@@ -180,7 +180,9 @@ final class Repo
         }
         if ($q !== '') {
             $like = '%' . $q . '%';
-            $where[] = '(nazev LIKE ? OR uplny_nazev LIKE ? OR navrhovatel LIKE ? OR zakony LIKE ? OR CAST(ct AS CHAR) = ?)';
+            $like_op = $this->db->ilike();
+            $where[] = "(nazev $like_op ? OR uplny_nazev $like_op ? OR navrhovatel $like_op ? OR zakony $like_op ? OR "
+                . $this->db->castText('ct') . ' = ?)';
             array_push($params, $like, $like, $like, $like, $q);
         }
         $order = $sort === 'recent' ? 'posledni DESC, ct DESC' : 'score DESC, posledni DESC';

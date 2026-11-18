@@ -1,0 +1,45 @@
+# Provoz na serveru: docker compose -f docker/docker-compose.yml up -d --build
+# Proměnné v docker/.env (vzor docker/.env.example).
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    environment: &appenv
+      HLIDAC_CONFIG: /run/hlidac/config.php
+      DB_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${BIND:-127.0.0.1:8100}:80"
+    volumes:
+      - ./config.php:/run/hlidac/config.php:ro
+      - appdata:/var/www/html/data
+    depends_on: [db]
+
+  # synchronizace s psp.cz každou hodinu (náhrada cronu)
+  sync:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    environment: *appenv
+    user: www-data
+    volumes:
+      - ./config.php:/run/hlidac/config.php:ro
+      - appdata:/var/www/html/data
+    command: ["sh", "-c", "while true; do php /var/www/html/bin/sync.php; sleep 3600; done"]
+    depends_on: [db]
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hlidac
+      POSTGRES_USER: hlidac
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  appdata:
+  pgdata:

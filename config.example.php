@@ -5,8 +5,9 @@ return [
     // veřejná adresa webu (bez lomítka na konci) – používá se v odkazech v příspěvcích
     'site_url' => 'https://hlidac.example.cz',
 
-    // databáze: SQLite (výchozí, nic nenastavujete) nebo MySQL/MariaDB
+    // databáze: SQLite (výchozí, nic nenastavujete), PostgreSQL nebo MySQL/MariaDB
     'db_dsn' => 'sqlite:' . __DIR__ . '/data/hlidac.sqlite',
+    // 'db_dsn' => 'pgsql:host=localhost;dbname=hlidac',
     // 'db_dsn' => 'mysql:host=localhost;dbname=hlidac;charset=utf8mb4',
     'db_user' => null,
     'db_pass' => null,

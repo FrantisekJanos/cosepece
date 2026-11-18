@@ -9,7 +9,10 @@ mkdir($tmp, 0775, true);
 // testovací data a konfigurace
 passthru(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/make_fixtures.php') . ' ' . escapeshellarg($tmp . '/src'));
 $base = require dirname(__DIR__) . '/config.example.php';
-$base['db_dsn'] = 'sqlite:' . $tmp . '/test.sqlite';
+// HLIDAC_TEST_DSN (+ _USER, _PASS) spustí testy proti jiné databázi, např. prázdnému PostgreSQL
+$base['db_dsn'] = getenv('HLIDAC_TEST_DSN') ?: 'sqlite:' . $tmp . '/test.sqlite';
+$base['db_user'] = getenv('HLIDAC_TEST_USER') ?: null;
+$base['db_pass'] = getenv('HLIDAC_TEST_PASS') ?: null;
 $base['source_dir'] = $tmp . '/src';
 $base['site_url'] = 'https://hlidac.test';
 $base['notify']['dry_run'] = true;

@@ -1,5 +1,5 @@
 <?php
-// Tenká vrstva nad PDO. Schéma funguje v SQLite i v MySQL/MariaDB.
+// Tenká vrstva nad PDO. Schéma funguje v SQLite, MySQL/MariaDB i PostgreSQL.
 
 declare(strict_types=1);
 
@@ -31,8 +31,10 @@ final class Db
         if ($this->driver === 'sqlite') {
             $this->pdo->exec('PRAGMA journal_mode = WAL');
             $this->pdo->exec('PRAGMA foreign_keys = OFF');
-        } else {
+        } elseif ($this->driver === 'mysql') {
             $this->pdo->exec("SET NAMES utf8mb4");
+        } elseif ($this->driver === 'pgsql') {
+            $this->pdo->exec("SET client_encoding TO 'UTF8'");
         }
     }
 
@@ -41,7 +43,7 @@ final class Db
         // tabulky se vytvoří jen pokud neexistují; data z psp.cz se při každém importu přepíší
         $text = $this->driver === 'sqlite' ? 'TEXT' : 'TEXT';
         $key = $this->driver === 'sqlite' ? 'TEXT' : 'VARCHAR(190)';
-        $suffix = $this->driver === 'sqlite' ? '' : ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_czech_ci';
+        $suffix = $this->driver !== 'mysql' ? '' : ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_czech_ci';
 
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS tisky (
             id_tisk INTEGER PRIMARY KEY,
@@ -155,9 +157,14 @@ final class Db
     private function addColumn(string $table, string $column, string $definition): void
     {
         // ALTER TABLE jen pokud sloupec chybí (funguje v SQLite i MySQL)
-        $columns = $this->driver === 'sqlite'
-            ? array_column($this->all("PRAGMA table_info($table)"), 'name')
-            : array_column($this->all("SHOW COLUMNS FROM $table"), 'Field');
+        $columns = match ($this->driver) {
+            'sqlite' => array_column($this->all("PRAGMA table_info($table)"), 'name'),
+            'pgsql' => array_column($this->all(
+                'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?',
+                [$table]
+            ), 'column_name'),
+            default => array_column($this->all("SHOW COLUMNS FROM $table"), 'Field'),
+        };
         if (!in_array($column, $columns, true)) {
             $this->pdo->exec("ALTER TABLE $table ADD COLUMN $column $definition");
         }
@@ -167,12 +174,24 @@ final class Db
     {
         // MySQL nezná CREATE INDEX IF NOT EXISTS, proto chybu „už existuje“ ignorujeme
         try {
-            $sql = $this->driver === 'sqlite'
+            $sql = $this->driver !== 'mysql'
                 ? "CREATE INDEX IF NOT EXISTS $name ON $table ($column)"
                 : "CREATE INDEX $name ON $table ($column)";
             $this->pdo->exec($sql);
         } catch (\PDOException) {
         }
+    }
+
+    /** Operátor pro hledání bez ohledu na velikost písmen (PostgreSQL má LIKE citlivé). */
+    public function ilike(): string
+    {
+        return $this->driver === 'pgsql' ? 'ILIKE' : 'LIKE';
+    }
+
+    /** Převod čísla na text pro porovnání s řetězcem (CAST AS CHAR je v PostgreSQL char(1)). */
+    public function castText(string $expr): string
+    {
+        return $this->driver === 'mysql' ? "CAST($expr AS CHAR)" : "CAST($expr AS VARCHAR)";
     }
 
     public function run(string $sql, array $params = []): PDOStatement

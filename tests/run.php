@@ -103,6 +103,25 @@ check('související krátký PN nedá „rozsáhlou úpravu“', in_array('pn_l
 db()->run("UPDATE pn_text SET signals = ?, ai_json = NULL WHERE id_dokument = 31312", [json_encode($a['signals'])]);
 $scorer->scoreBills();
 check('po vrácení signálů zase 55', $sc(311), 55);
+// tři krátké PN se souvisejícím přílepkem (rule_score 20, AI 3) nejsou problematické: bez pn_many i pn_large (issue #7, bod 1)
+$relatedPn = [json_encode(['other_laws' => ['252/1997']]), json_encode(['souvisi_s_predmetem' => true])];
+db()->run('UPDATE pn_text SET signals = ?, ai_json = ?, rule_score = 20, ai_score = 3 WHERE id_dokument = 31312', $relatedPn);
+foreach ([31313 => 2313, 31330 => 2330] as $idPn => $cisloPn) {
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, ai_json, ai_score, fetched_at) VALUES (?, 311, ?, 'x', 500, '252/1997', ?, 20, ?, 3, ?)",
+        [$idPn, $cisloPn, $relatedPn[0], $relatedPn[1], date('Y-m-d H:i:s')]);
+}
+$scorer->scoreBills();
+check('3 související přílepky: bez pn_many a pn_large', array_values(array_intersect(['pn_many', 'pn_large'], $keys(311))), []);
+// jeden nesouvisející přílepek a dva rozsáhlé PN = 3 problematické → pn_many
+db()->run('UPDATE pn_text SET ai_json = ? WHERE id_dokument = 31312', [json_encode(['souvisi_s_predmetem' => false])]);
+db()->run('UPDATE pn_text SET signals = ?, ai_json = NULL, rule_score = 10 WHERE id_dokument IN (31313, 31330)', [json_encode(['large' => 15000])]);
+$scorer->scoreBills();
+check('přílepek + 2 rozsáhlé PN: pn_many', in_array('pn_many', $keys(311), true), true);
+// úklid: testovací PN pryč, PN 31312 do původního stavu
+db()->run('DELETE FROM pn_text WHERE id_dokument IN (31313, 31330)');
+db()->run('UPDATE pn_text SET signals = ?, ai_json = NULL, rule_score = 30, ai_score = NULL WHERE id_dokument = 31312', [json_encode($a['signals'])]);
+$scorer->scoreBills();
+check('po úklidu testovacích PN zase 55', $sc(311), 55);
 
 echo "2. běh (bez nových dat)\n";
 $r2 = Hlidac\Sync::run();
@@ -190,6 +209,20 @@ ob_start();
 })(APP_ROOT . '/tisk.php');
 $html221 = (string)ob_get_clean();
 check('detail tisku ukazuje rozbor a citaci', str_contains($html221, 'Rozbor textu návrhu') && str_contains($html221, 'nejpozději do 4 let'), true);
+// celá cesta saveResult: nález bez ověřené citace se uloží se závažností 2 a do skóre tisku se nepromítne (issue #7, bod 2)
+$saved221 = db()->one('SELECT ai_json, ai_score, ai_at, ai_model FROM tisk_text WHERE ct = 221');
+$saveReviewer = new Hlidac\AiReviewer(db(), config());
+$saveReviewer->saveResult('tisk', 221, ['zavaznost' => 8, 'titulek' => 'x', 'citace' => ['Vymyšlená věta, která v textu návrhu vůbec není.']]);
+check('saveResult: vymyšlená citace → ai_score 2', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), 2);
+$scorer->scoreBills();
+check('saveResult: bez ověřené citace bez ai_bill', in_array('ai_bill', $keys(221), true), false);
+$saveReviewer->saveResult('tisk', 221, ['zavaznost' => 8, 'titulek' => 'x', 'citace' => ['   ', '']]);
+check('saveResult: citace jen z mezer → ai_score 2', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), 2);
+check('uložený rozbor bez klíče citace se nesníží', Hlidac\AiReviewer::sanitize(['zavaznost' => 8, 'titulek' => 'x'])['zavaznost'], 8);
+db()->run('UPDATE tisk_text SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ? WHERE ct = 221',
+    [$saved221['ai_json'], $saved221['ai_score'], $saved221['ai_at'], $saved221['ai_model']]);
+$scorer->scoreBills();
+check('tisk 221 po vrácení rozboru zase 94', $sc(221), 94);
 
 echo "AI rozbor přes claude CLI (falešné CLI, bez sítě)\n";
 $fakeCli = $tmp . '/claude';

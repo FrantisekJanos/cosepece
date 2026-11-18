@@ -27,12 +27,9 @@ $config = config();
 $config['ai']['enabled'] = true;
 $config['ai']['backend'] = 'cli';
 $reviewer = new AiReviewer(db(), $config);
-if (AiReviewer::cliPath($config) === null) {
-    fwrite(STDERR, "claude CLI nenalezeno – nastavte ai.cli_path v config.php\n");
-    exit(1);
-}
 
 try {
+    // --resanitize model nevolá, jde tedy spustit i bez claude CLI (např. v kontejneru na serveru)
     if (isset($opt['resanitize'])) {
         $n = $reviewer->resanitizeStored();
         $scorer = new Hlidac\Scorer(db(), config());
@@ -40,6 +37,10 @@ try {
         $scorer->scoreAlerts();
         echo "Upraveno $n rozborů\n";
         exit(0);
+    }
+    if (AiReviewer::cliPath($config) === null) {
+        fwrite(STDERR, "claude CLI nenalezeno – nastavte ai.cli_path v config.php\n");
+        exit(1);
     }
     if ($verify) {
         echo 'Ověření modelem ' . AiReviewer::verifyModel($config) . "\n";

@@ -278,6 +278,51 @@ check('post=watch: sledované odesláno', (int)db()->value("SELECT posted FROM a
 db()->run("DELETE FROM alerts WHERE alert_key LIKE 'test:%'");
 db()->run("DELETE FROM post_log WHERE alert_key LIKE 'test:%'");
 
+echo "Prompt AI bez jména předkladatele a typu návrhu\n";
+$promptOf = function (string $method, array $row): string {
+    $m = new ReflectionMethod(Hlidac\AiReviewer::class, $method);
+    return $m->invoke(new Hlidac\AiReviewer(db(), config()), $row, 'text', []);
+};
+$pnPrompt = $promptOf('pnPrompt', ['uplny_nazev' => 'Návrh X', 'osoba' => 'Marian Jurečka', 'signals' => '{}']);
+check('prompt PN neobsahuje jméno předkladatele', str_contains($pnPrompt, 'Jurečka'), false);
+$billPrompt = $promptOf('billPrompt', ['uplny_nazev' => 'Návrh X', 'nazev' => 'X', 'typ_navrhu' => 'poslanecký', 'signals' => '{}']);
+check('prompt návrhu neobsahuje typ návrhu', str_contains($billPrompt, 'poslanecký') || str_contains($billPrompt, 'poslanci'), false);
+
+echo "Neúplný export nepřepíše data\n";
+$bad = $tmp . '/src-bad';
+@mkdir($bad, 0775, true);
+foreach (['sd.zip', 'poslanci.zip'] as $f) {
+    copy($tmp . '/src/' . $f, $bad . '/' . $f);
+}
+copy($tmp . '/src/tisky.zip', $bad . '/tisky.zip');
+$zipBad = new ZipArchive();
+$zipBad->open($bad . '/tisky.zip');
+$zipBad->addFromString('tisky.unl', '');   // prázdný soubor se stejným jménem
+$zipBad->close();
+$countsBefore = [(int)db()->value('SELECT COUNT(*) FROM tisky'), (int)db()->value('SELECT COUNT(*) FROM kroky')];
+$syncBefore = db()->getMeta('last_sync');
+$importError = null;
+try {
+    (new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-bad', $bad)))->run();
+} catch (RuntimeException $ex) {
+    $importError = $ex->getMessage();
+}
+check('prázdný tisky.unl import zastaví', $importError !== null && str_contains($importError, 'Import zastaven'), true);
+check('tisky a kroky zůstaly', [(int)db()->value('SELECT COUNT(*) FROM tisky'), (int)db()->value('SELECT COUNT(*) FROM kroky')], $countsBefore);
+check('last_sync se neposunul', db()->getMeta('last_sync'), $syncBefore);
+check('důvod zapsán v meta', str_contains((string)db()->getMeta('import_error'), 'propad počtu řádků kroky') || str_contains((string)db()->getMeta('import_error'), 'žádné tisky'), true);
+(new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-bad', $tmp . '/src')))->run();
+check('úplný import chybu smaže', db()->getMeta('import_error'), '');
+
+echo "Stav rozboru textů\n";
+$repoTest = new Hlidac\Repo(db());
+$rs = $repoTest->reviewStatus();
+check('tisk 311: počet textů k posouzení = PN', $rs[311]['total'] ?? null, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311') + (int)db()->value('SELECT COUNT(*) FROM tisk_text WHERE ct = 311'));
+check('štítek bez rozboru', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 0]), 'Text neposouzen');
+check('štítek částečně', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 1]), 'Posouzeno 1 z 3 textů');
+check('štítek vše posouzeno', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 3]), null);
+check('jeden tisk = stejný výsledek jako hromadně', $repoTest->reviewStatus(311)[311] ?? null, $rs[311] ?? null);
+
 echo "Tokeny se neukládají do chyb\n";
 $leak = Hlidac\Http::redact('HTTP chyba při volání https://api.telegram.org/bot123456:ABC-tajne/sendMessage: timeout; '
     . 'https://web.cz/ai_api.php?token=tajne123&action=queue; Authorization: Bearer tajneJWT.x; {"accessJwt":"tajne.jwt"}');

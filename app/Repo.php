@@ -67,8 +67,10 @@ final class Repo
              ORDER BY score DESC, posledni DESC LIMIT " . $limit,
             [$minScore, $since]
         );
+        $surge = $this->surgeSet();
+        $review = $this->reviewStatus();
         foreach ($rows as &$row) {
-            $row['flags'] = $this->flags($row);
+            $row['flags'] = $this->flags($row, $surge, $review);
             $row['reasons_list'] = json_decode((string)$row['reasons'], true) ?: [];
             $row['headline'] = $this->headline((int)$row['ct']);
         }
@@ -137,10 +139,12 @@ final class Repo
     {
         // filtrováno v PHP, aby dotaz fungoval stejně v SQLite i MySQL
         $out = [];
+        $surge = $this->surgeSet();
+        $review = $this->reviewStatus();
         foreach ($this->db->all('SELECT * FROM tisky ORDER BY posledni DESC') as $t) {
             $tLaws = array_filter(explode(',', (string)$t['zakony']));
             if (array_intersect($tLaws, $laws) !== [] || in_array((int)$t['ct'], array_map('intval', $tisky), true)) {
-                $t['flags'] = $this->flags($t);
+                $t['flags'] = $this->flags($t, $surge, $review);
                 $out[] = $t;
             }
         }
@@ -189,8 +193,9 @@ final class Repo
         $rows = $this->db->all('SELECT * FROM tisky WHERE ' . implode(' AND ', $where)
             . ' ORDER BY ' . $order . ' LIMIT ' . $limit, $params);
         $surge = $this->surgeSet();
+        $review = $this->reviewStatus();
         foreach ($rows as &$row) {
-            $row['flags'] = $this->flags($row, $surge);
+            $row['flags'] = $this->flags($row, $surge, $review);
         }
         return $rows;
     }
@@ -229,7 +234,43 @@ final class Repo
         return $out;
     }
 
-    public function flags(array $t, ?array $surge = null): array
+    public function reviewStatus(?int $onlyCt = null): array
+    {
+        // kolik textů (návrh + PN) je posouzeno AI; neposouzený text má 0 bodů, což není totéž co „bez nálezu“
+        $out = [];
+        $filter = $onlyCt !== null ? ' WHERE ct = ?' : '';
+        $params = $onlyCt !== null ? [$onlyCt] : [];
+        foreach ($this->db->all('SELECT ct, COUNT(*) AS n FROM pn' . $filter . ' GROUP BY ct', $params) as $r) {
+            $ct = (int)$r['ct'];
+            $out[$ct] ??= ['total' => 0, 'done' => 0];
+            $out[$ct]['total'] += (int)$r['n'];
+        }
+        foreach ($this->db->all('SELECT ct, COUNT(*) AS n FROM pn_text' . $filter . ($filter ? ' AND' : ' WHERE') . ' ai_at IS NOT NULL GROUP BY ct', $params) as $r) {
+            $ct = (int)$r['ct'];
+            $out[$ct] ??= ['total' => 0, 'done' => 0];
+            $out[$ct]['done'] += (int)$r['n'];
+        }
+        foreach ($this->db->all('SELECT ct, ai_at FROM tisk_text' . $filter, $params) as $r) {
+            $ct = (int)$r['ct'];
+            $out[$ct] ??= ['total' => 0, 'done' => 0];
+            $out[$ct]['total']++;
+            $out[$ct]['done'] += $r['ai_at'] !== null ? 1 : 0;
+        }
+        return $out;
+    }
+
+    public static function reviewLabel(array $status): ?string
+    {
+        // null = vše posouzeno (nebo není co posuzovat)
+        $total = (int)($status['total'] ?? 0);
+        $done = (int)($status['done'] ?? 0);
+        if ($total === 0 || $done >= $total) {
+            return null;
+        }
+        return $done === 0 ? 'Text neposouzen' : "Posouzeno $done z $total textů";
+    }
+
+    public function flags(array $t, ?array $surge = null, ?array $review = null): array
     {
         // štítky v pořadí, v jakém se zobrazují
         $surge ??= $this->surgeSet();
@@ -249,6 +290,11 @@ final class Repo
         }
         if (isset($surge[(int)$t['ct']])) {
             $flags[] = ['surge', 'Nával PN'];
+        }
+        $review ??= $this->reviewStatus((int)$t['ct']);
+        $label = self::reviewLabel($review[(int)$t['ct']] ?? []);
+        if ($label !== null) {
+            $flags[] = ['pending', $label];
         }
         return $flags;
     }

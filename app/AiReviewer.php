@@ -18,7 +18,7 @@ Nehodnotíš, zda je návrh politicky dobrý nebo špatný. Hodnotíš jen, zda 
 - zpětná účinnost nebo použití nových pravidel na již vzniklé situace (např. „i tehdy, pokud … přede dnem nabytí účinnosti“),
 - zkrácení lhůt pro vymáhání, kontrolu, promlčení nebo prekluzi (např. vracení dotací, odvody za porušení rozpočtové kázně),
 - úprava, z níž má zjevně prospěch úzce vymezený nebo konkrétní subjekt či skupina,
-- zásadní nová úprava (nový režim, nové instituce, velké výdaje nebo výjimky) zavedená bez připomínkového řízení.
+- zásadní nová úprava (nový režim, nové instituce, velké výdaje nebo výjimky) vložená pozměňovacím návrhem nebo ustanovením mimo deklarovaný předmět návrhu.
 Legislativně-technické úpravy, opravy, posuny účinnosti a drobné věcné změny související s předmětem návrhu mají nízkou závažnost.
 Zvlášť závažné je, když se zkrácení lhůty pro vymáhání nebo kontrolu použije i zpětně na již vzniklé případy.
 Zpětnost rozlišuj podle směru:
@@ -33,7 +33,6 @@ Jsi nestranný legislativní analytik. Posuzuješ písemný pozměňovací návr
 {CRITERIA}
 
 Projednávaný návrh: {BILL}
-Předkladatel pozměňovacího návrhu: {AUTHOR}
 {HINTS}
 Text pozměňovacího návrhu{TRUNCATED}:
 <<<
@@ -45,7 +44,6 @@ TXT;
 
     private const PROMPT_BILL = <<<'TXT'
 Jsi nestranný legislativní analytik. Posuzuješ normativní text návrhu zákona v Poslanecké sněmovně ČR (bez důvodové zprávy).
-Typ návrhu: {TYPE} ({TYPE_NOTE}).
 {CRITERIA}
 U návrhu zákona hledej hlavně ustanovení, která s deklarovaným účelem návrhu souvisí jen volně nebo která by čtenář názvu nečekal
 (např. novela zákona o střetu zájmů, která zároveň zkracuje lhůtu pro vymáhání dotací v rozpočtových pravidlech a použije ji zpětně).
@@ -65,7 +63,7 @@ Odpověz pouze JSON objektem bez dalšího textu:
 {"titulek": "…", "perex": "…", "shrnuti": "1–2 věty, co text mění", "souvisi_s_predmetem": true, "jine_zakony": ["číslo/rok"], "zpetna_ucinnost": false, "zpetnost_smer": "neni", "zkraceni_lhut": false, "prospech_uzke_skupiny": false, "zasadni_nova_uprava": false, "zavaznost": 0, "duvod": "1 věta, proč tato závažnost", "citace": ["doslovně zkopírovaná věta z textu, která zjištění dokládá"]}
 "zpetnost_smer": jedna z hodnot "neni", "ve_prospech_verejnosti", "oslabuje_vymahani_nebo_kontrolu", "zvyhodnuje_uzkou_skupinu", "nova_povinnost".
 "titulek": nejdůležitější konkrétní změna srozumitelně pro běžného čtenáře, nejvýš 90 znaků, bez názvu zákona a bez čísel zákonů (např. „Lhůta pro vymáhání neoprávněných dotací se zkracuje na 4 roky – i zpětně“). Slovo „zpětně“ použij v titulku jen tehdy, když zpětnost není ve prospěch veřejnosti.
-"perex": jedna věta, nejvýš 160 znaků, proč je postup procedurálně sporný (např. zpětné použití, chybějící připomínkové řízení). Pokud nic sporného není, popiš věcně hlavní změnu.
+"perex": jedna věta, nejvýš 160 znaků, proč je postup procedurálně sporný (např. zpětné použití, přílepek, zkrácení lhůty). Pokud nic sporného není, popiš věcně hlavní změnu.
 Pravidla pro všechny texty: piš jen to, co přímo vyplývá z citovaného textu. Žádná hodnoticí ani expresivní slova, žádné spekulace o motivech, žádná jména osob ani firem, která v textu nejsou. „souvisi_s_predmetem“ dej false jen tehdy, když změna nemá s předmětem ani názvem návrhu nic společného; změny zákonů, které název návrhu výslovně ohlašuje („a další související zákony“), za nesouvisející nepovažuj.
 "zavaznost" je celé číslo 0–10 (0 = technická úprava, 10 = závažný procedurální problém).
 "citace" obsahuje 0–3 věty zkopírované z textu přesně znak po znaku (bez úprav a zkracování), první citace má dokládat titulek; pokud nic problematického nenajdeš, dej prázdné pole.
@@ -300,16 +298,11 @@ TXT;
 
     private function billPrompt(array $row, string $text, array $cfg): string
     {
-        $type = (string)$row['typ_navrhu'];
-        $notes = [
-            'poslanecký' => 'předložili poslanci, neprošel meziresortním připomínkovým řízením',
-            'senátní' => 'předložil Senát, neprošel meziresortním připomínkovým řízením',
-        ];
+        // typ a předkladatel se modelu záměrně neposílají: chybějící připomínkové řízení boduje Scorer
+        // (nesčítat dvakrát) a jméno ani strana nemají vliv na posouzení postupu (#7)
         [$body, $truncated] = self::clip($text, (int)($cfg['max_chars'] ?? 150000));
         return strtr(self::PROMPT_BILL, [
             '{CRITERIA}' => self::CRITERIA,
-            '{TYPE}' => $type,
-            '{TYPE_NOTE}' => $notes[$type] ?? 'prošel standardní přípravou předkladatele',
             '{BILL}' => (string)($row['uplny_nazev'] ?: $row['nazev']),
             '{HINTS}' => self::hints((string)$row['signals']),
             '{TRUNCATED}' => $truncated ? ' (zkráceno)' : '',
@@ -324,7 +317,6 @@ TXT;
         return strtr(self::PROMPT_PN, [
             '{CRITERIA}' => self::CRITERIA,
             '{BILL}' => (string)$row['uplny_nazev'],
-            '{AUTHOR}' => (string)$row['osoba'],
             '{HINTS}' => self::hints((string)$row['signals']),
             '{TRUNCATED}' => $truncated ? ' (zkráceno)' : '',
             '{TEXT}' => $body,

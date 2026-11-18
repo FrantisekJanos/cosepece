@@ -55,6 +55,13 @@ final class Importer
             ];
         }
 
+        // neúplný nebo poškozený export nesmí přepsat poslední úplná data (#2)
+        $problem = $this->validate($obdobiId, $tiskyRows, $kroky, $pn);
+        if ($problem !== null) {
+            $this->db->setMeta('import_error', date('Y-m-d H:i:s') . ' ' . $problem);
+            throw new RuntimeException('Import zastaven, data se nepřepsala: ' . $problem);
+        }
+
         // přepis tabulek se zdrojovými daty v jedné transakci
         $this->db->pdo->beginTransaction();
         try {
@@ -73,6 +80,7 @@ final class Importer
             $this->db->setMeta('obdobi_id', (string)$obdobiId);
             $this->db->setMeta('obdobi_cislo', (string)$obdobiCislo);
             $this->db->setMeta('last_sync', date('Y-m-d H:i:s'));
+            $this->db->setMeta('import_error', '');
             $this->db->pdo->commit();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
@@ -80,6 +88,44 @@ final class Importer
         }
 
         return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn)];
+    }
+
+    private function validate(int $obdobiId, array $tisky, array $kroky, array $pn): ?string
+    {
+        // vrací důvod, proč import nepoužít, nebo null
+        $samePeriod = (int)$this->db->getMeta('obdobi_id', '0') === $obdobiId;
+        $before = [
+            'tisky' => (int)$this->db->value('SELECT COUNT(*) FROM tisky'),
+            'kroky' => (int)$this->db->value('SELECT COUNT(*) FROM kroky'),
+            'pn' => (int)$this->db->value('SELECT COUNT(*) FROM pn'),
+        ];
+        $now = ['tisky' => count($tisky), 'kroky' => count($kroky), 'pn' => count($pn)];
+        if ($samePeriod) {
+            // ve stejném období data jen přibývají; výrazný propad = chybějící nebo useknutý soubor
+            foreach ($now as $table => $n) {
+                if ($before[$table] >= 20 && $n < $before[$table] * 0.8) {
+                    return "propad počtu řádků $table z {$before[$table]} na $n";
+                }
+            }
+        }
+        if ($tisky === [] && $pn !== []) {
+            return 'export neobsahuje žádné tisky, ale obsahuje pozměňovací návrhy';
+        }
+        if ($tisky === [] && $kroky !== []) {
+            return 'export obsahuje kroky historie, ale žádné tisky';
+        }
+        if ($tisky !== [] && $kroky === []) {
+            return 'export obsahuje tisky, ale žádné kroky historie';
+        }
+        if ($pn !== [] && $tisky !== []) {
+            // PN se musí aspoň zčásti vázat na tisky stejného období
+            $cts = array_flip(array_map(fn(array $t): int => (int)$t['ct'], $tisky));
+            $linked = count(array_filter($pn, fn(array $p): bool => isset($cts[(int)$p['ct']])));
+            if ($linked === 0) {
+                return 'žádný pozměňovací návrh se neváže na importované tisky';
+            }
+        }
+        return null;
     }
 
     private function currentPeriod(): array

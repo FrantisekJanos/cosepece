@@ -12,3 +12,5 @@ docker image prune -f >/dev/null
 docker compose ps --format '{{.Service}} {{.Status}}'
 BIND=$(grep -E '^BIND=' .env | cut -d= -f2)
 curl -s -o /dev/null -w 'web: %{http_code}\n' "http://${BIND:-127.0.0.1:8100}/"
+MCP_BIND=$(grep -E '^MCP_BIND=' .env | cut -d= -f2)
+curl -s -o /dev/null -w 'mcp: %{http_code}\n' "http://${MCP_BIND:-127.0.0.1:8102}/health"

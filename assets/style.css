@@ -132,6 +132,7 @@ td { padding: 14px 8px; border-top: 1px solid var(--line-soft); vertical-align: 
 th:first-child, td:first-child { padding-left: 20px; }
 th:last-child, td:last-child { padding-right: 20px; }
 td.wide { max-width: 360px; }
+table.table-compact { min-width: 0; }
 .num { text-align: right; }
 a.plain { color: var(--ink); text-decoration: none; }
 a.plain:hover { text-decoration: underline; }
@@ -171,3 +172,5 @@ a.plain:hover { text-decoration: underline; }
   .timeline li { grid-template-columns: 80px 14px 1fr; }
   .timeline li::before { left: 100px; }
 }
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
+.steps .small { display: block; margin-top: 2px; }

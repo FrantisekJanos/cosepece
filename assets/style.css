@@ -72,6 +72,7 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .chip-cut { background: #FEF3E2; color: #9A3412; }
 .chip-surge { background: #F0F0EC; color: var(--ink-2); }
 .chip-watch { background: #E7F5EC; color: #166534; }
+.chip-pending { background: transparent; color: var(--ink-2); border: 1px dashed currentColor; }
 
 /* skóre závažnosti */
 .score { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }

@@ -93,6 +93,10 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', $t['uplny_nazev']);
   <?php else: ?>
     <?= View::reasons($t['reasons_list']) ?>
   <?php endif; ?>
+  <?php $review = $repo->reviewStatus($ct)[$ct] ?? ['total' => 0, 'done' => 0]; ?>
+  <?php if ($review['total'] > 0 && $review['done'] < $review['total']): ?>
+    <p class="small"><strong>Rozbor textů není úplný:</strong> posouzeno <?= (int)$review['done'] ?> z <?= (int)$review['total'] ?> textů (návrh zákona a pozměňovací návrhy). Neposouzené texty do skóre zatím nepřispívají, nízké skóre proto neznamená „bez problému“.</p>
+  <?php endif; ?>
   <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
 </section>
 

@@ -7,17 +7,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any
 
+import anyio
 import psycopg
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from . import db, tools
 
@@ -34,23 +37,43 @@ current_token: ContextVar[int | None] = ContextVar("current_token", default=None
 server = MCPServer(name="hlidac-zakonu", instructions=INSTRUCTIONS)
 
 
+STATEMENT_TIMEOUT_MS = int(os.environ.get("MCP_STATEMENT_TIMEOUT_MS", "5000"))
+POOL_TIMEOUT_S = float(os.environ.get("MCP_POOL_TIMEOUT", "5"))
+log = logging.getLogger("hlidac_rag.mcp")
+
+
 def _call(name: str, fn, *args, **kwargs) -> Any:
+    """Spustí dotaz nástroje v transakci jen pro čtení s časovým limitem a zapíše volání do mcp.volani.
+
+    Režim čtení a limit platí jen pro jednu transakci (SET TRANSACTION / SET LOCAL), do poolu se nic nepřenáší.
+    Chyby se vrací jako ToolError, klient pak dostane isError a čitelnou zprávu."""
     start = time.monotonic()
     err = False
     try:
         with pool.connection() as conn:
-            conn.read_only = True
+            conn.execute("SET TRANSACTION READ ONLY")
+            conn.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
             return fn(conn, *args, **kwargs)
     except ValueError as e:
         err = True
-        return {"chyba": str(e)}
+        raise ToolError(str(e)) from None
+    except psycopg.errors.QueryCanceled:
+        err = True
+        raise ToolError(f"Dotaz trval déle než {STATEMENT_TIMEOUT_MS // 1000} s. Zužte ho: ct, osoba, od/do, "
+                        "konkrétnější slova.") from None
+    except PoolTimeout:
+        err = True
+        raise ToolError("Server je vytížen, zkuste to za chvíli.") from None
+    except psycopg.Error:
+        err = True
+        log.exception("chyba databáze v nástroji %s", name)
+        raise ToolError("Dočasná chyba databáze, zkuste to znovu.") from None
     finally:
         try:
             with pool.connection() as conn:
-                conn.read_only = False
                 conn.execute("INSERT INTO mcp.volani (token_id, nastroj, ms, chyba) VALUES (%s,%s,%s,%s)",
                              (current_token.get(), name, int((time.monotonic() - start) * 1000), err))
-        except psycopg.Error:
+        except (psycopg.Error, PoolTimeout):
             pass
 
 
@@ -113,10 +136,13 @@ def projevy_recnika(osoba: str, od: str | None = None, do: str | None = None, ct
 
 
 @server.tool()
-def get_projev(klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: int = 0) -> dict:
+def get_projev(klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: int = 0,
+               okoli_max_znaku: int = 1500) -> dict:
     """Celý text projevu podle klíče "10/34/633/1" (období/schůze/část/kotva), s metadaty, odkazy na hlasování,
-    stavem autorizace a historií verzí. okoli = počet sousedních vystoupení. Dlouhé projevy stránkuj offset_znaku."""
-    return _call("get_projev", tools.get_projev, klic, okoli, max_znaku, offset_znaku)
+    stavem autorizace a historií verzí. Vrací text, znaku_celkem, pokracuje a dalsi_offset_znaku: dlouhý projev
+    čti dalšími voláními s offset_znaku = dalsi_offset_znaku. okoli = počet sousedních vystoupení před i po
+    (pole okoli[] s poradi a úryvkem do okoli_max_znaku znaků)."""
+    return _call("get_projev", tools.get_projev, klic, okoli, max_znaku, offset_znaku, okoli_max_znaku)
 
 
 @server.tool()
@@ -168,16 +194,23 @@ class AuthMiddleware:
         self.day: dict[int, deque] = defaultdict(deque)
         self.cache: dict[str, tuple[int | None, float]] = {}
 
-    def _token_id(self, token: str) -> int | None:
-        h = hashlib.sha256(token.encode()).hexdigest()
-        hit = self.cache.get(h)
+    def _cached(self, token: str) -> tuple[bool, int | None]:
+        hit = self.cache.get(hashlib.sha256(token.encode()).hexdigest())
         if hit and time.monotonic() - hit[1] < 60:
-            return hit[0]
+            return True, hit[0]
+        return False, None
+
+    def _token_id(self, token: str) -> int | None:
+        """Ověří token v DB (blokující, volat mimo event loop). Do cache jen platné tokeny."""
+        h = hashlib.sha256(token.encode()).hexdigest()
         with pool.connection() as conn:
             r = conn.execute("UPDATE mcp.token SET naposledy = now() WHERE hash = %s AND zrusen IS NULL RETURNING id",
                              (h,)).fetchone()
         tid = r[0] if r else None
-        self.cache[h] = (tid, time.monotonic())
+        if tid is not None:
+            if len(self.cache) > 1000:
+                self.cache.clear()
+            self.cache[h] = (tid, time.monotonic())
         return tid
 
     def _limited(self, tid: int) -> bool:
@@ -199,7 +232,16 @@ class AuthMiddleware:
         headers = dict(scope.get("headers") or [])
         auth = headers.get(b"authorization", b"").decode()
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-        tid = self._token_id(token) if token else None
+        tid = None
+        if token:
+            hit, tid = self._cached(token)
+            if not hit:
+                try:
+                    tid = await anyio.to_thread.run_sync(self._token_id, token)
+                except (psycopg.Error, PoolTimeout):
+                    log.exception("ověření tokenu selhalo")
+                    return await _respond(send, 503, {"error": "dočasně nedostupné, zkuste to znovu"},
+                                          [(b"retry-after", b"2")])
         if tid is None:
             return await _respond(send, 401, {"error": "chybí nebo neplatný token"},
                                   [(b"www-authenticate", b'Bearer realm="hlidac-zakonu"')])
@@ -223,7 +265,7 @@ def build_app():
     global pool
     # check: spojení ukončené restartem DB se před použitím zahodí a nahradí novým
     pool = ConnectionPool(db.dsn(), min_size=1, max_size=int(os.environ.get("MCP_POOL", "4")), open=True,
-                          check=ConnectionPool.check_connection)
+                          check=ConnectionPool.check_connection, timeout=POOL_TIMEOUT_S)
     hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*").split(",") if h.strip()]
     app = server.streamable_http_app(
         streamable_http_path="/mcp",

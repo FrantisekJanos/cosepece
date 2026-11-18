@@ -65,6 +65,16 @@ def _excerpt(text: str | None, n: int = 400) -> str:
     return text if len(text) <= n else text[:n].rsplit(" ", 1)[0] + " …"
 
 
+def _date(s: str | None, name: str) -> str | None:
+    """Ověří datum ve tvaru RRRR-MM-DD, jinak srozumitelná chyba místo chyby databáze."""
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(str(s).strip()[:10]).isoformat()
+    except ValueError:
+        raise ValueError(f"{name}: datum zadejte ve tvaru RRRR-MM-DD, např. 2026-10-14") from None
+
+
 def _norm_sb(sb: str) -> str:
     m = re.search(r"(\d+)\s*/\s*(\d{4})", sb or "")
     if not m:
@@ -205,13 +215,22 @@ _SPEECH_COLS = """p.schuze, p.turn, p.aname, p.datum, p.cas, p.id_osoba, p.recni
                   p.ct, p.znaku, p.autorizovano, p.verze, p.url, b.nazev AS bod"""
 
 
+def _speech_meta(r: dict) -> dict:
+    """Klíč projevu a poznámka o autorizaci; pole text nechá být."""
+    r["klic"] = f"{OBDOBI}/{r.pop('schuze')}/{r.pop('turn')}/{r.pop('aname')}"
+    if not r["autorizovano"]:
+        r["poznamka"] = NOTE_UNAUTH
+    return r
+
+
 def _speech_rows(rows: list[dict], excerpt: int = 400) -> list[dict]:
+    """Řádky seznamu projevů: text se zkrátí na úryvek."""
     for r in rows:
-        r["klic"] = f"{OBDOBI}/{r.pop('schuze')}/{r.pop('turn')}/{r.pop('aname')}"
+        _speech_meta(r)
         if "text" in r:
-            r["uryvek"] = _excerpt(r.pop("text"), excerpt)
-        if not r["autorizovano"]:
-            r["poznamka"] = NOTE_UNAUTH
+            text = r.pop("text")
+            r["uryvek"] = _excerpt(text, excerpt)
+            r["zkraceno"] = bool(text) and len(text) > excerpt
     return rows
 
 
@@ -229,10 +248,10 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
         params.append(klub)
     if od:
         where.append("p.datum >= %s")
-        params.append(od)
+        params.append(_date(od, "od"))
     if do:
         where.append("p.datum <= %s")
-        params.append(do)
+        params.append(_date(do, "do"))
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
@@ -273,10 +292,10 @@ def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | Non
     where, params = ["p.id_osoba = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [id_osoba, min_znaku]
     if od:
         where.append("p.datum >= %s")
-        params.append(od)
+        params.append(_date(od, "od"))
     if do:
         where.append("p.datum <= %s")
-        params.append(do)
+        params.append(_date(do, "do"))
     if ct:
         where.append("p.ct = %s")
         params.append(ct)
@@ -300,32 +319,35 @@ def _parse_key(klic: str) -> tuple[int, int, int, int]:
     return parts[0], parts[1], parts[2], parts[3]
 
 
-def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: int = 0) -> dict:
+def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: int = 0,
+               okoli_max_znaku: int = 1500) -> dict:
     o, s, t, a = _parse_key(klic)
-    r = _one(conn, f"""SELECT p.id, {_SPEECH_COLS}, p.text, p.turny, p.hlasovani, p.ct_zdroj, p.id_bod
+    r = _one(conn, f"""SELECT p.id, p.poradi, {_SPEECH_COLS}, p.text, p.turny, p.hlasovani, p.ct_zdroj, p.id_bod
                        FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                        WHERE p.obdobi=%s AND p.schuze=%s AND p.turn=%s AND p.aname=%s""", (o, s, t, a))
     if not r:
         return {"chyba": f"Projev {klic} neznám."}
-    text = r.pop("text")
+    text = r.pop("text") or ""
     m = max(500, min(int(max_znaku), 60000))
-    start = max(0, int(offset_znaku))
+    start = max(0, min(int(offset_znaku), len(text)))
     r["text"] = text[start:start + m]
     r["znaku_celkem"] = len(text)
+    r["offset_znaku"] = start
     r["pokracuje"] = start + m < len(text)
+    r["dalsi_offset_znaku"] = start + m if r["pokracuje"] else None
     r["hlasovani"] = [f"{PSP}/sqw/hlasy.sqw?G={g}" for g in (r["hlasovani"] or [])]
     pid = r.pop("id")
     if okoli:
         n = max(1, min(int(okoli), 10))
+        om = max(200, min(int(okoli_max_znaku), 6000))
         r["okoli"] = _speech_rows(_rows(conn, f"""
-            SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
+            SELECT p.poradi, {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
             WHERE p.obdobi=%s AND p.schuze=%s AND p.zruseno IS NULL
               AND p.poradi BETWEEN (SELECT poradi FROM steno.projev WHERE id=%s) - %s
                                AND (SELECT poradi FROM steno.projev WHERE id=%s) + %s
-              AND p.id <> %s ORDER BY p.poradi""", (o, s, pid, n, pid, n, pid)), 300)
+              AND p.id <> %s ORDER BY p.poradi""", (o, s, pid, n, pid, n, pid)), om)
     r["verze_historie"] = _rows(conn, "SELECT verze, autorizovano, platne_do FROM steno.projev_verze WHERE projev_id=%s ORDER BY verze", (pid,))
-    _speech_rows([r])
-    return r
+    return _speech_meta(r)
 
 
 def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str | None = None,
@@ -358,10 +380,10 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
         params.append(klub)
     if od:
         where.append("p.datum >= %s")
-        params.append(od)
+        params.append(_date(od, "od"))
     if do:
         where.append("p.datum <= %s")
-        params.append(do)
+        params.append(_date(do, "do"))
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS},
                                   ts_headline('simple', p.text, to_tsquery('simple', %s),
                                               'MaxFragments=2, MaxWords=40, MinWords=15') AS uryvek_shoda,
@@ -395,7 +417,7 @@ def zmeny_projevu(conn, od: str | None = None, ct: int | None = None, limit: int
     where, params = ["p.verze > 1"], []
     if od:
         where.append("p.zmeneno >= %s")
-        params.append(od)
+        params.append(_date(od, "od"))
     if ct:
         where.append("p.ct = %s")
         params.append(ct)
@@ -404,8 +426,7 @@ def zmeny_projevu(conn, od: str | None = None, ct: int | None = None, limit: int
                                    ORDER BY v.verze DESC LIMIT 1) AS znaku_predtim
                            FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {' AND '.join(where)} ORDER BY p.zmeneno DESC LIMIT %s""", (*params, _limit(limit)))
-    for r in rows:
-        r["zmeneno"] = r["zmeneno"].isoformat() if r.get("zmeneno") else None
+    # zmeneno už převedl _clean na řetězec
     return {"pocet": len(rows), "projevy": _speech_rows(rows)}
 
 

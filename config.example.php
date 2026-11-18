@@ -26,6 +26,13 @@ return [
     // od kolika PN za jeden běh jde o „nával“
     'surge_threshold' => 10,
 
+    // měření návštěvnosti Umami (bez cookies); prázdné = tracker se nevloží
+    'umami' => [
+        'src' => '',        // např. https://stat.example.cz/sv.js
+        'website_id' => '',
+        'domains' => '',    // měřit jen na těchto doménách, např. example.cz
+    ],
+
     // odkaz na veřejné issues (podněty a chyby)
     'issues_url' => 'https://github.com/moodixmarket/hlidac-zakonu-podnety/issues',
 

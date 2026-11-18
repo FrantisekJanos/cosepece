@@ -40,6 +40,9 @@ final class View
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
+<?php $umami = (array)config('umami', []); if (($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
+<script defer src="<?= e($umami['src']) ?>" data-website-id="<?= e($umami['website_id']) ?>"<?php if (($umami['domains'] ?? '') !== ''): ?> data-domains="<?= e($umami['domains']) ?>"<?php endif; ?> data-do-not-track="true"></script>
+<?php endif; ?>
 </head>
 <body>
 <header class="top">

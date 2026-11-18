@@ -46,7 +46,7 @@ Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. 
 php tests/run.php                 # end-to-end test nad reálnými řádky z psp.cz (bez sítě)
 php bin/sync.php                  # synchronizace (import → upozornění → texty PN a tisků → AI → skóre → sítě)
 php bin/ai.php --ct=221           # AI rozbor přes claude CLI (předplatné) nad místní DB
-php bin/ai.php --remote=https://web.cz --token=…   # fronta z hostingu (ai_api.php), výsledky zpět
+HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (ai_api.php, token v hlavičce X-Hlidac-Token)
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099   # lokální náhled

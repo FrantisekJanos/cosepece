@@ -51,6 +51,7 @@ final class Importer
                 'pn_count' => $pnByCt[$tisk['ct']]['count'] ?? 0,
                 'pn_last' => $pnByCt[$tisk['ct']]['last'] ?? null,
                 'sbirka' => $this->sbirka($list),
+                'vyhlaseno' => $this->vyhlaseno($list),
             ];
         }
 
@@ -63,6 +64,7 @@ final class Importer
             $this->db->insertMany('tisky', [
                 'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
                 'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
+                'vyhlaseno',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce',
@@ -166,6 +168,8 @@ final class Importer
                 'akce' => $akce[$prechod['akce']] ?? '',
                 // číslo ve Sbírce zákonů (sloupce zaver_sb_cislo a datum vyhlášení)
                 '_sb' => trim($c[13] ?? '') !== '' ? trim($c[13]) . '/' . substr($this->czDate($c[11] ?? '') ?? '', 0, 4) : null,
+                // den vyhlášení ve Sbírce (zaver_publik); datum kroku je jen doručení nebo odeslání k publikaci
+                '_vyhl' => $this->czDate($c[11] ?? ''),
             ];
         }
         // chronologicky podle id historie (některé kroky nemají datum)
@@ -199,6 +203,17 @@ final class Importer
         foreach (array_reverse($kroky) as $krok) {
             if (!empty($krok['_sb']) && !str_ends_with($krok['_sb'], '/')) {
                 return $krok['_sb'];
+            }
+        }
+        return null;
+    }
+
+    private function vyhlaseno(array $kroky): ?string
+    {
+        // datum vyhlášení z posledního kroku, který ho uvádí
+        foreach (array_reverse($kroky) as $krok) {
+            if (!empty($krok['_vyhl'])) {
+                return $krok['_vyhl'];
             }
         }
         return null;

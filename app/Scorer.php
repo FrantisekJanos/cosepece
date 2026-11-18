@@ -179,7 +179,11 @@ final class Scorer
             if ($typ === 4 && (int)$k['akce_id'] === 23 && $day) {
                 $detailEnd = $day;
             }
-            if ($typ === 5 && $pnDay !== null && $thirdDay === null && $day && (int)$k['akce_id'] === 238) {
+            // nejdřívější krok skutečného projednávání 3. čtení (zahájeno 238, ukončeno 71, ukončena 23):
+            // „zahájeno“ bývá v hist.unl datované až po „projednávání ukončeno“; administrativní kroky
+            // (rozeslání, „GV nebude projednávat“) se nepočítají
+            if ($typ === 5 && in_array((int)$k['akce_id'], [238, 71, 23], true) && $pnDay !== null && $day
+                && $day >= $pnDay && ($thirdDay === null || $day < $thirdDay)) {
                 $thirdDay = $day;
             }
         }

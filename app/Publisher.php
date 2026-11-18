@@ -41,12 +41,15 @@ final class Publisher
         $kindsOff = $this->config['notify']['kinds_off'] ?? [];
         $limit = (int)($this->config['notify']['max_posts_per_run'] ?? 10);
         $dryRun = !empty($this->config['notify']['dry_run']);
+        // co se posílá: all = vše nad prahem, watch = jen sledované zákony, off = nic (platí i pro dry_run)
+        $mode = strtolower(trim((string)($this->config['notify']['post'] ?? 'all')));
         $stats = ['sent' => 0, 'filtered' => 0, 'errors' => 0];
 
         // nejzávažnější první; běžná agenda pod prahem zůstane jen na webu (potlačeno)
         $pending = $this->db->all('SELECT * FROM alerts WHERE posted = 0 ORDER BY score DESC, event_at');
         foreach ($pending as $alert) {
-            if ((int)$alert['score'] < $minScore || in_array($alert['kind'], $kindsOff, true)) {
+            $modeOff = $mode === 'off' || ($mode === 'watch' && !(int)$alert['watched']);
+            if ($modeOff || (int)$alert['score'] < $minScore || in_array($alert['kind'], $kindsOff, true)) {
                 $this->db->run('UPDATE alerts SET posted = 3 WHERE alert_key = ?', [$alert['alert_key']]);
                 $stats['filtered']++;
                 continue;
@@ -122,6 +125,6 @@ final class Publisher
     private function log(string $key, string $network, string $status, ?string $error): void
     {
         $this->db->run('INSERT INTO post_log (alert_key, network, status, at, error) VALUES (?, ?, ?, ?, ?)',
-            [$key, $network, $status, date('Y-m-d H:i:s'), $error]);
+            [$key, $network, $status, date('Y-m-d H:i:s'), $error === null ? null : mb_substr(Http::redact($error), 0, 500)]);
     }
 }

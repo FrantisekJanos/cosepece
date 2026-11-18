@@ -71,7 +71,7 @@ Texty návrhů zákonů a pozměňovacích návrhů může posoudit Claude (levn
 a vaše předplatné Claude Code – bez API klíče. Sdílený hosting CLI spustit neumí, proto běží rozbor na vašem počítači:
 
 ```bash
-php bin/ai.php --remote=https://vas-web.cz --token=VAS_TOKEN --limit=20
+HLIDAC_TOKEN=VAS_TOKEN php bin/ai.php --remote=https://vas-web.cz --limit=20
 ```
 
 Skript stáhne frontu textů z `ai_api.php`, každý posoudí přes `claude -p` a výsledky pošle zpět. Server ověří,
@@ -84,7 +84,7 @@ silnější model `ai.verify_model` (Sonnet) – i ten přes předplatné:
 
 ```bash
 php bin/ai.php --verify --all                                       # místní databáze
-php bin/ai.php --remote=https://vas-web.cz --token=VAS_TOKEN --verify   # hosting
+HLIDAC_TOKEN=VAS_TOKEN php bin/ai.php --remote=https://vas-web.cz --verify   # hosting
 ```
 
 Výsledek ověření nahradí první rozbor; na homepage je u nálezu poznámka „ověřeno druhým modelem“. Automatické

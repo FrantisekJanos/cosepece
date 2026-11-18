@@ -12,6 +12,10 @@ final class AiReviewer
 {
     private const API = 'https://api.anthropic.com/v1/messages';
 
+    // verze promptu a pravidel: po změně promptu ji zvyšte, fronta pak postupně znovu posoudí starší rozbory
+    // (původní výsledek zůstává zobrazený, dokud ho nový nenahradí). 2 = bez jména předkladatele a typu návrhu (#7)
+    public const PROMPT_VERSION = 2;
+
     private const CRITERIA = <<<'TXT'
 Nehodnotíš, zda je návrh politicky dobrý nebo špatný. Hodnotíš jen, zda jde o procedurálně problematický zásah, který obchází běžný legislativní proces, typicky:
 - přílepek: mění jiný zákon nebo jinou oblast, než které se týká projednávaný návrh,
@@ -162,14 +166,17 @@ TXT;
             $params[] = $onlyCt;
         }
         if ($verify) {
-            $where = 'x.ai_at IS NOT NULL AND x.ai_score >= ? AND (x.ai_model IS NULL OR x.ai_model <> ?)';
-            $params = array_merge([(int)($cfg['verify_min'] ?? 6), self::verifyModel($this->config)], $params);
+            // ověřuje se jen rozbor podle aktuální verze promptu
+            $where = 'x.ai_at IS NOT NULL AND x.ai_prompt = ? AND x.ai_score >= ? AND (x.ai_model IS NULL OR x.ai_model <> ?)';
+            $params = array_merge([self::PROMPT_VERSION, (int)($cfg['verify_min'] ?? 6), self::verifyModel($this->config)], $params);
             $orderBills = 't.score DESC, x.ai_score DESC, t.ct DESC';
             $orderPn = 't.score DESC, x.ai_score DESC, p.cas DESC';
         } else {
-            $where = 'x.ai_at IS NULL';
-            $orderBills = 't.predlozeno DESC, t.ct DESC';
-            $orderPn = 'p.cas DESC';
+            // nové texty, pak rozbory podle starší verze promptu (od nejzávažnějších tisků)
+            $where = '(x.ai_at IS NULL OR x.ai_prompt IS NULL OR x.ai_prompt < ?)';
+            $params = array_merge([self::PROMPT_VERSION], $params);
+            $orderBills = 'CASE WHEN x.ai_at IS NULL THEN 0 ELSE 1 END, t.score DESC, t.predlozeno DESC, t.ct DESC';
+            $orderPn = 'CASE WHEN x.ai_at IS NULL THEN 0 ELSE 1 END, t.score DESC, p.cas DESC';
         }
         $bills = $this->db->all(
             "SELECT x.ct, x.text, x.signals, t.uplny_nazev, t.nazev, t.typ_navrhu FROM tisk_text x
@@ -211,9 +218,9 @@ TXT;
         }
         $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
         $result = self::sanitize($result);
-        $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, error = NULL WHERE $column = ?",
+        $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
             [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
-                mb_substr($model ?? self::model($this->config), 0, 60), $id]);
+                mb_substr($model ?? self::model($this->config), 0, 60), self::PROMPT_VERSION, $id]);
     }
 
     public static function sanitize(array $result): array

@@ -231,6 +231,14 @@ check('fronta ověření: závažný nález 221', array_column($reviewer->queue(
 check('ověření silnějším modelem', $reviewer->run(5, 221, true), ['reviewed' => 1, 'errors' => 0]);
 check('výsledek ověření nahradí první kolo', [(int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), db()->value('SELECT ai_model FROM tisk_text WHERE ct = 221')], [7, 'claude-sonnet-5-5']);
 check('ověřený nález se znovu neověřuje', $reviewer->queue(5, 221, true), []);
+check('rozbor nese aktuální verzi promptu', (int)db()->value('SELECT ai_prompt FROM tisk_text WHERE ct = 221'), Hlidac\AiReviewer::PROMPT_VERSION);
+check('aktuální rozbor není ve frontě', $reviewer->queue(5, 221), []);
+// rozbor podle starší verze promptu: zůstane zobrazený, ale vrátí se do fronty; ověření ho přeskočí
+db()->run('UPDATE tisk_text SET ai_prompt = NULL WHERE ct = 221');
+check('starší verze promptu se znovu posoudí', array_column($reviewer->queue(5, 221), 'id'), [221]);
+check('starší rozbor se mezitím neověřuje', $reviewer->queue(5, 221, true), []);
+check('starší rozbor zůstává zobrazený', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), 7);
+db()->run('UPDATE tisk_text SET ai_prompt = ? WHERE ct = 221', [Hlidac\AiReviewer::PROMPT_VERSION]);
 check('„zpětně“ v titulku zůstane u oslabení vymáhání', str_contains(json_decode((string)db()->value('SELECT ai_json FROM tisk_text WHERE ct = 221'), true)['titulek'], 'zpětně'), true);
 $aiConfig['ai']['cli_path'] = $tmp . '/neexistuje';
 

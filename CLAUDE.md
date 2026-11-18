@@ -72,7 +72,8 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
                    ai.remote_token nebo cron_token), posoudí ji na Macu a pošle výsledky zpět.
                    Pojistky (sanitize): zpětnost ve prospěch veřejnosti max. 3/10 a bez „zpětně“ v titulku,
                    zásahy v ai_json.upravy. 2. kolo --verify: ai.verify_model (claude-sonnet-5-5) přepíše
-                   rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“)
+                   rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“). Po změně promptu zvyš
+                   AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```

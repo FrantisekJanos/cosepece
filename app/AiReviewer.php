@@ -223,6 +223,7 @@ TXT;
         // pojistky nad odpovědí modelu (levný model občas přehání):
         // - zpětnost ve prospěch veřejnosti má nejvýš závažnost 3,
         // - „zpětně“ v titulku jen u zpětnosti, která oslabuje vymáhání, zvýhodňuje úzkou skupinu nebo ukládá povinnost,
+        // - nález bez ověřené citace má nejvýš závažnost 2,
         // - titulek a perex pro homepage držíme krátké.
         // Každý zásah zapíšeme do „upravy“, aby byl na webu dohledatelný.
         $notes = [];
@@ -231,6 +232,13 @@ TXT;
         if ($direction === 've_prospech_verejnosti' && $score > 3) {
             $notes[] = 'závažnost snížena z ' . $score . ' na 3: zpětnost je ve prospěch veřejnosti';
             $score = 3;
+        }
+        // nález bez jediné ověřené citace není doložený → nejvýš 2 (issue #7, bod 2); platí pro výsledky,
+        // které prošly ověřením citací v saveResult (mají klíč „citace“), i pro už uložené rozbory (--resanitize)
+        $quoted = array_filter((array)($result['citace'] ?? []), fn($q) => trim((string)$q) !== '');
+        if (array_key_exists('citace', $result) && $quoted === [] && $score > 2) {
+            $notes[] = 'závažnost snížena z ' . $score . ' na 2: žádná citace se nepodařila ověřit v textu';
+            $score = 2;
         }
         $result['zavaznost'] = $score;
 

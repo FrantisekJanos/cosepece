@@ -202,7 +202,7 @@ final class Scorer
         }
 
         // 5. obsah textu návrhu a PN: přílepky, rozsáhlé změny, zpětně použité změny lhůt, rozbor AI
-        $maxRule = 0;
+        $anyLarge = false;
         $maxAi = 0;
         $flagged = 0;
         $otherLaws = [];
@@ -214,12 +214,16 @@ final class Scorer
             $retroWhere = 'Text návrhu';
         }
         foreach ($pnText as $x) {
-            $maxRule = max($maxRule, (int)$x['rule_score']);
             $signals = json_decode((string)$x['signals'], true) ?: [];
             // přílepek podle čísla zákona v textu PN; když rozbor AI výslovně potvrdil, že změna s předmětem
             // návrhu souvisí (např. navazující změny jiných zákonů), za přílepek ji nepočítáme
             $aiJson = json_decode((string)($x['ai_json'] ?? ''), true) ?: [];
             $related = ($aiJson['souvisi_s_predmetem'] ?? null) === true;
+            // pravidlové body PN rozlišujeme podle zdroje (rule_score je součet přílepku a rozsahu):
+            // přílepek, který AI označila za související, PN nečiní problematickým (issue #7, bod 1)
+            $large = !empty($signals['large']);
+            $anyLarge = $anyLarge || $large;
+            $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
             if (!$related) {
                 foreach ($signals['other_laws'] ?? [] as $law) {
                     $otherLaws[$law] = true;
@@ -232,7 +236,7 @@ final class Scorer
                 $retroWhere = 'Pozměňovací návrh č. ' . $x['cislo'];
             }
             $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : 0;
-            if ((int)$x['rule_score'] > 0 || $ai >= 6) {
+            if ($ruleFlag || $ai >= 6) {
                 $flagged++;
             }
             if ($x['ai_score'] !== null && $ai > $maxAi) {
@@ -243,7 +247,7 @@ final class Scorer
         if ($otherLaws !== []) {
             $add('pn_other_law', (int)$w['pn_other_law'], 'Přílepek: pozměňovací návrh mění i jiný zákon (' . implode(', ', array_map(fn($l) => $l . ' Sb.', array_keys($otherLaws))) . ')'
                 . ($otherLawsConfirmed ? '; rozbor textu potvrdil, že s předmětem návrhu nesouvisí' : ''));
-        } elseif ($maxRule > 0) {
+        } elseif ($anyLarge) {
             $add('pn_large', (int)$w['pn_large'], 'Rozsáhlá nová úprava zavedená pozměňovacím návrhem');
         }
         if ($retroWhere !== null) {

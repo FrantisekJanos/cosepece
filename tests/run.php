@@ -95,8 +95,14 @@ check('související změna jiného zákona není přílepek', in_array('pn_othe
 db()->run("UPDATE pn_text SET ai_json = ? WHERE id_dokument = 31312", [json_encode(['souvisi_s_predmetem' => false])]);
 $scorer->scoreBills();
 check('přílepek potvrzený rozborem zůstává', $sc(311), 55);
-db()->run('UPDATE pn_text SET ai_json = NULL WHERE id_dokument = 31312');
+// krátký PN se souvisejícím jiným zákonem: rule_score > 0, ale ani přílepek, ani „rozsáhlá úprava“ (issue #7, bod 1)
+db()->run("UPDATE pn_text SET signals = ?, ai_json = ? WHERE id_dokument = 31312",
+    [json_encode(['other_laws' => ['252/1997']]), json_encode(['souvisi_s_predmetem' => true])]);
 $scorer->scoreBills();
+check('související krátký PN nedá „rozsáhlou úpravu“', in_array('pn_large', $keys(311), true), false);
+db()->run("UPDATE pn_text SET signals = ?, ai_json = NULL WHERE id_dokument = 31312", [json_encode($a['signals'])]);
+$scorer->scoreBills();
+check('po vrácení signálů zase 55', $sc(311), 55);
 
 echo "2. běh (bez nových dat)\n";
 $r2 = Hlidac\Sync::run();
@@ -163,6 +169,10 @@ $quotes = Hlidac\AiReviewer::verifyQuotes([
     'Lhůta pro vrácení dotací se zkracuje z 10 na 4 roky.', // vymyšlená citace
 ], $billSample);
 check('ověřená citace zůstane, vymyšlená se zahodí', count($quotes), 1);
+$noQuote = Hlidac\AiReviewer::sanitize(['zavaznost' => 8, 'citace' => [], 'titulek' => 'x']);
+check('nález bez ověřené citace má nejvýš 2', $noQuote['zavaznost'], 2);
+check('snížení bez citace je zapsané', count($noQuote['upravy'] ?? []), 1);
+check('nález s citací zůstane', Hlidac\AiReviewer::sanitize(['zavaznost' => 8, 'citace' => $quotes, 'titulek' => 'x'])['zavaznost'], 8);
 db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, fetched_at, ai_at) VALUES (221, ?, ?, ?, 8, ?, ?, ?)", [
     $billSample, mb_strlen($billSample), json_encode($ba['signals'], JSON_UNESCAPED_UNICODE),
     json_encode(['shrnuti' => 'Zkracuje lhůtu pro vymáhání dotací a použije ji zpětně.', 'zavaznost' => 8, 'zpetna_ucinnost' => true,

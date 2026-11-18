@@ -1,0 +1,17 @@
+# do obrazu nesmí provozní konfigurace, tajemství ani data (issue #2, bod 6)
+.git
+docker/
+config.php
+deploy/ai-remote.env
+data/*
+!data/.htaccess
+*.sqlite
+*.sqlite-*
+*.log
+*.env
+.env
+secrets*
+*.zip
+tests/fixtures/
+.DS_Store
+rag/

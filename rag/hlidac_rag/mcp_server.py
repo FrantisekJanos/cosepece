@@ -221,7 +221,9 @@ async def _respond(send, status: int, body: dict, extra: list | None = None) -> 
 
 def build_app():
     global pool
-    pool = ConnectionPool(db.dsn(), min_size=1, max_size=int(os.environ.get("MCP_POOL", "4")), open=True)
+    # check: spojení ukončené restartem DB se před použitím zahodí a nahradí novým
+    pool = ConnectionPool(db.dsn(), min_size=1, max_size=int(os.environ.get("MCP_POOL", "4")), open=True,
+                          check=ConnectionPool.check_connection)
     hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*").split(",") if h.strip()]
     app = server.streamable_http_app(
         streamable_http_path="/mcp",

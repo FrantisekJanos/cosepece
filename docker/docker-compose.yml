@@ -56,8 +56,9 @@ services:
     depends_on: [db]
 
   db:
-    # PostgreSQL 17 s rozšířením pgvector (pro sémantické hledání)
-    image: pgvector/pgvector:pg17
+    # PostgreSQL 17 s rozšířením pgvector (pro sémantické hledání). Varianta trixie má stejnou glibc
+    # jako původní postgres:17, jinak hrozí nesoulad collation a poškozené řazení textových indexů.
+    image: pgvector/pgvector:pg17-trixie
     restart: unless-stopped
     environment:
       POSTGRES_DB: hlidac

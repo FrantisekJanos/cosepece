@@ -172,3 +172,5 @@ a.plain:hover { text-decoration: underline; }
   .timeline li { grid-template-columns: 80px 14px 1fr; }
   .timeline li::before { left: 100px; }
 }
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
+.steps .small { display: block; margin-top: 2px; }

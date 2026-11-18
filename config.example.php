@@ -78,6 +78,9 @@ return [
         // true = nic se neposílá, příspěvky se zapisují do data/posts.log
         'dry_run' => true,
         'max_posts_per_run' => 10,
+        // co se posílá: 'all' = vše nad prahem, 'watch' = jen sledované zákony, 'off' = nic
+        // (vypnutá upozornění zůstanou jen na webu a v RSS a po zapnutí se zpětně neposílají)
+        'post' => 'all',
         'hashtags' => '#Sněmovna',
 
         // na sítě jdou jen upozornění se skóre od tohoto prahu (0–100); ostatní zůstanou na webu

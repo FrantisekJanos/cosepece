@@ -1,7 +1,8 @@
 <?php
 // AI rozbor přes claude CLI (předplatné) na stroji s Claude Code.
 //   php bin/ai.php [--limit=20] [--ct=221] [--all]                 místní databáze (--all = vše po dávkách)
-//   php bin/ai.php --remote=https://web.cz --token=… [--limit=20] [--all]  fronta z hostingu, výsledky zpět
+//   php bin/ai.php --remote=https://web.cz [--token=…] [--limit=20] [--all]  fronta z hostingu, výsledky zpět
+//                  (token raději v proměnné HLIDAC_TOKEN než v argumentu)
 //   --verify       druhé kolo silnějším modelem (ai.verify_model) nad nálezy se závažností ≥ ai.verify_min
 //   --resanitize   znovu použije pojistky na uložené rozbory (bez volání modelu) a přepočítá skóre
 
@@ -63,11 +64,14 @@ try {
 
     // vzdálený režim: fronta z hostingu → claude -p → výsledky zpět
     // --all: po dávkách, dokud hosting něco vrací (první spuštění dožene celé období)
-    $base = rtrim((string)$opt['remote'], '/') . '/ai_api.php?token=' . rawurlencode((string)($opt['token'] ?? ''));
+    // token v hlavičce, ne v URL (nedostane se do access logů ani do chybových hlášek);
+    // z proměnné HLIDAC_TOKEN, aby nebyl vidět v argumentech procesu (--token zůstává pro ruční spuštění)
+    $tokenHeader = ['X-Hlidac-Token: ' . (string)($opt['token'] ?? getenv('HLIDAC_TOKEN') ?: '')];
+    $base = rtrim((string)$opt['remote'], '/') . '/ai_api.php?v=2';
     $model = $verify ? AiReviewer::verifyModel($config) : AiReviewer::model($config);
     $total = ['reviewed' => 0, 'errors' => 0];
     do {
-        $queue = json_decode(Http::get($base . '&action=queue&limit=' . $limit . ($ct !== null ? '&ct=' . $ct : '') . ($verify ? '&verify=1' : '')), true);
+        $queue = json_decode(Http::get($base . '&action=queue&limit=' . $limit . ($ct !== null ? '&ct=' . $ct : '') . ($verify ? '&verify=1' : ''), 20_000_000, $tokenHeader), true);
         if (!is_array($queue) || !isset($queue['items'])) {
             throw new RuntimeException('Neplatná odpověď fronty: ' . json_encode($queue, JSON_UNESCAPED_UNICODE));
         }
@@ -76,22 +80,22 @@ try {
             $label = $item['kind'] . ' ' . $item['id'] . ' (tisk ' . $item['ct'] . ')';
             try {
                 $result = $reviewer->callModel((string)$item['prompt'], $model);
-                Http::post($base . '&action=result', [], ['kind' => $item['kind'], 'id' => $item['id'], 'result' => $result, 'model' => $model], true, 60);
+                Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'result' => $result, 'model' => $model], true, 60);
                 $stats['reviewed']++;
                 echo date('H:i:s') . " OK    $label: závažnost " . (int)($result['zavaznost'] ?? 0) . "/10\n";
             } catch (Throwable $ex) {
                 try {
-                    Http::post($base . '&action=result', [], ['kind' => $item['kind'], 'id' => $item['id'], 'error' => $ex->getMessage()], true, 60);
+                    Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'error' => Http::redact($ex->getMessage())], true, 60);
                 } catch (Throwable) {
                     // hosting nedostupný – chyba se jen vypíše, text zůstane ve frontě
                 }
                 $stats['errors']++;
-                echo date('H:i:s') . " CHYBA $label: " . $ex->getMessage() . "\n";
+                echo date('H:i:s') . " CHYBA $label: " . Http::redact($ex->getMessage()) . "\n";
             }
         }
         if ($queue['items'] !== []) {
             // přepočet skóre na hostingu po každé dávce, web se průběžně plní
-            Http::post($base . '&action=done', [], [], true, 120);
+            Http::post($base . '&action=done', $tokenHeader, [], true, 120);
         }
         $total['reviewed'] += $stats['reviewed'];
         $total['errors'] += $stats['errors'];

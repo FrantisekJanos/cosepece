@@ -286,7 +286,7 @@ TXT;
     {
         // chybu zapíšeme; ai_at zůstane prázdné a další běh to zkusí znovu
         [$table, $column] = self::target($kind);
-        $this->db->run("UPDATE $table SET error = ? WHERE $column = ?", [mb_substr($message, 0, 500), $id]);
+        $this->db->run("UPDATE $table SET error = ? WHERE $column = ?", [mb_substr(Http::redact($message), 0, 500), $id]);
     }
 
     private static function target(string $kind): array

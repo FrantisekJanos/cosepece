@@ -89,13 +89,31 @@ final class AlertBuilder
                     'Zákon míří do Senátu. Písemných pozměňovacích návrhů: ' . (int)$t['pn_count'] . '.',
                     $posted);
             }
-            if ($typ === Analyzer::STAV_SBIRKA && !isset($seen["law:$ct"])) {
-                $seen["law:$ct"] = true;
-                $n += $this->add("law:$ct", 'law', $t, $when,
-                    'Vyhlášeno ve Sbírce zákonů: ' . $t['nazev'],
-                    $t['sbirka'] ? 'Zákon vyšel jako č. ' . $t['sbirka'] . ' Sb.' : 'Zákon byl vyhlášen ve Sbírce zákonů.',
-                    $posted);
+        }
+        return $n + $this->fromPublication($tisky, $posted);
+    }
+
+    private function fromPublication(array $tisky, int $posted): int
+    {
+        // „Vyhlášeno“ až podle doloženého data vyhlášení (hist.zaver_publik). Přechod do stavu Sbírka
+        // nastává už při doručení nebo odeslání k publikaci, tedy o dny až týdny dřív.
+        $n = 0;
+        foreach ($tisky as $ct => $t) {
+            $day = (string)($t['vyhlaseno'] ?? '');
+            if ($day === '') {
+                continue;
             }
+            $eventAt = $day . ' 00:00:00';
+            $body = $t['sbirka']
+                ? 'Zákon vyšel jako č. ' . $t['sbirka'] . ' Sb. (vyhlášen ' . date('j. n. Y', (int)strtotime($day)) . ').'
+                : 'Zákon byl vyhlášen ve Sbírce zákonů ' . date('j. n. Y', (int)strtotime($day)) . '.';
+            $added = $this->add("law:$ct", 'law', $t, $eventAt, 'Vyhlášeno ve Sbírce zákonů: ' . $t['nazev'], $body, $posted);
+            if ($added === 0) {
+                // dřív vytvořené upozornění mohlo dostat datum doručení nebo odeslání – opravíme datum i text
+                $this->db->run("UPDATE alerts SET event_at = ?, body = ? WHERE alert_key = ? AND kind = 'law' AND (event_at <> ? OR body <> ?)",
+                    [$eventAt, $body, "law:$ct", $eventAt, $body]);
+            }
+            $n += $added;
         }
         return $n;
     }

@@ -9,11 +9,12 @@ use RuntimeException;
 
 final class Http
 {
-    public static function get(string $url, int $maxBytes = 20_000_000): string
+    public static function get(string $url, int $maxBytes = 20_000_000, array $headers = []): string
     {
         // stažení obsahu (HTML, DOCX) s limitem velikosti
         $ch = curl_init($url);
         curl_setopt_array($ch, [
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_TIMEOUT => 60,
@@ -25,7 +26,7 @@ final class Http
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         if ($body === false || $status >= 400) {
-            throw new RuntimeException("HTTP $status při stahování $url: $error");
+            throw new RuntimeException(self::redact("HTTP $status při stahování $url: $error"));
         }
         return (string)$body;
     }
@@ -49,12 +50,21 @@ final class Http
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         if ($response === false) {
-            throw new RuntimeException("HTTP chyba při volání $url: $error");
+            throw new RuntimeException(self::redact("HTTP chyba při volání $url: $error"));
         }
         $data = json_decode((string)$response, true);
         if ($status >= 400) {
-            throw new RuntimeException("HTTP $status z $url: " . mb_substr((string)$response, 0, 300));
+            throw new RuntimeException(self::redact("HTTP $status z $url: " . mb_substr((string)$response, 0, 300)));
         }
         return is_array($data) ? $data : ['raw' => $response];
+    }
+
+    public static function redact(string $text): string
+    {
+        // tokeny a hesla z URL a odpovědí nesmí skončit v chybách, logu ani v post_log (balík s databází)
+        $text = (string)preg_replace('~(api\.telegram\.org/bot)[^/\s]+~i', '$1***', $text);
+        $text = (string)preg_replace('~([?&](?:token|access_token|key|api_key|password|secret)=)[^&\s"\']+~i', '$1***', $text);
+        $text = (string)preg_replace('#(Bearer\s+)[A-Za-z0-9._~+/=-]+#', '$1***', $text);
+        return (string)preg_replace('~("(?:accessJwt|refreshJwt|access_token|token|password)"\s*:\s*")[^"]*~', '$1***', $text);
     }
 }

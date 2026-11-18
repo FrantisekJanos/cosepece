@@ -46,8 +46,10 @@ trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 {
   echo "=== $(date '+%F %T') start"
-  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --token="$HLIDAC_TOKEN" --limit="${AI_LIMIT:-20}" --all
-  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --token="$HLIDAC_TOKEN" --limit="${AI_LIMIT:-20}" --all --verify
+  # token přes prostředí, ne jako argument (argumenty procesu vidí ostatní uživatelé v ps)
+  export HLIDAC_TOKEN
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all --verify
   echo "=== $(date '+%F %T') konec"
 } >> "$LOG" 2>&1
 

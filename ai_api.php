@@ -1,10 +1,11 @@
 <?php
 // Rozhraní pro vzdálený AI rozbor: hosting neumí spustit claude CLI, takže fronta textů se stáhne
 // na stroj s Claude Code (bin/ai.php --remote), tam se posoudí přes předplatné a výsledky se pošlou zpět.
-//   GET  ai_api.php?token=…&action=queue&limit=10[&ct=221][&verify=1]  → {"items": [{kind, id, ct, prompt}]}
+// Token v hlavičce X-Hlidac-Token (dřív ?token=…, stále přijímáno).
+//   GET  ai_api.php?action=queue&limit=10[&ct=221][&verify=1]  → {"items": [{kind, id, ct, prompt}]}
 //        verify=1: nejzávažnější nálezy k ověření silnějším modelem
-//   POST ai_api.php?token=…&action=result  {"kind","id","result","model"} nebo {"kind","id","error"}
-//   POST ai_api.php?token=…&action=done    → přepočet skóre
+//   POST ai_api.php?action=result  {"kind","id","result","model"} nebo {"kind","id","error"}
+//   POST ai_api.php?action=done    → přepočet skóre
 
 declare(strict_types=1);
 
@@ -24,7 +25,8 @@ function aiApiReply(array $data, int $status = 200): never
 
 // vlastní token pro AI, jinak token cronu
 $expected = (string)(config('ai.remote_token') ?: config('cron_token', ''));
-$token = (string)($_GET['token'] ?? '');
+// token v hlavičce X-Hlidac-Token; ?token= zůstává jen kvůli starším klientům (končí v access logu)
+$token = (string)($_SERVER['HTTP_X_HLIDAC_TOKEN'] ?? $_GET['token'] ?? '');
 if ($expected === '' || str_starts_with($expected, 'ZMENTE') || !hash_equals($expected, $token)) {
     aiApiReply(['error' => 'Neplatný token'], 403);
 }

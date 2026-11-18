@@ -60,6 +60,13 @@ check('autor PN', db()->value('SELECT osoba FROM pn WHERE cislo = 2312'), 'Maria
 check('bootstrap nic neposlal', (int)db()->value('SELECT COUNT(*) FROM alerts WHERE posted <> 2'), 0);
 check('upozornění vytvořena', (int)db()->value('SELECT COUNT(*) FROM alerts') > 5, true);
 check('tisk 221 sledovaný', (int)db()->value("SELECT watched FROM alerts WHERE alert_key = 'newbill:221'"), 1);
+check('tisk 78: datum vyhlášení', $t(78)['vyhlaseno'], '2026-05-12');
+check('tisk 78: „Vyhlášeno“ s datem vyhlášení, ne doručení', db()->value("SELECT event_at FROM alerts WHERE alert_key = 'law:78'"), '2026-05-12 00:00:00');
+check('tisk 311 bez vyhlášení nemá „Vyhlášeno“', db()->value("SELECT 1 FROM alerts WHERE alert_key = 'law:311'"), null);
+// dřív vytvořené upozornění s datem doručení se při dalším běhu opraví
+db()->run("UPDATE alerts SET event_at = '2026-04-28 00:00:00', body = 'x' WHERE alert_key = 'law:78'");
+(new Hlidac\AlertBuilder(db(), config()))->run();
+check('staré datum „Vyhlášeno“ opraveno', db()->value("SELECT event_at FROM alerts WHERE alert_key = 'law:78'"), '2026-05-12 00:00:00');
 
 echo "Skóre závažnosti\n";
 $sc = fn(int $ct) => (int)db()->value('SELECT score FROM tisky WHERE ct = ?', [$ct]);
@@ -240,6 +247,52 @@ $home = (string)ob_get_clean();
 check('homepage: srozumitelný titulek místo názvu novely', str_contains($home, 'Lhůta pro vymáhání dotací se zkracuje na 4 roky – i zpětně'), true);
 check('homepage: citace u nálezu', str_contains($home, 'nejpozději do 4 let'), true);
 check('bez CLI se AI přeskočí', (new Hlidac\AiReviewer(db(), $aiConfig))->run(), ['reviewed' => 0, 'errors' => 0, 'skipped' => true]);
+
+echo "Vypínač rozesílky notify.post\n";
+db()->run('UPDATE alerts SET posted = 2 WHERE posted = 0');
+$postAlert = fn(string $key, int $watched) => db()->run(
+    "INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted, score) VALUES (?, 'cut', 311, '2026-11-18 10:00:00', '2026-11-18 10:00:00', 't', 'b', ?, 0, 90)",
+    [$key, $watched]);
+$postCfg = config();
+$postCfg['notify']['dry_run'] = true;
+$postAlert('test:off', 1);
+$postCfg['notify']['post'] = 'off';
+$st = (new Hlidac\Publisher(db(), $postCfg))->run();
+check('post=off: nic se neodešle (ani v dry_run)', $st['sent'], 0);
+check('post=off: upozornění zůstane jen na webu', (int)db()->value("SELECT posted FROM alerts WHERE alert_key = 'test:off'"), 3);
+$postAlert('test:watch-no', 0);
+$postAlert('test:watch-yes', 1);
+$postCfg['notify']['post'] = 'watch';
+$st = (new Hlidac\Publisher(db(), $postCfg))->run();
+check('post=watch: odejde jen sledované', $st['sent'], 1);
+check('post=watch: nesledované se neposílá', (int)db()->value("SELECT posted FROM alerts WHERE alert_key = 'test:watch-no'"), 3);
+check('post=watch: sledované odesláno', (int)db()->value("SELECT posted FROM alerts WHERE alert_key = 'test:watch-yes'"), 1);
+db()->run("DELETE FROM alerts WHERE alert_key LIKE 'test:%'");
+db()->run("DELETE FROM post_log WHERE alert_key LIKE 'test:%'");
+
+echo "Tokeny se neukládají do chyb\n";
+$leak = Hlidac\Http::redact('HTTP chyba při volání https://api.telegram.org/bot123456:ABC-tajne/sendMessage: timeout; '
+    . 'https://web.cz/ai_api.php?token=tajne123&action=queue; Authorization: Bearer tajneJWT.x; {"accessJwt":"tajne.jwt"}');
+check('maskování tokenů v chybě', str_contains($leak, 'tajne'), false);
+check('maskování ponechá zbytek zprávy', str_contains($leak, 'api.telegram.org/bot***/sendMessage: timeout'), true);
+$reviewerLeak = new Hlidac\AiReviewer(db(), config());
+$leakId = (int)db()->value('SELECT id_dokument FROM pn_text ORDER BY id_dokument LIMIT 1');
+$reviewerLeak->saveError('pn', $leakId, 'HTTP 500 z https://web.cz/ai_api.php?token=tajne123&action=result: x');
+check('saveError uloží chybu bez tokenu', str_contains((string)db()->value('SELECT error FROM pn_text WHERE id_dokument = ?', [$leakId]), 'tajne'), false);
+
+echo "Krátký čas mezi PN a 3. čtením (tisk 198: „zahájeno“ datované po „ukončeno“)\n";
+$gapRow = fn(int $id, string $d, int $typ, int $akce) => db()->run(
+    'INSERT INTO kroky (id_hist, id_tisk, ct, datum, typ_stavu, stav, akce_id, akce) VALUES (?, 0, 311, ?, ?, ?, ?, ?)',
+    [$id, "$d 00:00:00", $typ, '', $akce, '']);
+db()->run('DELETE FROM kroky WHERE ct = 311 AND typ_stavu IN (5, 21)');
+$gapRow(990001, '2026-06-30', 21, 23);
+$gapRow(990002, '2026-06-30', 5, 86);   // administrativní krok se nepočítá
+$gapRow(990003, '2026-07-02', 5, 71);   // projednávání ukončeno
+$gapRow(990004, '2026-07-08', 5, 238);  // zahájeno (datované později)
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$gap = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 311'), true),
+    fn(array $r): bool => $r['key'] === 'short_gap'));
+check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny');
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {

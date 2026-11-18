@@ -101,6 +101,10 @@ final class AlertBuilder
         foreach ($tisky as $ct => $t) {
             $day = (string)($t['vyhlaseno'] ?? '');
             if ($day === '') {
+                // starší verze vytvářela „Vyhlášeno“ už při doručení nebo odeslání k publikaci; bez doloženého
+                // data vyhlášení upozornění odstraníme (po vyhlášení vznikne znovu se správným datem).
+                // Skutečně odeslané na sítě (posted = 1) necháme kvůli historii.
+                $this->db->run("DELETE FROM alerts WHERE alert_key = ? AND kind = 'law' AND posted <> 1", ["law:$ct"]);
                 continue;
             }
             $eventAt = $day . ' 00:00:00';

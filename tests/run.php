@@ -67,6 +67,14 @@ check('tisk 311 bez vyhlášení nemá „Vyhlášeno“', db()->value("SELECT 1
 db()->run("UPDATE alerts SET event_at = '2026-04-28 00:00:00', body = 'x' WHERE alert_key = 'law:78'");
 (new Hlidac\AlertBuilder(db(), config()))->run();
 check('staré datum „Vyhlášeno“ opraveno', db()->value("SELECT event_at FROM alerts WHERE alert_key = 'law:78'"), '2026-05-12 00:00:00');
+// předčasné „Vyhlášeno“ (zákon ještě není ve Sbírce) se odstraní, odeslané na sítě zůstane
+db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES ('law:311', 'law', 311, '2026-11-04 00:00:00', '2026-11-04 00:00:00', 'Vyhlášeno', 'x', 0, 2)");
+db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES ('law:221', 'law', 221, '2026-11-04 00:00:00', '2026-11-04 00:00:00', 'Vyhlášeno', 'x', 0, 1)");
+(new Hlidac\AlertBuilder(db(), config()))->run();
+check('předčasné „Vyhlášeno“ bez data vyhlášení odstraněno', db()->value("SELECT 1 FROM alerts WHERE alert_key = 'law:311'"), null);
+check('odeslané na sítě zůstane', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key = 'law:221'"), 1);
+check('správné „Vyhlášeno“ zůstane', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key = 'law:78'"), 1);
+db()->run("DELETE FROM alerts WHERE alert_key = 'law:221'");
 
 echo "Skóre závažnosti\n";
 $sc = fn(int $ct) => (int)db()->value('SELECT score FROM tisky WHERE ct = ?', [$ct]);

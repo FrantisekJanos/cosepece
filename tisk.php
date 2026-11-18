@@ -93,7 +93,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', $t['uplny_nazev']);
   <?php else: ?>
     <?= View::reasons($t['reasons_list']) ?>
   <?php endif; ?>
-  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
+  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
 <?php if ($billText !== null && ($billText['ai'] !== null || $billText['signals'] !== [])): ?>

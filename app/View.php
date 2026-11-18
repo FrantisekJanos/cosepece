@@ -26,6 +26,7 @@ final class View
             'prehled' => ['index.php', 'Přehled'],
             'tisky' => ['tisky.php', 'Tisky'],
             'upozorneni' => ['upozorneni.php', 'Upozornění'],
+            'metodika' => ['metodika.php', 'Jak hodnotíme'],
         ];
         $desc = $description !== '' ? $description : 'Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty v Poslanecké sněmovně.';
         ?>

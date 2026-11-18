@@ -147,6 +147,9 @@ final class Db
         // model, který rozbor naposledy udělal (druhé kolo silnějším modelem se pozná podle něj)
         $this->addColumn('tisk_text', 'ai_model', 'VARCHAR(60)');
         $this->addColumn('pn_text', 'ai_model', 'VARCHAR(60)');
+        // verze promptu, podle které rozbor vznikl (NULL = starší než verze 2)
+        $this->addColumn('tisk_text', 'ai_prompt', 'INTEGER');
+        $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
 
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
         $this->createIndex('pn_text', 'idx_pn_text_ct', 'ct');

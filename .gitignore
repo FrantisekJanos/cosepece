@@ -1,0 +1,7 @@
+config.php
+data/*
+!data/.htaccess
+tests/fixtures/
+.DS_Store
+deploy/ai-remote.env
+*.zip

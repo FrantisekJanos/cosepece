@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd úloha pro macOS: AI rozbor každou hodinu (a po probuzení Macu, pokud se termín prošvihl).
+  CESTA_K_PROJEKTU nahraďte plnou cestou ke složce projektu (např. /Users/jmeno/hlidac_zakonu),
+  pak soubor zkopírujte do ~/Library/LaunchAgents/ a načtěte – postup je v NASAZENI.md.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>cz.hlidac.ai</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>CESTA_K_PROJEKTU/deploy/ai-remote.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>CESTA_K_PROJEKTU/data/ai-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>CESTA_K_PROJEKTU/data/ai-launchd.log</string>
+</dict>
+</plist>

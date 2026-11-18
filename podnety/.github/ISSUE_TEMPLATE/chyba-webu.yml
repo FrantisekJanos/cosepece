@@ -1,0 +1,23 @@
+name: Chyba webu
+description: Něco nefunguje nebo se špatně zobrazuje
+title: "[Web] "
+labels: ["bug"]
+body:
+  - type: input
+    id: stranka
+    attributes:
+      label: Adresa stránky
+    validations:
+      required: true
+  - type: textarea
+    id: popis
+    attributes:
+      label: Co se stalo
+      description: Co jste dělali, co jste čekali a co se stalo.
+    validations:
+      required: true
+  - type: input
+    id: zarizeni
+    attributes:
+      label: Prohlížeč a zařízení
+      placeholder: např. Safari na iPhonu

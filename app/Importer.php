@@ -1,0 +1,229 @@
+<?php
+// Import otevřených dat psp.cz do databáze pro aktuální volební období.
+
+declare(strict_types=1);
+
+namespace Hlidac;
+
+use RuntimeException;
+
+final class Importer
+{
+    // druhy tisků, které sledujeme: vládní návrh, návrh zákona (poslanecký/senátní/krajský), státní rozpočet
+    private const DRUHY = [1, 2, 3];
+
+    public function __construct(private Db $db, private Source $source)
+    {
+    }
+
+    public function run(): array
+    {
+        [$obdobiId, $obdobiCislo] = $this->currentPeriod();
+
+        $osoby = $this->loadOsoby();
+        $tisky = $this->loadTisky($obdobiId);
+        $kroky = $this->loadKroky($tisky);
+        $pn = $this->loadPn($obdobiId, $osoby);
+
+        // agregace PN podle čísla tisku
+        $pnByCt = [];
+        foreach ($pn as $row) {
+            $ct = $row['ct'];
+            $pnByCt[$ct]['count'] = ($pnByCt[$ct]['count'] ?? 0) + 1;
+            $pnByCt[$ct]['last'] = max($pnByCt[$ct]['last'] ?? '', (string)$row['cas']);
+        }
+
+        $krokyByTisk = [];
+        foreach ($kroky as $krok) {
+            $krokyByTisk[$krok['id_tisk']][] = $krok;
+        }
+
+        $tiskyRows = [];
+        foreach ($tisky as $tisk) {
+            $list = $krokyByTisk[$tisk['id_tisk']] ?? [];
+            $a = Analyzer::analyze($list);
+            $tiskyRows[] = $tisk + [
+                'faze' => $a['faze'],
+                'posledni' => $a['posledni'],
+                'p90' => (int)$a['p90'],
+                'p90ok' => (int)$a['p90ok'],
+                'zl' => (int)$a['zl'],
+                'pn_count' => $pnByCt[$tisk['ct']]['count'] ?? 0,
+                'pn_last' => $pnByCt[$tisk['ct']]['last'] ?? null,
+                'sbirka' => $this->sbirka($list),
+            ];
+        }
+
+        // přepis tabulek se zdrojovými daty v jedné transakci
+        $this->db->pdo->beginTransaction();
+        try {
+            $this->db->run('DELETE FROM tisky');
+            $this->db->run('DELETE FROM kroky');
+            $this->db->run('DELETE FROM pn');
+            $this->db->insertMany('tisky', [
+                'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
+                'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
+            ], $tiskyRows);
+            $this->db->insertMany('kroky', [
+                'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce',
+            ], $kroky);
+            $this->db->insertMany('pn', ['id_dokument', 'cislo', 'ct', 'id_osoba', 'osoba', 'cas'], $pn);
+            $this->db->setMeta('obdobi_id', (string)$obdobiId);
+            $this->db->setMeta('obdobi_cislo', (string)$obdobiCislo);
+            $this->db->setMeta('last_sync', date('Y-m-d H:i:s'));
+            $this->db->pdo->commit();
+        } catch (\Throwable $ex) {
+            $this->db->pdo->rollBack();
+            throw $ex;
+        }
+
+        return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn)];
+    }
+
+    private function currentPeriod(): array
+    {
+        // volební období Sněmovny = orgán typu 11 se zkratkou PSPn; aktuální nemá datum konce
+        $best = null;
+        foreach ($this->source->rows('poslanci', 'organy.unl') as $c) {
+            if (($c[2] ?? '') !== '11' || !preg_match('~^PSP(\d+)$~', $c[3] ?? '', $m)) {
+                continue;
+            }
+            $cislo = (int)$m[1];
+            $open = trim($c[7] ?? '') === '';
+            if ($best === null || ($open && !$best['open']) || ($open === $best['open'] && $cislo > $best['cislo'])) {
+                $best = ['id' => (int)$c[0], 'cislo' => $cislo, 'open' => $open];
+            }
+        }
+        if ($best === null) {
+            throw new RuntimeException('Nepodařilo se určit volební období.');
+        }
+        return [$best['id'], $best['cislo']];
+    }
+
+    private function loadOsoby(): array
+    {
+        // id_osoba => „Jméno Příjmení“
+        $out = [];
+        foreach ($this->source->rows('poslanci', 'osoby.unl') as $c) {
+            $out[(int)$c[0]] = trim(($c[3] ?? '') . ' ' . ($c[2] ?? ''));
+        }
+        return $out;
+    }
+
+    private function loadTisky(int $obdobiId): array
+    {
+        $out = [];
+        foreach ($this->source->rows('tisky', 'tisky.unl') as $c) {
+            // jen hlavní tisky (cislo_za = 0) aktuálního období a sledovaných druhů
+            if ((int)($c[7] ?? 0) !== $obdobiId || (int)($c[4] ?? 1) !== 0 || !in_array((int)$c[1], self::DRUHY, true)) {
+                continue;
+            }
+            $uplny = trim($c[15] ?? '');
+            $out[(int)$c[0]] = [
+                'id_tisk' => (int)$c[0],
+                'ct' => (int)$c[3],
+                'druh' => (int)$c[1],
+                'typ_navrhu' => Analyzer::typNavrhu((int)$c[1], $uplny),
+                'navrhovatel' => trim($c[9] ?? ''),
+                'nazev' => trim($c[10] ?? ''),
+                'uplny_nazev' => $uplny,
+                'predlozeno' => $this->czDate($c[11] ?? ''),
+                'zakony' => implode(',', Analyzer::zakony($uplny)),
+            ];
+        }
+        return $out;
+    }
+
+    private function loadKroky(array $tisky): array
+    {
+        $prechody = [];
+        foreach ($this->source->rows('tisky', 'prechody.unl') as $c) {
+            $prechody[(int)$c[0]] = ['kam' => (int)$c[2], 'akce' => (int)$c[3]];
+        }
+        $stavToTyp = $this->source->map('tisky', 'stavy.unl', 0, 1);
+        $typy = $this->source->map('tisky', 'typ_stavu.unl', 0, 1);
+        $akce = $this->source->map('tisky', 'typ_akce.unl', 0, 1);
+
+        $out = [];
+        foreach ($this->source->rows('tisky', 'hist.unl') as $c) {
+            $idTisk = (int)($c[1] ?? 0);
+            if (!isset($tisky[$idTisk])) {
+                continue;
+            }
+            $prechod = $prechody[(int)($c[4] ?? 0)] ?? null;
+            if ($prechod === null) {
+                continue;
+            }
+            $typ = (int)($stavToTyp[$prechod['kam']] ?? 0);
+            $out[] = [
+                'id_hist' => (int)$c[0],
+                'id_tisk' => $idTisk,
+                'ct' => $tisky[$idTisk]['ct'],
+                'datum' => $this->isoDate($c[2] ?? ''),
+                'typ_stavu' => $typ,
+                'stav' => $typy[$typ] ?? '',
+                'akce_id' => $prechod['akce'],
+                'akce' => $akce[$prechod['akce']] ?? '',
+                // číslo ve Sbírce zákonů (sloupce zaver_sb_cislo a datum vyhlášení)
+                '_sb' => trim($c[13] ?? '') !== '' ? trim($c[13]) . '/' . substr($this->czDate($c[11] ?? '') ?? '', 0, 4) : null,
+            ];
+        }
+        // chronologicky podle id historie (některé kroky nemají datum)
+        usort($out, fn(array $a, array $b): int => $a['id_hist'] <=> $b['id_hist']);
+        return $out;
+    }
+
+    private function loadPn(int $obdobiId, array $osoby): array
+    {
+        $out = [];
+        foreach ($this->source->rows('sd', 'sd_dokument.unl') as $c) {
+            // typ 13 = písemné pozměňovací návrhy
+            if ((int)($c[1] ?? 0) !== $obdobiId || (int)($c[3] ?? 0) !== 13) {
+                continue;
+            }
+            $idOsoba = (int)($c[7] ?? 0);
+            $out[] = [
+                'id_dokument' => (int)$c[0],
+                'cislo' => (int)$c[2],
+                'ct' => (int)$c[6],
+                'id_osoba' => $idOsoba ?: null,
+                'osoba' => $osoby[$idOsoba] ?? trim($c[5] ?? ''),
+                'cas' => $this->isoDate($c[8] ?? ''),
+            ];
+        }
+        return $out;
+    }
+
+    private function sbirka(array $kroky): ?string
+    {
+        foreach (array_reverse($kroky) as $krok) {
+            if (!empty($krok['_sb']) && !str_ends_with($krok['_sb'], '/')) {
+                return $krok['_sb'];
+            }
+        }
+        return null;
+    }
+
+    private function czDate(string $value): ?string
+    {
+        // „27.01.2026“ → „2026-01-27“
+        $value = trim($value);
+        if (preg_match('~^(\d{2})\.(\d{2})\.(\d{4})$~', $value, $m)) {
+            return "$m[3]-$m[2]-$m[1]";
+        }
+        return null;
+    }
+
+    private function isoDate(string $value): ?string
+    {
+        // „2026-11-13 16:38“ i „2026-11-13 16:38:00“ → „2026-11-13 16:38:00“
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+        if (preg_match('~^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$~', $value)) {
+            return $value . ':00';
+        }
+        return substr($value, 0, 19);
+    }
+}

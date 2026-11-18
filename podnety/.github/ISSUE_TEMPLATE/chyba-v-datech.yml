@@ -1,0 +1,24 @@
+name: Chyba v datech
+description: Špatný příznak, chybějící pozměňovací návrh, nesedící fáze projednávání
+title: "[Data] "
+labels: ["data"]
+body:
+  - type: input
+    id: tisk
+    attributes:
+      label: Číslo sněmovního tisku
+      placeholder: např. 311
+    validations:
+      required: true
+  - type: textarea
+    id: popis
+    attributes:
+      label: Co je špatně
+      description: Co hlídač ukazuje a jak by to mělo být správně.
+    validations:
+      required: true
+  - type: input
+    id: odkaz
+    attributes:
+      label: Odkaz na zdroj (psp.cz)
+      placeholder: https://www.psp.cz/sqw/historie.sqw?o=10&T=311

@@ -1,0 +1,15 @@
+name: Návrh
+description: Co by měl hlídač sledovat nebo jak by se měl zlepšit
+title: "[Návrh] "
+labels: ["návrh"]
+body:
+  - type: textarea
+    id: navrh
+    attributes:
+      label: Váš návrh
+    validations:
+      required: true
+  - type: textarea
+    id: proc
+    attributes:
+      label: K čemu by to bylo dobré

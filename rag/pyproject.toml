@@ -1,0 +1,24 @@
+[project]
+name = "hlidac-rag"
+version = "0.1.0"
+description = "Stenoprotokoly Poslanecké sněmovny a MCP server pro Hlídač zákonů"
+requires-python = ">=3.12"
+dependencies = [
+  "psycopg[binary]==3.3.9",
+  "psycopg-pool==3.3.3",
+  "mcp==2.3.0",
+  "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["hlidac_rag*"]
+
+[tool.setuptools.package-data]
+hlidac_rag = ["schema.sql"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

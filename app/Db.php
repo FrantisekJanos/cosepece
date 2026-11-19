@@ -162,6 +162,9 @@ final class Db
         $this->addColumn('tisky', 'vyhlaseno', 'VARCHAR(10)');
         $this->addColumn('tisky', 'lhuta', 'INTEGER');
         $this->addColumn('kroky', 'id_hlasovani', 'INTEGER');
+        // souhrn pozměňovacích návrhů po 2. čtení: číslo podtisku (X/n) a čas rozeslání
+        $this->addColumn('tisky', 'souhrn_pn', 'INTEGER');
+        $this->addColumn('tisky', 'souhrn_pn_at', 'VARCHAR(16)');
         // kdy se naposledy ověřilo, že psp.cz má pořád stejný dokument tisku
         $this->addColumn('tisk_text', 'checked_at', 'VARCHAR(19)');
         $this->addColumn('tisky', 'reasons', $text);

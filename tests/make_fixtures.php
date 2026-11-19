@@ -16,6 +16,10 @@ function buildFixtures(string $outDir): void
 43434|8|0|311|1|0||174||výbor|Usnesení rozpočtového výboru k tisku 311|01.11.2026|01.11.2026|||Usnesení rozpočtového výboru k vládnímu návrhu zákona o daních z příjmů||||||2026-11-01 10:00|||
 42069|2|62|1|0|3||173||Vondráček R. a další|N. z. o lobbování|11.10.2021|15.11.2021|||Návrh poslanců Radka Vondráčka a dalších na vydání zákona o lobbování||||||2021-11-15 09:46|||
 UNL,
+            'tisky_za.unl' => <<<'UNL'
+43433|1|212296|8|Usnesení RV k tisku 311/0|Usnesení rozpočtového výboru č. 172 k vládnímu návrhu zákona o daních z příjmů|2026-10-27 10:00||||||||||
+43433|3|212400|10|Pozměňovací a jiné návrhy  k tisku 311/0|Pozměňovací a jiné návrhy k vládnímu návrhu zákona, kterým se mění zákon č. 586/1992 Sb., o daních z příjmů|2026-11-05 10:24||||||||||
+UNL,
             'hist.unl' => <<<'UNL'
 210677|43185|2026-01-12 00:00||2118|||||||||||
 210684|43185|2026-01-12 00:00||2119|||||||||||

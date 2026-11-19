@@ -399,10 +399,11 @@ $gapRow(990001, '2026-06-30', 21, 23);
 $gapRow(990002, '2026-06-30', 5, 86);   // administrativní krok se nepočítá
 $gapRow(990003, '2026-07-02', 5, 71);   // projednávání ukončeno
 $gapRow(990004, '2026-07-08', 5, 238);  // zahájeno (datované později)
+db()->run('UPDATE tisky SET souhrn_pn = NULL, souhrn_pn_at = NULL WHERE ct = 311'); // bez souhrnu PN: od kroku „Pozměňovací návrhy“
 (new Hlidac\Scorer(db(), config()))->scoreBills();
 $gap = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 311'), true),
     fn(array $r): bool => $r['key'] === 'short_gap'));
-check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny');
+check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny (souhrn pozměňovacích návrhů nebyl rozeslán jako sněmovní tisk)');
 
 echo "Předkladatel, § 90/2 a lhůta pro výbory z údajů tisku\n";
 check('kraj podle id_navrh', Hlidac\Analyzer::typNavrhu(2, 'Návrh Zastupitelstva Jihomoravského kraje na vydání zákona', 16), 'krajský');
@@ -863,6 +864,23 @@ db()->run('DELETE FROM tisk_text WHERE ct = ?', [$ctStrong]);
 if ($bak !== null) {
     db()->insertMany('tisk_text', array_keys(array_filter($bak, 'is_string', ARRAY_FILTER_USE_KEY)), [$bak]);
 }
+
+echo "Souhrn pozměňovacích návrhů (tisk X/n) a odstup od jeho rozeslání\n";
+(new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-souhrn', $tmp . '/src')))->run();
+check('souhrn PN z tisky_za (druh 10)', db()->one('SELECT souhrn_pn, souhrn_pn_at FROM tisky WHERE ct = 311'), ['souhrn_pn' => 3, 'souhrn_pn_at' => '2026-11-05 10:24']);
+check('tisk bez souhrnu', db()->value('SELECT souhrn_pn FROM tisky WHERE ct = 221'), null);
+db()->run('DELETE FROM kroky WHERE ct = 311 AND typ_stavu IN (5, 21)');
+db()->run("INSERT INTO kroky (id_hist, id_tisk, ct, datum, typ_stavu, stav, akce_id, akce) VALUES (990201, 43433, 311, '2026-11-01 00:00:00', 21, '', 23, ''), (990202, 43433, 311, '2026-11-08 00:00:00', 5, '', 71, '')");
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$gapLabel = fn(int $ct) => array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$ct]), true) ?: [], fn($r) => $r['key'] === 'short_gap'))[0]['label'] ?? null;
+check('odstup od rozeslání souhrnu (5. 11. → 8. 11.)', $gapLabel(311), 'Mezi rozesláním souhrnu pozměňovacích návrhů a 3. čtením jen 3 dny');
+db()->run("UPDATE tisky SET souhrn_pn = NULL, souhrn_pn_at = NULL WHERE ct = 311");
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+check('bez souhrnu od kroku PN a s poznámkou (1. 11. → 8. 11. = 7 dní, signál ne)', $gapLabel(311), null);
+db()->run("UPDATE kroky SET datum = '2026-11-08 00:00:00' WHERE id_hist = 990201");
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+check('bez souhrnu ve stejný den', $gapLabel(311), 'Pozměňovací návrhy a 3. čtení ve stejný den (souhrn pozměňovacích návrhů nebyl rozeslán jako sněmovní tisk)');
+db()->run('DELETE FROM kroky WHERE id_hist IN (990201, 990202)');
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {

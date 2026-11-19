@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Odstup před 3. čtením od rozeslání souhrnu pozměňovacích návrhů',
+        'Krátký čas mezi pozměňovacími návrhy a 3. čtením se počítá od skutečného rozeslání souhrnu platně podaných pozměňovacích návrhů (sněmovní tisk X/n), ne od konce rozpravy. Když souhrn rozeslán nebyl (zkrácené jednání), důvod to výslovně uvádí. U tisku je odkaz na tento souhrn. Díky podnětu z GitHubu.',
+        [42], true],
     ['2026-11-19', 'Víc hlavních nálezů na úvodní stránce',
         'Hlavní nálezy zahrnují tisky od 45 bodů (dřív od 50) a hned je vidět 9 karet místo 6. Úroveň „Závažné“ se nemění, zůstává od 50 bodů; karty mezi 45 a 49 body mají štítek „Pozor“.',
         [41], false],

@@ -1,4 +1,4 @@
-# Nasazení Hlídače zákonů
+# Nasazení webu Co se peče
 
 Aplikace běží na Laravelu 13 a PHP 8.3+. Veřejným adresářem je výhradně `public/`.
 Python ingest a MCP zůstávají samostatnými službami, viz [rag/README.md](rag/README.md).

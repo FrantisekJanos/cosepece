@@ -10,7 +10,7 @@ final class OgCard
     public const WIDTH = 1200;
     public const HEIGHT = 630;
 
-    public const VERSION = 2;
+    public const VERSION = 3;
 
     private const PAD = 72;
     private const COLORS = [
@@ -131,7 +131,7 @@ final class OgCard
         $barH = 100;
         imagefilledrectangle($im, 0, 0, $w, $barH, $c['ink']);
         self::drawLogo($im, $pad, 30, 40, $c['white']);
-        imagettftext($im, 30, 0, $pad + 58, 64, $c['white'], $bold, 'Hlídač zákonů');
+        imagettftext($im, 30, 0, $pad + 58, 64, $c['white'], $bold, 'Co se peče');
         $domain = (string)($card['domain'] ?? '');
         if ($domain !== '') {
             $dw = self::textWidth($domain, 24, $bold);

@@ -22,6 +22,7 @@
   let fitMode = true;
   let sheets = [];
 
+  const stickyOffset = () => { const bar = document.querySelector('.top'); return bar ? bar.offsetHeight : 0; };
   const clamp = (value) => Math.min(MAX, Math.max(MIN, value));
   const fitScale = () => clamp(Math.min(1.25, (viewport.clientWidth - 2) / naturalWidth));
 
@@ -64,7 +65,7 @@
   }
 
   function scrollToPage(index, smooth = true) {
-    const toolbarHeight = viewer.querySelector('.word-toolbar').offsetHeight;
+    const toolbarHeight = viewer.querySelector('.word-toolbar').offsetHeight + stickyOffset();
     const target = scaler.getBoundingClientRect().top + window.scrollY + sheetTop(index) - toolbarHeight - 8;
     window.scrollTo({ top: Math.max(0, target), behavior: smooth ? 'smooth' : 'auto' });
   }
@@ -93,7 +94,7 @@
     const hit = findQuote(quote);
     if (!hit) return false;
     hit.classList.add('quote-hit');
-    const toolbarHeight = viewer.querySelector('.word-toolbar').offsetHeight;
+    const toolbarHeight = viewer.querySelector('.word-toolbar').offsetHeight + stickyOffset();
     window.scrollTo({ top: Math.max(0, hit.getBoundingClientRect().top + window.scrollY - toolbarHeight - 120), behavior: 'smooth' });
     return true;
   }

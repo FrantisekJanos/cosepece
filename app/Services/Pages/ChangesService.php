@@ -9,6 +9,9 @@ final class ChangesService
     public function data(): array
     {
         $changes = [
+            ['2026-11-19', 'Web se jmenuje Co se peče, nové menu',
+                'Web má nový název Co se peče. Hlavní menu je nižší a přehlednější: aktuální stránka je zvýrazněná, RSS je odděleně vpravo a na telefonu se menu otevírá tlačítkem. Adresy stránek ani data se nemění. Skóre se nemění.',
+                [25], false],
             ['2026-11-19', 'Příprava návrhu u vlády: připomínkové řízení',
                 'U tisku je nově vidět, jak návrh prošel přípravou u vlády: kdy a jak dlouho probíhalo připomínkové řízení, kolik míst se k návrhu vyjadřovalo, kdy ho vláda schválila a proč byl předložen. U poslaneckých návrhů ukazujeme, zda si vláda ke svému stanovisku vyžádala připomínky. Popis bodů za poslanecký návrh jsme upřesnili: dřív tvrdil, že návrh „neprošel připomínkovým řízením“, ale vláda si připomínky ke stanovisku vyžádala u většiny takových návrhů. Skóre se nemění. Data: otevřená data Úřadu vlády. Díky podnětu z GitHubu.',
                 [43], false],
@@ -63,7 +66,7 @@ final class ChangesService
         ];
         $title = 'Co jsme změnili';
         $active = 'zmeny';
-        $description = 'Přehled oprav a změn v hodnocení na Hlídači zákonů.';
+        $description = 'Přehled oprav a změn v hodnocení na webu Co se peče.';
         $repo = 'https://github.com/FrantisekJanos/cosepece';
         return compact('changes', 'title', 'active', 'description', 'repo');
     }

@@ -12,11 +12,11 @@ final class WebTest extends TestCase
     {
         $this->importFixtures();
         foreach (['/', '/tisky?f=p90', '/tisky?q=221&sort=recent', '/tisky/90', '/upozorneni?vse=1', '/metodika'] as $url) {
-            $this->get($url)->assertOk()->assertSee('Hlídač zákonů')->assertSee('assets/style.css', false);
+            $this->get($url)->assertOk()->assertSee('Co se peče')->assertSee('assets/style.css', false);
         }
         $this->get('/tisky/90')->assertSee('https://hlidac.test/tisky/90', false);
         $this->get('/tisky')->assertSee('https://hlidac.test/tisky', false);
-        $this->get('/metodika')->assertSee('<title>Jak hodnotíme – Hlídač zákonů</title>', false);
+        $this->get('/metodika')->assertSee('<title>Jak hodnotíme – Co se peče</title>', false);
         $rss = $this->get('/rss?vse=1')->assertOk()->assertHeader('Content-Type', 'application/rss+xml; charset=utf-8');
         $xml = simplexml_load_string($rss->getContent());
         $this->assertNotFalse($xml);

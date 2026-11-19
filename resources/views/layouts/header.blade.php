@@ -4,11 +4,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ $title }} – Hlídač zákonů</title>
+<title>{{ $title }} – Co se peče</title>
 <meta name="description" content="{{ $desc }}">
 <link rel="canonical" href="{{ $ogUrl }}">
 <meta property="og:type" content="{!! isset($og['url']) ? 'article' : 'website' !!}">
-<meta property="og:site_name" content="Hlídač zákonů">
+<meta property="og:site_name" content="Co se peče">
 <meta property="og:locale" content="cs_CZ">
 <meta property="og:url" content="{{ $ogUrl }}">
 <meta property="og:title" content="{{ $ogTitle }}">
@@ -23,29 +23,45 @@
 <meta name="twitter:description" content="{{ $desc }}">
 <meta name="twitter:image" content="{{ $ogImage }}">
 <meta name="twitter:image:alt" content="{{ $ogAlt }}">
-<link rel="alternate" type="application/rss+xml" title="Hlídač zákonů – upozornění" href="{{ route('rss', [], false) }}">
+<link rel="alternate" type="application/rss+xml" title="Co se peče – upozornění" href="{{ route('rss', [], false) }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ asset('assets/style.css') }}">
+<script>document.documentElement.classList.add('js');</script>
+<script defer src="{{ asset('assets/nav.js') }}"></script>
 <?php $umami = (array)hlidacConfig('umami', []); if (($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
 <script defer src="{{ $umami['src'] }}" data-website-id="{{ $umami['website_id'] }}"<?php if (($umami['domains'] ?? '') !== ''): ?> data-domains="{{ $umami['domains'] }}"<?php endif; ?> data-do-not-track="true"></script>
 <?php endif; ?>
 </head>
 <body>
+<a class="skip-link" href="#obsah">Přeskočit na obsah</a>
 <header class="top">
   <div class="top-in">
     <a class="brand" href="{{ route('home', [], false) }}">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V10"/><path d="M19 21V10"/><path d="M9 21V10"/><path d="M15 21V10"/><path d="M2 10 12 3l10 7z"/></svg>
-      <span class="brand-name">Hlídač zákonů</span>
-      <span class="brand-sub">Poslanecká sněmovna · {{ $obdobi }}. volební období</span>
+
+      <span class="brand-text">
+        <span class="brand-name">Co se peče</span>
+        <span class="brand-sub">Sněmovna · {{ $obdobi }}. volební období</span>
+      </span>
     </a>
-    <nav aria-label="Hlavní menu">
-      <?php foreach ($nav as $key => [$href, $label]): ?>
-        <a href="{{ $href }}"{!! $key === $active ? ' class="active" aria-current="page"' : '' !!}>{{ $label }}</a>
-      <?php endforeach; ?>
-      <a href="{{ route('rss', [], false) }}">RSS</a>
-    </nav>
-    <div class="sync">{!! $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' !!}</div>
+    <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="site-menu" aria-label="Menu">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>
+      <span class="nav-toggle-label">Menu</span>
+    </button>
+    <div class="top-menu" id="site-menu">
+      <nav class="top-nav" aria-label="Hlavní menu">
+        <?php foreach ($nav as $key => [$href, $label]): ?>
+          <a href="{{ $href }}"{!! $key === $active ? ' class="active" aria-current="page"' : '' !!}>{{ $label }}</a>
+        <?php endforeach; ?>
+      </nav>
+      <div class="top-extra">
+        <a class="rss-link" href="{{ route('rss', [], false) }}" title="Odebírat upozornění přes RSS">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+          <span>RSS</span>
+        </a>
+        <div class="sync">{!! $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' !!}</div>
+      </div>
+    </div>
   </div>
 </header>
-<main class="wrap">
+<main class="wrap" id="obsah" tabindex="-1">

@@ -2,7 +2,7 @@
 
 return [
 
-    'name' => env('APP_NAME', 'Hlídač zákonů'),
+    'name' => env('APP_NAME', 'Co se peče'),
 
     'env' => env('APP_ENV', 'production'),
 

@@ -3,7 +3,7 @@ echo '<?xml version="1.0" encoding="utf-8"?>', "\n";
 ?>
 <rss version="2.0">
 <channel>
-  <title>Hlídač zákonů – upozornění</title>
+  <title>Co se peče – upozornění</title>
   <link><?= e(siteUrl()) ?></link>
   <description>Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty v Poslanecké sněmovně.</description>
   <language>cs</language>

@@ -12,6 +12,8 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from .texty.ingest import JEN_PDF
+
 OBDOBI = 10
 SITE = "https://cosepece.cz"
 PSP = "https://www.psp.cz"
@@ -202,6 +204,13 @@ def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
     if "zakony" in vcetne:
         pn_laws = _rows(conn, "SELECT laws FROM pn_text WHERE ct = %s AND laws <> ''", (ct,))
         out["zakony_z_pn"] = sorted({z for r in pn_laws for z in r["laws"].split(",") if z})
+    # verze textu tisku rozdělené na celky (osnova_textu, get_cel)
+    verze = set()
+    if _texty_ok(conn):
+        verze = {r["verze"] for r in _rows(conn, f"""SELECT d.verze FROM texty.dokument d
+                                                     WHERE d.druh = 'tisk' AND d.ct = %s AND d.cislo_pn = 0
+                                                       AND {_DOSTUPNY}""", (ct,))}
+    out["texty"] = {"puvodni": "puvodni" in verze, "schvalene": "schvalene" in verze}
     return out
 
 
@@ -289,21 +298,20 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
             "pocet": len(rows), "predkladatele": [(a["osoba"], a["n"]) for a in autori], "pn": rows}
 
 
-def get_pn(conn, cislo: int, s_textem: bool = False, max_znaku: int = 8000) -> dict:
+def get_pn(conn, cislo: int) -> dict:
+    """Detail PN. Text se čte po celcích přes osnova_textu(pn=…) a get_cel(pn=…); osnova_dostupna říká, zda už je."""
     r = _one(conn, """SELECT p.cislo, p.ct, p.id_osoba, p.osoba, p.cas, t.ai_score, t.ai_model, t.ai_json, t.signals,
-                             t.laws, t.chars, t.docx_url, t.text
+                             t.laws, t.chars, t.docx_url
                       FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument WHERE p.cislo = %s""", (cislo,))
     if not r:
         raise ValueError(f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám.")
-    text = r.pop("text")
     r["ai"] = _json(r.pop("ai_json"))
     r["priznaky"] = _json(r.pop("signals"))
     r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={cislo}&o={OBDOBI}"
     r["url_web"] = f"{SITE}/tisk.php?ct={r['ct']}"
-    if s_textem:
-        m = max(500, min(int(max_znaku), 50000))
-        r["text"] = text[:m] if text else None
-        r["text_oriznut"] = bool(text and len(text) > m)
+    r["osnova_dostupna"] = _texty_ok(conn) and bool(_one(conn, f"""
+        SELECT EXISTS (SELECT 1 FROM texty.dokument d WHERE d.druh = 'pn' AND d.cislo_pn = %s AND {_DOSTUPNY}) AS ok""",
+        (cislo,))["ok"])
     return r
 
 
@@ -565,7 +573,210 @@ def stav_dat(conn) -> dict:
         out["steno_last_result"] = None
     r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
     out["last_sync"] = r["v"] if r else None
+    # dokumentu = dokumenty s textem; jen_pdf = tisky a PN, ke kterým psp.cz nemá DOCX; None = schéma ještě není
+    out["texty"] = _one(conn, """SELECT
+          (SELECT count(*) FROM texty.dokument WHERE text IS NOT NULL) AS dokumentu,
+          (SELECT count(*) FROM texty.cel) AS celku,
+          (SELECT count(*) FROM texty.dokument WHERE chyba = %s) AS jen_pdf,
+          (SELECT count(*) FROM texty.dokument WHERE verze = 'schvalene' AND text IS NOT NULL) AS schvalenych""",
+                        (JEN_PDF,)) if _texty_ok(conn) else None
     return out
+
+
+# ---------------------------------------------------------------- texty návrhů zákonů a PN (schéma texty)
+
+_DOSTUPNY = "d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL"   # dokument má text rozdělený na celky
+_BEZ_DUVODOVE = "c.typ <> 'duvodova_zprava'"
+_VERZE_CHYBA = 'verze je "puvodni" (předložené znění) nebo "schvalene" (znění schválené Sněmovnou).'
+NEDOSTUPNE = "Texty zatím nejsou k dispozici (probíhá první načtení)."
+
+
+def _texty_ok(conn) -> bool:
+    """Schéma texty už existuje (MCP mohl naběhnout dřív, než rag-ingest provedl migraci)."""
+    return bool(_one(conn, "SELECT to_regclass('texty.cel') IS NOT NULL AS ok")["ok"])
+
+
+def _dokument(conn, ct: int | None, pn: int | None, verze: str | None) -> dict:
+    """Vybere dokument tisku nebo PN a jeho verzi; chybějící nebo nečitelný text = ValueError.
+
+    verze=None: u tisku schválené znění, je-li rozdělené na celky, jinak původní. PN mají jen jednu verzi."""
+    if (ct is None) == (pn is None):
+        raise ValueError("Zadejte právě jedno z ct (sněmovní tisk) nebo pn (číslo pozměňovacího návrhu).")
+    if verze not in (None, "puvodni", "schvalene"):
+        raise ValueError(_VERZE_CHYBA)
+    if pn is not None and verze == "schvalene":
+        raise ValueError('Pozměňovací návrh má jen jednu verzi, vynechte verze nebo použijte verze="puvodni".')
+    if not _texty_ok(conn):
+        raise ValueError(NEDOSTUPNE)
+    if pn is not None:
+        kde, params, nazev = "d.druh = 'pn' AND d.cislo_pn = %s", (pn,), f"pozměňovacího návrhu {pn}"
+        url_psp = f"{PSP}/sqw/sd.sqw?cd={pn}&o={OBDOBI}"
+    else:
+        kde, params, nazev = "d.druh = 'tisk' AND d.ct = %s AND d.cislo_pn = 0", (ct,), f"tisku {ct}"
+        url_psp = _tisk_urls(ct)["url_psp"]
+    rows = _rows(conn, f"""SELECT d.id, d.druh, d.ct, d.cislo_pn, d.verze, d.docx_url, d.znaku, d.chyba,
+                                  d.text IS NOT NULL AS ma_text, {_DOSTUPNY} AS dostupny
+                           FROM texty.dokument d WHERE {kde} ORDER BY d.verze""", params)
+    podle = {r["verze"]: r for r in rows}
+    dostupne = sorted(v for v, r in podle.items() if r["dostupny"])
+    if verze is None:
+        verze = "schvalene" if "schvalene" in dostupne else "puvodni"
+    if verze == "schvalene" and "schvalene" not in dostupne:
+        raise ValueError(f'Schválené znění tisku {ct} zatím není, použijte verze="puvodni".')
+    d = podle.get(verze)
+    if not d:
+        raise ValueError(f"Text {nazev} zatím nemám (texty se stahují postupně). Zdroj: {url_psp}")
+    if not d["ma_text"]:
+        raise ValueError(f"Text {nazev} není k dispozici ({d['chyba'] or 'bez textu'}). Zdroj: {url_psp}")
+    if not d["dostupny"]:
+        raise ValueError(f"Text {nazev} se teprve dělí na celky, zkuste to po další synchronizaci. Zdroj: {url_psp}")
+    return {"id": d["id"], "druh": d["druh"], "ct": d["ct"], "pn": d["cislo_pn"] if d["druh"] == "pn" else None,
+            "verze": verze, "url_docx": d["docx_url"], "url_psp": url_psp, "znaku": d["znaku"],
+            "dostupne_verze": dostupne}
+
+
+def _jeden_celek(conn, dokument_id: int, shody: list[dict]) -> bool:
+    """Shody označení jsou kusy nebo pokračování jednoho celku, ne dva různé celky se stejným označením.
+
+    Ano, když jdou poradi za sebou (kusy „(1/3)“…), nebo když mají shodnou cestu (bez „(k/n)“) a mezi nimi leží
+    jen jejich vnořené celky: článek pokračuje za citovaným novým zněním § (cesta „Čl. I / § 17c“)."""
+    cisla = [s["poradi"] for s in shody]
+    if cisla == list(range(cisla[0], cisla[0] + len(cisla))):
+        return True
+    zaklad = {re.sub(r"\s*\(\d+/\d+\)$", "", s["cesta"]) for s in shody}
+    if len(zaklad) != 1:
+        return False
+    predpona = zaklad.pop() + " / "
+    mezi = _rows(conn, """SELECT cesta FROM texty.cel WHERE dokument_id = %s AND poradi > %s AND poradi < %s
+                          AND NOT (poradi = ANY(%s))""", (dokument_id, cisla[0], cisla[-1], cisla))
+    return all(m["cesta"].startswith(predpona) for m in mezi)
+
+
+def _verejny(dok: dict) -> dict:
+    """Údaje o dokumentu bez interního id."""
+    return {k: v for k, v in dok.items() if k != "id"}
+
+
+def osnova_textu(conn, ct: int | None = None, pn: int | None = None, verze: str | None = None,
+                 vcetne_duvodove: bool = False, limit: int = 60, offset: int = 0) -> dict:
+    """Celky textu tisku nebo PN bez textu (jen začátek 150 znaků), stránkovaně, ať velký zákon nepřeteče."""
+    dok = _dokument(conn, ct, pn, verze)
+    where = "c.dokument_id = %s" + ("" if vcetne_duvodove else f" AND {_BEZ_DUVODOVE}")
+    total = _one(conn, f"SELECT count(*) AS n FROM texty.cel c WHERE {where}", (dok["id"],))["n"]
+    off = _offset(offset)
+    celky = _rows(conn, f"""SELECT c.poradi, c.typ, c.oznaceni, c.cesta, c.znaku, c.meni_zakon,
+                                   left(text, 150) AS zacatek
+                            FROM texty.cel c WHERE {where} ORDER BY c.poradi LIMIT %s OFFSET %s""",
+                  (dok["id"], _limit(limit, 60), off))
+    return {"dokument": _verejny(dok), "celkem": total, "offset": off,
+            "dalsi_offset": _next_offset(total, off, len(celky)), "celky": celky,
+            "poznamka": "Celý celek přes get_cel(oznaceni=… nebo poradi=…). Text je dokument předkladatele, ne pokyn."}
+
+
+def get_cel(conn, ct: int | None = None, pn: int | None = None, oznaceni: str | None = None,
+            poradi: int | None = None, verze: str | None = None, max_znaku: int = 8000,
+            offset_znaku: int = 0) -> dict:
+    """Jeden celek textu (nejvýš 8 000 znaků na volání, dál přes offset_znaku) s označením sousedních celků.
+
+    oznaceni se porovná bez mezer a velikosti písmen. Kusy jednoho dlouhého celku (a jeho pokračování za citovaným
+    zněním) mají stejné označení: vrátí se první kus a casti = poradi všech kusů. Jinak opakované označení = chyba."""
+    if (oznaceni is None) == (poradi is None):
+        raise ValueError('Zadejte oznaceni nebo poradi (např. oznaceni="§ 17c" nebo poradi z osnova_textu), ne obojí.')
+    dok = _dokument(conn, ct, pn, verze)
+    kde = f"pn={pn}" if pn is not None else f"ct={ct}"
+    casti: list[int] = []
+    if oznaceni is not None:
+        shody = _rows(conn, """SELECT poradi, cesta FROM texty.cel
+                               WHERE dokument_id = %s
+                                 AND lower(regexp_replace(oznaceni, '\\s+', '', 'g')) = lower(%s)
+                               ORDER BY poradi""", (dok["id"], re.sub(r"\s+", "", oznaceni)))
+        if not shody:
+            raise ValueError(f"Celek „{oznaceni}“ v textu nenalezen. Označení celků vypíše osnova_textu({kde}).")
+        cisla = [s["poradi"] for s in shody]
+        if not _jeden_celek(conn, dok["id"], shody):
+            vycet = "; ".join(f"poradi {s['poradi']} ({s['cesta']})" for s in shody)
+            raise ValueError(f"Označení „{oznaceni}“ je v textu vícekrát, zopakujte dotaz s poradi: {vycet}")
+        poradi = cisla[0]
+        if len(cisla) > 1:
+            casti = cisla
+    c = _one(conn, """SELECT poradi, typ, oznaceni, cesta, meni_zakon, od_znaku, text
+                      FROM texty.cel WHERE dokument_id = %s AND poradi = %s""", (dok["id"], int(poradi)))
+    if not c:
+        raise ValueError(f"Celek s poradi {poradi} v textu není. Pořadí celků vypíše osnova_textu({kde}).")
+    text = c.pop("text") or ""
+    m = max(500, min(int(max_znaku), 8000))
+    start = max(0, min(int(offset_znaku), len(text)))
+    dalsi_kus = start + m < len(text)
+    c.update(text=text[start:start + m], znaku_celkem=len(text), offset_znaku=start, pokracuje=dalsi_kus,
+             dalsi_offset_znaku=start + m if dalsi_kus else None)
+    posledni = casti[-1] if casti else c["poradi"]
+    sousede = _rows(conn, """(SELECT poradi, oznaceni FROM texty.cel WHERE dokument_id = %s AND poradi < %s
+                              ORDER BY poradi DESC LIMIT 1)
+                             UNION ALL
+                             (SELECT poradi, oznaceni FROM texty.cel WHERE dokument_id = %s AND poradi > %s
+                              ORDER BY poradi LIMIT 1)""", (dok["id"], c["poradi"], dok["id"], posledni))
+    pred = next((s for s in sousede if s["poradi"] < c["poradi"]), None)
+    dal = next((s for s in sousede if s["poradi"] > posledni), None)
+    out = {"dokument": _verejny(dok), "cel": c,
+           "predchozi": pred["oznaceni"] if pred else None, "predchozi_poradi": pred["poradi"] if pred else None,
+           "dalsi": dal["oznaceni"] if dal else None, "dalsi_poradi": dal["poradi"] if dal else None}
+    if casti:
+        out["casti"] = casti
+    return out
+
+
+def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = None, druh: str | None = None,
+                     meni_zakon: str | None = None, verze: str | None = None, vcetne_duvodove: bool = False,
+                     limit: int = 20, offset: int = 0) -> dict:
+    """Fulltext nad celky textů tisků a PN; úryvek kolem první shody s diakritikou, shoda v « »."""
+    tsq = _tsquery(dotaz)
+    if druh not in (None, "tisk", "pn"):
+        raise ValueError('druh je "tisk" (text návrhu zákona) nebo "pn" (pozměňovací návrh).')
+    if verze not in (None, "puvodni", "schvalene"):
+        raise ValueError(_VERZE_CHYBA)
+    sb = _norm_sb(meni_zakon) if meni_zakon else None
+    if not _texty_ok(conn):
+        raise ValueError(NEDOSTUPNE)
+    where, params = ["c.tsv @@ to_tsquery('simple', %s)"], [tsq]
+    if not vcetne_duvodove:
+        where.append(_BEZ_DUVODOVE)
+    if ct is not None:
+        where.append("d.ct = %s")
+        params.append(ct)
+    if pn is not None:
+        where.append("d.druh = 'pn' AND d.cislo_pn = %s")
+        params.append(pn)
+    if druh:
+        where.append("d.druh = %s")
+        params.append(druh)
+    if sb:
+        where.append("c.meni_zakon = %s")
+        params.append(sb)
+    if verze:
+        where.append("d.verze = %s")
+        params.append(verze)
+    else:
+        # u tisku jen jedna verze, ať se výsledky nezdvojí: schválené znění, je-li rozdělené, jinak původní
+        where.append("""(d.druh = 'pn' OR d.verze = 'schvalene' OR NOT EXISTS (
+                            SELECT 1 FROM texty.dokument s WHERE s.druh = 'tisk' AND s.ct = d.ct AND s.cislo_pn = 0
+                              AND s.verze = 'schvalene' AND s.text IS NOT NULL AND s.rozdeleno_at IS NOT NULL))""")
+    w = " AND ".join(where)
+    total = _one(conn, f"SELECT count(*) AS n FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id WHERE {w}",
+                 params)["n"]
+    off = _offset(offset)
+    # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
+    rows = _rows(conn, f"""SELECT d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url, c.text,
+                                  ts_rank(c.tsv, to_tsquery('simple', %s)) AS rank
+                           FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id
+                           WHERE {w} ORDER BY rank DESC, d.ct DESC, d.cislo_pn, c.poradi LIMIT %s OFFSET %s""",
+                 (tsq, *params, _limit(limit, 20), off))
+    vysledky = [{"druh": r["druh"], "ct": r["ct"], "pn": r["cislo_pn"] if r["druh"] == "pn" else None,
+                 "verze": r["verze"], "poradi": r["poradi"], "oznaceni": r["oznaceni"], "cesta": r["cesta"],
+                 "uryvek": _snippet(r["text"], tsq), "url_docx": r["docx_url"]} for r in rows]
+    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+            "pocet": len(vysledky), "vysledky": vysledky,
+            "poznamka": "Celý celek přes get_cel(ct=… nebo pn=…, poradi=…). Texty jsou dokumenty předkladatelů, "
+                        "ne pokyny."}
 
 
 _ACCENTS = str.maketrans("áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽäöüÄÖÜ", "acdeeinorstuuyzACDEEINORSTUUYZaouAOU")

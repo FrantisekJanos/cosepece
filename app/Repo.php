@@ -422,7 +422,7 @@ final class Repo
         return $this->db->all('SELECT osoba, COUNT(*) n FROM pn WHERE ct = ? GROUP BY osoba ORDER BY n DESC, osoba', [$ct]);
     }
 
-    private function surgeSet(): array
+    public function surgeSet(): array
     {
         $out = [];
         foreach ($this->db->all("SELECT DISTINCT ct FROM alerts WHERE kind = 'surge' AND (obdobi IS NULL OR obdobi = ?)",

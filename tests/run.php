@@ -1008,6 +1008,26 @@ $sh = (string)ob_get_clean();
 check('dotaz je v HTML escapovaný', !str_contains($sh, '<script>alert(1)') && str_contains($sh, '&lt;script&gt;'), true);
 $_GET = [];
 
+echo "Stránka zákona\n";
+$lw = new Hlidac\Laws(db());
+check('čísla zákonů v názvu', Hlidac\Laws::numbersIn('Návrh zákona, kterým se mění zákon č. 90/2024 Sb., o zbraních, a zákon č. 586/1992 Sb.'), ['90/2024', '586/1992']);
+check('název zákona ze slovníku (bez „ve znění“)', $lw->name('159/2006'), 'o střetu zájmů');
+check('tisky měnící zákon', array_map(fn($t) => (int)$t['ct'], $lw->bills('159/2006')), [221]);
+check('platné znění v e-Sbírce', Hlidac\Laws::eSbirkaUrl('159/2006'), 'https://e-sbirka.gov.cz/sb/2006/159');
+check('neplatné číslo zákona', [Hlidac\Laws::valid('159/2006'), Hlidac\Laws::valid('159'), Hlidac\Laws::valid('<b>')], [true, false, false]);
+foreach ([['z' => '159/2006'], []] as $get) {
+    $_GET = $get;
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/zakon.php');
+    $zh = (string)ob_get_clean();
+    check($get === [] ? 'přehled zákonů' : 'stránka zákona 159/2006', $get === []
+        ? str_contains($zh, 'href="zakon.php?z=159%2F2006"') && str_contains($zh, 'o střetu zájmů')
+        : str_contains($zh, 'Zákon č. 159/2006 Sb., o střetu zájmů') && str_contains($zh, 'href="tisk.php?ct=221"') && str_contains($zh, 'rss.php?zakon=159%2F2006'), true);
+}
+$_GET = [];
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);

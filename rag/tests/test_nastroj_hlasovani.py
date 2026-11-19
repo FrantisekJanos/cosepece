@@ -74,12 +74,13 @@ def steno(conn):
 
 
 def projev(conn, schuze: int, turn: int, aname: int, poradi: int, hlasovani: list[int] | None,
-           recnik: str = "Poslanec Test", obdobi: int = 10, zruseno: bool = False) -> None:
+           recnik: str = "Poslanec Test", obdobi: int = 10, zruseno: bool = False,
+           datum: str = "2026-10-24") -> None:
     conn.execute("""INSERT INTO steno.projev (obdobi, schuze, turn, aname, datum, poradi, recnik, text, znaku, hash,
                                               url, hlasovani, zruseno)
-                    VALUES (%s, %s, %s, %s, '2026-10-24', %s, %s, 'text', 4, 'h', 'u', %s,
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'text', 4, 'h', 'u', %s,
                             CASE WHEN %s THEN now() END)""",
-                 (obdobi, schuze, turn, aname, poradi, recnik, hlasovani, zruseno))
+                 (obdobi, schuze, turn, aname, datum, poradi, recnik, hlasovani, zruseno))
 
 
 def tisk(conn, ct: int, nazev: str) -> None:
@@ -171,6 +172,36 @@ def test_krok_jen_u_hlasovani_z_historie(conn):
 
     assert [(r["id_hlasovani"], r["krok"]) for r in radky] == [
         (10, "Prezident / setrváno"), (11, None), (12, "Odesíláno do Senátu"), (13, "Odesíláno do Senátu")]
+
+
+@pg
+def test_krok_jen_z_kroku_stejneho_tisku(conn):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 10, 231, 34, 300, "2026-10-24 05:00", krok=1)
+    krok_historie(conn, 400, 232, "Odesíláno do Senátu", "souhlas", 10)
+    krok_historie(conn, 500, 231, "Prezident", "setrváno", 10)
+
+    radky = h._hlasovani_k_tisku(conn, 231)["hlasovani"]
+
+    assert [r["krok"] for r in radky] == ["Prezident / setrváno"]
+
+
+@pg
+def test_obrovsky_offset_dava_prazdnou_stranku(conn):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 10, 231, 34, 300, "2026-10-24 05:00")
+
+    out = h._hlasovani_k_tisku(conn, 231, offset=10**20)
+
+    assert out["hlasovani"] == [] and out["celkem"] == 1 and out["dalsi_offset"] is None
+
+
+@pg
+def test_prazdny_nazev_tisku_vezme_nazev_z_hlasovani(conn):
+    conn.execute("INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, nazev) VALUES (1999, 999, 1, 'vládní', '')")
+    hlas(conn, 7, 999, 20, 1, "2026-06-01 10:00", nazev="Název z hlasování")
+
+    assert h._hlasovani_k_tisku(conn, 999)["nazev"] == "Název z hlasování"
 
 
 @pg
@@ -287,25 +318,25 @@ def test_chybejici_tabulka_je_citelna_chyba(conn):
 
 def _detail_s_kluby(conn):
     tisk(conn, 231, NAZEV_231)
-    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39", vysledek="R", pro=81, proti=96, zdrzel=0, nehlasoval=0,
+    hlas(conn, 1000001, 231, 34, 287, "2026-10-24 04:39", vysledek="R", pro=81, proti=96, zdrzel=0, nehlasoval=0,
          prihlaseno=177, kvorum=89, krok=1)
-    krok_historie(conn, 500, 231, "Odesíláno do Senátu", "souhlas", 88876)
-    klub(conn, 88876, "ODS", 23, 0, 0, 11)
-    klub(conn, 88876, "ANO2011", 0, 69, 0, 11)
-    klub(conn, 88876, "TOP09", 7, 0, 0, 2)
+    krok_historie(conn, 500, 231, "Odesíláno do Senátu", "souhlas", 1000001)
+    klub(conn, 1000001, "ODS", 23, 0, 0, 11)
+    klub(conn, 1000001, "ANO2011", 0, 69, 0, 11)
+    klub(conn, 1000001, "TOP09", 7, 0, 0, 2)
 
 
 @pg
 def test_get_hlasovani_plny_detail(steno):
     _detail_s_kluby(steno)
 
-    out = h._get_hlasovani(steno, 88876)
+    out = h._get_hlasovani(steno, 1000001)
 
     assert out == {
-        "id_hlasovani": 88876, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk.php?ct=231",
+        "id_hlasovani": 1000001, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk.php?ct=231",
         "schuze": 34, "cislo": 287, "datum": "2026-10-24 04:39", "vysledek": "zamítnuto",
         "pro": 81, "proti": 96, "zdrzel": 0, "nehlasoval": 0, "prihlaseno": 177, "kvorum": 89,
-        "krok": "Odesíláno do Senátu / souhlas", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=88876",
+        "krok": "Odesíláno do Senátu / souhlas", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=1000001",
         "kluby": [{"klub": "ANO2011", "pro": 0, "proti": 69, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "ODS", "pro": 23, "proti": 0, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "TOP09", "pro": 7, "proti": 0, "zdrzel": 0, "nepritomen": 2}],
@@ -315,10 +346,10 @@ def test_get_hlasovani_plny_detail(steno):
 
 @pg
 def test_get_hlasovani_nazev_z_hlasovani_pro_nesledovany_tisk(steno):
-    hlas(steno, 7, 999, 20, 1, "2026-06-01 10:00", nazev="Vl.n.z. o něčem**")
-    hlas(steno, 9, 999, 20, 3, "2026-06-01 10:02", nazev="Vl.n.z. o něčem")
+    hlas(steno, 1000007, 999, 20, 1, "2026-06-01 10:00", nazev="Vl.n.z. o něčem**")
+    hlas(steno, 1000009, 999, 20, 3, "2026-06-01 10:02", nazev="Vl.n.z. o něčem")
 
-    out = h._get_hlasovani(steno, 7)
+    out = h._get_hlasovani(steno, 1000007)
 
     assert out["ct"] == 999 and out["nazev"] == "Vl.n.z. o něčem" and out["kluby"] == []
 
@@ -326,19 +357,19 @@ def test_get_hlasovani_nazev_z_hlasovani_pro_nesledovany_tisk(steno):
 @pg
 def test_get_hlasovani_projevy(steno):
     tisk(steno, 231, NAZEV_231)
-    hlas(steno, 88876, 231, 34, 287, "2026-10-24 04:39")
-    hlas(steno, 88877, 231, 34, 288, "2026-10-24 04:40")
+    hlas(steno, 1000001, 231, 34, 287, "2026-10-24 04:39")
+    hlas(steno, 1000002, 231, 34, 288, "2026-10-24 04:40")
     # řazení podle schůze a pořadí, ne podle turn/aname
-    projev(steno, 9991, 40, 2, 5, [88876], recnik="Poslanec Druhý")
-    projev(steno, 9990, 90, 9, 7, [88876, 88877], recnik="Poslanec První")
-    projev(steno, 9990, 10, 1, 3, [88877, 88876], recnik="Poslankyně Nultá")
+    projev(steno, 9991, 40, 2, 5, [1000001], recnik="Poslanec Druhý")
+    projev(steno, 9990, 90, 9, 7, [1000001, 1000002], recnik="Poslanec První")
+    projev(steno, 9990, 10, 1, 3, [1000002, 1000001], recnik="Poslankyně Nultá")
     # nepatří: zrušený, jiné období, jiné hlasování, bez hlasování
-    projev(steno, 9990, 11, 1, 4, [88876], zruseno=True)
-    projev(steno, 9990, 12, 1, 5, [88876], obdobi=9)
-    projev(steno, 9990, 13, 1, 6, [88877])
+    projev(steno, 9990, 11, 1, 4, [1000001], zruseno=True)
+    projev(steno, 9990, 12, 1, 5, [1000001], obdobi=9)
+    projev(steno, 9990, 13, 1, 6, [1000002])
     projev(steno, 9990, 14, 1, 8, None)
 
-    out = h._get_hlasovani(steno, 88876)
+    out = h._get_hlasovani(steno, 1000001)
 
     assert out["projevu_celkem"] == 3
     assert [(p["klic"], p["recnik"]) for p in out["projevy"]] == [
@@ -349,13 +380,28 @@ def test_get_hlasovani_projevy(steno):
 
 
 @pg
+def test_get_hlasovani_projevy_nejdriv_schuze_hlasovani(steno):
+    tisk(steno, 231, NAZEV_231)
+    # schůze se překrývají: hlasování na 35. schůzi, projevy 34. schůze s dřívějším i pozdějším datem
+    hlas(steno, 1000001, 231, 9992, 1, "2026-10-14 10:00")
+    projev(steno, 9991, 1, 1, 1, [1000001], recnik="Dřívější cizí schůze", datum="2026-10-10")
+    projev(steno, 9991, 2, 1, 2, [1000001], recnik="Pozdější cizí schůze", datum="2026-10-24")
+    projev(steno, 9992, 3, 1, 1, [1000001], recnik="Schůze hlasování", datum="2026-10-14")
+
+    out = h._get_hlasovani(steno, 1000001)
+
+    assert [p["recnik"] for p in out["projevy"]] == [
+        "Schůze hlasování", "Dřívější cizí schůze", "Pozdější cizí schůze"]
+
+
+@pg
 def test_get_hlasovani_projevy_se_orezou_na_50(steno):
     tisk(steno, 231, NAZEV_231)
-    hlas(steno, 88876, 231, 34, 287, "2026-10-24 04:39")
+    hlas(steno, 1000001, 231, 34, 287, "2026-10-24 04:39")
     for i in range(h.MAX_PROJEVU + 3):
-        projev(steno, 9990, 100 + i, 1, i, [88876])
+        projev(steno, 9990, 100 + i, 1, i, [1000001])
 
-    out = h._get_hlasovani(steno, 88876)
+    out = h._get_hlasovani(steno, 1000001)
 
     assert out["projevu_celkem"] == h.MAX_PROJEVU + 3
     assert len(out["projevy"]) == h.MAX_PROJEVU
@@ -365,11 +411,11 @@ def test_get_hlasovani_projevy_se_orezou_na_50(steno):
 @pg
 def test_get_hlasovani_bez_tabulky_projevu(conn, monkeypatch):
     tisk(conn, 231, NAZEV_231)
-    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39")
+    hlas(conn, 1000001, 231, 34, 287, "2026-10-24 04:39")
     # skutečnou tabulku nechat být: nástroj se nasměruje na neexistující
     monkeypatch.setattr(h, "PROJEVY_TABULKA", "steno.neexistujici_tabulka")
 
-    out = h._get_hlasovani(conn, 88876)
+    out = h._get_hlasovani(conn, 1000001)
 
     assert out["projevy"] == [] and out["projevu_celkem"] == 0
     assert out["poznamka"]
@@ -379,7 +425,7 @@ def test_get_hlasovani_bez_tabulky_projevu(conn, monkeypatch):
 @pg
 def test_get_hlasovani_neznamy_id_je_valueerror(conn):
     tisk(conn, 231, NAZEV_231)
-    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39")
+    hlas(conn, 1000001, 231, 34, 287, "2026-10-24 04:39")
 
     with pytest.raises(ValueError, match=r"Hlasování 1 neznám.*hlasovani_k_tisku\(ct\)"):
         h._get_hlasovani(conn, 1)
@@ -391,7 +437,15 @@ def test_get_hlasovani_chybejici_tabulka_je_citelna_chyba(conn):
     conn.execute(f"SET LOCAL search_path TO {SCHEMA}")
 
     with pytest.raises(ValueError, match="hlasovani_kluby"):
-        h._get_hlasovani(conn, 88876)
+        h._get_hlasovani(conn, 1000001)
+
+
+@pg
+def test_get_hlasovani_nazev_tisku_null_vezme_nazev_z_hlasovani(steno):
+    steno.execute("INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, nazev) VALUES (1999, 999, 1, 'vládní', NULL)")
+    hlas(steno, 1000001, 999, 20, 1, "2026-06-01 10:00", nazev="Název z hlasování")
+
+    assert h._get_hlasovani(steno, 1000001)["nazev"] == "Název z hlasování"
 
 
 # ---------------------------------------------------------------- bez databáze
@@ -402,21 +456,22 @@ def _velikost(obj) -> int:
 
 
 def test_nejhorsi_pripad_se_vejde_pod_54000_znaku():
-    # řádek z DB s nejdelšími hodnotami: šestimístné id, trojciferné počty, nejdelší text výsledku,
-    # krok 120 znaků (nejdelší „stav / akce“ v datech má 35: „2. čtení - obecná rozprava / vrácen“)
+    # řádek s nejdelšími hodnotami podle schématu webu: šestimístné id, trojciferné počty, datum 16 znaků,
+    # krok „stav / akce“ = 120 + 3 + 120 znaků (kroky.stav a kroky.akce jsou varchar(120)), 10 klubů
+    # (vedle „Nezařaz“ i „Nezařazení“) s trojmístnými počty; názvy klubů jsou skutečné (sloupec připouští 40 znaků)
+    krok = "Ž" * 120 + " / " + "Ž" * 120
     radek_db = dict(id_hlasovani=999999, schuze=999, cislo=9999, datum="2026-12-31 23:59", vysledek="R",
-                    pro=200, proti=200, zdrzel=200, nehlasoval=200, prihlaseno=200, kvorum=200, krok="Ž" * 120)
+                    pro=200, proti=200, zdrzel=200, nehlasoval=200, prihlaseno=200, kvorum=200, krok=krok)
     kluby = {k: [200, 200, 200, 200]
-             for k in ("ANO2011", "MS", "SPD", "STAN", "Piráti", "TOP09", "ODS", "KDU-ČSL", "Nezařaz")}
+             for k in ("ANO2011", "MS", "SPD", "STAN", "Piráti", "TOP09", "ODS", "KDU-ČSL", "Nezařaz", "Nezařazení")}
     radek = h._radek_hlasovani(radek_db, kluby)
-    # nejhorší umělý řádek je aspoň tak dlouhý jako naměřená maxima (řádek 354, kompaktní kluby 224)
-    assert _velikost({k: v for k, v in radek.items() if k != "kluby"}) >= 354
-    assert _velikost(radek["kluby"]) >= 224
 
     odpoved = h._odpoved(99999, "Ř" * 255, 99999, 99999, [radek] * h.MAX_LIMIT_HLASOVANI)
 
     assert odpoved["pocet"] == h.MAX_LIMIT_HLASOVANI
     assert _velikost(odpoved) <= 54000
+    # strop není zbytečně nízký: o řádek víc by limit překročilo
+    assert _velikost(h._odpoved(99999, "Ř" * 255, 99999, 99999, [radek] * (h.MAX_LIMIT_HLASOVANI + 1))) > 54000
 
 
 def test_nastroj_je_registrovany_jen_pro_cteni():

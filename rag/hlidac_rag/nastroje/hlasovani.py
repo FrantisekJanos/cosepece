@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from ..tools import OBDOBI, PSP, _limit, _next_offset, _offset, _one, _rows, _tisk_urls
 
-# strop na stránku: 80 nejhorších řádků (s kluby asi 610 znaků) + hlavička vyjde pod 54 000 znaků,
-# rezerva pod limitem odpovědi 60 000 (test_nejhorsi_pripad_se_vejde_pod_54000_znaku)
-MAX_LIMIT_HLASOVANI = 80
+# strop na stránku: 70 nejhorších možných řádků podle schématu webu (krok „stav / akce“ 243 znaků, 10 klubů,
+# asi 770 znaků na řádek) + hlavička vyjde pod 54 000 znaků, rezerva pod limitem odpovědi 60 000
+# (test_nejhorsi_pripad_se_vejde_pod_54000_znaku)
+MAX_LIMIT_HLASOVANI = 70
+# offset se ořízne, ať obrovská hodnota nepřeteče číslo v databázi (výsledek je prázdná stránka s celkem)
+MAX_OFFSET = 10**6
 MAX_PROJEVU = 50
 PROJEVY_TABULKA = "steno.projev"
 KLUBY_SLOUPCE = ["pro", "proti", "zdrzel", "nepritomen"]
@@ -24,7 +27,7 @@ SELECT_HLASOVANI = """
            h.prihlaseno, h.kvorum,
            CASE WHEN h.krok = 1 THEN (
                SELECT nullif(concat_ws(' / ', nullif(k.stav, ''), nullif(k.akce, '')), '')
-               FROM kroky k WHERE k.id_hlasovani = h.id_hlasovani ORDER BY k.id_hist LIMIT 1) END AS krok
+               FROM kroky k WHERE k.id_hlasovani = h.id_hlasovani AND k.ct = h.ct ORDER BY k.id_hist LIMIT 1) END AS krok
     FROM hlasovani h"""
 
 
@@ -63,6 +66,15 @@ def _stat_hlasovani(conn, ct: int) -> dict:
     return _one(conn, 'SELECT count(*) AS n, min(nazev COLLATE "C") AS nazev FROM hlasovani WHERE ct = %s', (ct,))
 
 
+def _tisk(conn, ct: int) -> dict | None:
+    return _one(conn, "SELECT nazev FROM tisky WHERE ct = %s ORDER BY id_tisk LIMIT 1", (ct,))
+
+
+def _nazev_tisku(t: dict | None, stat: dict) -> str | None:
+    """Název z tisků webu; nemá-li ho (tisk chybí, NULL, prázdný), tak z hlasování."""
+    return (t and t["nazev"]) or stat["nazev"]
+
+
 def _radek_hlasovani(r: dict, kluby_hlasovani: dict[str, list] | None) -> dict:
     """Jeden řádek hlasování pro klienta z řádku SELECT_HLASOVANI a kompaktních klubů.
 
@@ -91,29 +103,31 @@ def _odpoved(ct: int, nazev: str | None, celkem: int, off: int, radky: list[dict
 
 def _hlasovani_k_tisku(conn, ct: int, limit: int = 50, offset: int = 0) -> dict:
     _over_tabulky(conn)
-    t = _one(conn, "SELECT nazev FROM tisky WHERE ct = %s ORDER BY id_tisk LIMIT 1", (ct,))
+    t = _tisk(conn, ct)
     stat = _stat_hlasovani(conn, ct)
     if not t and not stat["n"]:
         raise ValueError(f"Tisk {ct} v {OBDOBI}. období nesleduji a hlasování k němu nemám. "
                          "Zkuste seznam_tisku(q=…).")
-    off = _offset(offset)
+    off = min(_offset(offset), MAX_OFFSET)
     rows = _rows(conn, f"""{SELECT_HLASOVANI} WHERE h.ct = %s
                            ORDER BY h.datum, h.cislo, h.id_hlasovani LIMIT %s OFFSET %s""",
                  (ct, min(_limit(limit), MAX_LIMIT_HLASOVANI), off))
     kl = _kluby(conn, [r["id_hlasovani"] for r in rows])
     radky = [_radek_hlasovani(r, kl.get(r["id_hlasovani"])) for r in rows]
-    return _odpoved(ct, t["nazev"] if t else stat["nazev"], stat["n"], off, radky)
+    return _odpoved(ct, _nazev_tisku(t, stat), stat["n"], off, radky)
 
 
-def _projevy(conn, id_hlasovani: int) -> dict:
-    """Projevy, v jejichž poli hlasovani je toto id (klíče pro get_projev); bez steno.projev prázdně s poznámkou."""
+def _projevy(conn, id_hlasovani: int, schuze: int | None) -> dict:
+    """Projevy, v jejichž poli hlasovani je toto id (klíče pro get_projev); bez steno.projev prázdně s poznámkou.
+
+    Nejdřív projevy ze schůze hlasování (schůze se překrývají, čísla nejdou časově po sobě), pak podle data."""
     if not _one(conn, "SELECT to_regclass(%s) IS NOT NULL AS ok", (PROJEVY_TABULKA,))["ok"]:
         return {"projevy": [], "projevu_celkem": 0,
                 "poznamka": "Stenozáznamy nejsou v databázi k dispozici, projevy nelze přiřadit."}
     kde = f"FROM {PROJEVY_TABULKA} WHERE obdobi = %s AND zruseno IS NULL AND %s = ANY(hlasovani)"
     celkem = _one(conn, f"SELECT count(*) AS n {kde}", (OBDOBI, id_hlasovani))["n"]
-    rows = _rows(conn, f"SELECT schuze, turn, aname, datum, recnik {kde} ORDER BY schuze, poradi, id LIMIT %s",
-                 (OBDOBI, id_hlasovani, MAX_PROJEVU))
+    rows = _rows(conn, f"SELECT schuze, turn, aname, datum, recnik {kde} ORDER BY (schuze = %s) DESC, datum, schuze, poradi, id LIMIT %s",
+                 (OBDOBI, id_hlasovani, schuze, MAX_PROJEVU))
     projevy = [{"klic": f"{OBDOBI}/{r['schuze']}/{r['turn']}/{r['aname']}", "datum": r["datum"],
                 "recnik": r["recnik"]} for r in rows]
     return {"projevy": projevy, "projevu_celkem": celkem}
@@ -125,14 +139,13 @@ def _get_hlasovani(conn, id_hlasovani: int) -> dict:
     if not r:
         raise ValueError(f"Hlasování {id_hlasovani} neznám. Seznam hlasování k tisku vrací hlasovani_k_tisku(ct).")
     ct = r["ct"]
-    t = _one(conn, "SELECT nazev FROM tisky WHERE ct = %s ORDER BY id_tisk LIMIT 1", (ct,))
     out = _radek_hlasovani(r, None)
     # v detailu kluby v plné podobě (seznam objektů), ne kompaktně jako v seznamu k tisku
     out["kluby"] = [{k: v for k, v in kr.items() if k != "id_hlasovani"}
                     for kr in _kluby_radky(conn, [id_hlasovani])]
     return {"id_hlasovani": out.pop("id_hlasovani"), "ct": ct,
-            "nazev": t["nazev"] if t else _stat_hlasovani(conn, ct)["nazev"],
-            "url_web": _tisk_urls(ct)["url_web"], **out, **_projevy(conn, id_hlasovani)}
+            "nazev": _nazev_tisku(_tisk(conn, ct), _stat_hlasovani(conn, ct)),
+            "url_web": _tisk_urls(ct)["url_web"], **out, **_projevy(conn, id_hlasovani, r["schuze"])}
 
 
 def register(server, call, annotations) -> None:
@@ -142,7 +155,7 @@ def register(server, call, annotations) -> None:
         zdrzel, nehlasoval, prihlaseno, kvorum, url_psp a kluby {klub: [pro, proti, zdrzel, nepritomen]} (zdrzel klubu
         zahrnuje i nehlasoval). Jsou tu i procedurální hlasování (zamítnutí, vrácení, lhůty, čas hlasování); krok
         („Prezident / setrváno“) jen u hlasování z historie tisku. Data mohou být neúplná, zmatečná hlasování nejsou
-        označena. Stránkování přes offset: celkem, dalsi_offset (limit nejvýš 80). Příklad: hlasovani_k_tisku(231)."""
+        označena. Stránkování přes offset: celkem, dalsi_offset (limit nejvýš 70). Příklad: hlasovani_k_tisku(231)."""
         return call("hlasovani_k_tisku", _hlasovani_k_tisku, ct, limit, offset)
 
     @server.tool(annotations=annotations)

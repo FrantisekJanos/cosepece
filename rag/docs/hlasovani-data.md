@@ -92,8 +92,9 @@ Ke E20: usnesení o pevném čase hlasování je 88866 (34. schůze č. 277, 23.
   hlásí „Hlasování číslo 285 … 287“ (= `cislo`). Na produkci schéma `steno` ve stejné DB je.
 - 846 z 849 hlasování z tabulky má aspoň jeden projev; bez odkazu 88666, 88819, 87942.
 - Pole obsahuje všechny odkazy v projevu: i pozdější zmínky (`10/10/225/2` zmiňuje 86816 den po hlasování) a hromadné
-  výčty (až 51 id v jednom projevu u pořadu schůze). Projev, ve kterém se hlasovalo, je první podle `(schuze, poradi)`
-  (heuristika, ověřeno na vzorku výše).
+  výčty (až 51 id v jednom projevu u pořadu schůze). Nástroj `get_hlasovani` řadí projevy nejdřív ze schůze hlasování, pak podle data a pořadí
+  (schůze se překrývají, čísla schůzí nejdou časově po sobě). Na produkci 19. 11. 2026 byl první projev ze schůze
+  hlasování u 846 z 846 hlasování, která mají projev (heuristika, ne záruka).
 
 ## Velikost dat (limit odpovědi 60 000 znaků)
 
@@ -105,4 +106,6 @@ Ke E20: usnesení o pevném čase hlasování je 88866 (34. schůze č. 277, 23.
   - obálka seznamu (`ct`, `nazev` jako pole, `celkem`, `vraceno`, `limit`, URL tisku, prázdné `hlasovani`): 210 znaků.
 - Všech 171 hlasování tisku 67 bez klubů = 53 553 znaků + obálka. Odvozeně: 150 řádků bez klubů ≈ 150 × 354 + 210
   ≈ 53 300 znaků, rezerva jen asi 11 % pod 60 000; s kompaktními kluby (≈ 580 znaků na řádek) se vejde asi 100 řádků.
-  Závazný strop ať změří a nastaví Task 2 (navíc případná upozornění a `projevy` v obálce).
+  Strop `MAX_LIMIT_HLASOVANI` je 70 řádků na stránku: nejhorší možný řádek podle schématu webu (krok „stav / akce“
+  243 znaků, 10 klubů, trojmístná čísla) dává asi 770 znaků, 70 řádků s hlavičkou 53 928 znaků (pod 54 000, rezerva
+  pod limitem 60 000). Naměřené maximum na produkci: 31 803 znaků u `hlasovani_k_tisku(67, limit=80)` (starší strop 80).

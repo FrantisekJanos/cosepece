@@ -940,6 +940,14 @@ check('jiná adresa má vlastní počítadlo', $rl('203.0.113.6'), null);
 check('IPv6 ze stejné /64 sítě se počítá dohromady', [Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::1', $rlDir), is_int(Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::ffff', $rlDir))], [null, true]);
 check('soubory neobsahují IP adresu', array_filter(array_map('file_get_contents', glob($rlDir . '/*')), fn($c) => str_contains($c, '203.0.113')) === []
     && array_filter(glob($rlDir . '/*'), fn($f) => str_contains($f, '203.0.113')) === [], true);
+$peek = fn() => Hlidac\RateLimit::hit('auth', 2, 900, '198.51.100.7', $rlDir, false);
+$fail = fn() => Hlidac\RateLimit::hit('auth', 2, 900, '198.51.100.7', $rlDir);
+$states = [$peek()];
+$fail();
+$states[] = $peek();
+$fail();
+$states[] = is_int($peek());
+check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
 
 echo "Stránky\n";

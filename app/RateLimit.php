@@ -13,7 +13,7 @@ final class RateLimit
     /**
      * Započítá dotaz. Vrací null, když je v limitu, jinak počet sekund do konce okna (Retry-After).
      */
-    public static function hit(string $bucket, int $limit, int $window = 60, ?string $ip = null, ?string $dir = null): ?int
+    public static function hit(string $bucket, int $limit, int $window = 60, ?string $ip = null, ?string $dir = null, bool $count = true): ?int
     {
         $ip ??= (string)($_SERVER['REMOTE_ADDR'] ?? '');
         if ($limit <= 0 || $ip === '' || PHP_SAPI === 'cli' && $dir === null) {
@@ -43,11 +43,16 @@ final class RateLimit
             if (!is_array($state) || (int)($state['start'] ?? 0) <= $now - $window) {
                 $state = ['start' => $now, 'count' => 0];
             }
-            $state['count'] = (int)$state['count'] + 1;
-            ftruncate($fh, 0);
-            rewind($fh);
-            fwrite($fh, json_encode($state));
-            $over = $state['count'] > $limit ? max(1, (int)$state['start'] + $window - $now) : null;
+            if ($count) {
+                $state['count'] = (int)$state['count'] + 1;
+                ftruncate($fh, 0);
+                rewind($fh);
+                fwrite($fh, json_encode($state));
+                $over = $state['count'] > $limit ? max(1, (int)$state['start'] + $window - $now) : null;
+            } else {
+                // jen dotaz, zda je adresa zablokovaná (limit už vyčerpaný)
+                $over = $state['count'] >= $limit ? max(1, (int)$state['start'] + $window - $now) : null;
+            }
         } finally {
             flock($fh, LOCK_UN);
             fclose($fh);
@@ -83,6 +88,20 @@ final class RateLimit
         if ($retry !== null) {
             self::deny($retry, $json);
         }
+    }
+
+    /**
+     * Ochrana tokenu před hádáním: po vyčerpání pokusů (výchozí 10 chybných za 15 minut) se adresa
+     * odmítne i se správným tokenem, dokud okno neskončí. Volat před kontrolou tokenu, failed() po chybné.
+     */
+    public static function authBlocked(): ?int
+    {
+        return self::hit('auth', self::limit('auth', 10), 900, null, null, false);
+    }
+
+    public static function authFailed(): void
+    {
+        self::hit('auth', self::limit('auth', 10), 900);
     }
 
     public static function limit(string $bucket, int $default): int

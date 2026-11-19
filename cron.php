@@ -7,9 +7,15 @@ require_once __DIR__ . '/app/bootstrap.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
+// po 10 chybných tokenech za 15 minut se adresa dočasně odmítá (hádání tokenu)
+$blocked = Hlidac\RateLimit::authBlocked();
+if ($blocked !== null) {
+    Hlidac\RateLimit::deny($blocked);
+}
 $token = (string)($_GET['token'] ?? '');
 $expected = (string)config('cron_token', '');
 if ($expected === '' || str_starts_with($expected, 'ZMENTE') || !hash_equals($expected, $token)) {
+    Hlidac\RateLimit::authFailed();
     http_response_code(403);
     echo json_encode(['error' => 'Neplatný token']);
     exit;

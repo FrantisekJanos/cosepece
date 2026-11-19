@@ -18,7 +18,8 @@ $send = function (string $path): never {
     exit;
 };
 
-if (!OgCard::available()) {
+// kreslení obrázku je náročnější: nad limit dotazů z jedné IP jen statický záložní obrázek
+if (!OgCard::available() || Hlidac\RateLimit::hit('og', Hlidac\RateLimit::limit('og', 120)) !== null) {
     $send(__DIR__ . '/assets/og-default.png');
 }
 

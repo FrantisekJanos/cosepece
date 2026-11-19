@@ -9,6 +9,7 @@ use Hlidac\Api;
 use Hlidac\Repo;
 use Hlidac\View;
 
+Hlidac\RateLimit::guard('rss', 30, false);
 $repo = new Repo(db());
 // do RSS jde jen to důležité (?vse=1 = vše); filtry stejné jako v api.php
 $query = $_GET;

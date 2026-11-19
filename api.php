@@ -9,8 +9,11 @@ declare(strict_types=1);
 require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\Api;
+use Hlidac\RateLimit;
 use Hlidac\Repo;
 
+// limit dotazů na IP (config.php → rate_limit.api, výchozí 60 za minutu), popis na data.php#limity
+RateLimit::guard('api', 60);
 [$status, $body] = (new Api(db(), new Repo(db()), config()))->handle($_GET);
 if (!headers_sent()) {
     http_response_code($status);

@@ -92,3 +92,9 @@ function siteUrl(string $path = ''): string
 {
     return rtrim((string)config('site_url', ''), '/') . '/' . ltrim($path, '/');
 }
+
+// limit dotazů z jedné IP na všechny veřejné stránky (přísnější limity mají api.php, rss.php a og.php);
+// cron.php a ai_api.php chrání token a fronta AI posílá výsledky v rychlém sledu
+if (PHP_SAPI !== 'cli' && !in_array(basename((string)($_SERVER['SCRIPT_NAME'] ?? '')), ['cron.php', 'ai_api.php'], true)) {
+    \Hlidac\RateLimit::guard('web', 240, false);
+}

@@ -16,6 +16,7 @@ final class RedirectLegacyUrl
         $name = match ($request->path()) {
             'index.php' => 'home',
             'zmeny.php' => 'changes',
+            'api.php' => 'public-api',
             'revize.php' => 'revisions',
             'tisky.php' => 'bills',
             'tisk.php' => 'bill',

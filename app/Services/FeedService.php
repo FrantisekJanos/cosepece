@@ -4,20 +4,18 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\Alert;
-use Hlidac\Scorer;
-
 final class FeedService
 {
-    public function __construct(private \App\Services\AlertPresentationService $alertPresentation)
+    public function __construct(private PublicApiService $api)
     {
     }
 
-    public function alerts(bool $includeAll): array
+    public function alerts(bool $includeAll, array $filters): array
     {
-        $minimumScore = $includeAll ? 0 : (int)Scorer::weights(hlidacConfig())['level_watch'];
-
-        return $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', $minimumScore)->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
-            ->limit(50)->get());
+        if ($includeAll && $filters['min_score'] === null) {
+            $filters['min_score'] = 0;
+        }
+        $filters['limit'] = min(100, $filters['limit']);
+        return $this->api->alertRows($filters);
     }
 }

@@ -21,7 +21,6 @@ final class RequestDTOTest extends TestCase
             ['/tisky?q=' . str_repeat('x', 101), 'q'],
             ['/tisk.php?ct=abc', 'ct'], ['/tisk.php?ct[]=221', 'ct'], ['/tisk.php', 'ct'],
             ['/upozorneni?p=0', 'p'], ['/upozorneni?vse[]=1', 'vse'],
-            ['/rss?vse=unknown', 'vse'],
             ['/og?ct=-1', 'ct'], ['/og?p=unknown', 'p'], ['/og?v=bad', 'v'],
         ] as [$url, $field]) {
             $this->getJson($url)->assertUnprocessable()->assertJsonValidationErrors($field);

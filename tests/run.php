@@ -722,6 +722,32 @@ $voteHtml = testPage('/tisky/78');
 check('detail tisku ukazuje hlasování s klubem a odkazem na psp.cz', str_contains($voteHtml, 'Hlasování ve Sněmovně')
     && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, 'ANO2011'), true);
 
+echo "JSON API a filtry RSS (#28)\n";
+$apiRequest = function (array $query): array {
+    $kernel = app(Illuminate\Contracts\Http\Kernel::class);
+    $request = Illuminate\Http\Request::create('/api', 'GET', $query);
+    $response = $kernel->handle($request);
+    $result = [$response->getStatusCode(), json_decode($response->getContent(), true)];
+    $kernel->terminate($request, $response);
+    return $result;
+};
+[$st, $body] = $apiRequest(['tisk' => '78']);
+check('api.php?tisk=78: detail s důvody, hlasováním a odkazy', [$st, $body['tisk']['ct'] ?? null, isset($body['tisk']['duvody'], $body['tisk']['upozorneni']),
+    count($body['tisk']['hlasovani'] ?? []), str_contains((string)($body['tisk']['psp_url'] ?? ''), 'psp.cz')], [200, 78, true, 4, true]);
+check('api.php?tisk=…: neznámý tisk 404', $apiRequest(['tisk' => '99999'])[0], 404);
+check('api.php?since=špatně: 400', $apiRequest(['since' => '1. 11. 2026'])[0], 400);
+check('api.php?zakon=špatně: 400', $apiRequest(['zakon' => 'střet'])[0], 400);
+[, $list] = $apiRequest(['zakon' => '586/1992']);
+check('filtr podle zákona', array_column($list['tisky'], 'ct'), [311]);
+[, $future] = $apiRequest(['since' => '2999-01-01']);
+check('filtr since', $future['tisky'], []);
+[, $al] = $apiRequest(['upozorneni' => '1', 'min_score' => '0', 'ct' => '78', 'limit' => '2']);
+check('upozornění k tisku s limitem', [count($al['upozorneni']), array_unique(array_column($al['upozorneni'], 'ct'))], [2, [78]]);
+$rssXml = testPage('/rss', ['zakon' => '586/1992', 'min_score' => '0']);
+$rssItems = substr_count($rssXml, '<item>');
+check('RSS filtrované podle zákona má jen položky tisku 311', $rssItems > 0 && !str_contains($rssXml, '/tisky/78<') && !str_contains($rssXml, '/tisky/221<'), true);
+$_GET = [];
+
 
 echo "Historie verzí textů a rozborů (#2 bod 2)\n";
 // počty verzí přibylé v této části (dřívější části testu už rozbory tisku 221 ukládaly)
@@ -830,12 +856,12 @@ db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [$revPn]);
 $rescore();
 
 echo "Stránky\n";
-foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     try {
         $kernel = app(Illuminate\Contracts\Http\Kernel::class);
         $path = match ($page) {
             'index.php' => '/', 'tisky.php' => '/tisky', 'tisk.php' => '/tisky/90',
-            'upozorneni.php' => '/upozorneni', 'metodika.php' => '/metodika', 'rss.php' => '/rss', 'zmeny.php' => '/zmeny', 'revize.php' => '/revize/tisk/221',
+            'upozorneni.php' => '/upozorneni', 'metodika.php' => '/metodika', 'rss.php' => '/rss', 'zmeny.php' => '/zmeny', 'revize.php' => '/revize/tisk/221', 'api.php' => '/api',
         };
         $request = Illuminate\Http\Request::create($path, 'GET', $get);
         $response = $kernel->handle($request);

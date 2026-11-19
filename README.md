@@ -103,6 +103,21 @@ korekce (např. snížení závažnosti u zpětnosti ve prospěch veřejnosti) j
 
 Omezení: otevřená data obsahují u pozměňovacího návrhu jen číslo, autora a čas. Obsah je v PDF na psp.cz a Sněmovna neeviduje, které návrhy byly platně podány ve 2. čtení.
 
+## Strojový výstup (JSON) a RSS
+
+`/api` vrací data v JSON (jen čtení, `Access-Control-Allow-Origin: *`, cache 5 min):
+
+| Adresa | Co vrátí |
+|---|---|
+| `/api` | tisky aktuálního období od poslední změny: číslo, název, fáze, skóre, úroveň, důvody, příznaky, odkazy |
+| `/api?tisk=221` | detail tisku + hlasování (i podle klubů) + upozornění + stav rozboru textů |
+| `/api?upozorneni=1` | upozornění (bez `min_score` od úrovně „Pozor“) |
+
+Filtry: `since=YYYY-MM-DD` (poslední změna / datum upozornění), `min_score=0–100`, `zakon=159/2006`,
+`ct=221` (u upozornění), `limit` (nejvýš 500). Chybný filtr = HTTP 400, neznámý tisk = 404.
+
+`/rss` má stejné filtry, např. `/rss?zakon=159/2006`, `/rss?min_score=60`, `/rss?ct=221&vse=1`.
+
 ## Struktura
 
 ```text

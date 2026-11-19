@@ -12,7 +12,7 @@ final class FeedController
 {
     public function index(FeedRequestDTO $dto, FeedService $feed): Response
     {
-        return response()->view('rss', ['alerts' => $feed->alerts($dto->includeAll)], 200, [
+        return response()->view('rss', ['alerts' => $feed->alerts($dto->includeAll, $dto->filters())], 200, [
             'Content-Type' => 'application/rss+xml; charset=utf-8',
         ]);
     }

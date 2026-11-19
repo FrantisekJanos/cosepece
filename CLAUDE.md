@@ -108,6 +108,10 @@ tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-
 ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
 (PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
 
+Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
+skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh
+bootstrap (meta `prep_alerts_bootstrapped`). `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP.
+
 Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
 a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,
 připravované podle čísla v názvu. Hledání (`SearchIndex`) bere názvy zákonů ze stejného slovníku.

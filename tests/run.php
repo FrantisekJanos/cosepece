@@ -14,6 +14,7 @@ $base['db_dsn'] = getenv('HLIDAC_TEST_DSN') ?: 'sqlite:' . $tmp . '/test.sqlite'
 $base['db_user'] = getenv('HLIDAC_TEST_USER') ?: null;
 $base['db_pass'] = getenv('HLIDAC_TEST_PASS') ?: null;
 $base['source_dir'] = $tmp . '/src';
+$base['notify']['dry_run_log'] = $tmp . '/posts.log';
 $base['site_url'] = 'https://hlidac.test';
 $base['notify']['dry_run'] = true;
 $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu testujeme přímo
@@ -159,10 +160,10 @@ $r3 = Hlidac\Sync::run();
 check('2 nová upozornění', $r3['alerts_new'], 2);
 check('tisk 221 nyní závažný (55)', $sc(221), 55);
 check('odesláno jen nad prahem (dry run)', $r3['posts']['sent'], 2);
-$log = (string)@file_get_contents(APP_ROOT . '/data/posts.log');
+$log = (string)@file_get_contents($tmp . '/posts.log');
 check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisk.php?ct=221'), true);
 check('příspěvek o PN', str_contains($log, 'Nový pozměňovací návrh k tisku: Novela z. o střetu zájmů'), true);
-@unlink(APP_ROOT . '/data/posts.log');
+@unlink($tmp . '/posts.log');
 
 echo "4. běh (běžný PN pod prahem se nepošle)\n";
 db()->run("UPDATE alerts SET posted = 1 WHERE posted = 0");
@@ -438,6 +439,36 @@ $hit = fn(string $q): bool => in_array(221, array_map(fn($t) => (int)$t['ct'], $
 check('hledání „střetu“ najde tisk 221', $hit('STŘETU'), true);
 check('hledání bez diakritiky „stretu zajmu“', $hit('stretu zajmu'), true);
 check('hledání podle čísla tisku', $hit('221'), true);
+
+echo "Čtvrtá várka: Word, zápor zpětnosti, ověřený rozbor, Bluesky\n";
+$docx = $tmp . '/tracked.docx';
+$dz = new ZipArchive();
+$dz->open($docx, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$dz->addFromString('word/document.xml', '<w:document><w:body><w:p><w:r><w:t>Lhůta činí </w:t></w:r>'
+    . '<w:del w:id="1" w:author="X"><w:r><w:delText>10 let</w:delText></w:r></w:del>'
+    . '<w:ins w:id="2" w:author="X"><w:r><w:t>4 roky</w:t></w:r></w:ins><w:r><w:t>.</w:t></w:r></w:p></w:body></w:document>');
+$dz->close();
+check('smazaný text ze sledovaných změn se nečte', Hlidac\PnText::docxToText((string)file_get_contents($docx)), 'Lhůta činí 4 roky.');
+check('„nemá zpětnou účinnost“ není zpětnost', Hlidac\PnText::procedureSignals('Toto rozhodnutí nemá zpětnou účinnost, a to ani v případě zajištění zvířete.'), []);
+check('„zpětné použití se vylučuje“ není zpětnost', Hlidac\PnText::negatesRetro('Zpětné použití se vylučuje.'), true);
+check('skutečná zpětná účinnost zůstává', isset(Hlidac\PnText::procedureSignals('Ustanovení má zpětnou účinnost ke dni 1. ledna 2020.')['retro']), true);
+
+$guardCt = (int)db()->value('SELECT ct FROM tisk_text ORDER BY ct LIMIT 1');
+$verifier = Hlidac\AiReviewer::verifyModel(config());
+db()->run("UPDATE tisk_text SET text = 'Lhůta činí 4 roky.', ai_json = '{}', ai_score = 7, ai_model = ?, ai_prompt = ?, ai_at = ? WHERE ct = ?",
+    [$verifier, Hlidac\AiReviewer::PROMPT_VERSION, date('Y-m-d H:i:s'), $guardCt]);
+$guard = new Hlidac\AiReviewer(db(), config());
+$guard->saveResult('tisk', $guardCt, ['zavaznost' => 1, 'titulek' => 'x', 'citace' => []], Hlidac\AiReviewer::model(config()));
+check('pozdní výsledek 1. kola nepřepíše ověřený rozbor', [(int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]),
+    db()->value('SELECT ai_model FROM tisk_text WHERE ct = ?', [$guardCt])], [7, $verifier]);
+$guard->saveResult('tisk', $guardCt, ['zavaznost' => 5, 'titulek' => 'y', 'citace' => ['Lhůta činí 4 roky.']], $verifier);
+check('ověřovací model rozbor přepsat smí', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]), 5);
+
+$bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
+$fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
+check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);
+check('Bluesky: krátký text beze změny', Hlidac\Notifier\Bluesky::fit('Krátce', $bskyUrl), 'Krátce');
+check('testy nepíšou do data/posts.log', is_file(APP_ROOT . '/data/posts.log') && filemtime(APP_ROOT . '/data/posts.log') >= $_SERVER['REQUEST_TIME'], false);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {

@@ -82,6 +82,9 @@ final class PnText
         $xml = (string)$zip->getFromName('word/document.xml');
         $zip->close();
         @unlink($tmp);
+        // sledované změny: smazaný a přesunutý-odsud text do znění nepatří (#2 bod 9)
+        $xml = preg_replace('~<w:(del|moveFrom)\b[^>]*/>|<w:(del|moveFrom)\b[^>]*>.*?</w:\2>~s', '', $xml) ?? $xml;
+        $xml = preg_replace('~<w:delText\b[^>]*>.*?</w:delText>~s', '', $xml) ?? $xml;
         $xml = str_replace(['</w:p>', '<w:tab/>', '<w:br/>'], ["\n", "\t", "\n"], $xml);
         $text = html_entity_decode(strip_tags($xml), ENT_QUOTES | ENT_XML1, 'UTF-8');
         return trim(preg_replace("~\n{3,}~", "\n\n", $text) ?? $text);
@@ -129,7 +132,7 @@ final class PnText
             }
             // nové pravidlo se výslovně použije i na situace vzniklé před účinností
             $isRetro = preg_match('~\bi\s+(?:tehdy|v\s+případech?|na\s+(?:případy|řízení|nároky|platby|dotace|práva|povinnosti))\b[^.]{0,300}?(?:před(?:e)?\s+dnem\s+nabytí\s+účinnosti|před\s+účinností)~ui', $sentence)
-                || preg_match('~\bzpětn(?:ě|á|é|ou)\s+(?:účinnost|použi)~ui', $sentence);
+                || (preg_match('~\bzpětn(?:ě|á|é|ou)\s+(?:účinnost|použi)~ui', $sentence) && !self::negatesRetro($sentence));
             // změna lhůty pro vymáhání, kontrolu, promlčení nebo prekluzi (počet let/měsíců ve stejné větě)
             $isDeadline = preg_match('~(?:lhůt|promlč|preklu|nejpozději\s+do|zanik(?:á|ne)\s+(?:nárok|právo|odpovědnost))~ui', $sentence)
                 && preg_match('~\b\d+\s+(?:let|roků|rok[uy]?|měsíců)\b~u', $sentence)
@@ -151,6 +154,13 @@ final class PnText
             }
         }
         return $out;
+    }
+
+    public static function negatesRetro(string $sentence): bool
+    {
+        // „nemá zpětnou účinnost“, „zpětné použití se vylučuje“, „nelze použít zpětně“ = zpětnost výslovně vyloučená
+        return (bool)(preg_match('~\b(?:nemá|nemají|nemůže\s+mít|nemohou\s+mít|není|nejsou|nelze|bez|vylučuje\s+se|vyloučen[aáoéý]?|nepoužij\w*|nepoužívá\w*)\s+(?:\S+\s+){0,2}zpětn~ui', $sentence)
+            || preg_match('~\bzpětn\w*\s+(?:účinnost|použití)\s+(?:se\s+)?(?:vylučuje|je\s+vyloučen\w*|není\s+přípustn\w*)~ui', $sentence));
     }
 
     public static function analyze(string $text, array $billLaws, array $config): array

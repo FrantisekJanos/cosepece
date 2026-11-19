@@ -216,11 +216,20 @@ TXT;
         if ($text === null) {
             throw new \RuntimeException('Neznámý text ' . $kind . ' ' . $id);
         }
+        // opožděný výsledek 1. kola nesmí přepsat rozbor, který už ověřil silnější model (#2 bod 4)
+        $model = mb_substr($model ?? self::model($this->config), 0, 60);
+        $verifier = self::verifyModel($this->config);
+        if ($model !== $verifier) {
+            $current = $this->db->one("SELECT ai_model, ai_prompt FROM $table WHERE $column = ?", [$id]);
+            if ($current !== null && (string)$current['ai_model'] === $verifier && (int)$current['ai_prompt'] === self::PROMPT_VERSION) {
+                return;
+            }
+        }
         $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
         $result = self::sanitize($result);
         $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
             [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
-                mb_substr($model ?? self::model($this->config), 0, 60), self::PROMPT_VERSION, $id]);
+                $model, self::PROMPT_VERSION, $id]);
     }
 
     public static function sanitize(array $result): array

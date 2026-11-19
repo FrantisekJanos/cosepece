@@ -80,7 +80,7 @@ final class Publisher
                 $text = $this->compose($alert, $notifier?->maxLength() ?? 300);
                 try {
                     if ($notifier === null) {
-                        file_put_contents(APP_ROOT . '/data/posts.log', date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
+                        file_put_contents($this->dryRunLog(), date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
                     } else {
                         $notifier->send($text, $url);
                     }
@@ -99,6 +99,12 @@ final class Publisher
             }
         }
         return $stats;
+    }
+
+    public function dryRunLog(): string
+    {
+        // kam se v dry_run zapisují příspěvky (testy si nastaví vlastní soubor mimo data/)
+        return (string)($this->config['notify']['dry_run_log'] ?? APP_ROOT . '/data/posts.log');
     }
 
     /** @return array<int, Notifier|null> null = zkušební režim bez odesílání */

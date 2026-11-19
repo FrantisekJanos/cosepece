@@ -371,6 +371,32 @@ foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' 
         check("$page se vyrenderuje", $ex->getMessage(), 'bez chyby');
     }
 }
+
+echo "Náhledy pro sociální sítě\n";
+$tiskHtml = (string)@file_get_contents($tmp . '/tisk.html');
+check('tisk má og:image s vlastním obrázkem', (bool)preg_match('~<meta property="og:image" content="[^"]*og\.php\?ct=90&amp;v=[0-9a-f]{16}"~', $tiskHtml), true);
+check('tisk má twitter:card pro velký obrázek', str_contains($tiskHtml, '<meta name="twitter:card" content="summary_large_image">'), true);
+check('tisk má og:url na detail', (bool)preg_match('~<meta property="og:url" content="[^"]*tisk\.php\?ct=90"~', $tiskHtml), true);
+check('přehled má obrázek stránky', str_contains((string)@file_get_contents($tmp . '/index.html'), 'og.php?p=prehled'), true);
+check('název bez výčtu předkladatelů',
+    Hlidac\OgCard::cleanTitle('Návrh poslanců Radka Vondráčka, Davida Pražáka a Filipa Turka na vydání zákona, kterým se mění zákon č. 159/2006 Sb., o střetu zájmů, ve znění pozdějších předpisů'),
+    'Zákon, kterým se mění zákon č. 159/2006 Sb., o střetu zájmů');
+check('vládní návrh ústavního zákona', Hlidac\OgCard::cleanTitle('Vládní návrh ústavního zákona o bezpečnosti České republiky'), 'Ústavní zákon o bezpečnosti České republiky');
+check('krátký název zůstane', Hlidac\OgCard::cleanTitle('Návrh zákona'), 'Návrh zákona');
+if (Hlidac\OgCard::available()) {
+    $font = APP_ROOT . '/assets/fonts/NotoSans-Bold.ttf';
+    $lines = Hlidac\OgCard::fit(str_repeat('slovo ', 200), 40, $font, 600, 2, $complete);
+    check('dlouhý text se zalomí a zkrátí', [count($lines), $complete, str_ends_with($lines[1], '…')], [2, false, true]);
+    $card = Hlidac\OgCard::forBill(db()->one('SELECT * FROM tisky WHERE ct = 90') + ['reasons_list' => []], config());
+    check('karta tisku má skóre a důvod', [$card['score'] !== null, str_starts_with($card['text'], 'Běžné') || str_starts_with($card['text'], 'Proč:')], [true, true]);
+    $png = Hlidac\OgCard::cached($card, $tmp . '/og');
+    $size = getimagesize($png);
+    check('obrázek má 1200 × 630 px', [$size[0] ?? 0, $size[1] ?? 0, $size['mime'] ?? ''], [1200, 630, 'image/png']);
+    check('druhé volání použije cache', Hlidac\OgCard::cached($card, $tmp . '/og'), $png);
+} else {
+    echo "  (GD s FreeType není k dispozici, kreslení obrázku se netestuje)\n";
+}
+check('záložní obrázek existuje', is_file(APP_ROOT . '/assets/og-default.png'), true);
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

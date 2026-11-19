@@ -17,7 +17,7 @@ final class View
         'law' => ['mp', 'Vyhlášeno'],
     ];
 
-    public static function header(string $title, string $active, string $description = ''): void
+    public static function header(string $title, string $active, string $description = '', array $og = []): void
     {
         $repo = new Repo(db());
         $obdobi = $repo->obdobi();
@@ -29,6 +29,12 @@ final class View
             'metodika' => ['metodika.php', 'Jak hodnotíme'],
         ];
         $desc = $description !== '' ? $description : 'Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty v Poslanecké sněmovně.';
+        // náhled pro sociální sítě: vlastní obrázek ke každé stránce (og.php), absolutní adresy ze site_url
+        $page = basename((string)($_SERVER['SCRIPT_NAME'] ?? 'index.php'));
+        $ogUrl = siteUrl((string)($og['url'] ?? ($page === 'index.php' ? '' : $page)));
+        $ogImage = siteUrl((string)($og['image'] ?? 'og.php?p=' . rawurlencode($active)));
+        $ogTitle = (string)($og['title'] ?? $title);
+        $ogAlt = (string)($og['alt'] ?? $ogTitle . ' – Hlídač zákonů');
         ?>
 <!doctype html>
 <html lang="cs">
@@ -37,6 +43,23 @@ final class View
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($title) ?> – Hlídač zákonů</title>
 <meta name="description" content="<?= e($desc) ?>">
+<link rel="canonical" href="<?= e($ogUrl) ?>">
+<meta property="og:type" content="<?= isset($og['url']) ? 'article' : 'website' ?>">
+<meta property="og:site_name" content="Hlídač zákonů">
+<meta property="og:locale" content="cs_CZ">
+<meta property="og:url" content="<?= e($ogUrl) ?>">
+<meta property="og:title" content="<?= e($ogTitle) ?>">
+<meta property="og:description" content="<?= e($desc) ?>">
+<meta property="og:image" content="<?= e($ogImage) ?>">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="<?= OgCard::WIDTH ?>">
+<meta property="og:image:height" content="<?= OgCard::HEIGHT ?>">
+<meta property="og:image:alt" content="<?= e($ogAlt) ?>">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="<?= e($ogTitle) ?>">
+<meta name="twitter:description" content="<?= e($desc) ?>">
+<meta name="twitter:image" content="<?= e($ogImage) ?>">
+<meta name="twitter:image:alt" content="<?= e($ogAlt) ?>">
 <link rel="alternate" type="application/rss+xml" title="Hlídač zákonů – upozornění" href="rss.php">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
@@ -105,21 +128,27 @@ final class View
         return $out . '</ul>';
     }
 
-    public static function reasonKeysSummary(array $reasons, int $max = 3): string
+    public static function reasonShortLabels(array $reasons, int $max = 3): array
     {
-        // krátký výčet hlavních důvodů skóre pro kartu na homepage (plné důvody jsou v detailu tisku)
+        // krátké názvy hlavních důvodů skóre (karta na homepage, obrázek pro sdílení); plné důvody jsou v detailu tisku
         $short = [
             'mp_bill' => 'poslanecký návrh', 'senate_bill' => 'senátní návrh', 'p90_passed' => 'schváleno v 1. čtení',
             'p90_requested' => 'návrh na § 90/2', 'deadline_cut' => 'zkrácená lhůta', 'short_gap' => 'málo času na PN',
             'late_pn' => 'PN na poslední chvíli', 'surge' => 'nával PN', 'pn_other_law' => 'přílepek', 'pn_large' => 'rozsáhlý PN',
-            'retro_deadline' => 'lhůta i zpětně', 'pn_many' => 'více sporných PN', 'ai_bill' => 'rozbor textu',
-            'ai' => 'rozbor PN', 'topic' => 'citlivá oblast', 'omnibus' => 'souhrnná novela', 'watched' => 'sledovaný zákon',
+            'retro_deadline' => 'lhůta i zpětně', 'pn_many' => 'více sporných PN', 'ai_bill' => 'sporný text návrhu',
+            'ai' => 'sporné pozměňovací návrhy', 'topic' => 'citlivá oblast', 'omnibus' => 'souhrnná novela', 'watched' => 'sledovaný zákon',
         ];
         $labels = [];
         foreach (array_slice($reasons, 0, $max) as $r) {
-            $labels[] = $short[$r['key']] ?? $r['key'];
+            $labels[] = $short[$r['key']] ?? (string)$r['key'];
         }
-        return e(implode(', ', $labels));
+        return $labels;
+    }
+
+    public static function reasonKeysSummary(array $reasons, int $max = 3): string
+    {
+        // krátký výčet hlavních důvodů skóre pro kartu na homepage
+        return e(implode(', ', self::reasonShortLabels($reasons, $max)));
     }
 
     public static function chips(array $flags): string

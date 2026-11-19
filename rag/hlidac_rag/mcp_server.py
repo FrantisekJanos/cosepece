@@ -173,15 +173,18 @@ def get_cel(ct: int | None = None, pn: int | None = None, oznaceni: str | None =
 @server.tool(annotations=READ_ONLY)
 def hledej_v_textech(dotaz: str, ct: int | None = None, pn: int | None = None, druh: str | None = None,
                      meni_zakon: str | None = None, verze: str | None = None, vcetne_duvodove: bool = False,
-                     limit: int = 20, offset: int = 0) -> dict:
-    """Fulltext v textech návrhů zákonů a PN po celcích (všechna slova, bez ohledu na diakritiku; čísla předpisů
-    jako "586/1992" přesně). Filtry: ct (text tisku i PN podaných k tomuto tisku), pn, druh ("tisk" | "pn"),
+                     limit: int = 20, offset: int = 0, rezim: str = "auto") -> dict:
+    """Hledání v textech návrhů zákonů a PN po celcích: podle slov (všechna slova, bez ohledu na diakritiku; čísla
+    předpisů jako "586/1992" přesně) a podle významu (najde i jinak formulovaný obsah). rezim: "auto" (výchozí,
+    slova i význam sloučené), "fulltext" (jen slova), "vyznam" (jen význam); rezim_pouzity v odpovědi říká, co
+    skutečně běželo (bez indexu nebo při výpadku jen slova), shoda u celku: slova | vyznam | obe.
+    Filtry: ct (text tisku i PN podaných k tomuto tisku), pn, druh ("tisk" | "pn"),
     meni_zakon ("586/1992"), verze. Prázdný dotaz s filtrem (ct, pn nebo meni_zakon) vrátí všechny odpovídající
     celky v pořadí dokumentu, např. hledej_v_textech("", meni_zakon="256/2000"). Bez důvodové zprávy, pokud
     vcetne_duvodove=False. Vrací celky s uryvek (shoda v « ») a poradi pro get_cel; limit nejvýš 100.
     Stránkování: celkem, dalsi_offset. Příklad: hledej_v_textech("paušální daň", ct=311)."""
     return _call("hledej_v_textech", tools.hledej_v_textech, dotaz, ct, pn, druh, meni_zakon, verze,
-                 vcetne_duvodove, limit, offset)
+                 vcetne_duvodove, limit, offset, rezim)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -218,13 +221,16 @@ def get_projev(klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: 
 @server.tool(annotations=READ_ONLY)
 def hledej_v_projevech(dotaz: str, ct: int | None = None, osoba: str | None = None, klub: str | None = None,
                        od: str | None = None, do: str | None = None, vcetne_predsedajicich: bool = False,
-                       limit: int = 20, offset: int = 0) -> dict:
-    """Fulltextové hledání slov v projevech (všechna slova, bez ohledu na diakritiku, předpony delších slov;
-    slova pod 3 znaky se ignorují). uryvek_shoda je okolí první shody, shoda je v « ».
-    Stránkování: celkem, dalsi_offset (None na konci). Sémantické hledání zatím není.
-    Příklad: hledej_v_projevech("dotace SZIF promlčení")."""
+                       limit: int = 20, offset: int = 0, rezim: str = "auto") -> dict:
+    """Hledání v projevech podle slov (všechna slova, bez ohledu na diakritiku, předpony delších slov; slova pod
+    3 znaky se ignorují) a podle významu (najde i projev, který o věci mluví jinými slovy, např. "zdražování
+    energií" → "ceny elektřiny"). rezim: "auto" (výchozí, slova i význam sloučené), "fulltext" (jen slova),
+    "vyznam" (jen význam); rezim_pouzity v odpovědi říká, co skutečně běželo (bez indexu nebo při výpadku jen
+    slova). shoda u projevu: slova | vyznam | obe. uryvek_shoda je okolí první shody (v « »), u shody podle
+    významu začátek nejbližšího úseku. Jména, čísla tisků a období patří do filtrů osoba, ct, od/do.
+    Stránkování: celkem, dalsi_offset (None na konci). Příklad: hledej_v_projevech("dotace SZIF promlčení")."""
     return _call("hledej_v_projevech", tools.hledej_v_projevech, dotaz, ct, osoba, klub, od, do,
-                 vcetne_predsedajicich, limit, offset)
+                 vcetne_predsedajicich, limit, offset, rezim)
 
 
 @server.tool(annotations=READ_ONLY)

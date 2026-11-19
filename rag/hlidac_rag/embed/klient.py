@@ -42,8 +42,9 @@ def _cekani(odpoved: httpx.Response | None, pokus: int) -> float:
 
 class Klient:
     def __init__(self, api_key: str, model: str = VYCHOZI_MODEL, dim: int = VYCHOZI_DIM, timeout: float = 30.0,
-                 transport: httpx.BaseTransport | None = None):
+                 transport: httpx.BaseTransport | None = None, pokusu: int = POKUSU):
         self.model = model
+        self.pokusu = max(1, pokusu)   # embedding dotazu při hledání: 1 pokus, indexování: POKUSU
         self.dim = dim
         self.timeout = timeout
         self._http = httpx.Client(timeout=timeout, transport=transport,
@@ -55,19 +56,19 @@ class Klient:
     __str__ = __repr__
 
     @classmethod
-    def z_prostredi(cls, timeout: float = 30.0) -> "Klient | None":
+    def z_prostredi(cls, timeout: float = 30.0, pokusu: int = POKUSU) -> "Klient | None":
         """Klient podle OPENAI_API_KEY, EMBED_MODEL a EMBED_DIM; bez klíče None."""
         klic = (os.environ.get("OPENAI_API_KEY") or "").strip()
         if not klic:
             return None
         model = (os.environ.get("EMBED_MODEL") or "").strip() or VYCHOZI_MODEL
         dim = int((os.environ.get("EMBED_DIM") or "").strip() or VYCHOZI_DIM)
-        return cls(klic, model=model, dim=dim, timeout=timeout)
+        return cls(klic, model=model, dim=dim, timeout=timeout, pokusu=pokusu)
 
     def _davka(self, texty: list[str]) -> tuple[list[list[float]], int]:
         body = {"model": self.model, "input": [t[:MAX_ZNAKU] for t in texty], "dimensions": self.dim}
         posledni = ""
-        for pokus in range(POKUSU):
+        for pokus in range(self.pokusu):
             odpoved = None
             try:
                 odpoved = self._http.post(URL, json=body)
@@ -80,11 +81,11 @@ class Klient:
                     # 4xx kromě 429 se opakováním nespraví; text odpovědi (může obsahovat klíč) se nepřenáší
                     raise EmbedChyba(f"OpenAI vrátilo HTTP {odpoved.status_code}")
                 posledni = f"HTTP {odpoved.status_code}"
-            if pokus + 1 < POKUSU:
+            if pokus + 1 < self.pokusu:
                 cekat = _cekani(odpoved, pokus)
                 log.warning("embeddingy: %s, opakuji za %.0f s", posledni, cekat)
                 _spi(cekat)
-        raise EmbedChyba(f"OpenAI neodpovědělo ani po {POKUSU} pokusech ({posledni})")
+        raise EmbedChyba(f"OpenAI neodpovědělo ani po {self.pokusu} pokusech ({posledni})")
 
     @staticmethod
     def _vektory(odpoved: httpx.Response, pocet: int) -> tuple[list[list[float]], int]:

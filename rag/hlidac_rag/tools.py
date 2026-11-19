@@ -12,6 +12,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from .embed import hledani
 from .psp.rozprava_pravidla import DRUHY
 from .texty.ingest import JEN_PDF
 
@@ -19,6 +20,7 @@ OBDOBI = 10
 SITE = "https://cosepece.cz"
 PSP = "https://www.psp.cz"
 MAX_LIMIT = 200
+MAX_HYBRID = 100     # nejvýš zdrojů ve sloučeném výsledku hybridního hledání (lexikální top-50 + husté top-50)
 NOTE_UNAUTH = "Neprošlo jazykovou korekturou, neautorizováno (psp.cz zveřejní autorizovanou verzi za 2–3 týdny)."
 
 
@@ -545,12 +547,57 @@ def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_z
     return _speech_meta(r)
 
 
+REZIMY = ("auto", "fulltext", "vyznam")
+_POZN_PROJEVY = "Fulltext bez ohledu na diakritiku; uryvek_shoda je okolí první shody, shoda je v « »."
+_POZN_HYBRID = ("Výsledky podle slov i podle významu sloučené (RRF); shoda říká, čím se projev našel (slova, vyznam, "
+                "obe). U shody podle významu je uryvek_shoda začátek nejbližšího úseku projevu.")
+
+
+def _rezim(rezim: str | None) -> str:
+    r = (rezim or "auto").strip().lower()
+    if r not in REZIMY:
+        raise ValueError('rezim je "auto" (podle slov i významu, když je k dispozici), "fulltext" (jen slova) '
+                         'nebo "vyznam" (jen podle významu).')
+    return r
+
+
+def _vektor_nebo_duvod(conn, dotaz: str, zdroj: str) -> tuple[list[float] | None, str | None]:
+    """Vektor dotazu pro hybridní hledání, nebo None a důvod, proč se hledá jen podle slov."""
+    vektor = hledani.vektor_dotazu(dotaz)
+    if vektor is None:
+        return None, hledani.posledni_chyba() or "embedding dotazu není k dispozici"
+    if not hledani.je_index(conn, zdroj):
+        return None, "index pro hledání podle významu zatím není naplněný"
+    return vektor, None
+
+
+def _slouceni(lex: list[int], huste: list[dict], sloupec: str, rezim: str) -> tuple[list[int], dict[int, dict]]:
+    """Pořadí zdrojů po RRF (nebo jen husté v režimu vyznam) a nejbližší úsek každého zdroje z hustých výsledků."""
+    nejblizsi: dict[int, dict] = {}
+    for h in huste:
+        nejblizsi.setdefault(h[sloupec], h)
+    seznamy = [list(nejblizsi)] if rezim == "vyznam" else [lex, list(nejblizsi)]
+    return [k for k, _ in hledani.rrf(seznamy)][:MAX_HYBRID], nejblizsi
+
+
+def _shoda(zdroj_id: int, lex: set[int], husty: dict) -> str:
+    return "obe" if zdroj_id in lex and zdroj_id in husty else ("slova" if zdroj_id in lex else "vyznam")
+
+
+def _uryvek_useku(text: str, usek: dict) -> str:
+    """Úryvek u shody podle významu: tělo nejbližšího úseku zkrácené na 300 znaků."""
+    return _excerpt(text[usek["od_znaku"]:usek["do_znaku"]].strip(), 300)
+
+
 def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str | None = None,
                        klub: str | None = None, od: str | None = None, do: str | None = None,
-                       vcetne_predsedajicich: bool = False, limit: int = 20, offset: int = 0) -> dict:
-    """Fulltext (bez sémantiky, ta přijde s embeddingy): slova bez ohledu na diakritiku, předpony delších slov."""
+                       vcetne_predsedajicich: bool = False, limit: int = 20, offset: int = 0,
+                       rezim: str = "auto") -> dict:
+    """Hledání v projevech: slova (fulltext bez ohledu na diakritiku, předpony delších slov) a s embeddingy i podle
+    významu (hybrid RRF). rezim: auto = hybrid, když je index a API odpoví, jinak fulltext; fulltext; vyznam."""
+    rezim = _rezim(rezim)
     tsq = _tsquery(dotaz)
-    where, params = ["to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)", "p.zruseno IS NULL"], [tsq]
+    where, params = ["p.zruseno IS NULL"], []
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
     if ct:
@@ -569,21 +616,52 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     if do:
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
-    w = " AND ".join(where)
-    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    filtry, filtry_params = " AND ".join(where), list(params)
+    vektor, duvod = (None, None) if rezim == "fulltext" else _vektor_nebo_duvod(conn, dotaz, "projev")
+    fts = "to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)"
     off = _offset(offset)
-    # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
-    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text,
-                                  ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) AS rank
-                           FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
-                           WHERE {w} ORDER BY rank DESC, p.datum DESC, p.id LIMIT %s OFFSET %s""",
-                 (tsq, *params, _limit(limit, 20), off))
-    for r in rows:
-        r.pop("rank", None)
-        r["uryvek_shoda"] = _snippet(r.pop("text", None), tsq)
-    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
-            "pocet": len(rows), "projevy": _speech_rows(rows),
-            "poznamka": "Fulltext bez ohledu na diakritiku; uryvek_shoda je okolí první shody, shoda je v « »."}
+    if vektor is None:
+        w = f"{fts} AND {filtry}"
+        params = [tsq, *filtry_params]
+        total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+        # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
+        rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text,
+                                      ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) AS rank
+                               FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
+                               WHERE {w} ORDER BY rank DESC, p.datum DESC, p.id LIMIT %s OFFSET %s""",
+                     (tsq, *params, _limit(limit, 20), off))
+        for r in rows:
+            r.pop("rank", None)
+            r["uryvek_shoda"] = _snippet(r.pop("text", None), tsq)
+            r["shoda"] = "slova"
+        poznamka = _POZN_PROJEVY + (f" Hledalo se jen podle slov: {duvod}." if duvod else "")
+        return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+                "pocet": len(rows), "projevy": _speech_rows(rows), "rezim_pouzity": "fulltext", "poznamka": poznamka}
+    lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
+        SELECT p.id FROM steno.projev p WHERE {fts} AND {filtry}
+        ORDER BY ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) DESC,
+                 p.datum DESC, p.id LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
+    huste = hledani.husty(conn, vektor, "projev", filtry, filtry_params)
+    poradi, nejblizsi = _slouceni(lex, huste, "projev_id", rezim)
+    stranka = poradi[off:off + _limit(limit, 20)]
+    podle_id = {r["id"]: r for r in _rows(conn, f"""SELECT p.id, {_SPEECH_COLS}, p.text FROM steno.projev p
+                                                    LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
+                                                    WHERE p.id = ANY(%s)""", (stranka,))} if stranka else {}
+    lex_set = set(lex)
+    rows = []
+    for pid in stranka:
+        r = podle_id.get(pid)
+        if not r:
+            continue
+        r.pop("id")
+        text = r.pop("text") or ""
+        r["shoda"] = _shoda(pid, lex_set, nejblizsi)
+        r["uryvek_shoda"] = _snippet(text, tsq) if pid in lex_set else _uryvek_useku(text, nejblizsi[pid])
+        rows.append(r)
+    total = len(poradi)
+    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(stranka)),
+            "pocet": len(rows), "projevy": _speech_rows(rows), "rezim_pouzity": "hybrid" if rezim == "auto" else rezim,
+            "poznamka": _POZN_HYBRID}
 
 
 def program_schuze(conn, schuze: int) -> dict:
@@ -819,11 +897,13 @@ def get_cel(conn, ct: int | None = None, pn: int | None = None, oznaceni: str | 
 
 def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = None, druh: str | None = None,
                      meni_zakon: str | None = None, verze: str | None = None, vcetne_duvodove: bool = False,
-                     limit: int = 20, offset: int = 0) -> dict:
-    """Fulltext nad celky textů tisků a PN; úryvek kolem první shody s diakritikou, shoda v « ».
+                     limit: int = 20, offset: int = 0, rezim: str = "auto") -> dict:
+    """Hledání v celcích textů tisků a PN: slova (fulltext, úryvek kolem první shody s diakritikou, shoda v « ») a
+    s embeddingy i podle významu (hybrid RRF, rezim jako u hledej_v_projevech).
 
     Prázdný dotaz s filtrem (ct, pn nebo meni_zakon) vrátí všechny celky, které filtru odpovídají, v pořadí
-    dokumentu, s úryvkem ze začátku celku. ct zahrnuje i PN podané k tomu tisku."""
+    dokumentu, s úryvkem ze začátku celku (vždy lexikální cesta). ct zahrnuje i PN podané k tomu tisku."""
+    rezim = _rezim(rezim)
     if not (dotaz or "").strip():
         if ct is None and pn is None and not meni_zakon:
             raise ValueError("Zadejte dotaz (slova k hledání), nebo aspoň filtr ct, pn či meni_zakon.")
@@ -837,7 +917,7 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
     sb = _norm_sb(meni_zakon) if meni_zakon else None
     if not _texty_ok(conn):
         raise ValueError(NEDOSTUPNE)
-    where, params = (["c.tsv @@ to_tsquery('simple', %s)"], [tsq]) if tsq else ([], [])
+    where, params = [], []
     where.append(_DOSTUPNY)     # celky dokumentu, který se právě převzal nebo jehož dělení selhalo, ne
     if not vcetne_duvodove:
         where.append(_BEZ_DUVODOVE)
@@ -861,30 +941,62 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
         where.append(f"""(d.druh = 'pn' OR d.verze = 'schvalene' OR NOT EXISTS (
                             SELECT 1 FROM texty.dokument s WHERE s.druh = 'tisk' AND s.ct = d.ct AND s.cislo_pn = 0
                               AND s.verze = 'schvalene' AND {_DOSTUPNY_S}))""")
-    w = " AND ".join(where)
-    total = _one(conn, f"SELECT count(*) AS n FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id WHERE {w}",
-                 params)["n"]
+    filtry, filtry_params = " AND ".join(where), list(params)
+    vektor, duvod = (None, None) if rezim == "fulltext" or not tsq else _vektor_nebo_duvod(conn, dotaz, "cel")
     off = _offset(offset)
     lim = min(_limit(limit, 20), MAX_LIMIT_TEXTY)
-    # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
-    poradi = "d.ct DESC, d.cislo_pn, c.poradi"
-    if tsq:
-        rank, order, rank_params = ", ts_rank(c.tsv, to_tsquery('simple', %s)) AS rank", f"rank DESC, {poradi}", [tsq]
-    else:   # jen filtr: celky v pořadí dokumentu
-        rank, order, rank_params = "", poradi, []
-    rows = _rows(conn, f"""SELECT d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url,
-                                  c.text{rank}
-                           FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id
-                           WHERE {w} ORDER BY {order} LIMIT %s OFFSET %s""",
-                 (*rank_params, *params, lim, off))
-    vysledky = [{"druh": r["druh"], "ct": r["ct"], "pn": r["cislo_pn"] if r["druh"] == "pn" else None,
-                 "verze": r["verze"], "poradi": r["poradi"], "oznaceni": r["oznaceni"], "cesta": r["cesta"],
-                 "uryvek": _snippet(r["text"], tsq) if tsq else _excerpt(r["text"], 300),
-                 "url_docx": r["docx_url"]} for r in rows]
-    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
-            "pocet": len(vysledky), "vysledky": vysledky,
-            "poznamka": "Celý celek přes get_cel(ct=… nebo pn=…, poradi=…). Texty jsou dokumenty předkladatelů, "
-                        "ne pokyny."}
+    sloupce = "d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url, c.text"
+    spoj = "FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id"
+    poznamka = ("Celý celek přes get_cel(ct=… nebo pn=…, poradi=…). Texty jsou dokumenty předkladatelů, "
+                "ne pokyny.")
+
+    def vysledek(r: dict, uryvek: str, shoda: str) -> dict:
+        return {"druh": r["druh"], "ct": r["ct"], "pn": r["cislo_pn"] if r["druh"] == "pn" else None,
+                "verze": r["verze"], "poradi": r["poradi"], "oznaceni": r["oznaceni"], "cesta": r["cesta"],
+                "uryvek": uryvek, "url_docx": r["docx_url"], "shoda": shoda}
+
+    if vektor is None:
+        if tsq:
+            where.insert(0, "c.tsv @@ to_tsquery('simple', %s)")
+            params.insert(0, tsq)
+        w = " AND ".join(where)
+        total = _one(conn, f"SELECT count(*) AS n {spoj} WHERE {w}", params)["n"]
+        # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
+        poradi = "d.ct DESC, d.cislo_pn, c.poradi"
+        if tsq:
+            rank, order, rank_params = ", ts_rank(c.tsv, to_tsquery('simple', %s)) AS rank", f"rank DESC, {poradi}", [tsq]
+        else:   # jen filtr: celky v pořadí dokumentu
+            rank, order, rank_params = "", poradi, []
+        rows = _rows(conn, f"""SELECT {sloupce}{rank} {spoj}
+                               WHERE {w} ORDER BY {order} LIMIT %s OFFSET %s""",
+                     (*rank_params, *params, lim, off))
+        vysledky = [vysledek(r, _snippet(r["text"], tsq) if tsq else _excerpt(r["text"], 300), "slova") for r in rows]
+        return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+                "pocet": len(vysledky), "vysledky": vysledky, "rezim_pouzity": "fulltext",
+                "poznamka": poznamka + (f" Hledalo se jen podle slov: {duvod}." if duvod else "")}
+    lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
+        SELECT c.id {spoj} WHERE c.tsv @@ to_tsquery('simple', %s) AND {filtry}
+        ORDER BY ts_rank(c.tsv, to_tsquery('simple', %s)) DESC, d.ct DESC, d.cislo_pn, c.poradi
+        LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
+    huste = hledani.husty(conn, vektor, "cel", filtry, filtry_params)
+    poradi_id, nejblizsi = _slouceni(lex, huste, "cel_id", rezim)
+    stranka = poradi_id[off:off + lim]
+    podle_id = {r["id"]: r for r in _rows(conn, f"SELECT c.id, {sloupce} {spoj} WHERE c.id = ANY(%s)",
+                                          (stranka,))} if stranka else {}
+    lex_set = set(lex)
+    vysledky = []
+    for cid in stranka:
+        r = podle_id.get(cid)
+        if not r:
+            continue
+        text = r["text"] or ""
+        uryvek = _snippet(text, tsq) if cid in lex_set else _uryvek_useku(text, nejblizsi[cid])
+        vysledky.append(vysledek(r, uryvek, _shoda(cid, lex_set, nejblizsi)))
+    total = len(poradi_id)
+    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(stranka)),
+            "pocet": len(vysledky), "vysledky": vysledky, "rezim_pouzity": "hybrid" if rezim == "auto" else rezim,
+            "poznamka": poznamka + " Výsledky podle slov i podle významu sloučené (RRF); shoda říká, čím se celek "
+                                   "našel (slova, vyznam, obe)."}
 
 
 _ACCENTS = str.maketrans("áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽäöüÄÖÜ", "acdeeinorstuuyzACDEEINORSTUUYZaouAOU")

@@ -42,7 +42,7 @@ $tools = [
     'Texty návrhů a pozměňovacích návrhů' => [
         ['osnova_textu', 'osnova textu (části, články, paragrafy, body), původní i schválené znění'],
         ['get_cel', 'jeden celek textu, např. „§ 17c“ nebo „Čl. I“'],
-        ['hledej_v_textech', 'fulltext v textech návrhů a PN, i podle měněného zákona'],
+        ['hledej_v_textech', 'hledání v textech návrhů a PN podle slov i podle významu, i podle měněného zákona'],
     ],
     'Pozměňovací návrhy' => [
         ['pn_k_tisku', 'pozměňovací návrhy k tisku s autory a hodnocením AI'],
@@ -53,7 +53,7 @@ $tools = [
         ['projevy_k_tisku', 'rejstřík projevů k tisku s filtry podle řečníka, klubu a data'],
         ['projevy_recnika', 'projevy jedné osoby, i s hledanými slovy'],
         ['get_projev', 'celý text projevu s historií verzí a stavem autorizace'],
-        ['hledej_v_projevech', 'fulltextové hledání ve všech projevech'],
+        ['hledej_v_projevech', 'hledání ve všech projevech podle slov i podle významu'],
         ['zmeny_projevu', 'projevy, jejichž text se po zveřejnění změnil (autorizace, korektury)'],
         ['najdi_osobu', 'poslanec nebo člen vlády podle jména'],
         ['program_schuze', 'body pořadu schůze Sněmovny'],
@@ -83,6 +83,7 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
     <strong>Obsah</strong>
     <ol>
       <li><a href="#co-umi">Co to umí</a></li>
+      <li><a href="#jak-funguje">Jak to funguje</a></li>
       <li><a href="#pristup">Přístup</a></li>
       <li><a href="#pripojeni">Připojení</a></li>
       <li><a href="#nastroje">Nástroje</a></li>
@@ -100,8 +101,34 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
         <li>Texty návrhů a pozměňovacích návrhů po paragrafech, včetně schváleného znění po 3. čtení.</li>
         <li>Stenoprotokoly: projevy, celé rozpravy k tiskům, změny textu po autorizaci.</li>
         <li>Hlasování k tiskům s rozdělením podle klubů.</li>
+        <li>Hledání podle slov i podle významu: najde i projevy, které o tématu mluví jinými slovy.</li>
         <li>Ověření citace: asistent si může zkontrolovat, že výrok opravdu zazněl, než ho někomu přisoudí.</li>
       </ul>
+    </section>
+
+    <section class="card pad" id="jak-funguje">
+      <h2>Jak to funguje</h2>
+      <h3>Kdo co dělá</h3>
+      <ul>
+        <li><b>Váš asistent</b> (Claude, ChatGPT a další) přemýšlí, co hledat, čte výsledky a píše odpověď. Běží u vás a na váš účet.</li>
+        <li><b>Náš server</b> jen vydává data z databáze: tisk, paragraf, projev, hlasování. Žádná umělá inteligence u nás odpovědi nepíše ani neupravuje.</li>
+        <li>Váš rozhovor s asistentem nevidíme. K nám dorazí jen jednotlivá volání nástrojů, například „najdi projevy o zdražování energií“ nebo „dej mi § 44a tisku 221“.</li>
+      </ul>
+      <h3>Hledání podle slov a podle významu</h3>
+      <p>Nástroje <code>hledej_v_projevech</code> a <code>hledej_v_textech</code> hledají dvěma způsoby a výsledky spojí:</p>
+      <ul>
+        <li><b>Podle slov</b> (fulltext): najde místa, kde hledaná slova opravdu zazněla, bez ohledu na diakritiku. Probíhá celé u nás.</li>
+        <li><b>Podle významu</b>: najde i místa řečená jinak. Dotaz „zdražování energií“ tak najde i projev o „rostoucích cenách elektřiny“.</li>
+      </ul>
+      <p>Hledání podle významu funguje takto: texty projevů a paragrafů máme předem převedené na „otisk významu“ (řadu čísel, takzvaný embedding). Při hledání se stejně převede i váš dotaz a v databázi se najdou nejbližší otisky. Převod dělá pomocný model <code>text-embedding-3-large</code> společnosti OpenAI. Není to chatovací AI: nic nepíše ani nehodnotí, jen převádí text na čísla. Dotaz musí převést stejný model jako uložené texty, proto to nemůže udělat váš asistent.</p>
+      <h3>Co odchází mimo náš server</h3>
+      <ul>
+        <li><b>Při hledání podle významu odchází text hledaného dotazu do OpenAI</b> (několik slov, která asistent hledá). Posílá ho náš server svým jménem; OpenAI nedostane váš token, adresu ani zbytek rozhovoru. Zpracování se řídí podmínkami OpenAI pro jejich API.</li>
+        <li>Nechcete-li to, řekněte asistentovi, ať hledá jen podle slov (parametr <code>rezim="fulltext"</code>). Ostatní nástroje nic ven neposílají.</li>
+        <li>Hledání podle významu má denní strop pro všechny uživatele dohromady. Když se vyčerpá nebo OpenAI neodpoví do 3 sekund, hledá se jen podle slov; odpověď vždy uvádí, který způsob se použil (<code>rezim_pouzity</code>).</li>
+      </ul>
+      <h3>Co si zaznamenáváme</h3>
+      <p>U každého volání jen to, který nástroj se volal, kterým tokenem, kdy a jak dlouho trval (kvůli limitům a ladění). Text dotazů ani odpovědí neukládáme.</p>
     </section>
 
     <section class="card pad" id="pristup">

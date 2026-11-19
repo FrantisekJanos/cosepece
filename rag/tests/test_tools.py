@@ -279,3 +279,33 @@ def test_tisky_menici_zakon_razeni():
     r = tools.tisky_menici_zakon(conn, "586/1992")
     assert "ORDER BY score DESC NULLS LAST, ct" in conn.sql[1]
     assert r["celkem"] == 1 and r["dalsi_offset"] is None and r["tisky"][0]["url_psp"]
+
+
+_TISK_ROW = dict(ct=231, druh=1, typ_navrhu="vládní", navrhovatel="vláda", nazev="N", uplny_nazev="N", predlozeno=None,
+                 faze="1. čtení", posledni=None, p90=False, p90ok=False, zl=False, pn_count=0, pn_last=None,
+                 zakony="", sbirka=None, score=10, reasons="[]")
+
+
+def test_get_tisk_body_vcetne_opakovanych():
+    bod = {"schuze": 30, "cislo": 5, "nazev": "Bod", "konec": "k", "datum": date(2026, 10, 1), "projevu": 3}
+    conn = FakeConn([_TISK_ROW], [bod, dict(bod, schuze=34, projevu=7)],
+                    [{"projevu": 10, "projevu_vse": 12, "recniku": 4, "prvni": None, "posledni": None}])
+    r = tools.get_tisk(conn, 231, ["body"])
+    assert "DISTINCT ON" not in conn.sql[1].upper()
+    assert [b["schuze"] for b in r["body_poradu"]] == [30, 34]
+    assert all({"schuze", "datum", "projevu"} <= set(b) for b in r["body_poradu"])
+
+
+def test_get_tisk_projevy_stejne_jako_projevy_k_tisku():
+    conn = FakeConn([_TISK_ROW], [], [{"projevu": 10, "projevu_vse": 12, "recniku": 4, "prvni": None, "posledni": None}])
+    r = tools.get_tisk(conn, 231, ["body"])
+    assert r["projevy"]["projevu"] == 10 and r["projevy"]["projevu_vse"] == 12
+    sql = conn.sql[2]
+    assert "NOT predsedajici" in sql and "znaku >= 200" in sql and "zruseno IS NULL" in sql
+
+
+def test_call_prilis_velka_odpoved(fake_pool):
+    fake_pool(FakeConn())
+    with pytest.raises(ToolError, match="Zužte"):
+        mcp_server._call("t", lambda c: {"text": "x" * 70000})
+    assert mcp_server._call("t", lambda c: {"text": "x" * 100}) == {"text": "x" * 100}

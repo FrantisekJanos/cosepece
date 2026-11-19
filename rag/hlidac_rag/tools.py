@@ -155,7 +155,12 @@ def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
     t = _one(conn, """SELECT ct, druh, typ_navrhu, navrhovatel, nazev, uplny_nazev, predlozeno, faze, posledni,
                              p90, p90ok, zl, pn_count, pn_last, zakony, sbirka, score, reasons
                       FROM tisky WHERE ct = %s""", (ct,))
-    bod = _rows(conn, "SELECT DISTINCT ON (nazev) schuze, cislo, nazev, konec FROM steno.bod WHERE ct = %s ORDER BY nazev, schuze", (ct,))
+    # body pořadu včetně opakovaných (jeden tisk se projednává ve více schůzích): schůze, datum a počet projevů u každého
+    bod = _rows(conn, """SELECT b.schuze, b.cislo, b.nazev, b.konec,
+                                (SELECT min(p.datum) FROM steno.projev p WHERE p.id_bod = b.id_bod AND p.zruseno IS NULL) AS datum,
+                                (SELECT count(*) FROM steno.projev p WHERE p.id_bod = b.id_bod AND p.zruseno IS NULL
+                                    AND NOT p.predsedajici AND p.znaku >= 200) AS projevu
+                         FROM steno.bod b WHERE b.ct = %s ORDER BY b.schuze, b.cislo""", (ct,))
     if not t and not bod:
         raise ValueError(f"Tisk {ct} v {OBDOBI}. období nesleduji. Zkuste seznam_tisku(q=…).")
     out: dict = {"ct": ct, **_tisk_urls(ct)}
@@ -166,9 +171,13 @@ def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
     else:
         out["poznamka"] = "Tisk není návrh zákona, web ho nesleduje; údaje jen z pořadu schůzí."
         out["nazev"] = bod[0]["nazev"]
-    stats = _one(conn, """SELECT count(*) AS projevu, count(DISTINCT id_osoba) AS recniku,
-                                 min(datum) AS prvni, max(datum) AS posledni
-                          FROM steno.projev WHERE ct = %s AND zruseno IS NULL AND NOT predsedajici""", (ct,))
+    # projevu = stejné podmínky jako výchozí projevy_k_tisku (bez předsedajících, od 200 znaků); projevu_vse = všechna vystoupení
+    stats = _one(conn, """SELECT count(*) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS projevu,
+                                 count(*) AS projevu_vse,
+                                 count(DISTINCT id_osoba) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS recniku,
+                                 min(datum) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS prvni,
+                                 max(datum) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS posledni
+                          FROM steno.projev WHERE ct = %s AND zruseno IS NULL""", (ct,))
     out["projevy"] = stats
     if "rozbor" in vcetne:
         tt = _one(conn, "SELECT ai_json, ai_score, ai_model, signals, chars, docx_url FROM tisk_text WHERE ct = %s", (ct,))

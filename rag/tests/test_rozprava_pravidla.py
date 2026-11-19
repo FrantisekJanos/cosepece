@@ -1,9 +1,13 @@
 """Testy čistých pravidel pro stenoprotokoly (věty z reálných stenoprotokolů psp.cz)."""
 from __future__ import annotations
 
+import inspect
+import re
+
 import pytest
 
 from hlidac_rag.psp.rozprava_pravidla import (
+    DRUHY,
     druh_vystoupeni,
     osloveny_recnik,
     pn_z_textu,
@@ -118,6 +122,19 @@ def test_druh_proceduralni_a_recnik():
     assert druh_vystoupeni("Máte slovo, procedurální návrh.", "Poslanec X", False) == "proceduralni"
     assert druh_vystoupeni(None, "Poslanec X", False) == "recnik"
     assert druh_vystoupeni("Prosím, pan poslanec Bureš.", None, False) == "recnik"
+
+
+def test_druhy_pokryva_vsechny_vystupy_druh_vystoupeni():
+    """DRUHY (filtr druh v nástrojích MCP) = právě hodnoty, které druh_vystoupeni vrací, v daném pořadí."""
+    assert DRUHY == ("recnik", "fakticka", "prednostni", "zpravodaj", "predkladatel", "ministr", "proceduralni",
+                     "predsedajici")
+    vraci = set(re.findall(r'return "(\w+)"', inspect.getsource(druh_vystoupeni)))
+    assert vraci == set(DRUHY)
+    vzorky = [("x", "Poslanec X", True), ("S faktickou poznámkou pan poslanec X.", "Poslanec X", False),
+              ("S přednostním právem pan předseda X.", "Poslanec X", False), ("Prosím pana zpravodaje.", None, False),
+              ("Za navrhovatele vystoupí pan X.", None, False), (None, "Ministr financí X", False),
+              ("Máte slovo, procedurální návrh.", None, False), (None, "Poslanec X", False)]
+    assert [druh_vystoupeni(*v) for v in vzorky] == ["predsedajici", *DRUHY[1:7], "recnik"]
 
 
 # --- pn_z_textu ------------------------------------------------------------

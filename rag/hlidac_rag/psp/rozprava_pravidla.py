@@ -121,6 +121,9 @@ def osloveny_recnik(text: str | None) -> str | None:
 
 # --- druh vystoupení -------------------------------------------------------
 
+# všechny hodnoty, které vrací druh_vystoupeni (výčet platných hodnot filtru druh v nástrojích MCP)
+DRUHY = ("recnik", "fakticka", "prednostni", "zpravodaj", "predkladatel", "ministr", "proceduralni", "predsedajici")
+
 RE_VETY = re.compile(r"(?<=[.!?])\s+")
 RE_ODDELOVAC = re.compile(
     r"\b(?:a\s+)?(?:potom|pak|poté|následně|připraví se|bude následovat)\b", re.I

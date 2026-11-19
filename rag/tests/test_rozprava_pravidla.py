@@ -186,6 +186,29 @@ def test_shoda_prijmeni_tabulka_ne(tvar, prijmeni):
     assert not shoda_prijmeni(tvar, prijmeni)
 
 
+# pohyblivé e (-ek, -ec, -el): kmen je příjmení bez „e“ (Marek -> mark), 1. pád se porovná celý
+@pytest.mark.parametrize("tvar, prijmeni, ocekavano", [
+    ("Marka", "Marek", True), ("Markovi", "Marek", True), ("Marek", "Marek", True),
+    ("Maříkovi", "Marek", False), ("Marně", "Marek", False),
+    ("Vlček", "Vlček", True), ("Vlčkovi", "Vlček", True), ("Válek", "Válek", True), ("Němec", "Němec", True),
+    ("Havla", "Havel", True), ("STANu", "Staněk", False),
+])
+def test_shoda_prijmeni_pohyblive_e(tvar, prijmeni, ocekavano):
+    assert shoda_prijmeni(tvar, prijmeni) is ocekavano
+
+
+# víceslovná příjmení: tvar se porovná s každým slovem příjmení (krátká slova jako „ml.“ se nepočítají)
+@pytest.mark.parametrize("tvar, prijmeni, ocekavano", [
+    ("Adamové", "Pekarová Adamová", True), ("Pekarové", "Pekarová Adamová", True),
+    ("Vaňková", "Pivoňka Vaňková", True), ("Pivoňka", "Pivoňka Vaňková", True),
+    ("Crkvenjaš", "Němečková Crkvenjaš", True), ("Petrové", "Marcová - Petrová", True),
+    ("Batkové", "Šťáhlavská-Batková", True), ("Kučery", "Kučera ml.", True),
+    ("Mluvím", "Kučera ml.", False), ("Novákové", "Pekarová Adamová", False),
+])
+def test_shoda_prijmeni_viceslovne(tvar, prijmeni, ocekavano):
+    assert shoda_prijmeni(tvar, prijmeni) is ocekavano
+
+
 def test_druh_male_slovo_nepoplete_prijmeni():
     t = "Pan poslanec Berki vystoupí s faktickou poznámkou. Bereme si pauzu."
     assert druh_vystoupeni(t, "Poslanec Jan Berki", False, "Berki") == "fakticka"

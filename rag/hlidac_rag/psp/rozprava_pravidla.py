@@ -33,36 +33,49 @@ def tisky_z_konce(konec: str | None) -> list[int]:
 
 # --- shoda příjmení --------------------------------------------------------
 
+RE_SLOVA = re.compile(r"[^\W\d_]+", re.U)
+
+
 def _bez_diakritiky(s: str) -> str:
     return "".join(
         c for c in unicodedata.normalize("NFD", s) if not unicodedata.combining(c)
     ).lower()
 
 
-def shoda_prijmeni(tvar: str, prijmeni: str) -> bool:
-    """Odpovídá ohnutý tvar příjmení (Haase, Vlčka) základnímu tvaru (Haas, Vlček)?
-
-    Bez diakritiky a velikosti písmen; `tvar` musí začínat kmenem příjmení
-    (příjmení bez koncové samohlásky, u „-ek/-ec/-el“ bez posledních 2 znaků;
-    nejméně 3 znaky, kratší kmen = celé příjmení).
-    """
-    t, p = _bez_diakritiky(tvar), _bez_diakritiky(prijmeni)
-    if not t or not p:
-        return False
-    if p.endswith(("ek", "ec", "el")):  # pohyblivé e: Vlček -> Vlčka
-        kmen = p[:-2]
-    elif p[-1] in "aeiouy":  # koncová samohláska: Kupka -> Kupky
-        kmen = p[:-1]
+def _kmen(slovo: str) -> str:
+    """Kmen slova příjmení (bez diakritiky): bez koncové samohlásky, u „-ek/-ec/-el“ bez pohyblivého e
+    (Marek -> mark, Vlček -> vlck); kratší než 3 znaky = celé slovo."""
+    if slovo.endswith(("ek", "ec", "el")):  # pohyblivé e: Vlček -> Vlčka, Němec -> Němce
+        kmen = slovo[:-2] + slovo[-1]
+    elif slovo[-1] in "aeiouy":  # koncová samohláska: Kupka -> Kupky
+        kmen = slovo[:-1]
     else:
-        kmen = p
-    if len(kmen) < 3:
-        kmen = p
-    return t.startswith(kmen)
+        kmen = slovo
+    return kmen if len(kmen) >= 3 else slovo
+
+
+def _slova_prijmeni(prijmeni: str) -> list[str]:
+    """Slova příjmení bez diakritiky; u víceslovného (Pekarová Adamová, Šťáhlavská-Batková, Kučera ml.)
+    jen slova od 3 písmen."""
+    slova = RE_SLOVA.findall(_bez_diakritiky(prijmeni))
+    dlouha = [s for s in slova if len(s) >= 3]
+    return dlouha if len(slova) > 1 and dlouha else slova
+
+
+def shoda_prijmeni(tvar: str, prijmeni: str) -> bool:
+    """Odpovídá ohnutý tvar příjmení (Haase, Vlčka, Adamové) základnímu tvaru (Haas, Vlček, Pekarová Adamová)?
+
+    Bez diakritiky a velikosti písmen; `tvar` se rovná některému slovu příjmení, nebo začíná jeho kmenem
+    (viz _kmen: Marka ~ Marek, ale Maříkovi ne).
+    """
+    t = _bez_diakritiky(tvar)
+    if not t:
+        return False
+    return any(t == s or t.startswith(_kmen(s)) for s in _slova_prijmeni(prijmeni))
 
 
 # --- oslovený řečník -------------------------------------------------------
 
-RE_SLOVA = re.compile(r"[^\W\d_]+", re.U)
 RE_REAKCE = re.compile(
     r"(?:reagov\w+|zareaguj\w+|reakc\w+|navázat|vyjádřit se?|odpov\w+)\s+(?:na|k|ke)\s+"
     r"|\bk\s+(?:odpovědi|vystoupení|projevu)\s+",

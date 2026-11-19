@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Spolehlivější rozbor AI: opakované běhy a namátková kontrola',
         'Text, kterému rychlý model dá hraniční závažnost 3–7 (tam se rozhoduje, zda dostane body), posoudí třikrát a platí prostřední hodnota; jedno nahodilé hodnocení tak skóre neurčí. Každý desátý text s nízkým hodnocením nově posoudí i silnější model, aby se ukázalo, kolik problémů rychlý model přehlíží; když najde závažný problém, jeho rozbor platí. Na stránce Jak hodnotíme je nový oddíl Jak ověřujeme rozbor AI s průběžnými čísly o shodě modelů. Skóre některých tisků se může změnit, jak doběhnou opakované běhy. Díky podnětu z GitHubu (#7).',
-        [0], true],
+        [50], true],
     ['2026-11-19', 'Chytré vyhledávání s našeptávačem',
         'Vyhledávání na úvodní stránce a v hlavičce ostatních stránek našeptává už při psaní: tisky (i podle shrnutí rozboru AI, takže „dotace“ najde novelu zákona o střetu zájmů), pozměňovací návrhy a jejich autory, zákony podle čísla i názvu, připravované zákony u vlády a druhy problémů. Hledá se bez ohledu na diakritiku, stačí začátek slova, snese různé tvary slova i jeden překlep. Číslo tisku vede rovnou na tisk. Ovládá se i klávesnicí (šipky, Enter, Esc, „/“ skočí do hledání). Našeptávání běží v prohlížeči, dotazy se nikam neposílají ani neukládají. U tisku jsou nově vidět všechny pozměňovací návrhy, ne jen prvních 30.',
         [49], false],

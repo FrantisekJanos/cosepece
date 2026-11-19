@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from hlidac_rag import mcp_server, tools
-from hlidac_rag.nastroje.citace import _over_citaci
+from hlidac_rag.citace_shoda import UVOZOVKY
+from hlidac_rag.nastroje.citace import MAX_CITACE, _orizni, _over_citaci
 
 
 class FakeConn:
@@ -65,7 +67,7 @@ CITACE = "Tento zákon nepodpoříme, protože zkracuje lhůtu"
 
 def _projev(**kw) -> dict:
     row = dict(recnik="Poslanec Jan Testovací", klub="TEST", datum=date(2026, 10, 14), autorizovano=True,
-               url="https://www.psp.cz/x.htm#r6", text=PROJEV)
+               url="https://www.psp.cz/x.htm#r6", zruseno=None, text=PROJEV)
     row.update(kw)
     return row
 
@@ -107,6 +109,20 @@ def test_projev_obraceny_vyznam_je_nenalezeno_s_kandidatem():
     assert "podpoříme" in r["nalezeny_text"] and "podpoříme" in r["kontext"]
 
 
+def test_projev_zruseny_ma_poznamku_a_datum():
+    zruseno = datetime(2026, 10, 20, 8, 30, tzinfo=timezone.utc)
+    conn = FakeConn([_projev(zruseno=zruseno)])
+    r = _over_citaci(conn, CITACE, klic="10/35/10/6")
+    assert "zruseno" in conn.sql[0]
+    assert r["shoda"] == "presne"                         # neodmítá se, jen varuje
+    assert r["zruseno"] == "2026-10-20T08:30:00+00:00"
+    assert "chybí" in r["poznamka"] and "url" in r["poznamka"]
+    r = _over_citaci(FakeConn([_projev(zruseno=zruseno, autorizovano=False)]), CITACE, klic="10/35/10/6")
+    assert tools.NOTE_UNAUTH in r["poznamka"] and "chybí" in r["poznamka"]
+    r = _over_citaci(FakeConn([_projev()]), CITACE, klic="10/35/10/6")
+    assert "zruseno" not in r and "poznamka" not in r
+
+
 def test_projev_neautorizovany_ma_poznamku():
     r = _over_citaci(FakeConn([_projev(autorizovano=False)]), CITACE, klic="10/35/10/6")
     assert r["poznamka"] == tools.NOTE_UNAUTH and r["autorizovano"] is False
@@ -137,8 +153,13 @@ def _cel(poradi: int, oznaceni: str, text: str, **kw) -> dict:
     return row
 
 
-def _meta(*cesty: tuple[int, str]) -> list[dict]:
-    return [dict(poradi=p, cesta=c) for p, c in cesty]
+def _meta(*radky: tuple) -> list[dict]:
+    """Řádky (poradi, cesta[, typ, oznaceni]); označení se jinak odvodí z posledního dílu cesty bez „(k/n)“."""
+    out = []
+    for poradi, cesta, *zbytek in radky:
+        typ, oznaceni = zbytek or ("clanek", cesta.split(" / ")[-1].split(" (")[0])
+        out.append(dict(poradi=poradi, typ=typ, oznaceni=oznaceni, cesta=cesta))
+    return out
 
 
 C0 = "Zákon č. 256/2000 Sb., o Státním zemědělském intervenčním fondu, se mění takto:"
@@ -181,7 +202,20 @@ def test_text_shoda_pres_hranici_celku():
     r = _over_citaci(conn, "Lhůta pro vymáhání odvodu činí čtyři roky", ct=311)
     assert r["shoda"] == "presne" and r["poradi"] == 5 and r["do_poradi"] == 6
     assert r["od_znaku"] == 0 and r["do_znaku"] == len(a) + 1 + len("čtyři roky")
+    assert r["do_znaku_v_do_poradi"] == len("čtyři roky")
     assert r["nalezeny_text"] == a + "\nčtyři roky"
+
+
+def test_text_priblizne_pres_hranici_celku():
+    a, b = "Lhůta pro vymáhání odvodu činí", "čtyři roky ode dne poskytnutí dotace."
+    conn = FakeConn(_OK, [_dok()], [_cel(5, "odst. 1", a), _cel(6, "odst. 2", b)])
+    r = _over_citaci(conn, "Lhuta pro vymahani odvodu cini ctyri roky ode dne", ct=311)
+    assert r["shoda"] == "priblizne" and r["skore"] == 1.0
+    assert r["poradi"] == 5 and r["do_poradi"] == 6 and r["od_znaku"] == 0
+    assert r["do_znaku_v_do_poradi"] == len("čtyři roky ode dne")
+    assert b[:r["do_znaku_v_do_poradi"]] == "čtyři roky ode dne"
+    assert r["nalezeny_text"] == a + "\nčtyři roky ode dne"
+    assert "do_znaku_v_do_poradi" not in _over_citaci(FakeConn(_OK, [_dok()], CELKY), "kázně, a to i zpětně", ct=311)
 
 
 def test_text_oznaceni_s_kusy_a_vnorenym_celkem():
@@ -226,6 +260,42 @@ def test_text_poradi_bez_pokracovani_nebere_soused_se_stejnou_predponou():
     conn = FakeConn(_OK, [_dok()], _meta((1, "Čl. I"), (2, "Čl. II")), [_cel(1, "Čl. I", "Jen první článek zákona.")])
     _over_citaci(conn, "Jen první článek", ct=311, poradi=1)
     assert conn.params[3] == (7, 1, 1)               # „Čl. II“ nezačíná „Čl. I / “
+
+
+def test_text_duvodova_zprava_jen_svuj_kus():
+    """Kusy DZ mají stejnou cestu „důvodová zpráva“, ale jiné označení: DZ 3 nebere DZ 4 a dál."""
+    dz = [(10, "důvodová zpráva", "duvodova_zprava", "důvodová zpráva 3"),
+          (11, "důvodová zpráva", "duvodova_zprava", "důvodová zpráva 4"),
+          (12, "důvodová zpráva", "duvodova_zprava", "důvodová zpráva 5")]
+    texty = [_cel(10, "důvodová zpráva 3", "Obecná část odůvodnění.", typ="duvodova_zprava", cesta="důvodová zpráva")]
+    conn = FakeConn(_OK, [_dok()], _meta((10, "důvodová zpráva")), _meta(*dz), texty)
+    r = _over_citaci(conn, "Obecná část odůvodnění", ct=311, oznaceni="důvodová zpráva 3")
+    assert "typ" in conn.sql[3] and "oznaceni" in conn.sql[3]
+    assert conn.params[4] == (7, 10, 10) and r["shoda"] == "presne"
+    conn = FakeConn(_OK, [_dok()], _meta(*dz), texty)
+    _over_citaci(conn, "Obecná část odůvodnění", ct=311, poradi=10)
+    assert conn.params[3] == (7, 10, 10)
+
+
+def test_text_bod_pn_nebere_sve_oduvodneni():
+    radky = _meta((0, "bod 1", "bod", "bod 1"), (1, "bod 1 / důvodová zpráva", "duvodova_zprava", "důvodová zpráva 1"),
+                  (2, "bod 1 / § 5", "paragraf", "§ 5"), (3, "bod 2", "bod", "bod 2"))
+    conn = FakeConn(_OK, [_dok(druh="pn", ct=76, cislo_pn=894)], radky, [_cel(0, "bod 1", "V § 5 se číslo 10 nahrazuje.")])
+    _over_citaci(conn, "číslo 10 nahrazuje", pn=894, poradi=0)
+    assert conn.params[3] == (7, 0, 0)              # odůvodnění bodu (DZ) rozsah ukončí
+
+
+def test_text_nenalezeno_s_oznacenim_radi_hledat_v_celem_dokumentu():
+    radky = _meta((1, "Čl. I"), (2, "Čl. II"))
+    r = _over_citaci(FakeConn(_OK, [_dok()], radky, [_cel(1, "Čl. I", "Jen první článek zákona.")]),
+                     "kočka mňouká večer potichu doma", ct=311, poradi=1)
+    assert r["shoda"] == "nenalezeno"
+    assert "bez oznaceni a poradi" in r["poznamka"] and "verze" not in r["poznamka"]
+    verze = [_dok(), _dok(id=8, verze="schvalene")]
+    shody = _meta((1, "Čl. I"))
+    r = _over_citaci(FakeConn(_OK, verze, shody, radky, [_cel(1, "Čl. I", "Jen první článek zákona.")]),
+                     "kočka mňouká večer potichu doma", ct=311, oznaceni="Čl. I")
+    assert r["poznamka"].index("bez oznaceni a poradi") < r["poznamka"].index('verze="puvodni"')
 
 
 def test_text_neexistujici_celek():
@@ -307,14 +377,48 @@ def test_citace_delsi_nez_2000_znaku():
 
 
 def test_citace_kratsi_nez_3_slova():
-    with pytest.raises(ValueError, match="aspoň 3 slova"):
-        _over_citaci(FakeConn([_projev()]), "Tento zákon", klic="10/35/10/6")
-    with pytest.raises(ValueError, match="aspoň 3 slova"):
-        _over_citaci(FakeConn(_OK, [_dok()], CELKY), "„ “", ct=311)
+    for citace, zdroj in (("Tento zákon", dict(klic="10/35/10/6")), ("„ “", dict(ct=311)), ("„… dvě slova …“", dict(pn=1))):
+        conn = FakeConn()
+        with pytest.raises(ValueError, match="aspoň 3 slova"):
+            _over_citaci(conn, citace, **zdroj)
+        assert conn.sql == []                     # odmítnuto před dotazem do DB
+
+
+def test_dlouhy_beh_mezer_se_odmitne_rychle():
+    """Ořez okrajů je lineární a délka se kontroluje dřív než cokoli jiného (hrubá pojistka času)."""
+    for citace in (CITACE + " " * 20_000 + "konec", " " * 1_000_000 + CITACE, "„" * 50_000):
+        conn = FakeConn()
+        t0 = time.perf_counter()
+        with pytest.raises(ValueError, match="nejvýš 2 000"):
+            _over_citaci(conn, citace, klic="10/35/10/6")
+        assert time.perf_counter() - t0 < 0.5 and conn.sql == []
+    t0 = time.perf_counter()
+    assert _orizni(" " * (2 * MAX_CITACE) + CITACE + "…" * MAX_CITACE) == CITACE
+    assert time.perf_counter() - t0 < 0.5
+    r = _over_citaci(FakeConn([_projev()]), " " * (3 * MAX_CITACE) + CITACE + " \n" * 400, klic="10/35/10/6")
+    assert r["shoda"] == "presne"
+
+
+@pytest.mark.parametrize("citace, oriznuta", [
+    ("„… i tehdy, … tohoto zákona“", "i tehdy, … tohoto zákona"),
+    ("… i tehdy, pokud byla …", "i tehdy, pokud byla"),
+    ("[…] i tehdy [...]", "i tehdy"),
+    ("(...) „i tehdy“ (…)", "i tehdy"),
+    ("\"... i tehdy...\"", "i tehdy"),
+    ("i tehdy, pokud byla.", "i tehdy, pokud byla."),
+])
+def test_orez_krajnich_vypustek(citace, oriznuta):
+    assert _orizni(citace) == oriznuta
+
+
+def test_citace_s_krajni_vypustkou_je_presne():
+    text = "Ustanovení se použije i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti."
+    r = _over_citaci(FakeConn([_projev(text=text)]), "„… i tehdy, pokud byla …“", klic="10/35/10/6")
+    assert r["shoda"] == "presne" and r["nalezeny_text"] == "i tehdy, pokud byla"
 
 
 @pytest.mark.parametrize("obal", ["„{}“", '"{}"', "'{}'", "»{}«", "«{}»", "‚{}‘", "“{}”", "‘{}’",
-                                  "  „{}“ \n", "\"„{}“\""])
+                                  "  „{}“ \n", "\"„{}“\""] + [q + "{}" + q for q in UVOZOVKY])
 def test_citace_bez_krajnich_uvozovek(obal):
     r = _over_citaci(FakeConn([_projev()]), obal.format(CITACE), klic="10/35/10/6")
     assert r["shoda"] == "presne" and r["nalezeny_text"] == CITACE
@@ -330,7 +434,8 @@ def test_over_citaci_je_nastroj_serveru():
     assert set(t.parameters["properties"]) == {"citace", "klic", "ct", "pn", "oznaceni", "poradi", "verze"}
     assert t.parameters["required"] == ["citace"]
     for slovo in ("presne", "priblizne", "nenalezeno", "nalezeny_text", "skore", "2 000", "3 slova",
-                  'klic="10/34/633/1"', 'oznaceni="Čl. VI"'):
+                  'klic="10/34/633/1"', 'oznaceni="Čl. VI"', "i u presne", "vnořen", "do_znaku_v_do_poradi",
+                  "get_cel(offset_znaku)"):
         assert slovo in t.description, slovo
 
 

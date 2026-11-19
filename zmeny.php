@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Víc hlavních nálezů na úvodní stránce',
+        'Hlavní nálezy zahrnují tisky od 45 bodů (dřív od 50) a hned je vidět 9 karet místo 6. Úroveň „Závažné“ se nemění, zůstává od 50 bodů; karty mezi 45 a 49 body mají štítek „Pozor“.',
+        [41], false],
     ['2026-11-19', 'Silný ověřený nález se neztratí',
         'Hlavní nálezy na úvodní stránce ukazují i tisky pod hranicí 50 bodů, pokud mají nález AI se závažností aspoň 8/10, který ověřil silnější model a doložil citací z textu. Týká se to např. novely zákona o střetu zájmů (tisk 221), kde rozbor našel zkrácení lhůty pro vymáhání dotací z 10 na 4 roky i pro dřívější případy. Samotné skóre se nemění.',
         [40], false],

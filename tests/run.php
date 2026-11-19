@@ -625,7 +625,7 @@ check('detail tisku ukazuje hlasování s klubem a odkazem na psp.cz', str_conta
     && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, 'ANO2011'), true);
 
 echo "Stránky\n";
-foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {
+foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => []] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {

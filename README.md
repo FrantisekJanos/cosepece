@@ -10,7 +10,7 @@ Web, který sleduje legislativní proces v Poslanecké sněmovně a upozorňuje 
 
 Data se berou z [otevřených dat Poslanecké sněmovny](https://www.psp.cz/sqw/hp.sqw?k=1300). Upozornění jdou na web, do RSS a na sociální sítě (Bluesky, Mastodon, Telegram, X).
 
-Podněty a chyby: <https://github.com/moodixmarket/hlidac-zakonu-podnety/issues>
+Podněty a chyby: <https://github.com/FrantisekJanos/cosepece/issues>
 
 ## Požadavky
 

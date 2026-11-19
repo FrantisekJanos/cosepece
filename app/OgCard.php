@@ -72,6 +72,10 @@ final class OgCard
                 'Upozornění na sporné kroky ve Sněmovně',
                 'Nové pozměňovací návrhy, schválení podle § 90/2, zkrácené lhůty a vyhlášené zákony. Běžná agenda je potlačená.',
             ],
+            'zmeny' => [
+                'Co jsme na webu změnili',
+                'Opravy a změny v hodnocení legislativního postupu, hlavně podle připomínek čtenářů.',
+            ],
             'metodika' => [
                 'Jak hodnotíme legislativní postup',
                 'Signály, body a stropy skóre závažnosti. Hodnotíme postup a formu, nikdy politický obsah nebo stranu.',

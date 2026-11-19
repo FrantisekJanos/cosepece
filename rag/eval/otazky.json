@@ -915,5 +915,282 @@
   "faze": "2b",
   "volani": [],
   "rucne": "Hodnotit ručně. projevy_k_tisku(311, od=2026-11-13, vcetne_predsedajicich, min_znaku=0) = 41 projevů, neautorizované. Musí zaznít Jakob 10/36/15/4, Svobodová 10/36/17/2, Sedmihradská 10/36/20/2, Vojáček 10/36/22/4. Plný seznam řečníků neověřen. Měřit počet volání a znaků."
+ },
+ {
+  "id": "E4-01",
+  "otazka": "Mluvil někdo o opilých taxikářích z ciziny?",
+  "faze": "4",
+  "cile": [
+   "10/34/297/3"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "opilí taxikáři z ciziny"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/297/3"
+     }
+    ]
+   }
+  ],
+  "rucne": "Parafráze bez slov cíle: Koten 10/34/297/3 mluví o alkoholu u řidičů taxislužby a platforem z jiných zemí."
+ },
+ {
+  "id": "E4-02",
+  "otazka": "Kritizoval někdo odhad, kolik státu vynese povinné hlášení hotovostních plateb?",
+  "faze": "4",
+  "cile": [
+   "10/24/341/7"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "přehnaný odhad výnosu z hlášení hotovostních plateb finanční správě"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/24/341/7"
+     }
+    ]
+   }
+  ],
+  "rucne": "Filipovičová 10/24/341/7: interpelace k odhadu 14,4 mld. Kč z nové EET (RIA, dvojnásobná efektivita)."
+ },
+ {
+  "id": "E4-03",
+  "otazka": "Kolik proudu v Evropě vyrábí vítr a jak na tom je Česko?",
+  "faze": "4",
+  "cile": [
+   "10/23/12/2"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "vítr vyrábí pětinu proudu v Unii, Česko zaostává"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/23/12/2"
+     }
+    ]
+   }
+  ],
+  "rucne": "Hřib 10/23/12/2: větrné elektrárny pokryly 19 % evropské spotřeby, ČR 1 %."
+ },
+ {
+  "id": "E4-04",
+  "otazka": "Kdo chválil úlevu OSVČ na povinném pojištění?",
+  "faze": "4",
+  "cile": [
+   "10/13/58/2"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "úleva pro OSVČ na sociálním a zdravotním pojištění"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/13/58/2"
+     }
+    ]
+   }
+  ],
+  "rucne": "Okamura 10/13/58/2: závěrečné hlasování o snížení povinných odvodů živnostníků."
+ },
+ {
+  "id": "E4-05",
+  "otazka": "Zlevnila vláda lidem proud?",
+  "faze": "4",
+  "cile": [
+   "10/8/19/2",
+   "10/13/14/4",
+   "10/33/18/2"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "zlevnila vláda domácnostem proud"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/8/19/2"
+     }
+    ]
+   }
+  ],
+  "rucne": "Havlíček 10/8/19/2 (snížili regulovanou složku ceny elektřiny), Skopeček 10/13/14/4 (vláda ceny nesnížila, jen přenesla poplatky na rozpočet), Okamura 10/33/18/2 (ceny elektřiny poklesly o 11 %)."
+ },
+ {
+  "id": "E4-06",
+  "otazka": "Kdo kritizoval, že státní vodní dílo zavlaží hlavně pozemky premiérových firem?",
+  "faze": "4",
+  "cile": [
+   "10/29/33/4"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "zavlažování polí skoupených premiérovým koncernem z peněz státu"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/29/33/4"
+     }
+    ]
+   }
+  ],
+  "rucne": "Svárovská 10/29/33/4: závlahy chmelnic z vodního díla, nákupy Agrofertu v oblasti."
+ },
+ {
+  "id": "E4-07",
+  "otazka": "Prodlužuje nebo zkracuje se lhůta pro vymáhání dotací i zpětně?",
+  "faze": "4",
+  "cile": [
+   "tisk:221:puvodni:12",
+   "tisk:221:puvodni:16"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "zkrácení lhůty pro vymáhání neoprávněných podpor i za minulost"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "vysledky.*.oznaceni",
+      "rovna_se": "Čl. VI"
+     }
+    ]
+   }
+  ],
+  "rucne": "Tisk 221: Čl. VI (lhůta pro vrácení dotace i u plateb před účinností) a Čl. VII (§ 44a, 4 roky)."
+ },
+ {
+  "id": "E4-08",
+  "otazka": "Kdy musí zemědělec vrátit podporu kvůli spáchanému deliktu?",
+  "faze": "4",
+  "cile": [
+   "pn:2092:puvodni:7"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "zemědělec musí vracet podporu po spáchaném deliktu"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "vysledky.*.oznaceni",
+      "rovna_se": "§ 2dd"
+     }
+    ]
+   }
+  ],
+  "rucne": "PN 2092 k tisku 174, § 2dd Rozhodování a vrácení dotace (vázanost rozhodnutím o přestupku)."
+ },
+ {
+  "id": "E4-09",
+  "otazka": "Které veřejné instituce nemusí registrovat příjmy z prodeje?",
+  "faze": "4",
+  "cile": [
+   "tisk:189:schvalene:12",
+   "tisk:189:puvodni:12"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "které veřejné instituce nemusí registrovat příjmy z prodeje"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "vysledky.*.oznaceni",
+      "rovna_se": "§ 11"
+     }
+    ]
+   }
+  ],
+  "rucne": "Tisk 189 (evidence tržeb), § 11 Osobní vynětí z evidence tržeb: stát, kraje, obce, příspěvkové organizace…"
+ },
+ {
+  "id": "E4-10",
+  "otazka": "Kdo má nárok na daňové úlevy pro farmáře podle PN k tisku 311?",
+  "faze": "4",
+  "cile": [
+   "pn:2312:puvodni:2",
+   "pn:2313:puvodni:2",
+   "pn:2314:puvodni:2",
+   "pn:2315:puvodni:2"
+  ],
+  "volani": [
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "kdo má nárok na daňové úlevy pro rolníky"
+    },
+    "kontroly": [
+     {
+      "cesta": "rezim_pouzity",
+      "rovna_se": "hybrid"
+     },
+     {
+      "cesta": "vysledky.*.oznaceni",
+      "rovna_se": "§ 21j"
+     }
+    ]
+   }
+  ],
+  "rucne": "PN 2312–2318 k tisku 311, § 21j Oprávněný zemědělský poplatník (sedm stejných PN, cíle jsou čtyři z nich)."
  }
 ]

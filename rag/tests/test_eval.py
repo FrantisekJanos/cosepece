@@ -79,3 +79,40 @@ def test_vyber_fazi_ma_vlastni_soubor_a_srovnani(tmp_path):
     assert nacti_predchozi(tmp_path, "2026-11-19") == {"ok": 10}
     assert nacti_predchozi(tmp_path, "2026-11-19", "dnes,pr2") == {"ok": 3}
     assert nacti_predchozi(tmp_path, "2026-11-19", "pr2") is None
+
+
+# ---------------------------------------------------------------- fáze 4 (embeddingy) a porovnání modelů
+
+def test_otazky_faze4_maji_cile_a_kontroly():
+    from pathlib import Path
+
+    from eval.porovnani_modelu import otazky_faze4, rozloz_cil
+
+    otazky = json.loads((Path(__file__).parent.parent / "eval" / "otazky.json").read_text(encoding="utf-8"))
+    ids = [o["id"] for o in otazky]
+    assert len(ids) == len(set(ids))
+    f4 = otazky_faze4(otazky)
+    assert 8 <= len(f4) <= 12
+    for o in f4:
+        for c in o["cile"]:
+            zdroj, _ = rozloz_cil(c)
+            assert zdroj == o["zdroj"], (o["id"], c)
+    for o in otazky:
+        if o.get("cile"):
+            kontroly = o["volani"][0]["kontroly"]
+            assert {"cesta": "rezim_pouzity", "rovna_se": "hybrid"} in kontroly
+            assert any(k.get("cesta") in ("projevy.*.klic", "vysledky.*.oznaceni") for k in kontroly)
+
+
+def test_rozloz_cil_a_recall():
+    import pytest
+
+    from eval.porovnani_modelu import recall, rozloz_cil
+
+    assert rozloz_cil("10/34/297/3") == ("projev", (10, 34, 297, 3))
+    assert rozloz_cil("tisk:221:puvodni:12") == ("cel", ("tisk", 221, "puvodni", 12))
+    assert rozloz_cil("pn:2092:puvodni:7") == ("cel", ("pn", 2092, "puvodni", 7))
+    with pytest.raises(ValueError):
+        rozloz_cil("pn:1:navrh:1")
+    assert recall({1, 2}, [5, 1, 7], 2) == 0.5 and recall({1, 2}, [5, 1, 7], 1) == 0.0
+    assert recall(set(), [1], 10) == 0.0

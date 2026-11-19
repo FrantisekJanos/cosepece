@@ -273,3 +273,15 @@ def test_filtry_zkopirovane(conn):
     assert c[norm] == (221, "tisk", "schvalene", True, "cel")
     assert c[duv] == (221, "tisk", "schvalene", False, "cel")
     assert c[pn] == (221, "pn", "puvodni", True, "cel")
+
+
+def test_omezeni_na_vybrane_zdroje(conn):
+    from hlidac_rag.embed.indexer import indexuj
+
+    a = _projev(conn, 1, KRATKY_OK)
+    b = _projev(conn, 2, KRATKY_OK + " Navíc.")
+    cid = _dokument(conn, [("clanek", "Text článku o dotacích.")])[0]
+    r = indexuj(conn, FalesnyKlient(), omezeni={"projev": [b], "cel": []})
+    assert r["zdroju"] == 1 and r["zbyva_zdroju"] == 0
+    assert _useky(conn, "projev_id", a) == [] and len(_useky(conn, "projev_id", b)) == 1
+    assert _useky(conn, "cel_id", cid) == []

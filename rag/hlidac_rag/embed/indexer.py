@@ -19,7 +19,7 @@ log = logging.getLogger("hlidac_rag.embed")
 DIM = 1024                     # dimenze sloupce rag.usek.embedding
 MIN_ZNAKU_PROJEVU = 200        # kratší projevy (procedurální věty) se neindexují
 CENA_USD_ZA_MILION = {"text-embedding-3-large": 0.13, "text-embedding-3-small": 0.02}
-ZNAKU_NA_TOKEN = 3             # odhad pro strop (čeština v tokenizéru OpenAI ~2,9 znaku na token)
+ZNAKU_NA_TOKEN = 2             # odhad pro strop (čeština s hlavičkami: změřeno 2,2 znaku na token, 19. 11. 2026)
 DAVKA_VSTUPU = 128             # vstupů v jednom požadavku na API
 STRANKA = 500                  # kandidátů načtených najednou
 
@@ -47,8 +47,8 @@ def _ma_tisky(conn) -> bool:
         return bool(cur.fetchone()[0])
 
 
-def _dotaz_kandidatu(zdroj: str, tabulka: str, tisky: bool, jen_pocet: bool) -> str:
-    """SQL kandidátů zdroje; parametry (model[, limit])."""
+def _dotaz_kandidatu(zdroj: str, tabulka: str, tisky: bool, jen_pocet: bool, omezit: bool = False) -> str:
+    """SQL kandidátů zdroje; parametry ([seznam id,] model[, limit]); omezit = jen zdroje se zadanými id."""
     if zdroj == "projev":
         otisk, kde, sloupec = _OTISK_PROJEVU, _PROJEV_OK, "projev_id"
         z = "steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod"
@@ -68,6 +68,7 @@ def _dotaz_kandidatu(zdroj: str, tabulka: str, tisky: bool, jen_pocet: bool) -> 
         raise ValueError(f"neznámý zdroj {zdroj}")
     hotovo = f"""SELECT DISTINCT ON ({sloupec}) {sloupec} AS id, zdroj_hash, model FROM {tabulka}
                  WHERE {sloupec} IS NOT NULL ORDER BY {sloupec}, id"""
+    kde += f" AND {idcol} = ANY(%s)" if omezit else ""
     base = f"""SELECT {vyber if not jen_pocet else idcol}, {otisk} AS otisk FROM {z} WHERE {kde}"""
     if jen_pocet:
         return f"""WITH k AS ({base}), h AS ({hotovo})
@@ -80,19 +81,20 @@ def _dotaz_kandidatu(zdroj: str, tabulka: str, tisky: bool, jen_pocet: bool) -> 
 
 
 def kandidati(conn, zdroj: str, limit: int, model: str = "text-embedding-3-large",
-              tabulka: str = "rag.usek") -> list[dict]:
+              tabulka: str = "rag.usek", jen_id: list[int] | None = None) -> list[dict]:
     """Zdroje k (pře)indexování: projevy (nezrušené, od 200 znaků) a celky dostupných dokumentů bez úseků,
     se změněným otiskem nebo s úseky jiného modelu. Projevy od nejnovějších, celky od nejvyšších tisků."""
-    sql = _dotaz_kandidatu(zdroj, _tabulka(tabulka), _ma_tisky(conn), jen_pocet=False)
+    sql = _dotaz_kandidatu(zdroj, _tabulka(tabulka), _ma_tisky(conn), jen_pocet=False, omezit=jen_id is not None)
     with conn.cursor() as cur:
-        cur.execute(sql, (model, limit))
+        cur.execute(sql, (*([list(jen_id)] if jen_id is not None else []), model, limit))
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def pocet_kandidatu(conn, zdroj: str, model: str, tabulka: str = "rag.usek") -> int:
+def pocet_kandidatu(conn, zdroj: str, model: str, tabulka: str = "rag.usek", jen_id: list[int] | None = None) -> int:
     with conn.cursor() as cur:
-        cur.execute(_dotaz_kandidatu(zdroj, _tabulka(tabulka), _ma_tisky(conn), jen_pocet=True), (model,))
+        cur.execute(_dotaz_kandidatu(zdroj, _tabulka(tabulka), _ma_tisky(conn), jen_pocet=True, omezit=jen_id is not None),
+                    (*([list(jen_id)] if jen_id is not None else []), model))
         return int(cur.fetchone()[0])
 
 
@@ -152,9 +154,10 @@ def _zapis(conn, tabulka: str, zdroj: str, zdroj_id: int, useky: list[dict], mod
 
 
 def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] = ("projev", "cel"),
-            tabulka: str = "rag.usek", dim: int = DIM) -> dict:
+            tabulka: str = "rag.usek", dim: int = DIM, omezeni: dict[str, list[int]] | None = None) -> dict:
     """Doindexuje kandidáty zdrojů do stropu tokenů. Chyba API běh nepřeruší výjimkou: vrátí se v klíči chyba
-    a nezapsané zdroje zůstanou na příští běh."""
+    a nezapsané zdroje zůstanou na příští běh. omezeni = {zdroj: [id]} indexuje jen vybrané zdroje (porovnání
+    modelů na vzorku); úklid se pak nedělá."""
     t = _tabulka(tabulka)
     model = klient.model
     out = {"model": model, "zdroju": 0, "useku": 0, "tokenu": 0, "odhad_usd": 0.0, "zbyva_zdroju": 0,
@@ -162,7 +165,8 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
     if klient.dim != dim:
         out["chyba"] = f"dimenze modelu {klient.dim} neodpovídá sloupci embedding ({dim}), nastavte EMBED_DIM={dim}"
         return out
-    out["smazano"] = uklid(conn, t)
+    omez = omezeni or {}
+    out["smazano"] = 0 if omezeni else uklid(conn, t)
     odhad_celkem = 0          # odhad tokenů zdrojů, které se embedují nebo už embedovaly
     davka: list[tuple[str, int, list[dict]]] = []
 
@@ -183,7 +187,7 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
         for zdroj in zdroje:
             videne: set[int] = set()
             while not out["preruseno_stropem"]:
-                rows = [r for r in kandidati(conn, zdroj, STRANKA, model, t) if r["id"] not in videne]
+                rows = [r for r in kandidati(conn, zdroj, STRANKA, model, t, omez.get(zdroj)) if r["id"] not in videne]
                 conn.commit()
                 if not rows:
                     break
@@ -207,6 +211,6 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
         out["chyba"] = str(e)[:300]
         davka.clear()
     out["odhad_usd"] = round(out["tokenu"] / 1e6 * CENA_USD_ZA_MILION.get(model, 0.13), 6)
-    out["zbyva_zdroju"] = sum(pocet_kandidatu(conn, z, model, t) for z in zdroje)
+    out["zbyva_zdroju"] = sum(pocet_kandidatu(conn, z, model, t, omez.get(z)) for z in zdroje)
     conn.commit()
     return out

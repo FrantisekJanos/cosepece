@@ -92,10 +92,10 @@ final class Bill extends Model
             : $query->orderByDesc('score')->orderByDesc('posledni')->orderByDesc('ct');
     }
 
-    public function scopeActiveFindings(Builder $query, int $minimumScore): Builder
+    public function scopeActiveFindings(Builder $query, int $minimumScore, array $strongAiNumbers = []): Builder
     {
         $since = date('Y-m-d', strtotime('-120 days'));
-        return $query->where('score', '>=', $minimumScore)
+        return $query->where(fn (Builder $eligible) => $eligible->where('score', '>=', $minimumScore)->orWhereIn('ct', $strongAiNumbers))
             ->where(fn (Builder $active) => $active
                 ->whereNotIn('faze', ['Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'])->orWhere('posledni', '>=', $since));
     }

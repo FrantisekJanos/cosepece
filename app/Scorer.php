@@ -23,6 +23,8 @@ final class Scorer
         return [
             'mp_bill' => 15,
 
+            'finding_ai_min' => 8,
+
             'mp_bill_early' => 5,
             'senate_bill' => 5,
             'region_bill' => 5,

@@ -27,9 +27,7 @@ final class OverviewService
         $s = $this->stats();
 
         $findingsShown = max(6, min(60, $findingsShown));
-        $findings = $this->presentation->presentMany(
-            Bill::query()->activeFindings((int)$w['level_major'])->ranked('score')->limit(60)->get(), true,
-        );
+        $findings = $this->topFindings((int)$w['level_major'], 60);
         $alerts = $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', (int)$w['level_watch'])->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
             ->limit(8)->get());
         $suppressed = Alert::query()->where('score', '<', (int)$w['level_watch'])->count();
@@ -44,6 +42,18 @@ final class OverviewService
         $active = 'prehled';
 
         return compact('title', 'active', 'w', 's', 'findingsShown', 'findings', 'alerts', 'suppressed', 'watch', 'authors', 'bills', 'maxAuthor');
+    }
+
+    public function topFindings(int $minimumScore, int $limit): array
+    {
+        $strong = $this->presentation->strongAiFindings();
+        $findings = $this->presentation->presentMany(
+            Bill::query()->activeFindings($minimumScore, array_keys($strong))->ranked('score')->limit($limit)->get(), true,
+        );
+        foreach ($findings as &$finding) {
+            $finding['strong_ai'] = (int)$finding['score'] < $minimumScore ? ($strong[(int)$finding['ct']] ?? null) : null;
+        }
+        return $findings;
     }
 
     private function stats(): array

@@ -38,6 +38,22 @@ final class BillPresentationService
         })->all();
     }
 
+    public function strongAiFindings(): array
+    {
+        $minimum = (int)\Hlidac\Scorer::weights(hlidacConfig())['finding_ai_min'];
+        $verifier = AiReviewer::verifyModel(hlidacConfig());
+        $findings = [];
+        foreach ([BillText::class, AmendmentText::class] as $model) {
+            foreach ($model::query()->where('ai_score', '>=', $minimum)->where('ai_model', $verifier)->get(['ct', 'ai_score', 'ai_json']) as $text) {
+                $ai = $text->ai_json ?: [];
+                if (trim((string)(((array)($ai['citace'] ?? []))[0] ?? '')) !== '') {
+                    $findings[$text->ct] = max($findings[$text->ct] ?? 0, $text->ai_score);
+                }
+            }
+        }
+        return $findings;
+    }
+
     public function headline(int $ct): ?array
     {
 

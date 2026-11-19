@@ -162,6 +162,7 @@ a.plain:hover { text-decoration: underline; }
 /* patička */
 .foot { font-size: 13px; color: var(--muted); padding-bottom: 24px; }
 .foot p { margin: 0 0 6px; }
+.foot-disclaimer { padding: 10px 12px; border-left: 3px solid var(--warn); background: #FBF6EE; color: var(--ink-2); border-radius: 0; }
 
 @media (max-width: 640px) {
   .wrap, .top-in { padding: 16px; }

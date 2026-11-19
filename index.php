@@ -70,7 +70,7 @@ View::header('Přehled', 'prehled');
   <div class="card-head">
     <div>
       <h2>Hlavní nálezy</h2>
-      <p class="muted small head-note">Rozpracované tisky se skóre od <?= (int)$w['finding_min'] ?> bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
+      <p class="muted small head-note">Rozpracované tisky se skóre od <?= (int)$w['finding_min'] ?> bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah. Titulky a shrnutí připravuje AI a může se mýlit; rozhodující je původní text.</p>
     </div>
     <a href="tisky.php?min=<?= (int)$w['finding_min'] ?>">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
   </div>

@@ -178,7 +178,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     <blockquote class="quote"><?= e(trim((string)$q)) ?></blockquote>
   <?php endforeach; ?>
   <p class="muted small">Citace jsou doslovně z textu návrhu<?= $billText['docx_url'] ? ' (<a href="' . e($billText['docx_url']) . '">Word na psp.cz</a>)' : '' ?>.
-    <?= $bai !== null ? 'Rozbor připravil jazykový model; hodnotí formu a postup, ne politický obsah.' : 'Pasáže vybrala automatická pravidla.' ?></p>
+    <?= $bai !== null ? 'Rozbor připravil jazykový model (AI) a může se mýlit; hodnotí formu a postup, ne politický obsah. Rozhodující je původní text.' : 'Pasáže vybrala automatická pravidla.' ?></p>
   <?php if (Revisions::hasHistory($billRev)): ?><p class="small"><a href="<?= e(Revisions::url('tisk', $ct)) ?>">Historie (<?= e(Revisions::versionsLabel($billRev['text'] + $billRev['ai'])) ?>)</a> <span class="muted">– předchozí znění textu a rozbory</span></p><?php endif; ?>
 </section>
 <?php endif; ?>
@@ -210,6 +210,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     </section>
     <section class="card pad">
       <h2>Pozměňovací návrhy</h2>
+      <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
       <?php if (!empty($t['souhrn_pn'])): ?>
         <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o=<?= (int)$obdobi ?>&amp;ct=<?= $ct ?>&amp;ct1=<?= (int)$t['souhrn_pn'] ?>">Souhrn platně podaných pozměňovacích návrhů (tisk <?= $ct ?>/<?= (int)$t['souhrn_pn'] ?>)</a> <span class="muted">rozeslán <?= e(formatDate((string)$t['souhrn_pn_at'] . ':00', true)) ?></span></p>
       <?php endif; ?>

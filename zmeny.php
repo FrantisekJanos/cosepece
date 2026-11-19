@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Upozornění: AI se může mýlit',
+        'Na každé stránce je upozornění, že obsah vzniká automaticky a že rozbory, titulky a hodnocení závažnosti připravuje umělá inteligence, která se může mýlit. Stránka Jak hodnotíme má nový oddíl Upozornění a omezení odpovědnosti: co AI dělá a co může pokazit, že skóre není obvinění, že nejde o právní radu a že rozhodující je znění na psp.cz a v e-Sbírce.',
+        [48], false],
     ['2026-11-19', 'Řazení a filtr hlavních nálezů',
         'Hlavní nálezy na úvodní stránce jdou seřadit nejen podle celkového skóre, ale i podle závažnosti nálezu v rozboru textu (jen ověřené nálezy doložené citací), podle nejnovějšího dění a podle toho, kde se blíží hlasování ve Sněmovně. Filtr „Co hledám“ vybere jeden druh problému: přílepky, rozsáhlé změny v pozměňovacích návrzích, zkrácené lhůty, § 90/2 bez 2. čtení, obcházení připomínek nebo zpětné použití. Volba je v adrese, takže odkaz jde poslat dál. Přílepky, rozsáhlé změny v PN a zpětné použití jsou nově i mezi filtry na stránce Tisky. Skóre se nemění.',
         [46], false],

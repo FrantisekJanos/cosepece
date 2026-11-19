@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Opravy po kontrole kódu',
         'Prošli jsme nově přidané části webu a opravili deset nedostatků. Hledání teď snese i chybějící nebo přebývající písmeno a překlep ve slově v jiném tvaru („rozpcet“, „energticky“). Upozornění na připravovaný zákon se neopakuje, když materiál dostane u vlády novou verzi, a odběr RSS nebo dat podle čísla zákona nově obsahuje i upozornění na připravované změny tohoto zákona. U opakovaných rozborů AI platí pojistky i po výpočtu mediánu, takže rozbor se stropem závažnosti strop nepřekročí. Dokumentace dat popisuje upozornění na připravované zákony.',
-        [0], false],
+        [58], false],
     ['2026-11-19', 'Jak funguje napojení pro AI asistenty',
         'Stránka Pro AI asistenty (MCP) nově vysvětluje, kdo co dělá: odpovědi píše váš asistent, náš server jen vydává data. Popisuje hledání podle slov a nově i podle významu, které najde projevy řečené jinými slovy. Uvádí také, že při hledání podle významu odchází text hledaného dotazu do OpenAI, jak to vypnout a co si o voláních zaznamenáváme (jen nástroj, token a čas, ne text dotazů).',
         [57], false],

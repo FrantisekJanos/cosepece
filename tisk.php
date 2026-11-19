@@ -238,11 +238,16 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
       </ul>
       <?php if (count($pn) > 30): ?></details>
       <script>
-      // odkaz na konkrétní PN (#pn-123, např. z hledání): rozbalit skryté a posunout se na něj
+      // odkaz na konkrétní PN (#pn-123, např. z hledání): rozbalit skryté a posunout se na něj;
+      // i při změně kotvy na téže stránce (výběr z našeptávače stránku znovu nenačte)
       (function () {
-        var el = location.hash.indexOf('#pn-') === 0 ? document.getElementById(location.hash.slice(1)) : null;
-        var box = el && el.closest('details');
-        if (box && !box.open) { box.open = true; el.scrollIntoView(); }
+        function show() {
+          var el = location.hash.indexOf('#pn-') === 0 ? document.getElementById(location.hash.slice(1)) : null;
+          var box = el && el.closest('details');
+          if (box && !box.open) { box.open = true; el.scrollIntoView(); }
+        }
+        show();
+        window.addEventListener('hashchange', show);
       })();
       </script>
       <?php endif; ?>

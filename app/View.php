@@ -230,15 +230,43 @@ final class View
         return !empty($alert['obdobi']) && $current > 0 && (int)$alert['obdobi'] !== $current;
     }
 
+    /** @var array<string, array{pid: string, nazev: string}>|null PID kterékoli verze materiálu => aktuální řádek */
+    private static ?array $upcoming = null;
+
+    /**
+     * Připravované zákony podle PID kterékoli verze materiálu (upozornění může nést PID starší verze).
+     * Načte se jednou na požadavek; výpis upozornění by se jinak ptal databáze u každé položky.
+     */
+    public static function upcomingIndex(): array
+    {
+        if (self::$upcoming === null) {
+            self::$upcoming = [];
+            foreach (db()->all('SELECT pid, pidy, nazev FROM pripravovane') as $u) {
+                $row = ['pid' => (string)$u['pid'], 'nazev' => (string)$u['nazev']];
+                foreach (array_filter(array_merge([(string)$u['pid']], explode(',', (string)$u['pidy']))) as $pid) {
+                    self::$upcoming[$pid] ??= $row;
+                }
+            }
+        }
+        return self::$upcoming;
+    }
+
+    /** Po změně tabulky pripravovane (synchronizace, testy) se tabulka PID načte znovu. */
+    public static function forgetUpcoming(): void
+    {
+        self::$upcoming = null;
+    }
+
     public static function alertUrl(array $alert, bool $absolute = false): string
     {
         // připravovaný zákon (bez tisku): na stránku připravovaných, a když už tam není, do VeKLEP
         if (str_starts_with((string)$alert['kind'], 'prep_')) {
             $pid = (string)substr((string)$alert['alert_key'], strpos((string)$alert['alert_key'], ':') + 1);
-            if (db()->value('SELECT 1 FROM pripravovane WHERE pid = ?', [$pid]) === null) {
+            $current = self::upcomingIndex()[$pid]['pid'] ?? null;
+            if ($current === null) {
                 return GovPrep::url($pid);
             }
-            $path = 'pripravovane.php#prep-' . rawurlencode($pid);
+            $path = 'pripravovane.php#prep-' . rawurlencode($current);
             return $absolute ? siteUrl($path) : $path;
         }
         // upozornění minulého období vede na psp.cz (tisk se stejným číslem je teď jiný návrh)

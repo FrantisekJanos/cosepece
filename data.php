@@ -59,7 +59,7 @@ $endpoints = [
         ['since', 'min_score', 'zakon', 'limit'], ['limit' => '3']],
     'tisk' => ['Detail tisku', 'api.php?tisk={číslo}', 'Jeden tisk: vše jako v seznamu a navíc hlasování ve Sněmovně (i podle klubů), upozornění a stav rozboru textů.',
         [], ['tisk' => (string)$exampleCt]],
-    'upozorneni' => ['Upozornění', 'api.php?upozorneni=1', 'Upozornění na kroky v projednávání (nové pozměňovací návrhy, § 90/2, zkrácené lhůty, schválení, vyhlášení), od nejnovějších. Bez min_score jen od úrovně „Pozor“ (' . (int)$w['level_watch'] . ' bodů).',
+    'upozorneni' => ['Upozornění', 'api.php?upozorneni=1', 'Upozornění na kroky v projednávání (nové pozměňovací návrhy, § 90/2, zkrácené lhůty, schválení, vyhlášení) a na připravované zákony u vlády (krátké připomínky, mimo plán), od nejnovějších. Bez min_score jen od úrovně „Pozor“ (' . (int)$w['level_watch'] . ' bodů).',
         ['since', 'min_score', 'zakon', 'ct', 'limit'], ['upozorneni' => '1', 'limit' => '3']],
     'pripravovane' => ['Připravované zákony', 'api.php?pripravovane=1', 'Návrhy zákonů, které připravuje vláda a Sněmovna je ještě nedostala, od nejpokročilejší fáze. Bez filtrů.',
         [], ['pripravovane' => '1']],
@@ -67,7 +67,7 @@ $endpoints = [
 $filters = [
     'since' => ['YYYY-MM-DD', 'jen tisky změněné / upozornění od tohoto dne (včetně)', 'since=2026-11-01'],
     'min_score' => ['0–100', 'jen se skóre aspoň tolik (alias min)', 'min_score=50'],
-    'zakon' => ['číslo/rok', 'jen tisky, které mění daný zákon (alias law)', 'zakon=159/2006'],
+    'zakon' => ['číslo/rok', 'jen tisky, které mění daný zákon, a upozornění k nim i k připravovaným změnám tohoto zákona (alias law)', 'zakon=159/2006'],
     'ct' => ['číslo', 'jen upozornění k tomuto tisku', 'ct=221'],
     'limit' => ['1–500', 'nejvýš tolik položek (výchozí 100)', 'limit=20'],
 ];
@@ -98,13 +98,13 @@ $fields = [
     'Upozornění' => [
         ['id', 'text', 'jednoznačný klíč upozornění (vhodný k odstranění duplicit)'],
         ['typ', 'text', 'druh upozornění (číselník níže)'],
-        ['ct', 'číslo', 'číslo tisku'],
+        ['ct', 'číslo nebo null', 'číslo tisku; null u upozornění na připravovaný zákon (typ prep_…), který číslo tisku ještě nemá'],
         ['obdobi', 'číslo', 'volební období tisku'],
         ['datum', 'datum a čas', 'kdy událost nastala'],
         ['titulek', 'text', 'nadpis upozornění'],
         ['text', 'text', 'krátký popis'],
-        ['skore', 'číslo', 'skóre tisku + příplatek za druh upozornění'],
-        ['url', 'adresa', 'odkaz na web'],
+        ['skore', 'číslo', 'skóre tisku + příplatek za druh upozornění; u připravovaného zákona jen body podle druhu (' . implode(', ', array_map(fn($k, $v) => $k . ' ' . $v, array_keys(Hlidac\AlertBuilder::UPCOMING_KINDS), Hlidac\AlertBuilder::UPCOMING_KINDS)) . ')'],
+        ['url', 'adresa', 'odkaz na web (detail tisku; u připravovaného zákona stránka připravovaných zákonů nebo VeKLEP)'],
     ],
     'Připravovaný zákon' => [
         ['pid', 'text', 'identifikátor materiálu v eKLEP/VeKLEP'],
@@ -131,6 +131,10 @@ $alertKinds = [
     'surge' => 'nával pozměňovacích návrhů najednou',
     'passed' => 'schváleno Sněmovnou',
     'law' => 'vyhlášeno ve Sbírce zákonů',
+    'prep_velmi' => 'připravovaný zákon: připomínkové řízení kratší než 10 dní',
+    'prep_kratke' => 'připravovaný zákon: připomínkové řízení kratší než 3 týdny',
+    'prep_plan' => 'připravovaný zákon: předloženo mimo plán legislativních prací vlády',
+    'prep_vlada' => 'připravovaný zákon: vláda návrh schválila',
 ];
 $phases = ['Podáno', 'Organizační výbor', 'U vlády', 'Stanovisko vlády', '1. čtení', '2. čtení', '3. čtení', 'Schváleno Sněmovnou',
     'V Senátu', 'Sněmovna po Senátu', 'U prezidenta', 'Sněmovna po vetu', 'Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'];

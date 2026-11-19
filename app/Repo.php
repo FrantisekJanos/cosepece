@@ -233,7 +233,7 @@ final class Repo
                 $prev = (int)$row['ai_prev_score'];
                 $now = (int)$row['ai_score'];
                 $group = $prev >= $verifyMin ? 'high'
-                    : ($prev < $r['sample_below'] && (int)$row['id'] % $r['sample_every'] === AiReviewer::SAMPLE_REMAINDER ? 'sample' : null);
+                    : ($prev < $r['sample_below'] && (int)$row['id'] % $r['sample_every'] === AiReviewer::sampleRemainder($r['sample_every']) ? 'sample' : null);
                 if ($group === null) {
                     continue;
                 }

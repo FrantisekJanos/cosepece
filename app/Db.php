@@ -202,6 +202,8 @@ final class Db
         $this->addColumn('tisky', 'souhrn_pn', 'INTEGER');
         $this->addColumn('tisky', 'souhrn_pn_at', 'VARCHAR(16)');
         $this->addColumn('priprava', 'znovu', 'INTEGER NOT NULL DEFAULT 0');
+        // PID všech verzí připravovaného materiálu (čárkami): upozornění se nesmí opakovat, když přibude nová verze
+        $this->addColumn('pripravovane', 'pidy', $text);
         // opakované běhy rychlého modelu u hraničních hodnocení (#7 bod 7): závažnosti jednotlivých běhů (JSON) a jejich počet
         foreach (['tisk_text', 'pn_text'] as $aiTable) {
             $this->addColumn($aiTable, 'ai_runs', 'VARCHAR(60)');

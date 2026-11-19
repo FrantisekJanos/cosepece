@@ -103,8 +103,9 @@ final class GovPrep
                 'vlada', 'duvod', 'poznamka', 'mimo_plan', 'vyjimka', 'znovu'], $rows);
             $this->db->run('DELETE FROM pripravovane');
             $this->db->insertMany('pripravovane', ['pid', 'nazev', 'resort', 'faze', 'stav', 'zalozeno', 'zmeneno', 'pripominky_od',
-                'pripominky_do', 'dni', 'mist', 'vlada', 'duvod', 'popis', 'mimo_plan', 'vyjimka', 'verzi'], $upcoming);
+                'pripominky_do', 'dni', 'mist', 'vlada', 'duvod', 'popis', 'mimo_plan', 'vyjimka', 'verzi', 'pidy'], $upcoming);
             $this->db->pdo->commit();
+            View::forgetUpcoming();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
@@ -198,6 +199,8 @@ final class GovPrep
                 'mimo_plan' => max(array_map(fn(array $m) => $this->row(0, 'vladni', $m, null)['mimo_plan'], $versions)),
                 'vyjimka' => max(array_map(fn(array $m) => $this->row(0, 'vladni', $m, null)['vyjimka'], $versions)),
                 'verzi' => count($versions),
+                // od nejnovější verze; podle nich se pozná upozornění vydané k dřívější verzi téhož materiálu
+                'pidy' => implode(',', array_values(array_unique(array_map(fn(array $m) => (string)$m['pid'], $versions)))),
             ];
         }
         return $out;

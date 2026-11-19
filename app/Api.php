@@ -117,10 +117,21 @@ final class Api
         }
         $out = [];
         foreach ($rows as $a) {
-            if ((int)$a['score'] < $min
-                || ($f['since'] !== '' && substr((string)$a['event_at'], 0, 10) < $f['since'])
-                || ($laws !== null && (View::isPastPeriod($a) || !isset($laws[(int)$a['ct']])))) {
+            if ((int)$a['score'] < $min || ($f['since'] !== '' && substr((string)$a['event_at'], 0, 10) < $f['since'])) {
                 continue;
+            }
+            if ($laws !== null) {
+                // připravovaný zákon nemá číslo tisku: zákon se pozná z názvu materiálu (titulek upozornění
+                // ho nese zkrácený, aktuální název je v tabulce připravovaných)
+                if (str_starts_with((string)$a['kind'], 'prep_')) {
+                    $pid = (string)substr((string)$a['alert_key'], strpos((string)$a['alert_key'], ':') + 1);
+                    $match = in_array($f['zakon'], Laws::numbersIn($a['title'] . ' ' . (View::upcomingIndex()[$pid]['nazev'] ?? '')), true);
+                } else {
+                    $match = !View::isPastPeriod($a) && isset($laws[(int)$a['ct']]);
+                }
+                if (!$match) {
+                    continue;
+                }
             }
             $out[] = $a;
             if (count($out) >= $f['limit']) {

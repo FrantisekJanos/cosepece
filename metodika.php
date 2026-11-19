@@ -32,9 +32,9 @@ $groups = [
         [$w['pn_other_law'], 'Přílepek: pozměňovací návrh mění jiný zákon, než který se projednává.'],
         [$w['pn_large'], 'Rozsáhlá nová úprava zavedená pozměňovacím návrhem.'],
         [$w['retro_deadline'], 'Text mění lhůtu pro vymáhání nebo kontrolu a výslovně ji použije i na případy z doby před účinností.'],
-        [$w['pn_many_flagged'], 'Aspoň 3 problematické pozměňovací návrhy.'],
+        [$w['pn_many_flagged'], 'Aspoň ' . (int)$w['pn_many_min'] . ' problematické pozměňovací návrhy a zároveň aspoň ' . (int)round(100 * (float)$w['pn_many_share']) . ' % všech pozměňovacích návrhů k tisku (od ' . (int)$w['pn_many_abs'] . ' problematických stačí samotný počet). Problematický je návrh, který splní pravidlo (přílepek, rozsáhlá úprava), nebo ho umělá inteligence ohodnotí aspoň ' . (int)$w['pn_flag_ai_min'] . '/10.'],
         ['0–' . (10 * (int)$w['ai_multiplier']), 'Rozbor textu návrhu zákona umělou inteligencí: závažnost 0–10 × ' . (int)$w['ai_multiplier'] . ' (počítá se od závažnosti 4).'],
-        ['0–' . (10 * (int)$w['ai_multiplier']), 'Rozbor nejzávažnějšího pozměňovacího návrhu umělou inteligencí: závažnost 0–10 × ' . (int)$w['ai_multiplier'] . ' (počítá se od závažnosti 4).'],
+        ['0–' . (10 * (int)$w['ai_multiplier']), 'Rozbor nejzávažnějšího pozměňovacího návrhu umělou inteligencí: závažnost 0–10 × ' . (int)$w['ai_multiplier'] . ' (počítá se od závažnosti 4). Čím víc pozměňovacích návrhů, tím větší šance, že jeden vyjde závažně náhodou: plné body jen tehdy, když podobně závažné (aspoň ' . (int)$w['ai_pn_full_min'] . '/10, nebo jako ten nejhorší) jsou aspoň ' . (int)$w['ai_pn_full_count'] . ' návrhy, nebo aspoň ' . (int)round(100 * (float)$w['ai_pn_full_share']) . ' % všech; ojedinělý nález dostane ' . (int)round(100 * (float)$w['ai_pn_single_factor']) . ' % bodů.'],
     ]],
     ['Kontext', 'cap_context', [
         [$w['topic'], 'Citlivá oblast podle názvu tisku: ' . implode(', ', array_keys((array)$w['topics'])) . '. Jde o redakční výběr oblastí, kde mají procedurální zkratky větší dopad; proto jen malý příplatek, ne hodnocení obsahu.'],
@@ -108,6 +108,7 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
   <?php if ($aiOn): ?>
   <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností <?= $verifyMin ?> a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“. U pozměňovacích návrhů se takový nález do skóre počítá naplno až po tomto ověření, do té doby nejvýš jako <?= $verifyMin - 1 ?>/10. Přílepek se posuzuje proti zákonům, které mění název i text samotného návrhu.</p>
   <?php endif; ?>
+  <p>Když psp.cz text návrhu nebo pozměňovacího návrhu vymění, uloží se nové znění jako další verze a rozbor se udělá znovu. Předchozí znění i dřívější rozbory zůstávají uložené: v detailu tisku vede odkaz „Historie“ na seznam verzí, rozdíl mezi nimi a změny závažnosti rozboru. Do skóre se počítá jen poslední verze. Texty a rozbory z minulého volebního období se uchovávají v archivu, ale ke stejně očíslovaným tiskům nového období se nepoužijí.</p>
 </section>
 
 <section class="card pad" aria-label="Omezení">

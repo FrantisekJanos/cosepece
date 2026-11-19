@@ -137,8 +137,15 @@ final class View
             'ai' => 'sporné pozměňovací návrhy', 'topic' => 'citlivá oblast', 'omnibus' => 'souhrnná novela', 'watched' => 'sledovaný zákon',
         ];
         $labels = [];
-        foreach (array_slice($reasons, 0, $max) as $r) {
+        // důvod s 0 body (např. celý ustřižený stropem skupiny) skóre nezvýšil, do zkratky nepatří
+        foreach ($reasons as $r) {
+            if ((int)($r['points'] ?? 1) <= 0) {
+                continue;
+            }
             $labels[] = $short[$r['key']] ?? (string)$r['key'];
+            if (count($labels) >= $max) {
+                break;
+            }
         }
         return $labels;
     }

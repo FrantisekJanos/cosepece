@@ -77,6 +77,9 @@ return [
     'scoring' => [
         // 'mp_bill' => 15, 'p90_passed' => 25, 'deadline_cut' => 15, 'short_gap' => 15,
         // 'pn_other_law' => 20, 'topic' => 15, 'level_major' => 50, 'level_watch' => 25,
+        // víc problematických PN (#7 bod 6): 'pn_many_min' => 3, 'pn_many_share' => 0.2, 'pn_many_abs' => 10,
+        // 'pn_flag_ai_min' => 6 (od této závažnosti AI je PN problematický),
+        // body AI u PN: 'ai_pn_full_min' => 6, 'ai_pn_full_count' => 2, 'ai_pn_full_share' => 0.25, 'ai_pn_single_factor' => 0.5,
     ],
 
     'notify' => [

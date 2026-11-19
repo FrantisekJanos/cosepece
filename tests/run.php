@@ -503,12 +503,24 @@ db()->run('DELETE FROM pn WHERE id_dokument >= 970000 AND id_dokument < 980000')
 
 // přelom období: tisk 221 nového období je jiný návrh než tisk 221 minulého
 $keysBefore = (int)db()->value('SELECT COUNT(*) FROM alerts');
+// texty a rozbory minulého období se nesmažou, ale přesunou do archivu a historie (#2 bod 2)
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, ai_json, ai_score, ai_model, ai_prompt, ai_at)
+    VALUES (311, 'https://www.psp.cz/sqw/text/orig2.sqw?idd=900', 'Text tisku 311 minulého období.', 31, '{}', ?, ?, 6, 'claude-haiku-5-5', 2, ?)",
+    [date('Y-m-d H:i:s'), json_encode(['titulek' => 'Starý rozbor', 'zavaznost' => 6]), date('Y-m-d H:i:s')]);
+$textsBefore = [(int)db()->value('SELECT COUNT(*) FROM tisk_text'), (int)db()->value('SELECT COUNT(*) FROM pn_text')];
+$aiBefore = (int)db()->value('SELECT COUNT(*) FROM tisk_text WHERE ai_at IS NOT NULL') + (int)db()->value('SELECT COUNT(*) FROM pn_text WHERE ai_at IS NOT NULL');
 db()->run('UPDATE alerts SET obdobi = 9');
 db()->setMeta('obdobi_id', '999');
 db()->setMeta('obdobi_cislo', '9');
 (new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-switch', $tmp . '/src')))->run();
 check('stará upozornění dostala klíč s obdobím', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key LIKE '9/%'"), $keysBefore);
-check('texty minulého období smazané', [(int)db()->value('SELECT COUNT(*) FROM tisk_text'), (int)db()->value('SELECT COUNT(*) FROM pn_text')], [0, 0]);
+check('texty minulého období nejsou v pracovních tabulkách', [(int)db()->value('SELECT COUNT(*) FROM tisk_text'), (int)db()->value('SELECT COUNT(*) FROM pn_text')], [0, 0]);
+check('texty minulého období jsou celé v archivu', [(int)db()->value('SELECT COUNT(*) FROM tisk_text_archiv WHERE obdobi = 9'), (int)db()->value('SELECT COUNT(*) FROM pn_text_archiv WHERE obdobi = 9')], $textsBefore);
+check('archiv drží i rozbor AI', db()->value('SELECT ai_score FROM tisk_text_archiv WHERE obdobi = 9 AND ct = 311') !== null, true);
+check('historie má texty minulého období', (int)db()->value("SELECT COUNT(*) FROM text_revize WHERE obdobi = 9 AND druh = 'tisk' AND ref_id = 311"), 1);
+check('historie má všechny rozbory minulého období', $aiBefore > 0 && (int)db()->value('SELECT COUNT(*) FROM ai_revize WHERE obdobi = 9') >= $aiBefore, true);
+check('nové období starou historii nepoužije', [Hlidac\Revisions::counts(db(), 'tisk')[311] ?? null, (int)db()->value('SELECT COUNT(*) FROM text_revize WHERE obdobi = 10')], [null, 0]);
 check('nové období začne bootstrapem', db()->getMeta('bootstrapped'), null);
 $created = (new Hlidac\AlertBuilder(db(), config()))->run();
 check('nová upozornění vzniknou i se stejným číslem tisku', $created > 0 && db()->value("SELECT kind FROM alerts WHERE alert_key = 'newbill:221'") !== null, true);
@@ -599,6 +611,76 @@ $rescore();
 $w = Hlidac\Scorer::weights(config());
 check('výchozí váhy: citlivá oblast 5, podíl pozdních PN 50 %', [$w['topic'], $w['late_pn_share'], $w['mp_bill_early']], [5, 0.5, 5]);
 
+echo "Metodika skóre (#7 bod 6): víc PN = víc šancí na závažný nález\n";
+// testovací tisk bez procedurálních signálů: vládní, bez § 90/2, bez zkrácené lhůty, bez citlivé oblasti;
+// $ai = [pořadí PN => závažnost AI (ověřeno silnějším modelem)], $extra = [pořadí PN => sloupce pn_text]
+$verifiedModel = Hlidac\AiReviewer::verifyModel(config());
+$fixtureBill = function (int $ct, int $pnCount, array $ai, array $extra = []) use ($verifiedModel): void {
+    $t = array_filter(db()->one('SELECT * FROM tisky WHERE ct = 90'), 'is_string', ARRAY_FILTER_USE_KEY);
+    $t = array_replace($t, array_intersect_key(['id_tisk' => 980000 + $ct, 'ct' => $ct, 'typ_navrhu' => 'vládní', 'p90' => 0, 'p90ok' => 0, 'zl' => 0,
+        'rj' => 0, 'lhuta' => null, 'faze' => '2. čtení', 'nazev' => 'Testovací návrh', 'uplny_nazev' => 'Testovací návrh', 'zakony' => ''], $t));
+    db()->insertMany('tisky', array_keys($t), [$t]);
+    for ($i = 1; $i <= $pnCount; $i++) {
+        $id = $ct * 1000 + $i;
+        db()->run('INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas) VALUES (?, ?, ?, 1, ?, ?)',
+            [$id, $id, $ct, 'Test Poslanec', '2026-10-0' . (1 + $i % 9) . ' 10:00:00']);
+        if (isset($ai[$i]) || isset($extra[$i])) {
+            $row = array_replace(['id_dokument' => $id, 'ct' => $ct, 'cislo' => $id, 'text' => 'x', 'chars' => 1, 'laws' => '', 'signals' => '{}',
+                'rule_score' => 0, 'ai_json' => isset($ai[$i]) ? json_encode(['citace' => ['x']]) : null, 'ai_score' => $ai[$i] ?? null,
+                'ai_model' => isset($ai[$i]) ? $verifiedModel : null, 'ai_at' => isset($ai[$i]) ? date('Y-m-d H:i:s') : null,
+                'fetched_at' => date('Y-m-d H:i:s')], $extra[$i] ?? []);
+            db()->insertMany('pn_text', array_keys($row), [$row]);
+        }
+    }
+};
+$dropBill = function (int $ct): void {
+    db()->run('DELETE FROM pn_text WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM pn WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM tisk_text WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM tisky WHERE ct = ?', [$ct]);
+};
+check('výchozí prahy bodu 6 v config scoring',
+    [$w['pn_many_min'], $w['pn_many_share'], $w['pn_many_abs'], $w['pn_flag_ai_min'], $w['ai_pn_full_min'], $w['ai_pn_full_count'], $w['ai_pn_full_share'], $w['ai_pn_single_factor']],
+    [3, 0.2, 10, 6, 6, 2, 0.25, 0.5]);
+
+// tisk D: 4 PN, 3 s ověřenou AI 6 → pn_many i plné body AI
+$fixtureBill(9801, 4, [1 => 6, 2 => 6, 3 => 6]);
+// tisk E: 100 PN, 3 s AI 6 → 3 % PN nestačí na pn_many; 3 podobně závažné PN ale plné body AI dají
+$fixtureBill(9802, 100, [1 => 6, 2 => 6, 3 => 6]);
+// tisk E2: 100 PN, 10 s AI 6 → absolutní počet pn_many_abs stačí i bez podílu
+$fixtureBill(9803, 100, array_fill(1, 10, 6));
+// jediný PN s AI 6 mezi 20 → polovina bodů
+$fixtureBill(9804, 20, [1 => 6]);
+// jediný PN s AI 6 mezi 3 → tvoří třetinu PN, plné body
+$fixtureBill(9805, 3, [1 => 6]);
+// jediný PN s neověřenou AI 9 (počítá se jako 5/10) mezi 20 → 15 b., polovina = 8
+$fixtureBill(9806, 20, [1 => 9], [1 => ['ai_model' => 'claude-haiku-5-5']]);
+// nejhorší 9/10 a druhý 6/10 mezi 20 → oba dosáhnou prahu 6, plné body za 9
+$fixtureBill(9807, 20, [1 => 9, 2 => 6]);
+// dva PN 5/10 mezi 20 → práh min(6, 5) = 5, dva PN, plné body
+$fixtureBill(9808, 20, [1 => 5, 2 => 5]);
+$rescore();
+$d = $reasonsOf(9801);
+check('tisk D (3 z 4 PN s AI 6): pn_many', [isset($d['pn_many']), str_contains($d['pn_many']['label'] ?? '', '3 z 4')], [true, true]);
+check('tisk D: plné body AI 18 a důvod „3 z 4 PN“', [$d['ai']['points'] ?? null, str_contains($d['ai']['label'] ?? '', '3 z 4 PN se závažností ≥ 6')], [18, true]);
+$e = $reasonsOf(9802);
+check('tisk E (3 ze 100 PN): bez pn_many', isset($e['pn_many']), false);
+check('tisk E: tři PN s AI 6 = plné body AI', $e['ai']['points'] ?? null, 18);
+check('tisk E2 (10 ze 100 PN): pn_many podle absolutního počtu', isset($reasonsOf(9803)['pn_many']), true);
+$single = $reasonsOf(9804)['ai'] ?? [];
+check('jediný PN s AI 6 mezi 20: polovina bodů', [$single['points'] ?? null, str_contains($single['label'] ?? '', '1 z 20 PN') && str_contains($single['label'] ?? '', '50 % bodů')], [9, true]);
+check('jediný PN s AI 6 mezi 3: plné body', $reasonsOf(9805)['ai']['points'] ?? null, 18);
+check('neověřený nález 9/10 mezi 20 PN: 5/10 a polovina', $reasonsOf(9806)['ai']['points'] ?? null, 8);
+check('nejhorší 9/10 a další 6/10 mezi 20 PN: plné body', $reasonsOf(9807)['ai']['points'] ?? null, 27);
+check('dva PN 5/10 mezi 20: plné body', $reasonsOf(9808)['ai']['points'] ?? null, 15);
+check('zkratka důvodů vynechá důvod s 0 body',
+    Hlidac\View::reasonShortLabels([['key' => 'retro_deadline', 'points' => 0, 'label' => 'x'], ['key' => 'ai', 'points' => 18, 'label' => 'y'], ['key' => 'topic', 'points' => 5, 'label' => 'z']], 2),
+    ['sporné pozměňovací návrhy', 'citlivá oblast']);
+foreach (range(9801, 9808) as $fixtureCt) {
+    $dropBill($fixtureCt);
+}
+$rescore();
+
 echo "Hlasování k tiskům (#5, #24)\n";
 $votesSource = new Hlidac\Source('', $tmp . '/cache-votes', $tmp . '/src');
 (new Hlidac\Importer(db(), $votesSource))->run();
@@ -648,8 +730,125 @@ $rssItems = substr_count($rssXml, '<item>');
 check('RSS filtrované podle zákona má jen položky tisku 311', $rssItems > 0 && !str_contains($rssXml, 'tisk.php?ct=78<') && !str_contains($rssXml, 'tisk.php?ct=221<'), true);
 $_GET = [];
 
+
+echo "Historie verzí textů a rozborů (#2 bod 2)\n";
+// počty verzí přibylé v této části (dřívější části testu už rozbory tisku 221 ukládaly)
+$revTotal = fn(string $table, string $kind, int $id): int => (int)db()->value("SELECT COUNT(*) FROM $table WHERE druh = ? AND obdobi = 10 AND ref_id = ?", [$kind, $id]);
+$revBase = [];
+$revCount = function (string $table, string $kind, int $id) use ($revTotal, &$revBase): int {
+    $revBase[$table . $kind . $id] ??= $revTotal($table, $kind, $id);
+    return $revTotal($table, $kind, $id) - $revBase[$table . $kind . $id];
+};
+foreach ([['text_revize', 'tisk', 221], ['ai_revize', 'tisk', 221], ['text_revize', 'tisk', 311], ['ai_revize', 'tisk', 311]] as [$tb, $kd, $rid]) {
+    $revCount($tb, $kd, $rid);
+}
+$alertsQueued = fn(): int => (int)db()->value('SELECT COUNT(*) FROM alerts WHERE posted = 0');
+$queuedBefore = $alertsQueued();
+$revBackup = db()->one('SELECT * FROM tisk_text WHERE ct = 221');
+db()->run('DELETE FROM tisk_text WHERE ct = 221');
+$textV1 = "ČÁST PRVNÍ\nV zákoně č. 159/2006 Sb. se § 1 mění.\nŘízení o odvodu lze zahájit nejpozději do 10 let od porušení rozpočtové kázně.\nČÁST DRUHÁ\nÚčinnost <b>1. 1. 2027</b>";
+$textV2 = "ČÁST PRVNÍ\nV zákoně č. 159/2006 Sb. se § 1 mění.\nŘízení o odvodu lze zahájit nejpozději do 4 let od porušení rozpočtové kázně.\nUstanovení se použije i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona.\nČÁST DRUHÁ\nÚčinnost <b>1. 1. 2027</b>";
+$tiskSaver = new Hlidac\TiskText(db(), config());
+$tiskSaver->save(221, 'https://www.psp.cz/sqw/text/orig2.sqw?idd=1001', $textV1, null);
+check('první stažení = 1 verze textu', $revCount('text_revize', 'tisk', 221), 1);
+$tiskSaver->save(221, 'https://www.psp.cz/sqw/text/orig2.sqw?idd=1002', $textV2, null);
+check('změněný text = 2 verze', $revCount('text_revize', 'tisk', 221), 2);
+$tiskSaver->save(221, 'https://www.psp.cz/sqw/text/orig2.sqw?idd=1002', $textV2, null);
+check('stejný text znovu = pořád 2 verze', $revCount('text_revize', 'tisk', 221), 2);
+check('verze drží odkaz na dokument (idd)', db()->value("SELECT docx_url FROM text_revize WHERE druh = 'tisk' AND obdobi = 10 AND ref_id = 221 AND verze = 2"), 'https://www.psp.cz/sqw/text/orig2.sqw?idd=1002');
+
+$revReviewer = new Hlidac\AiReviewer(db(), config());
+$haiku = Hlidac\AiReviewer::model(config());
+$sonnet = Hlidac\AiReviewer::verifyModel(config());
+$quote221 = 'Řízení o odvodu lze zahájit nejpozději do 4 let od porušení rozpočtové kázně.';
+$result1 = ['titulek' => 'Lhůta pro vymáhání se zkracuje na 4 roky', 'zavaznost' => 7, 'zpetnost_smer' => 'oslabuje_vymahani_nebo_kontrolu', 'citace' => [$quote221]];
+$revReviewer->saveResult('tisk', 221, $result1, $haiku);
+check('rozbor = 1 verze rozboru', $revCount('ai_revize', 'tisk', 221), 1);
+$revReviewer->saveResult('tisk', 221, $result1, $haiku);
+check('stejný rozbor znovu = pořád 1', $revCount('ai_revize', 'tisk', 221), 1);
+$revReviewer->saveResult('tisk', 221, ['titulek' => 'Lhůta pro vymáhání dotací se zkracuje na 4 roky – i zpětně', 'zavaznost' => 8] + $result1, $sonnet);
+check('2. kolo = 2 verze rozboru', $revCount('ai_revize', 'tisk', 221), 2);
+$aiRevs = array_slice(Hlidac\Revisions::aiVersions(db(), 'tisk', 221, 10), -2);
+check('verze rozboru: model, závažnost, prompt', [$aiRevs[0]['ai_model'], (int)$aiRevs[0]['ai_score'], $aiRevs[1]['ai_model'], (int)$aiRevs[1]['ai_score'], (int)$aiRevs[1]['ai_prompt']],
+    [$haiku, 7, $sonnet, 8, Hlidac\AiReviewer::PROMPT_VERSION]);
+check('rozbor ví, ke které verzi textu patří', $aiRevs[1]['text_hash'], sha1((string)db()->value('SELECT text FROM tisk_text WHERE ct = 221')));
+$revReviewer->saveResult('tisk', 221, $result1, $haiku);
+check('opožděné 1. kolo po ověření historii nemění', $revCount('ai_revize', 'tisk', 221), 2);
+$tiskSaver->save(221, 'https://www.psp.cz/sqw/text/orig2.sqw?idd=1003', $textV2 . "\nNový odstavec.", null);
+check('nové znění: 3 verze textu, rozbory zůstanou v historii', [$revCount('text_revize', 'tisk', 221), $revCount('ai_revize', 'tisk', 221), db()->value('SELECT ai_at FROM tisk_text WHERE ct = 221')], [3, 2, null]);
+
+// data z doby před zavedením historie: před přepsáním se zapíšou (i uschované 1. kolo)
+$revPn = (int)db()->value('SELECT id_dokument FROM pn WHERE ct = 221 ORDER BY id_dokument LIMIT 1');
+db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [$revPn]);
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, docx_url, text, chars, laws, signals, rule_score, ai_json, ai_score, ai_model, ai_prompt, ai_at, ai_prev_json, ai_prev_score, ai_prev_model, fetched_at)
+    VALUES (?, 221, 1, NULL, 'Starý text PN.', 14, '', '{}', 0, ?, 6, ?, 2, ?, ?, 8, ?, ?)",
+    [$revPn, json_encode(['titulek' => 'Ověřeno', 'zavaznost' => 6]), $sonnet, date('Y-m-d H:i:s'), json_encode(['titulek' => 'První kolo', 'zavaznost' => 8]), $haiku, date('Y-m-d H:i:s')]);
+(new Hlidac\PnText(db(), config()))->save(['id_dokument' => $revPn, 'ct' => 221, 'cislo' => 1], null, 'Nový text PN.', ['chars' => 13, 'laws' => [], 'signals' => [], 'score' => 0], null);
+check('PN: starý i nový text v historii', $revTotal('text_revize', 'pn', $revPn), 2);
+check('PN: 1. i 2. kolo starého rozboru v historii', array_map(fn($r) => (int)$r['ai_score'], Hlidac\Revisions::aiVersions(db(), 'pn', $revPn, 10)), [8, 6]);
+
+// jednorázové doplnění historie: idempotentní, bez nových upozornění
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, ai_json, ai_score, ai_model, ai_prompt, ai_at) VALUES (311, NULL, 'Text tisku 311.', 15, '{}', ?, ?, 3, ?, 2, ?)",
+    [date('Y-m-d H:i:s'), json_encode(['titulek' => 'Rozbor 311', 'zavaznost' => 3]), $haiku, date('Y-m-d H:i:s')]);
+db()->setMeta('revize_backfill', '');
+$historyTotal = fn(): int => (int)db()->value('SELECT COUNT(*) FROM text_revize') + (int)db()->value('SELECT COUNT(*) FROM ai_revize');
+$filled = Hlidac\Revisions::backfill(db());
+check('doplnění historie zapíše chybějící text i rozbor', [$filled >= 2, $revCount('text_revize', 'tisk', 311), $revCount('ai_revize', 'tisk', 311)], [true, 1, 1]);
+$totalAfter = $historyTotal();
+check('druhé doplnění nic nepřidá', [Hlidac\Revisions::backfill(db()), $historyTotal()], [0, $totalAfter]);
+db()->setMeta('revize_backfill', '');
+check('ani po smazání značky nic nepřidá', [Hlidac\Revisions::backfill(db()), $historyTotal()], [0, $totalAfter]);
+check('historie nevyrobí upozornění k odeslání', $alertsQueued(), $queuedBefore);
+check('pracovní data se doplněním nezměnila', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 311'), 3);
+
+// rozdíl textů
+check('rozdíl po řádcích', Hlidac\Diff::ops(['a', 'b', 'c'], ['a', 'x', 'c']), [['=', 'a'], ['-', 'b'], ['+', 'x'], ['=', 'c']]);
+check('rozdíl: vložení i smazání', Hlidac\Diff::ops(['a', 'b'], ['b', 'c']), [['-', 'a'], ['=', 'b'], ['+', 'c']]);
+$d = Hlidac\Diff::render($textV1, $textV2);
+check('rozdíl verzí: změněný a přidaný odstavec', [$d['added'], $d['removed']], [2, 1]);
+$dHtml = implode("\n", array_column($d['blocks'], 'html'));
+check('rozdíl po slovech', str_contains($dHtml, '<del>10</del>') && str_contains($dHtml, '<ins>4</ins>'), true);
+$escHtml = implode('', array_column(Hlidac\Diff::render("x\n<b>a</b>", "x\n<b>c</b>")['blocks'], 'html'));
+check('rozdíl je escapovaný', str_contains($escHtml, '&lt;b&gt;') && !str_contains($escHtml, '<b>'), true);
+$long = array_map(fn($i) => 'Odstavec číslo ' . $i . ' s nějakým textem.', range(1, 4000));
+$long2 = $long;
+foreach ([5, 900, 1800, 2500, 3999] as $i) {
+    $long2[$i] = 'Změněný odstavec ' . $i . '.';
+}
+$started = microtime(true);
+$dl = Hlidac\Diff::render(implode("\n", $long), implode("\n", $long2));
+check('dlouhý text: rozdíl rychle a přesně', [$dl['added'], $dl['removed'], microtime(true) - $started < 5], [5, 5, true]);
+$dx = Hlidac\Diff::ops(range(1, 3000), array_reverse(range(1, 3000)), 50);
+check('příliš mnoho změn: blok místo přesného rozdílu', count(array_filter($dx, fn($o) => $o[0] === '+')), 3000);
+
+$_GET = ['ct' => '221'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$revHtml = (string)ob_get_clean();
+check('detail tisku odkazuje na historii textu', str_contains($revHtml, 'revize.php?druh=tisk&amp;id=221') && str_contains($revHtml, 'Historie (' . Hlidac\Revisions::versionsLabel(3 + $revTotal('ai_revize', 'tisk', 221)) . ')'), true);
+check('detail tisku odkazuje na historii PN', str_contains($revHtml, 'revize.php?druh=pn&amp;id=' . $revPn), true);
+$_GET = ['druh' => 'tisk', 'id' => '221', 'a' => '1', 'b' => '2'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/revize.php');
+$revPage = (string)ob_get_clean();
+check('stránka historie: verze, rozdíl a rozbory', [str_contains($revPage, 'Verze textu'), str_contains($revPage, '<del>10</del>'), str_contains($revPage, 'idd 1002'),
+    str_contains($revPage, 'předtím 7/10'), str_contains($revPage, 'nový titulek')], [true, true, true, true, true]);
+check('stránka historie escapuje text', str_contains($revPage, '&lt;b&gt;1. 1. 2027&lt;/b&gt;') && !str_contains($revPage, '<b>1. 1. 2027</b>'), true);
+// úklid: tisk 221 zpět do stavu před testem historie (historie zůstává)
+db()->run('DELETE FROM tisk_text WHERE ct = 221');
+if ($revBackup !== null) {
+    db()->insertMany('tisk_text', array_keys(array_filter($revBackup, 'is_string', ARRAY_FILTER_USE_KEY)), [$revBackup]);
+}
+db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [$revPn]);
+$rescore();
+
 echo "Stránky\n";
-foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {

@@ -90,13 +90,23 @@ kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cac
 `assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
 
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
-`upozorneni.php`, `rss.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
+`upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 
 Nové volební období (`Importer::switchPeriod`): stará upozornění dostanou klíč `9/…` a odkaz na psp.cz (`alerts.obdobi`),
-texty a rozbory se smažou a nové období začne bootstrapem (nic se neposílá). Nával PN = ≥ `surge_threshold` PN k tisku
+texty a rozbory se nemažou: celé řádky se zkopírují do `tisk_text_archiv` / `pn_text_archiv` (sloupec `obdobi`) a z pracovních
+tabulek zmizí, takže detail tisku, skóre a fronty pracují jen s aktuálním obdobím. Nové období začne bootstrapem (nic se neposílá).
+
+Historie verzí (`app/Revisions.php`, #2 bod 2): `text_revize` (každé nové znění textu tisku nebo PN: stažení, obnova při
+změně idd) a `ai_revize` (každý uložený rozbor AI: 1. i 2. kolo, `--resanitize`; model, verze promptu, závažnost, ai_json,
+otisk textu). Záznam přibude jen při skutečné změně (sha1), klíč `(druh, obdobi, ref_id, verze)`, nic se nemaže. Stav, který
+v historii ještě není, se zapíše před přepsáním; jednorázové doplnění dosavadních dat `Revisions::backfill` na začátku
+`Sync::run` (meta `revize_backfill`, opakování nic nepřidá). Web: odkaz „Historie (N verzí)“ v detailu tisku (u textu návrhu
+i u PN, když je verzí textu nebo rozboru víc než jedna) → `revize.php?druh=tisk|pn&id=…` (seznam verzí, rozdíl dvou verzí
+textu po odstavcích a slovech přes `app/Diff.php`, změny závažnosti a titulku rozboru). Skóre historie neovlivňuje. Nával PN = ≥ `surge_threshold` PN k tisku
 za kalendářní den podle času podání, ne za běh synchronizace.
 
-Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
+Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`,
+`text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období).
 
 ## Zdroj dat (psp.cz open data)
 
@@ -130,10 +140,10 @@ Výchozí váhy v `Scorer::defaults()`, přepis přes `config.php → scoring`. 
 | ≥ 3 PN a ≥ 50 % všech PN tisku v den konce podrobné rozpravy | 10 |
 | Nával PN (≥ surge_threshold PN k tisku za kalendářní den) | 5 |
 | PN mění jiný zákon než návrh – podle názvu i textu návrhu (přílepek; nepočítá se, když AI potvrdí souvislost) / rozsáhlá nová úprava v PN | 20 / 10 |
-| ≥ 3 problematické PN | 5 |
-| Text návrhu nebo PN mění lhůtu vymáhání a použije ji i zpětně (retro + deadline) | 15 |
+| ≥ `pn_many_min` (3) problematické PN (pravidlo, nebo AI ≥ `pn_flag_ai_min` 6) a zároveň ≥ `pn_many_share` (20 %) všech PN tisku; od `pn_many_abs` (10) stačí počet | 5 |
+| Text návrhu nebo PN mění lhůtu vymáhání a použije ji i zpětně (retro + deadline); nepočítá se, když nález potvrdil rozbor AI téhož textu (≥ 4 se zpětnou účinností nebo zkrácením lhůt) | 15 |
 | AI závažnost textu návrhu (0–10) × 3 | 0–30 |
-| AI závažnost PN (0–10) × 3; nález ≥ `ai.verify_min` neověřený Sonnetem nejvýš 5/10 | 0–30 |
+| AI závažnost nejhoršího PN (0–10) × 3; nález ≥ `ai.verify_min` neověřený Sonnetem nejvýš 5/10; plné body jen když ≥ `ai_pn_full_count` (2) PN nebo ≥ `ai_pn_full_share` (25 %) PN má závažnost ≥ min(`ai_pn_full_min` 6, nejhorší), jinak × `ai_pn_single_factor` (0,5) | 0–30 |
 | Citlivá oblast (redakční výběr: střet zájmů, dotace/SZIF, veřejné zakázky, kontrolní instituce, policie a služby, volby, média…; samotný trestní zákoník ne) | 5 |
 | Souhrnná novela / sledovaný zákon | 3 / 10 |
 

@@ -136,6 +136,11 @@
       </ul>
     </section>
 
+    <section class="card pad" id="mcp">
+      <h2>Pro AI asistenty (MCP)</h2>
+      <p>Pro Claude a další AI asistenty je k dispozici MCP server s 21 nástroji nad návrhy zákonů, jejich texty, pozměňovacími návrhy, rozpravami ve Sněmovně a hlasováním. Návod k připojení a přehled nástrojů je na stránce <a href="{{ route('mcp-info', [], false) }}">Pro AI asistenty (MCP)</a>.</p>
+    </section>
+
     <section class="card pad" id="rss">
       <h2>RSS</h2>
       <p><a href="/rss"><code><?= e(siteUrl('/rss')) ?></code></a> – upozornění od úrovně „Pozor“, nejnovější nahoře, nejvýš 50 (parametrem <code>limit</code> až 100).</p>

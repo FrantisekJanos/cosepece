@@ -142,7 +142,8 @@ def pn_k_tisku(ct: int, id_osoba: int | None = None, limit: int = 100, offset: i
 
 @server.tool(annotations=READ_ONLY)
 def get_pn(cislo: int) -> dict:
-    """Detail pozměňovacího návrhu podle čísla (např. 2329): autor, tisk, AI rozbor (odvozený text), příznaky.
+    """Detail pozměňovacího návrhu podle čísla (např. 2329): autor, tisk, AI rozbor (odvozený text), příznaky,
+    projevy (klíče a řečníci projevů, které PN zmiňují; nejvýš 20, celkem v projevy_celkem; celý text get_projev).
     Text PN čtěte po celcích: osnova_textu(pn=cislo) → get_cel(pn=cislo, …); osnova_dostupna říká, zda už je."""
     return _call("get_pn", tools.get_pn, cislo)
 
@@ -186,11 +187,14 @@ def hledej_v_textech(dotaz: str, ct: int | None = None, pn: int | None = None, d
 @server.tool(annotations=READ_ONLY)
 def projevy_k_tisku(ct: int, id_osoba: int | None = None, klub: str | None = None, od: str | None = None,
                     do: str | None = None, min_znaku: int = 200, vcetne_predsedajicich: bool = False,
-                    limit: int = 50, offset: int = 0) -> dict:
-    """Projevy ve stenoprotokolech k tisku, chronologicky: řečník, klub, datum, bod pořadu, úryvek, odkaz na psp.cz.
-    od/do ve tvaru RRRR-MM-DD. Celý text přes get_projev(klic). Stránkování: celkem, dalsi_offset."""
+                    limit: int = 50, offset: int = 0, druh: list[str] | None = None) -> dict:
+    """Rejstřík projevů k tisku s filtry (osoba, klub, období, druh), chronologicky: řečník, klub, druh, datum,
+    bod pořadu, úryvek, odkaz na psp.cz; slouží k vyhledání. Celou rozpravu v pořadí (kdo na koho reagoval, plné
+    texty, souhrn) čte nástroj rozprava. Sloučená rozprava (tisky 76 a 77) vrátí stejné projevy u obou tisků.
+    od/do ve tvaru RRRR-MM-DD. druh (seznam): recnik, fakticka, prednostni, zpravodaj, predkladatel, ministr,
+    proceduralni. Celý text přes get_projev(klic). Stránkování: celkem, dalsi_offset."""
     return _call("projevy_k_tisku", tools.projevy_k_tisku, ct, id_osoba, klub, od, do, min_znaku,
-                 vcetne_predsedajicich, limit, offset)
+                 vcetne_predsedajicich, limit, offset, druh)
 
 
 @server.tool(annotations=READ_ONLY)

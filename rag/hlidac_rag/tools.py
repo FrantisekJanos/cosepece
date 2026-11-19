@@ -12,6 +12,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from .psp.rozprava_pravidla import DRUHY
 from .texty.ingest import JEN_PDF
 
 OBDOBI = 10
@@ -159,17 +160,37 @@ def _norm_sb(sb: str) -> str:
 
 # ---------------------------------------------------------------- tisky
 
+# projev patří k tisku přes steno.projev_tisk (bod z rec, konec bodu, nadpis; sloučená rozprava 76 a 77 patří
+# k oběma, i když vlastní ct projevu je jen 76), parametr ct; i filtr ct v nástrojích nad projevy
+_PATRI_K_TISKU = "p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)"
+# nezrušené projevy k tisku, parametr ct
+_PROJEVY_TISKU = f"""SELECT p.schuze, p.id_bod, p.datum, p.id_osoba, p.predsedajici, p.znaku FROM steno.projev p
+                     WHERE p.zruseno IS NULL AND {_PATRI_K_TISKU}"""
+# projevu = stejné podmínky jako výchozí projevy_k_tisku (bez předsedajících, od 200 znaků)
+_POCITANY = "NOT predsedajici AND znaku >= 200"
+
+
 def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
     vcetne = vcetne or ["rozbor", "zakony"]
     t = _one(conn, """SELECT ct, druh, typ_navrhu, navrhovatel, nazev, uplny_nazev, predlozeno, faze, posledni,
                              p90, p90ok, zl, pn_count, pn_last, zakony, sbirka, score, reasons
                       FROM tisky WHERE ct = %s""", (ct,))
-    # body pořadu včetně opakovaných (jeden tisk se projednává ve více schůzích): schůze, datum a počet projevů u každého
-    bod = _rows(conn, """SELECT b.schuze, b.cislo, b.nazev, b.konec,
-                                (SELECT min(p.datum) FROM steno.projev p WHERE p.id_bod = b.id_bod AND p.zruseno IS NULL) AS datum,
-                                (SELECT count(*) FROM steno.projev p WHERE p.id_bod = b.id_bod AND p.zruseno IS NULL
-                                    AND NOT p.predsedajici AND p.znaku >= 200) AS projevu
-                         FROM steno.bod b WHERE b.ct = %s ORDER BY b.schuze, b.cislo""", (ct,))
+    # jedna položka na schůzi, kde byl tisk na pořadu (bod s ct) nebo k němu jsou projevy (i bez bodu, i sloučená
+    # rozprava): čísla bodů s ct nebo s projevem tisku, název a konec prvního z nich, první den a počty projevů
+    bod = _rows(conn, f"""WITH pt AS ({_PROJEVY_TISKU}),
+                               bb AS (SELECT b.schuze, b.cislo, b.nazev, b.konec FROM steno.bod b
+                                      WHERE b.ct = %s OR b.id_bod IN (SELECT id_bod FROM pt))
+                          SELECT s.schuze, coalesce(b.body, '{{}}') AS body, b.nazev, b.konec, p.datum,
+                                 coalesce(p.projevu, 0) AS projevu, coalesce(p.projevu_vse, 0) AS projevu_vse
+                          FROM (SELECT schuze FROM bb UNION SELECT schuze FROM pt) s
+                          LEFT JOIN (SELECT schuze, array_agg(cislo ORDER BY cislo) AS body,
+                                            (array_agg(nazev ORDER BY cislo))[1] AS nazev,
+                                            (array_agg(konec ORDER BY cislo))[1] AS konec
+                                     FROM bb GROUP BY schuze) b ON b.schuze = s.schuze
+                          LEFT JOIN (SELECT schuze, min(datum) AS datum,
+                                            count(*) FILTER (WHERE {_POCITANY}) AS projevu, count(*) AS projevu_vse
+                                     FROM pt GROUP BY schuze) p ON p.schuze = s.schuze
+                          ORDER BY s.schuze""", (ct, ct))
     if not t and not bod:
         raise ValueError(f"Tisk {ct} v {OBDOBI}. období nesleduji. Zkuste seznam_tisku(q=…).")
     out: dict = {"ct": ct, **_tisk_urls(ct)}
@@ -179,14 +200,14 @@ def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
         out.update(t)
     else:
         out["poznamka"] = "Tisk není návrh zákona, web ho nesleduje; údaje jen z pořadu schůzí."
-        out["nazev"] = bod[0]["nazev"]
-    # projevu = stejné podmínky jako výchozí projevy_k_tisku (bez předsedajících, od 200 znaků); projevu_vse = všechna vystoupení
-    stats = _one(conn, """SELECT count(*) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS projevu,
-                                 count(*) AS projevu_vse,
-                                 count(DISTINCT id_osoba) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS recniku,
-                                 min(datum) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS prvni,
-                                 max(datum) FILTER (WHERE NOT predsedajici AND znaku >= 200) AS posledni
-                          FROM steno.projev WHERE ct = %s AND zruseno IS NULL""", (ct,))
+        out["nazev"] = next((b["nazev"] for b in bod if b["nazev"]), None)
+    # projevu_vse = všechna vystoupení
+    stats = _one(conn, f"""SELECT count(*) FILTER (WHERE {_POCITANY}) AS projevu,
+                                  count(*) AS projevu_vse,
+                                  count(DISTINCT id_osoba) FILTER (WHERE {_POCITANY}) AS recniku,
+                                  min(datum) FILTER (WHERE {_POCITANY}) AS prvni,
+                                  max(datum) FILTER (WHERE {_POCITANY}) AS posledni
+                           FROM ({_PROJEVY_TISKU}) p""", (ct,))
     out["projevy"] = stats
     if "rozbor" in vcetne:
         tt = _one(conn, "SELECT ai_json, ai_score, ai_model, signals, chars, docx_url FROM tisk_text WHERE ct = %s", (ct,))
@@ -324,13 +345,32 @@ def get_pn(conn, cislo: int) -> dict:
     r["osnova_dostupna"] = _texty_ok(conn) and bool(_one(conn, f"""
         SELECT EXISTS (SELECT 1 FROM texty.dokument d WHERE d.druh = 'pn' AND d.cislo_pn = %s AND {_DOSTUPNY}) AS ok""",
         (cislo,))["ok"])
+    r["projevy"], r["projevy_celkem"] = _projevy_pn(conn, cislo)
     return r
+
+
+def _projevy_pn(conn, cislo: int, limit: int = 20) -> tuple[list[dict], int]:
+    """Projevy, které PN zmiňují (steno.projev_pn): bez předsedajících a zrušených, nejvýš limit, a jejich celkový počet.
+
+    Bez tabulek rozpravy (starší databáze) vrátí prázdný seznam."""
+    if not _one(conn, "SELECT to_regclass('steno.projev_pn') IS NOT NULL AS ok")["ok"]:
+        return [], 0
+    z = """FROM steno.projev p JOIN steno.projev_pn pp ON pp.projev_id = p.id
+           WHERE pp.cislo_pn = %s AND p.zruseno IS NULL AND NOT p.predsedajici"""
+    celkem = _one(conn, f"SELECT count(*) AS n {z}", (cislo,))["n"]
+    rows = _rows(conn, f"""SELECT p.schuze, p.turn, p.aname, p.datum, p.recnik, p.klub, p.druh, p.url, p.autorizovano
+                           {z} ORDER BY p.datum, p.schuze, p.poradi LIMIT {int(limit)}""", (cislo,))
+    out = []
+    for r in rows:
+        r = _speech_meta(r)
+        out.append({k: r[k] for k in ("klic", "datum", "recnik", "klub", "druh", "url")})
+    return out, celkem
 
 
 # ---------------------------------------------------------------- projevy
 
 _SPEECH_COLS = """p.schuze, p.turn, p.aname, p.datum, p.cas, p.id_osoba, p.recnik, p.role, p.klub, p.predsedajici,
-                  p.ct, p.znaku, p.autorizovano, p.verze, p.url, b.nazev AS bod"""
+                  p.ct, p.znaku, p.autorizovano, p.verze, p.url, p.druh, b.nazev AS bod"""
 
 
 def _speech_meta(r: dict) -> dict:
@@ -373,8 +413,17 @@ def _resolve_klub(conn, klub: str) -> list[str]:
 
 def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None = None, od: str | None = None,
                     do: str | None = None, min_znaku: int = 200, vcetne_predsedajicich: bool = False,
-                    limit: int = 50, offset: int = 0) -> dict:
-    where, params = ["p.ct = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [ct, min_znaku]
+                    limit: int = 50, offset: int = 0, druh: list[str] | None = None) -> dict:
+    """Rejstřík vystoupení k tisku s filtry. Tisk se hledá přes steno.projev_tisk, takže sloučená rozprava
+    (tisky 76 a 77) vrátí stejné projevy u obou tisků; každý projev je v tabulce u tisku nejvýš jednou."""
+    druhy = [str(d).strip().lower() for d in druh or []]
+    platne = [d for d in DRUHY if d != "predsedajici"]
+    if set(druhy) - set(platne):
+        raise ValueError(f"Neznámý druh: {', '.join(sorted(set(druhy) - set(platne)))}. Platné: {', '.join(platne)}.")
+    where, params = ["pt.ct = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [ct, min_znaku]
+    if druhy:
+        where.append("p.druh = ANY(%s)")
+        params.append(druhy)
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
     if id_osoba:
@@ -390,9 +439,11 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
     w = " AND ".join(where)
-    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    spoj = "JOIN steno.projev_tisk pt ON pt.projev_id = p.id"
+    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p {spoj} WHERE {w}", params)["n"]
     off = _offset(offset)
-    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
+    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p {spoj}
+                           LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum, p.schuze, p.poradi LIMIT %s OFFSET %s""",
                  (*params, _limit(limit), off))
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
@@ -439,7 +490,7 @@ def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | Non
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     if q:
         where.append("to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)")
@@ -503,7 +554,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     if osoba:
         id_osoba = _resolve_person(conn, osoba)
@@ -557,7 +608,7 @@ def zmeny_projevu(conn, od: str | None = None, ct: int | None = None, limit: int
         where.append("p.zmeneno >= %s")
         params.append(_date(od, "od"))
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.zmeneno,
                                   (SELECT length(v.text) FROM steno.projev_verze v WHERE v.projev_id = p.id

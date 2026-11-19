@@ -303,14 +303,31 @@ _TISK_ROW = dict(ct=231, druh=1, typ_navrhu="vládní", navrhovatel="vláda", na
                  zakony="", sbirka=None, score=10, reasons="[]")
 
 
+_STATS = {"projevu": 260, "projevu_vse": 526, "recniku": 40, "prvni": None, "posledni": None}
+
+
 def test_get_tisk_body_vcetne_opakovanych():
-    bod = {"schuze": 30, "cislo": 5, "nazev": "Bod", "konec": "k", "datum": date(2026, 10, 1), "projevu": 3}
-    conn = FakeConn([_TISK_ROW], [bod, dict(bod, schuze=34, projevu=7)],
-                    [{"projevu": 10, "projevu_vse": 12, "recniku": 4, "prvni": None, "posledni": None}], [{"ok": False}])
+    """Tisk 231: na pořadu schůze 30 (neprojednán, bez projevů) i 34; jedna položka na schůzi."""
+    s30 = {"schuze": 30, "body": [34], "nazev": "Bod", "konec": "/sněmovní tisk 231/", "datum": None,
+           "projevu": 0, "projevu_vse": 0}
+    s34 = dict(s30, schuze=34, datum=date(2026, 10, 23), projevu=260, projevu_vse=526)
+    conn = FakeConn([_TISK_ROW], [s30, s34], [_STATS], [{"ok": False}])
     r = tools.get_tisk(conn, 231, ["body"])
-    assert "DISTINCT ON" not in conn.sql[1].upper()
-    assert [b["schuze"] for b in r["body_poradu"]] == [30, 34]
-    assert all({"schuze", "datum", "projevu"} <= set(b) for b in r["body_poradu"])
+    assert r["body_poradu"] == [s30, dict(s34, datum="2026-10-23")]
+    # body i počty z projev_tisk (projevy bez bodu z rec se počítají), ne podle id_bod bodu
+    sql = conn.sql[1]
+    assert "steno.projev_tisk" in sql and "steno.bod" in sql and "zruseno IS NULL" in sql
+    assert "p.id_bod = b.id_bod" not in sql
+    assert "DISTINCT ON" not in sql.upper()
+
+
+def test_get_tisk_mimo_tisky_nazev_z_bodu():
+    """Tisk mimo tabulku tisky: název z prvního bodu, který ho má; schůze jen s projevy bod nemá."""
+    bez_bodu = {"schuze": 29, "body": [], "nazev": None, "konec": None, "datum": date(2026, 9, 1), "projevu": 1,
+                "projevu_vse": 1}
+    s34 = {"schuze": 34, "body": [34], "nazev": "Bod", "konec": "k", "datum": None, "projevu": 0, "projevu_vse": 0}
+    r = tools.get_tisk(FakeConn([], [bez_bodu, s34], [_STATS], [{"ok": False}]), 231, ["body"])
+    assert r["nazev"] == "Bod" and r["poznamka"]
 
 
 def test_get_tisk_projevy_stejne_jako_projevy_k_tisku():
@@ -320,6 +337,7 @@ def test_get_tisk_projevy_stejne_jako_projevy_k_tisku():
     assert r["projevy"]["projevu"] == 10 and r["projevy"]["projevu_vse"] == 12
     sql = conn.sql[2]
     assert "NOT predsedajici" in sql and "znaku >= 200" in sql and "zruseno IS NULL" in sql
+    assert "steno.projev_tisk" in sql
 
 
 def test_call_prilis_velka_odpoved(fake_pool):
@@ -519,10 +537,85 @@ def test_get_pn_nema_s_textem():
     assert "s_textem" not in inspect.signature(mcp_server.get_pn).parameters
     pn = dict(cislo=894, ct=76, id_osoba=1, osoba="A", cas=None, ai_score=1, ai_model="m", ai_json=None,
               signals=None, laws="", chars=10, docx_url=None)
-    r = tools.get_pn(FakeConn([pn], _OK, [{"ok": True}]), 894)
+    r = tools.get_pn(FakeConn([pn], _OK, [{"ok": True}], [{"ok": False}]), 894)
     assert r["osnova_dostupna"] is True and "text" not in r
-    r = tools.get_pn(FakeConn([dict(pn)], [{"ok": False}]), 894)
+    r = tools.get_pn(FakeConn([dict(pn)], [{"ok": False}], [{"ok": False}]), 894)
     assert r["osnova_dostupna"] is False
+
+
+def _pn_row() -> dict:
+    return dict(cislo=894, ct=76, id_osoba=1, osoba="A", cas=None, ai_score=1, ai_model="m", ai_json=None,
+                signals=None, laws="", chars=10, docx_url=None)
+
+
+def test_get_pn_projevy_z_projev_pn():
+    radky = [dict(_speech(), druh="recnik")]
+    conn = FakeConn([_pn_row()], [{"ok": False}], [{"ok": True}], [dict(n=25)], radky)
+    r = tools.get_pn(conn, 894)
+    assert r["projevy_celkem"] == 25
+    assert len(r["projevy"]) == 1
+    p = r["projevy"][0]
+    assert p["klic"] == "10/35/10/6" and p["recnik"] == "Poslanec Radek Vondráček" and p["druh"] == "recnik"
+    assert {"datum", "klub", "url"} <= set(p) and "text" not in p and "uryvek" not in p
+    sql = " ".join(conn.sql[3:])
+    assert "steno.projev_pn" in sql and "NOT p.predsedajici" in sql and "p.zruseno IS NULL" in sql
+    assert "LIMIT 20" in sql and "ORDER BY p.datum, p.schuze, p.poradi" in sql
+    assert conn.params[-1] == (894,) and conn.params[-2] == (894,)
+    json.dumps(r, default=str)
+
+
+def test_get_pn_bez_tabulky_projev_pn_nespadne():
+    r = tools.get_pn(FakeConn([_pn_row()], [{"ok": False}], [{"ok": False}]), 894)
+    assert r["projevy"] == [] and r["projevy_celkem"] == 0
+
+
+def test_projevy_k_tisku_hleda_pres_projev_tisk():
+    conn = FakeConn([dict(n=0)], [])
+    tools.projevy_k_tisku(conn, 77)
+    for q in conn.sql:
+        assert "JOIN steno.projev_tisk pt ON pt.projev_id = p.id" in q and "pt.ct = %s" in q
+        assert "p.ct = %s" not in q
+    assert conn.params[0][0] == 77
+    assert "p.druh" in conn.sql[1]
+
+
+@pytest.mark.parametrize("volani, vysledky", [
+    (lambda c: tools.hledej_v_projevech(c, "dotace", ct=77), ([dict(n=0)], [])),
+    (lambda c: tools.projevy_recnika(c, 6165, ct=77), ([dict(n=0)], [])),
+    (lambda c: tools.zmeny_projevu(c, ct=77), ([],)),
+])
+def test_filtr_ct_pres_projev_tisk(volani, vysledky):
+    """Filtr ct jde přes steno.projev_tisk (sloučená rozprava 76 a 77), ne přes vlastní ct projevu."""
+    conn = FakeConn(*vysledky)
+    volani(conn)
+    for q in conn.sql:
+        assert "p.ct = %s" not in q
+        assert "p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)" in q
+    assert all(77 in list(prm) for prm in conn.params)
+
+
+def test_projevy_k_tisku_filtr_druh():
+    conn = FakeConn([dict(n=0)], [])
+    tools.projevy_k_tisku(conn, 76, druh=["Fakticka", "ministr"])
+    assert "p.druh = ANY(%s)" in conn.sql[0] and "p.druh = ANY(%s)" in conn.sql[1]
+    assert ["fakticka", "ministr"] in list(conn.params[0])
+
+
+@pytest.mark.parametrize("druh", [["blabla"], ["predsedajici"]])
+def test_projevy_k_tisku_neznamy_druh(druh):
+    with pytest.raises(ValueError, match="Platné:.*recnik"):
+        tools.projevy_k_tisku(FakeConn(), 76, druh=druh)
+
+
+def test_projevy_k_tisku_pozicni_argumenty_beze_zmeny():
+    import inspect
+    names = list(inspect.signature(tools.projevy_k_tisku).parameters)
+    assert names[:10] == ["conn", "ct", "id_osoba", "klub", "od", "do", "min_znaku", "vcetne_predsedajicich",
+                          "limit", "offset"]
+    assert names[-1] == "druh"
+    assert "druh" in inspect.signature(mcp_server.projevy_k_tisku).parameters
+    d = mcp_server.projevy_k_tisku.__doc__
+    assert "rozprava" in d and "druh" in d
 
 
 def test_get_tisk_ma_texty():

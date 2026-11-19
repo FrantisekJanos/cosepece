@@ -28,6 +28,8 @@ $defaults = [
 
     'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120, 'auth' => 10],
 
+    'mcp_url' => '',
+
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     'odok' => ['enabled' => true],

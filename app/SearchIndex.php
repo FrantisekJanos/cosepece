@@ -18,7 +18,7 @@ use App\Models\Meta;
 
 final class SearchIndex
 {
-    public const VERSION = 3;
+    public const VERSION = 4;
 
     public const KINDS = [
         'tisk' => 'Tisky',
@@ -169,6 +169,7 @@ final class SearchIndex
             ['Jak hodnotíme', 'metodika skóre body váhy omezení odpovědnosti AI', '/metodika'],
             ['Připravované zákony', 'vláda připomínkové řízení VeKLEP ministerstvo', '/pripravovane'],
             ['Data a API', 'JSON RSS export stažení vývojáři', '/data'],
+            ['Pro AI asistenty (MCP)', 'MCP Claude AI asistent napojení nástroje rozprava projevy', '/mcp'],
             ['Co jsme změnili', 'změny opravy novinky', '/zmeny'],
             ['Upozornění', 'upozornění RSS nové kroky', '/upozorneni'],
         ];

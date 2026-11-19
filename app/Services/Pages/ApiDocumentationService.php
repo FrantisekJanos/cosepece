@@ -152,6 +152,7 @@ final class ApiDocumentationService
             'ciselniky' => 'Číselníky',
             'chyby' => 'Chyby',
             'limity' => 'Limity a slušné chování',
+            'mcp' => 'Pro AI asistenty (MCP)',
             'rss' => 'RSS',
             'priklady' => 'Příklady kódu',
             'podminky' => 'Zdroje a podmínky',

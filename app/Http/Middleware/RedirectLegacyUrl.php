@@ -18,6 +18,7 @@ final class RedirectLegacyUrl
             'data.php' => 'api-docs',
             'hledat.php' => 'search',
             'zakon.php' => 'laws',
+            'mcp.php' => 'mcp-info',
             'index.php' => 'home',
             'zmeny.php' => 'changes',
             'api.php' => 'public-api',

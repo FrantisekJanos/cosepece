@@ -1075,11 +1075,11 @@ $apiPrep = array_values(array_filter(app(App\Services\PublicApiService::class)->
 check('API: upozornění bez čísla tisku', array_key_exists(0, $apiPrep) ? [$apiPrep[0]['ct'], $apiPrep[0]['skore']] : 'chybí', [null, 50]);
 
 echo "Stránky\n";
-foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     try {
         $kernel = app(Illuminate\Contracts\Http\Kernel::class);
         $path = match ($page) {
-            'pripravovane.php' => '/pripravovane', 'data.php' => '/data', 'index.php' => '/', 'tisky.php' => '/tisky', 'tisk.php' => '/tisky/90',
+            'pripravovane.php' => '/pripravovane', 'data.php' => '/data', 'mcp.php' => '/mcp', 'index.php' => '/', 'tisky.php' => '/tisky', 'tisk.php' => '/tisky/90',
             'upozorneni.php' => '/upozorneni', 'metodika.php' => '/metodika', 'rss.php' => '/rss', 'zmeny.php' => '/zmeny', 'revize.php' => '/revize/tisk/221', 'api.php' => '/api',
         };
         $request = Illuminate\Http\Request::create($path, 'GET', $get);

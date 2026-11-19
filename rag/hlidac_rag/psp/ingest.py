@@ -17,6 +17,8 @@ import psycopg
 from . import parser
 from .http import Fetcher
 from .opendata import part_url, term_dir
+from .rozprava_pravidla import tisky_z_konce
+from .rozprava_prepocet import prepocitej_rozpravu
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +162,10 @@ class Speech:
 
 
 def build_speeches(casts: list[tuple]) -> list[Speech]:
-    """Ze seřazených částí (turn, datum, jd, stav, html) složí projevy, i přes hranice částí."""
+    """Ze seřazených částí (turn, datum, jd, stav, html) složí projevy, i přes hranice částí.
+
+    Tisk dne (heading_ct nových projevů) určuje poslední nadpis bodu s tiskem; nadpis bodu bez tisku
+    (seg.headings 0, např. „203. Ústní interpelace“) ho ukončí. Projev svůj heading_ct neztratí."""
     out: list[Speech] = []
     current: Speech | None = None
     prev_turn, prev_day = None, None
@@ -187,10 +192,19 @@ def build_speeches(casts: list[tuple]) -> list[Speech]:
                 current = sp
             sp.votes.extend(seg.votes)
             for ct in seg.headings:
-                day_ct = ct
-                if sp.heading_ct is None:
+                day_ct = ct or None
+                if ct and sp.heading_ct is None:
                     sp.heading_ct = ct
     return out
+
+
+def _ct_bodu(ct: int | None, konec: str | None, nazev: str | None) -> tuple[int | None, str | None]:
+    """(ct, ct_zdroj) projevu s tímto bodem z rec: ct bodu ('rec'); jinak první tisk z konce či názvu bodu
+    ('bod', sloučená rozprava „/sněmovní tisky 76 a 77/“ → 76); jinak bez tisku (None, None)."""
+    if ct is not None:
+        return ct, "rec"
+    tisky = tisky_z_konce(konec) or tisky_z_konce(nazev)
+    return (tisky[0], "bod") if tisky else (None, None)
 
 
 def _speech_hash(label: str, text: str) -> str:
@@ -211,8 +225,8 @@ def assemble(conn: psycopg.Connection, obdobi: int, schuze: int) -> dict:
         cur.execute("SELECT aname, turn, id_osoba, id_bod, druh FROM steno.rec WHERE obdobi=%s AND schuze=%s",
                     (obdobi, schuze))
         rec = {(r[1], r[0]): r[2:] for r in cur.fetchall()}
-        cur.execute("SELECT id_bod, ct FROM steno.bod WHERE obdobi=%s", (obdobi,))
-        bod_ct = dict(cur.fetchall())
+        cur.execute("SELECT id_bod, ct, konec, nazev FROM steno.bod WHERE obdobi=%s", (obdobi,))
+        bod_ct = {i: _ct_bodu(ct, konec, nazev) for i, ct, konec, nazev in cur.fetchall()}
         names = _name_index(cur)
         cur.execute("SELECT id_osoba, klub, od, \"do\" FROM steno.klub_clenstvi")
         kluby: dict[int, list] = {}
@@ -234,8 +248,9 @@ def assemble(conn: psycopg.Connection, obdobi: int, schuze: int) -> dict:
             r = rec.get(key)
             id_osoba = (r[0] if r else None) or sp.href_osoba or names.get(_name_tail(sp.label, names))
             id_bod = r[1] if r else None
-            if id_bod and bod_ct.get(id_bod):
-                ct, ct_src = bod_ct[id_bod], "rec"
+            if id_bod in bod_ct:
+                # známý bod z rec rozhoduje sám: bod bez tisku (interpelace) nedědí tisk dne z nadpisu
+                ct, ct_src = bod_ct[id_bod]
             elif sp.heading_ct:
                 ct, ct_src = sp.heading_ct, "nadpis"
             else:
@@ -284,6 +299,7 @@ def assemble(conn: psycopg.Connection, obdobi: int, schuze: int) -> dict:
             else:
                 cur.execute("DELETE FROM steno.projev WHERE id = %s", (pid,))
                 stats["smazane"] += 1
+        stats["rozprava"] = prepocitej_rozpravu(cur, obdobi, schuze)
     conn.commit()
     return stats
 

@@ -82,6 +82,10 @@ final class OgCard
                 'Které zákony se mění',
                 'Pro každý zákon návrhy ve Sněmovně, pozměňovací návrhy k jiným tiskům a připravované změny u vlády, s vlastním RSS.',
             ],
+            'mcp' => [
+                'Data Hlídače zákonů pro AI asistenty',
+                'MCP server pro Claude a další asistenty: návrhy zákonů, jejich texty, pozměňovací návrhy, rozpravy ve Sněmovně a hlasování.',
+            ],
             'zmeny' => [
                 'Co jsme na webu změnili',
                 'Opravy a změny v hodnocení legislativního postupu, hlavně podle připomínek čtenářů.',

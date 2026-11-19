@@ -42,6 +42,7 @@
         ],
         "test": [
             "@php tests/run.php",
+            "@php tests/sentry_test.php",
             "@php vendor/bin/phpunit"
         ],
         "analyse": "@php vendor/bin/phpstan analyse --no-progress"

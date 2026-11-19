@@ -19,6 +19,7 @@ final class SyncCommand extends Command
             $this->output->write(json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n");
             return 0;
         } catch (\Throwable $ex) {
+            report($ex);
             $this->output->write('Chyba: ' . $ex->getMessage() . "\n");
             return 1;
         }

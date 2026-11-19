@@ -32,6 +32,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: ['10.0.0.0/8', '172.16.0.0/12']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->report(function (\Throwable $ex): void {
+            \Hlidac\Sentry::capture($ex);
+        });
         $exceptions->shouldRenderJsonWhen(fn (Request $request) =>
             $request->is('ai_api.php', 'cron.php') || $request->expectsJson());
     })->create();

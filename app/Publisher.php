@@ -88,6 +88,10 @@ final class Publisher
                     $stats['sent']++;
                 } catch (\Throwable $ex) {
                     $this->log($alert['alert_key'], $name, 'error', $ex->getMessage());
+                    if (!$dryRun) {
+
+                        Sentry::capture($ex, ['kde' => 'Publisher', 'sit' => $name]);
+                    }
                     $stats['errors']++;
                     if (!$this->isFinished($alert['alert_key'], $name)) {
                         $done = false;

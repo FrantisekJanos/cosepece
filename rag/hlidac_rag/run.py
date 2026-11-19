@@ -15,7 +15,7 @@ import logging
 import sys
 import time
 
-from . import db
+from . import db, sentry
 from .psp import ingest, opendata
 from .psp.http import Fetcher
 from .texty.ingest import sync_texty
@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--texty-limit", type=int, default=40, help="nejvýš dokumentů textů ke stažení za běh")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    sentry.init("ingest")
 
     started = time.time()
     conn = db.connect()

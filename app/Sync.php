@@ -31,12 +31,14 @@ final class Sync
                 $prep = (new GovPrep(db(), $source, $config))->run();
             } catch (\Throwable $ex) {
 
+                Sentry::capture($ex, ['kde' => 'Sync/GovPrep']);
                 $prep = ['error' => Http::redact($ex->getMessage())];
             }
             try {
                 $votes = (new Votes(db(), $source))->run();
             } catch (\Throwable $ex) {
 
+                Sentry::capture($ex, ['kde' => 'Sync/Votes']);
                 $votes = ['error' => Http::redact($ex->getMessage())];
             }
 

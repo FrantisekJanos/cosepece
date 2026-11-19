@@ -66,6 +66,8 @@ $defaults = [
 
     ],
 
+    'sentry' => ['dsn' => '', 'environment' => 'production'],
+
     'notify' => [
 
         'dry_run' => true,
@@ -126,6 +128,7 @@ $merge = function (array $base, array $overrides) use (&$merge): array {
 $settings = $merge($defaults, $legacy);
 $settings['data_path'] = env('HLIDAC_DATA_PATH', base_path('data'));
 $overrides = [
+    'sentry.dsn' => 'SENTRY_DSN', 'sentry.environment' => 'SENTRY_ENVIRONMENT',
     'site_url' => 'APP_URL', 'cron_token' => 'HLIDAC_CRON_TOKEN',
     'source_url' => 'HLIDAC_SOURCE_URL', 'source_dir' => 'HLIDAC_SOURCE_DIR',
     'ai.enabled' => 'HLIDAC_AI_ENABLED', 'ai.backend' => 'HLIDAC_AI_BACKEND',

@@ -28,6 +28,7 @@ final class AppServiceProvider extends ServiceProvider
         View::composer('partials.search', function ($view): void {
             $view->with('searchIndexVersion', substr(md5((string)(\App\Models\Meta::query()->whereKey('last_sync')->value('v') ?? '')), 0, 10));
         });
+        \Hlidac\Sentry::init((array)hlidacConfig('sentry', []), $this->app->runningInConsole() ? 'sync' : 'web', false);
         mb_internal_encoding('UTF-8');
         $path = hlidacDataPath();
         if (!is_dir($path) && !mkdir($path, 0775, true) && !is_dir($path)) {

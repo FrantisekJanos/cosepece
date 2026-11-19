@@ -158,3 +158,7 @@ Migrace `2026_11_19_140000_add_text_and_ai_revisions` zavádí historii textů a
 období. Spusťte ji před novou synchronizací nebo AI příkazy. První synchronizace doplní dosavadní
 texty a rozbory do historie; pracovní data a fronta upozornění se tím nemění. Archiv a historie
 zvyšují objem databáze a musí být zahrnuté do záloh.
+
+## Hlášení chyb do Sentry
+
+PHP používá `sentry.dsn` a `sentry.environment` v konfiguraci nebo `SENTRY_DSN` a `SENTRY_ENVIRONMENT` v prostředí. Prázdné DSN hlášení vypíná. Laravel výjimky hlásí přes svůj handler; chyby pomocných importů a publikování se hlásí i při pokračování synchronizace. Odesílač filtruje citlivá data, deduplikuje chyby a omezuje počet událostí. `docker/redeploy.sh` nastaví `SENTRY_RELEASE` podle nasazeného commitu. Python ingest a MCP používají samostatné `SENTRY_DSN_RAG`, viz `rag/README.md`.

@@ -17,6 +17,7 @@ final class RedirectLegacyUrl
             'pripravovane.php' => 'upcoming',
             'data.php' => 'api-docs',
             'hledat.php' => 'search',
+            'zakon.php' => 'laws',
             'index.php' => 'home',
             'zmeny.php' => 'changes',
             'api.php' => 'public-api',
@@ -29,6 +30,15 @@ final class RedirectLegacyUrl
             'og.php' => 'og',
         };
         $parameters = $request->query();
+        if ($name === 'laws' && isset($parameters['z'])) {
+            $dto = \App\Http\DTO\LawRequestDTO::fromRequest($request);
+            if ($dto->law !== '') {
+                [$number, $year] = explode('/', $dto->law);
+                $name = 'law';
+                unset($parameters['z']);
+                $parameters += compact('number', 'year');
+            }
+        }
         if ($name === 'bill') {
             $parameters['ct'] = BillDetailRequestDTO::fromRequest($request)->billNumber;
         }

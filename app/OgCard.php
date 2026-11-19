@@ -78,6 +78,10 @@ final class OgCard
                 'Data a API Hlídače zákonů',
                 'Tisky se skóre a důvody, hlasování, upozornění a připravované zákony v JSON a RSS. Bez registrace, s popisem všech polí a příklady.',
             ],
+            'zakony' => [
+                'Které zákony se mění',
+                'Pro každý zákon návrhy ve Sněmovně, pozměňovací návrhy k jiným tiskům a připravované změny u vlády, s vlastním RSS.',
+            ],
             'zmeny' => [
                 'Co jsme na webu změnili',
                 'Opravy a změny v hodnocení legislativního postupu, hlavně podle připomínek čtenářů.',

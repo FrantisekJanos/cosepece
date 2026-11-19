@@ -18,7 +18,7 @@ use App\Models\Meta;
 
 final class SearchIndex
 {
-    public const VERSION = 2;
+    public const VERSION = 3;
 
     public const KINDS = [
         'tisk' => 'Tisky',
@@ -95,13 +95,14 @@ final class SearchIndex
                 $lawCount[trim($law)] = ($lawCount[trim($law)] ?? 0) + 1;
             }
         }
+        $laws = app(Laws::class)->names() + $laws;
         foreach ($lawCount as $law => $n) {
             $items[] = [
                 'k' => 'zakon', 'id' => $law,
                 't' => $law . ' Sb.' . (isset($laws[$law]) ? ' ' . $laws[$law] : ''),
                 's' => 'mění ' . $n . ' ' . ($n === 1 ? 'tisk' : ($n < 5 ? 'tisky' : 'tisků')),
                 'd' => '', 'x' => '',
-                'u' => '/tisky?q=' . rawurlencode($law),
+                'u' => Laws::url($law),
                 'w' => $n,
             ];
         }

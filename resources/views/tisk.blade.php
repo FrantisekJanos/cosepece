@@ -63,7 +63,7 @@ use Hlidac\View;
       <div><dt>Předloženo</dt><dd>{{ formatDate($t['predlozeno']) }}</dd></div>
       <div><dt>Poslední změna</dt><dd>{{ formatDate($t['posledni']) }}</dd></div>
       <div><dt>Od předložení po poslední krok</dt><dd>{{ $days !== null ? $days . ' dní' : '—' }}</dd></div>
-      @if ($laws)<div><dt>Zákony v názvu</dt><dd>{{ implode(', ', array_map(fn ($law) => $law . ' Sb.', $laws)) }}</dd></div>@endif
+      @if ($laws)<div><dt>Zákony v názvu</dt><dd>@foreach ($laws as $law)@if (!$loop->first), @endif<a href="{{ \Hlidac\Laws::url($law) }}">{{ $law }} Sb.</a>@endforeach</dd></div>@endif
       @if ($t['sbirka'])<div><dt>Vyhlášeno ve Sbírce</dt><dd>{{ $t['sbirka'] }} Sb.</dd></div>@endif
     </dl>
   </div>

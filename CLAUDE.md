@@ -76,7 +76,11 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
                    ai.remote_token nebo cron_token), posoudí ji na Macu a pošle výsledky zpět.
                    Pojistky (sanitize): zpětnost ve prospěch veřejnosti max. 3/10 a bez „zpětně“ v titulku,
                    zásahy v ai_json.upravy. 2. kolo --verify: ai.verify_model (claude-sonnet-5-5) přepíše
-                   rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“). Po změně promptu zvyš
+                   rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“).
+                   Spolehlivost (#7 bod 7): hraniční hodnocení repeat_min–repeat_max (3–7) posoudí rychlý model
+                   repeat_runs× (ai_runs, ai_run_count), platí medián; --verify bere i namátkový vzorek nízkých
+                   hodnocení (< sample_below, číslo textu % sample_every = AiReviewer::SAMPLE_REMAINDER).
+                   Repo::aiReliability() počítá shodu modelů pro metodika.php#spolehlivost-ai. Po změně promptu zvyš
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
@@ -103,6 +107,14 @@ Vyhledávání: `app/SearchIndex.php` staví při synchronizaci index (tisky + t
 tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-<db>.json`; `hledat.php?index=<otisk>`
 ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
 (PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
+
+Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
+skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh
+bootstrap (meta `prep_alerts_bootstrapped`). `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP.
+
+Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
+a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,
+připravované podle čísla v názvu. Hledání (`SearchIndex`) bere názvy zákonů ze stejného slovníku.
 
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).

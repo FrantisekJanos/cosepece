@@ -74,5 +74,6 @@ try {
     aiApiReply(['error' => 'Neznámá akce'], 400);
 } catch (Throwable $ex) {
     error_log('ai_api.php: ' . $ex->getMessage());
+    Hlidac\Sentry::capture($ex, ['kde' => 'ai_api.php']);
     aiApiReply(['error' => Hlidac\Http::redact($ex->getMessage())], 500);
 }

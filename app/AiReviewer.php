@@ -15,6 +15,8 @@ final class AiReviewer
     // verze promptu a pravidel: po změně promptu ji zvyšte, fronta pak postupně znovu posoudí starší rozbory
     // (původní výsledek zůstává zobrazený, dokud ho nový nenahradí). 2 = bez jména předkladatele a typu návrhu (#7)
     public const PROMPT_VERSION = 2;
+    // namátkový vzorek nízkých hodnocení pro silnější model: texty s číslem ≡ SAMPLE_REMAINDER (mod sample_every)
+    public const SAMPLE_REMAINDER = 3;
 
     private const CRITERIA = <<<'TXT'
 Nehodnotíš, zda je návrh politicky dobrý nebo špatný. Hodnotíš jen, zda jde o procedurálně problematický zásah, který obchází běžný legislativní proces, typicky:
@@ -126,6 +128,27 @@ TXT;
         return (string)($config['ai']['model'] ?? 'claude-haiku-5-5');
     }
 
+    /** Opakované běhy a namátkový vzorek (#7 bod 7), výchozí hodnoty lze přepsat v config.php → ai. */
+    public static function repeatConfig(array $config): array
+    {
+        $ai = $config['ai'] ?? [];
+        return [
+            'runs' => max(1, (int)($ai['repeat_runs'] ?? 3)),        // kolik běhů u hraničního hodnocení (medián)
+            'min' => (int)($ai['repeat_min'] ?? 3),                  // hraniční pásmo: od…
+            'max' => (int)($ai['repeat_max'] ?? 7),                  // …do (výš ověřuje silnější model)
+            'sample_every' => max(2, (int)($ai['sample_every'] ?? 10)), // každý n-tý nízko hodnocený text…
+            'sample_below' => (int)($ai['sample_below'] ?? 4),        // …s hodnocením pod touto hranicí jde k ověření
+        ];
+    }
+
+    /** Medián závažností; u sudého počtu nižší ze dvou prostředních (opatrnější). */
+    public static function median(array $scores): int
+    {
+        $s = array_map('intval', array_values($scores));
+        sort($s);
+        return $s === [] ? 0 : $s[intdiv(count($s) - 1, 2)];
+    }
+
     public static function verifyModel(array $config): string
     {
         // silnější model, který znovu posoudí jen nejzávažnější nálezy (ty jdou na homepage a na sítě)
@@ -167,23 +190,32 @@ TXT;
             $filter .= ' AND x.ct = ?';
             $params[] = $onlyCt;
         }
+        $r = self::repeatConfig($this->config);
         if ($verify) {
-            // ověřuje se jen rozbor podle aktuální verze promptu
-            $where = 'x.ai_at IS NOT NULL AND x.ai_prompt = ? AND x.ai_score >= ? AND (x.ai_model IS NULL OR x.ai_model <> ?)';
-            $params = array_merge([self::PROMPT_VERSION, (int)($cfg['verify_min'] ?? 6), self::verifyModel($this->config)], $params);
+            // ověřuje se jen rozbor podle aktuální verze promptu: nálezy od verify_min a namátkový vzorek
+            // nízkých hodnocení (#7 bod 7: přehlédnutý problém s nízkým hodnocením by se jinak nikdy nezkontroloval);
+            // vzorek je pevný podle čísla textu (každý sample_every-tý), aby šel později vyhodnotit
+            // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
+            $where = 'x.ai_at IS NOT NULL AND x.ai_prompt = ? AND (x.ai_model IS NULL OR x.ai_model <> ?)'
+                . ' AND (x.ai_score >= ' . (int)($cfg['verify_min'] ?? 6) . ' OR (x.ai_score < ' . $r['sample_below']
+                . ' AND x.{ID} % ' . $r['sample_every'] . ' = ' . self::SAMPLE_REMAINDER . '))';
+            $params = array_merge([self::PROMPT_VERSION, self::verifyModel($this->config)], $params);
             $orderBills = 't.score DESC, x.ai_score DESC, t.ct DESC';
             $orderPn = 't.score DESC, x.ai_score DESC, p.cas DESC';
         } else {
-            // nové texty, pak rozbory podle starší verze promptu (od nejzávažnějších tisků)
-            $where = '(x.ai_at IS NULL OR x.ai_prompt IS NULL OR x.ai_prompt < ?)';
-            $params = array_merge([self::PROMPT_VERSION], $params);
-            $orderBills = 'CASE WHEN x.ai_at IS NULL THEN 0 ELSE 1 END, t.score DESC, t.predlozeno DESC, t.ct DESC';
-            $orderPn = 'CASE WHEN x.ai_at IS NULL THEN 0 ELSE 1 END, t.score DESC, p.cas DESC';
+            // nové texty, pak rozbory podle starší verze promptu (od nejzávažnějších tisků), pak opakované běhy
+            // u hraničních hodnocení (#7 bod 7): dokud jich není repeat_runs, posoudí se text znovu a platí medián
+            $where = '(x.ai_at IS NULL OR x.ai_prompt IS NULL OR x.ai_prompt < ?'
+                . ' OR (x.ai_prompt = ? AND x.ai_model = ? AND COALESCE(x.ai_run_count, 1) < ' . $r['runs']
+                . ' AND (COALESCE(x.ai_run_count, 1) > 1 OR x.ai_score BETWEEN ' . $r['min'] . ' AND ' . $r['max'] . ')))';
+            $params = array_merge([self::PROMPT_VERSION, self::PROMPT_VERSION, self::model($this->config)], $params);
+            $orderBills = 'CASE WHEN x.ai_at IS NULL THEN 0 WHEN x.ai_prompt IS NULL OR x.ai_prompt < ' . self::PROMPT_VERSION . ' THEN 1 ELSE 2 END, t.score DESC, t.predlozeno DESC, t.ct DESC';
+            $orderPn = 'CASE WHEN x.ai_at IS NULL THEN 0 WHEN x.ai_prompt IS NULL OR x.ai_prompt < ' . self::PROMPT_VERSION . ' THEN 1 ELSE 2 END, t.score DESC, p.cas DESC';
         }
         $bills = $this->db->all(
             "SELECT x.ct, x.text, x.signals, t.uplny_nazev, t.nazev, t.typ_navrhu FROM tisk_text x
              JOIN tisky t ON t.ct = x.ct
-             WHERE $where AND x.chars > 0 AND t.faze <> 'Vyhlášeno'$filter
+             WHERE " . str_replace('{ID}', 'ct', $where) . " AND x.chars > 0 AND t.faze <> 'Vyhlášeno'$filter
              ORDER BY $orderBills
              LIMIT " . max(0, $limit),
             $params
@@ -198,7 +230,7 @@ TXT;
                 "SELECT x.*, p.osoba, t.uplny_nazev FROM pn_text x
                  JOIN pn p ON p.id_dokument = x.id_dokument
                  JOIN tisky t ON t.ct = x.ct
-                 WHERE $where AND x.chars > 0 AND t.faze <> 'Vyhlášeno'$filter
+                 WHERE " . str_replace('{ID}', 'id_dokument', $where) . " AND x.chars > 0 AND t.faze <> 'Vyhlášeno'$filter
                  ORDER BY $orderPn LIMIT " . $left,
                 $params
             );
@@ -229,6 +261,26 @@ TXT;
         }
         $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
         $result = self::sanitize($result);
+        // opakovaný běh rychlého modelu u hraničního hodnocení: platí medián běhů a rozbor z běhu,
+        // jehož závažnost je mediánu nejblíž (#7 bod 7)
+        $runs = [(int)$result['zavaznost']];
+        if ($model !== $verifier) {
+            $prev = $this->db->one("SELECT ai_json, ai_score, ai_model, ai_prompt, ai_runs, ai_run_count FROM $table WHERE $column = ? AND ai_at IS NOT NULL", [$id]);
+            $r = self::repeatConfig($this->config);
+            $count = (int)($prev['ai_run_count'] ?? 1) ?: 1;
+            if ($prev !== null && (string)$prev['ai_model'] === $model && (int)$prev['ai_prompt'] === self::PROMPT_VERSION && $count < $r['runs']
+                && ($count > 1 || ((int)$prev['ai_score'] >= $r['min'] && (int)$prev['ai_score'] <= $r['max']))) {
+                $earlier = json_decode((string)$prev['ai_runs'], true);
+                $runs = array_merge(is_array($earlier) && $earlier !== [] ? array_map('intval', $earlier) : [(int)$prev['ai_score']], $runs);
+                $median = self::median($runs);
+                $kept = json_decode((string)$prev['ai_json'], true);
+                if (is_array($kept) && abs((int)$kept['zavaznost'] - $median) <= abs((int)$result['zavaznost'] - $median)) {
+                    $result = $kept;
+                }
+                // závažnosti jednotlivých běhů jsou ve sloupci ai_runs (rozbor sám se nemění, historie verzí nebobtná)
+                $result['zavaznost'] = $median;
+            }
+        }
         $own = !$this->db->pdo->inTransaction();
         if ($own) {
             $this->db->pdo->beginTransaction();
@@ -241,9 +293,10 @@ TXT;
                 $this->db->run("UPDATE $table SET ai_prev_json = ai_json, ai_prev_score = ai_score, ai_prev_model = ai_model
                     WHERE $column = ? AND ai_at IS NOT NULL AND (ai_model IS NULL OR ai_model <> ?)", [$id, $verifier]);
             }
-            $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
+            $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL,
+                ai_runs = ?, ai_run_count = ? WHERE $column = ?",
                 [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
-                    $model, self::PROMPT_VERSION, $id]);
+                    $model, self::PROMPT_VERSION, $model === $verifier ? null : json_encode($runs), $model === $verifier ? null : count($runs), $id]);
             // nová verze rozboru (jen když se liší obsah, model nebo verze promptu)
             Revisions::recordAi($this->db, $kind, $id, 'rozbor');
             if ($own) {

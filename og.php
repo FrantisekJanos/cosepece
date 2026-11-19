@@ -33,5 +33,6 @@ try {
     $send(OgCard::cached($card, APP_ROOT . '/data/cache/og'));
 } catch (Throwable $e) {
     error_log('og.php: ' . $e->getMessage());
+    Hlidac\Sentry::capture($e, ['kde' => 'og.php']);
     $send(__DIR__ . '/assets/og-default.png');
 }

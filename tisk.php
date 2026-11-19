@@ -104,7 +104,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <div class="card kpi">
     <div class="kpi-label">Zákony v názvu</div>
     <div class="kpi-value"><?= count($laws) ?: '—' ?></div>
-    <div class="kpi-note"><?= $laws ? e(implode(', ', array_map(fn($l) => $l . ' Sb.', array_slice($laws, 0, 3)))) : 'nový zákon nebo souhrnná novela' ?></div>
+    <div class="kpi-note"><?= $laws ? implode(', ', array_map(fn($l) => '<a href="' . e(Hlidac\Laws::url($l)) . '">' . e($l) . ' Sb.</a>', array_slice($laws, 0, 3))) : 'nový zákon nebo souhrnná novela' ?></div>
   </div>
 </section>
 

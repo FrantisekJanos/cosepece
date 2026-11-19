@@ -468,6 +468,39 @@ check('pozdní výsledek 1. kola nepřepíše ověřený rozbor', [(int)db()->va
 $guard->saveResult('tisk', $guardCt, ['zavaznost' => 5, 'titulek' => 'y', 'citace' => ['Lhůta činí 4 roky.']], $verifier);
 check('ověřovací model rozbor přepsat smí', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]), 5);
 
+echo "Spolehlivost rozboru AI (#7 bod 7)\n";
+check('medián (u sudého počtu nižší)', [Hlidac\AiReviewer::median([5, 2, 6]), Hlidac\AiReviewer::median([5, 2]), Hlidac\AiReviewer::median([4])], [5, 2, 4]);
+$haiku = Hlidac\AiReviewer::model(config());
+$sonnet = Hlidac\AiReviewer::verifyModel(config());
+// tisk 311: 311 % 4 = 3 → při sample_every = 4 je ve vzorku nízkých hodnocení
+$relCfg = config();
+$relCfg['ai']['sample_every'] = 4;
+$rel = new Hlidac\AiReviewer(db(), $relCfg);
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, fetched_at) VALUES (311, 'Lhůta činí 4 roky.', 18, '[]', ?)", [date('Y-m-d H:i:s')]);
+$inQueue = fn(bool $verify) => in_array(311, array_column($rel->queue(50, 311, $verify), 'id'), true);
+$state = fn() => db()->one('SELECT ai_score, ai_run_count, ai_runs, ai_json FROM tisk_text WHERE ct = 311');
+$rel->saveResult('tisk', 311, ['zavaznost' => 5, 'titulek' => 'a', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+check('hraniční hodnocení 5 → zpět do fronty na další běh', [(int)$state()['ai_run_count'], $inQueue(false)], [1, true]);
+$rel->saveResult('tisk', 311, ['zavaznost' => 2, 'titulek' => 'b', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+check('po 2. běhu nižší medián a ještě 3. běh', [(int)$state()['ai_score'], (int)$state()['ai_run_count'], $inQueue(false)], [2, 2, true]);
+$rel->saveResult('tisk', 311, ['zavaznost' => 6, 'titulek' => 'c', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+$st = $state();
+// uložený je jen aktuální rozbor: po 2. běhu „b“ (medián 2), po 3. běhu bližší mediánu 5 je „c“ (6) než „b“ (2)
+check('po 3. běhu medián 5, rozbor z běhu blíž mediánu, fronta hotová', [(int)$st['ai_score'], (int)$st['ai_run_count'], json_decode($st['ai_runs'], true),
+    json_decode($st['ai_json'], true)['titulek'], $inQueue(false)], [5, 3, [5, 2, 6], 'c', false]);
+db()->run('UPDATE tisk_text SET ai_score = 1, ai_runs = NULL, ai_run_count = NULL, ai_prev_score = NULL, ai_prev_model = NULL WHERE ct = 311');
+check('nízké hodnocení mimo pásmo se neopakuje', $inQueue(false), false);
+check('nízké hodnocení ve vzorku jde k ověření silnějším modelem', $inQueue(true), true);
+$other = config();
+$other['ai']['sample_every'] = 5;
+check('nízké hodnocení mimo vzorek k ověření nejde', in_array(311, array_column((new Hlidac\AiReviewer(db(), $other))->queue(50, 311, true), 'id'), true), false);
+$rel->saveResult('tisk', 311, ['zavaznost' => 7, 'titulek' => 'd', 'citace' => ['Lhůta činí 4 roky.']], $sonnet);
+$stats = (new Hlidac\Repo(db()))->aiReliability($relCfg);
+check('statistika vzorku: silnější model našel přehlédnutý problém', [$stats['sample']['n'], $stats['sample']['to_points'], $stats['sample']['to_finding'], $stats['sample']['higher']], [1, 1, 1, 1]);
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("DELETE FROM ai_revize WHERE druh = 'tisk' AND ref_id = 311");
+
 $bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
 $fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
 check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);
@@ -1008,6 +1041,26 @@ $sh = (string)ob_get_clean();
 check('dotaz je v HTML escapovaný', !str_contains($sh, '<script>alert(1)') && str_contains($sh, '&lt;script&gt;'), true);
 $_GET = [];
 
+echo "Stránka zákona\n";
+$lw = new Hlidac\Laws(db());
+check('čísla zákonů v názvu', Hlidac\Laws::numbersIn('Návrh zákona, kterým se mění zákon č. 90/2024 Sb., o zbraních, a zákon č. 586/1992 Sb.'), ['90/2024', '586/1992']);
+check('název zákona ze slovníku (bez „ve znění“)', $lw->name('159/2006'), 'o střetu zájmů');
+check('tisky měnící zákon', array_map(fn($t) => (int)$t['ct'], $lw->bills('159/2006')), [221]);
+check('platné znění v e-Sbírce', Hlidac\Laws::eSbirkaUrl('159/2006'), 'https://e-sbirka.gov.cz/sb/2006/159');
+check('neplatné číslo zákona', [Hlidac\Laws::valid('159/2006'), Hlidac\Laws::valid('159'), Hlidac\Laws::valid('<b>')], [true, false, false]);
+foreach ([['z' => '159/2006'], []] as $get) {
+    $_GET = $get;
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/zakon.php');
+    $zh = (string)ob_get_clean();
+    check($get === [] ? 'přehled zákonů' : 'stránka zákona 159/2006', $get === []
+        ? str_contains($zh, 'href="zakon.php?z=159%2F2006"') && str_contains($zh, 'o střetu zájmů')
+        : str_contains($zh, 'Zákon č. 159/2006 Sb., o střetu zájmů') && str_contains($zh, 'href="tisk.php?ct=221"') && str_contains($zh, 'rss.php?zakon=159%2F2006'), true);
+}
+$_GET = [];
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);
@@ -1025,6 +1078,30 @@ $fail();
 $states[] = is_int($peek());
 check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
+
+echo "Upozornění na připravované zákony\n";
+db()->run("DELETE FROM meta WHERE k = 'prep_alerts_bootstrapped'");
+(new Hlidac\AlertBuilder(db(), config()))->run();
+(new Hlidac\Scorer(db(), config()))->scoreAlerts();
+$prepAlerts = [];
+foreach (db()->all("SELECT alert_key, kind, ct, score, posted, title FROM alerts WHERE kind LIKE 'prep_%' AND alert_key NOT LIKE '%/%' ORDER BY alert_key") as $a) {
+    $prepAlerts[$a['alert_key']] = [$a['kind'], (int)$a['ct'], (int)$a['score'], (int)$a['posted']];
+}
+check('krátké připomínky (7 dní), mimo plán a schválení vládou; první běh se neposílá', $prepAlerts, [
+    'prep_plan:KORNUP000003' => ['prep_plan', 0, 30, 2],
+    'prep_review:KORNUP000003' => ['prep_velmi', 0, 50, 2],
+    'prep_vlada:KORNUP000003' => ['prep_vlada', 0, 0, 2],
+]);
+check('titulek s délkou připomínek', db()->value("SELECT title FROM alerts WHERE alert_key = 'prep_review:KORNUP000003'"),
+    'Připomínky k návrhu jen 7 dní: Návrh zákona, kterým se mění zákon č. 300/2013 Sb., o Vojenské policii.');
+check('druhý běh nic nepřidá', (new Hlidac\AlertBuilder(db(), config()))->run(), 0);
+$pa = db()->one("SELECT * FROM alerts WHERE alert_key = 'prep_review:KORNUP000003'");
+check('odkaz na připravovaný zákon, po odchodu do Sněmovny do VeKLEP', [Hlidac\View::alertUrl($pa),
+    (function () use ($pa) { db()->run("DELETE FROM pripravovane WHERE pid = 'KORNUP000003'"); return Hlidac\View::alertUrl($pa); })()],
+    ['pripravovane.php#prep-KORNUP000003', 'https://odok.gov.cz/portal/veklep/material/KORNUP000003/']);
+$apiPrep = array_values(array_filter((new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->alerts(Hlidac\Api::filters(['since' => '2026-09-29', 'min_score' => '50', 'limit' => '500'])),
+    fn($a) => $a['id'] === 'prep_review:KORNUP000003'));
+check('API: upozornění bez čísla tisku', array_key_exists(0, $apiPrep) ? [$apiPrep[0]['ct'], $apiPrep[0]['skore']] : 'chybí', [null, 50]);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {

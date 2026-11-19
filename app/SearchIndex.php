@@ -90,13 +90,15 @@ final class SearchIndex
                 $lawCount[trim($law)] = ($lawCount[trim($law)] ?? 0) + 1;
             }
         }
+        // názvy zákonů ze stejného slovníku jako stránka zákona (i z připravovaných zákonů)
+        $laws = (new Laws($this->db))->names() + $laws;
         foreach ($lawCount as $law => $n) {
             $items[] = [
                 'k' => 'zakon', 'id' => $law,
                 't' => $law . ' Sb.' . (isset($laws[$law]) ? ' ' . $laws[$law] : ''),
                 's' => 'mění ' . $n . ' ' . ($n === 1 ? 'tisk' : ($n < 5 ? 'tisky' : 'tisků')),
                 'd' => '', 'x' => '',
-                'u' => 'tisky.php?q=' . rawurlencode($law),
+                'u' => Laws::url($law),
                 'w' => $n,
             ];
         }

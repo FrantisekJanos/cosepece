@@ -6,6 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 git fetch --quiet origin main
 git reset --hard origin/main
+# release pro Sentry: krátký otisk nasazeného commitu (compose ho předá kontejnerům)
+export SENTRY_RELEASE=$(git rev-parse --short HEAD)
 cd docker
 # --pull: i bezpečnostní aktualizace základních obrazů (php:8.3-apache, python)
 docker compose build --pull

@@ -76,7 +76,7 @@ final class Publisher
                 if ($this->isFinished($alert['alert_key'], $name)) {
                     continue;
                 }
-                $url = siteUrl('tisk.php?ct=' . (int)$alert['ct']);
+                $url = View::alertUrl($alert, true);
                 $text = $this->compose($alert, $notifier?->maxLength() ?? 300);
                 try {
                     if ($notifier === null) {
@@ -88,6 +88,10 @@ final class Publisher
                     $stats['sent']++;
                 } catch (\Throwable $ex) {
                     $this->log($alert['alert_key'], $name, 'error', $ex->getMessage());
+                    if (!$dryRun) {
+                        // v dry_run se nic neodesílá, takže chybu nehlásíme
+                        Sentry::capture($ex, ['kde' => 'Publisher', 'sit' => $name]);
+                    }
                     $stats['errors']++;
                     if (!$this->isFinished($alert['alert_key'], $name)) {
                         $done = false;

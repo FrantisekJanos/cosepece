@@ -76,6 +76,9 @@ return [
         // druhé kolo: nálezy se závažností ≥ verify_min znovu posoudí silnější model (php bin/ai.php --verify)
         'verify_model' => 'claude-sonnet-5-5',
         'verify_min' => 6,
+        // spolehlivost (#7 bod 7): hraniční hodnocení repeat_min–repeat_max posoudí rychlý model repeat_runs× a platí medián;
+        // každý sample_every-tý text s hodnocením pod sample_below namátkou ověří i silnější model
+        'repeat_runs' => 3, 'repeat_min' => 3, 'repeat_max' => 7, 'sample_every' => 10, 'sample_below' => 4,
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI
@@ -88,6 +91,12 @@ return [
         // víc problematických PN (#7 bod 6): 'pn_many_min' => 3, 'pn_many_share' => 0.2, 'pn_many_abs' => 10,
         // 'pn_flag_ai_min' => 6 (od této závažnosti AI je PN problematický),
         // body AI u PN: 'ai_pn_full_min' => 6, 'ai_pn_full_count' => 2, 'ai_pn_full_share' => 0.25, 'ai_pn_single_factor' => 0.5,
+    ],
+
+    // Sentry: hlášení neošetřených chyb. Prázdné dsn = vypnuto (nic se neodesílá).
+    'sentry' => [
+        'dsn' => '',
+        'environment' => 'production',
     ],
 
     'notify' => [

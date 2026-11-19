@@ -28,6 +28,7 @@ ini_set('memory_limit', '512M');
 try {
     echo json_encode(Hlidac\Sync::run(), JSON_UNESCAPED_UNICODE);
 } catch (Throwable $ex) {
+    Hlidac\Sentry::capture($ex, ['kde' => 'cron.php']);
     http_response_code(500);
     echo json_encode(['error' => $ex->getMessage()], JSON_UNESCAPED_UNICODE);
 }

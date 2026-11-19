@@ -9,6 +9,15 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Upozornění na připravované zákony',
+        'Upozornění nově hlídají i přípravu zákonů u vlády: připomínkové řízení kratší než 3 týdny (úroveň Pozor, kratší než 10 dní Závažné a jde i na sociální sítě), návrh předložený mimo plán legislativních prací vlády (Pozor) a schválení návrhu vládou (běžná agenda). Upozornění vedou na stránku Připravované, a jakmile návrh dostane číslo sněmovního tisku, do VeKLEP. Jsou v přehledu upozornění, v RSS i v API. Dosavadní případy se zapsaly bez rozeslání.',
+        [52], false],
+    ['2026-11-19', 'Spolehlivější rozbor AI: opakované běhy a namátková kontrola',
+        'Text, kterému rychlý model dá hraniční závažnost 3–7 (tam se rozhoduje, zda dostane body), posoudí třikrát a platí prostřední hodnota; jedno nahodilé hodnocení tak skóre neurčí. Každý desátý text s nízkým hodnocením nově posoudí i silnější model, aby se ukázalo, kolik problémů rychlý model přehlíží; když najde závažný problém, jeho rozbor platí. Na stránce Jak hodnotíme je nový oddíl Jak ověřujeme rozbor AI s průběžnými čísly o shodě modelů. Skóre některých tisků se může změnit, jak doběhnou opakované běhy. Díky podnětu z GitHubu (#7).',
+        [50], true],
+    ['2026-11-19', 'Stránka zákona',
+        'Každý zákon má vlastní stránku (např. zakon.php?z=159/2006, odkaz z detailu tisku i z hledání): všechny tisky tohoto období, které ho mění, pozměňovací návrhy k jiným tiskům, jejichž text tento zákon mění (možné přílepky), a připravované změny u vlády. Odkaz vede i na platné znění v e-Sbírce a na RSS jen k tomuto zákonu. Přehled všech zákonů je v patičce pod odkazem Zákony. Skóre se nemění.',
+        [51], false],
     ['2026-11-19', 'Chytré vyhledávání s našeptávačem',
         'Vyhledávání na úvodní stránce a v hlavičce ostatních stránek našeptává už při psaní: tisky (i podle shrnutí rozboru AI, takže „dotace“ najde novelu zákona o střetu zájmů), pozměňovací návrhy a jejich autory, zákony podle čísla i názvu, připravované zákony u vlády a druhy problémů. Hledá se bez ohledu na diakritiku, stačí začátek slova, snese různé tvary slova i jeden překlep. Číslo tisku vede rovnou na tisk. Ovládá se i klávesnicí (šipky, Enter, Esc, „/“ skočí do hledání). Našeptávání běží v prohlížeči, dotazy se nikam neposílají ani neukládají. U tisku jsou nově vidět všechny pozměňovací návrhy, ne jen prvních 30.',
         [49], false],

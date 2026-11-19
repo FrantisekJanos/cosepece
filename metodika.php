@@ -118,8 +118,28 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
     <li><b>Vládní návrh:</b> meziresortní připomínkové řízení (od–do, počet připomínkových míst), kdy návrh schválila vláda, důvod předložení (např. „mimo plán legislativních prací“) a udělené výjimky. Obvyklá délka připomínek jsou 4 týdny; kratší řízení označujeme. Když připomínkové řízení v datech nenajdeme, napíšeme „nedohledáno“ – mohlo proběhnout pod jiným názvem nebo u dřívější verze návrhu.</li>
     <li><b>Poslanecký, senátní a krajský návrh:</b> text nepřipravovalo ministerstvo. Vláda k němu ale zaujímá stanovisko a k tomu si někdy vyžádá připomínky (v 10. období u většiny takových návrhů, obvykle na 1–2 týdny). Ty se týkají stanoviska vlády, ne úprav návrhu.</li>
   </ul>
+  <p><b>Upozornění na připravované zákony</b> (bez čísla tisku, skóre se neodvozuje od tisku): připomínkové řízení kratší než 10 dní má <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_velmi'] ?> bodů (Závažné, jde i na sociální sítě), kratší než 3 týdny <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_kratke'] ?> bodů (Pozor), předložení mimo plán legislativních prací vlády <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_plan'] ?> bodů (Pozor); schválení návrhu vládou je běžná agenda.</p>
   <p>Ze stejných dat je i přehled <a href="pripravovane.php">připravovaných zákonů</a>: vládní návrhy z tohoto volebního období, které ještě nemají číslo sněmovního tisku, rozdělené podle fáze (připomínkové řízení, vypořádání, vláda, schváleno). Kratší připomínky a nedohledané připomínkové řízení označujeme stejně jako u tisků.</p>
   <p class="muted small">Tyto údaje zatím do skóre nevstupují; body za poslanecký návrh zůstávají, jen jejich popis uvádí, zda si vláda připomínky vyžádala. Po několika týdnech dat zvážíme, zda a jak je započítat. Stanovisko Legislativní rady vlády a jednotlivé připomínky jsou u materiálu ve VeKLEP.</p>
+</section>
+
+<?php
+  // spolehlivost rozboru AI (#7 bod 7) z uložených rozborů; počty se mění, jak přibývají ověřené texty
+  $rel = (new Hlidac\Repo(db()))->aiReliability();
+  $rc = Hlidac\AiReviewer::repeatConfig(config());
+  $pct = fn(int $a, int $n): string => $n > 0 ? (string)round(100 * $a / $n) . ' %' : '–';
+?>
+<section class="card pad" id="spolehlivost-ai" aria-label="Spolehlivost rozboru AI">
+  <h2>Jak ověřujeme rozbor AI</h2>
+  <ul>
+    <li><b>Opakované běhy u hraničních hodnocení.</b> Text, kterému rychlý model dá závažnost <?= $rc['min'] ?>–<?= $rc['max'] ?> (tam se rozhoduje, zda dostane body), posoudí celkem <?= $rc['runs'] ?>× a platí prostřední hodnota (medián). Jedno nahodilé hodnocení tak skóre neurčí.<?php if ($rel['runs']['n'] > 0): ?>
+      Zatím u <?= $rel['runs']['n'] ?> textů: běhy se lišily nejvýš o 1 bod v <?= $pct($rel['runs']['stable'], $rel['runs']['n']) ?> případů (největší rozdíl <?= $rel['runs']['max_spread'] ?>), medián změnil, zda text dostane body, u <?= $rel['runs']['changed_points'] ?>.<?php endif; ?></li>
+    <li><b>Silnější model ověřuje závažné nálezy</b> (od <?= $verifyMin ?>/10) a jen ty jdou do hlavních nálezů a na sítě.<?php if ($rel['high']['n'] > 0): ?>
+      U <?= $rel['high']['n'] ?> ověřených nálezů se shodl s rychlým modelem (rozdíl nejvýš 1 bod) v <?= $pct($rel['high']['agree'], $rel['high']['n']) ?> případů, závažnost výrazně snížil u <?= $rel['high']['lower'] ?> a zvýšil u <?= $rel['high']['higher'] ?>.<?php endif; ?></li>
+    <li><b>Namátková kontrola nízkých hodnocení.</b> Každý <?= $rc['sample_every'] ?>. text, kterému rychlý model dal méně než <?= $rc['sample_below'] ?>/10, posoudí i silnější model, aby se ukázalo, kolik problémů rychlý model přehlíží. Když silnější model najde závažný problém, jeho rozbor platí.<?php if ($rel['sample']['n'] > 0): ?>
+      Ze <?= $rel['sample']['n'] ?> zkontrolovaných textů zvýšil závažnost tak, že text dostal body, u <?= $rel['sample']['to_points'] ?> (z toho na závažný nález <?= $rel['sample']['to_finding'] ?>).<?php else: ?> Výsledky přibudou po prvním ověřovacím běhu.<?php endif; ?></li>
+  </ul>
+  <p class="muted small">Model nedostává jméno předkladatele ani typ návrhu. Citace z textu ověřujeme strojově, nález bez ověřené citace má nejvýš 2/10. Srovnání s hodnocením lidí (ruční kalibrace) zatím neproběhlo, čísla výše porovnávají dva modely mezi sebou.</p>
 </section>
 
 <section class="card pad" id="odpovednost" aria-label="Upozornění a omezení odpovědnosti">

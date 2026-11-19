@@ -15,6 +15,10 @@ final class View
         'pn' => ['surge', 'Nové PN'],
         'passed' => ['mp', 'Schváleno Sněmovnou'],
         'law' => ['mp', 'Vyhlášeno'],
+        'prep_velmi' => ['cut', 'Připomínky < 10 dní'],
+        'prep_kratke' => ['cut', 'Krátké připomínky'],
+        'prep_plan' => ['surge', 'Mimo plán vlády'],
+        'prep_vlada' => ['mp', 'Schváleno vládou'],
     ];
 
     // krátké názvy důvodů skóre podle klíče (karty, obrázky pro sdílení, dokumentace API)
@@ -133,7 +137,7 @@ final class View
 <footer class="foot">
   <p>Zdroj: <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřená data Poslanecké sněmovny</a> (tisky, sněmovní dokumenty, poslanci). Počty PN jsou podané písemné pozměňovací návrhy; Sněmovna neeviduje, které z nich byly platně podány ve 2. čtení. Příznaky se počítají automaticky z historie tisku.</p>
   <p class="foot-disclaimer"><strong>Upozornění:</strong> Obsah vzniká automaticky z otevřených dat a část rozborů (shrnutí, titulky a hodnocení závažnosti textů) připravuje umělá inteligence, která se může mýlit. Údaje mají informativní povahu, nejsou právní radou ani oficiálním stanoviskem Sněmovny a před dalším použitím je ověřte v původních zdrojích. <a href="metodika.php#odpovednost">Omezení odpovědnosti</a></p>
-  <p><a href="zmeny.php">Co jsme změnili</a> · <a href="data.php">Data a API</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
+  <p><a href="zmeny.php">Co jsme změnili</a> · <a href="zakon.php">Zákony</a> · <a href="data.php">Data a API</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </footer>
 </main>
 </body>
@@ -225,6 +229,15 @@ final class View
 
     public static function alertUrl(array $alert, bool $absolute = false): string
     {
+        // připravovaný zákon (bez tisku): na stránku připravovaných, a když už tam není, do VeKLEP
+        if (str_starts_with((string)$alert['kind'], 'prep_')) {
+            $pid = (string)substr((string)$alert['alert_key'], strpos((string)$alert['alert_key'], ':') + 1);
+            if (db()->value('SELECT 1 FROM pripravovane WHERE pid = ?', [$pid]) === null) {
+                return GovPrep::url($pid);
+            }
+            $path = 'pripravovane.php#prep-' . rawurlencode($pid);
+            return $absolute ? siteUrl($path) : $path;
+        }
         // upozornění minulého období vede na psp.cz (tisk se stejným číslem je teď jiný návrh)
         if (self::isPastPeriod($alert)) {
             return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);
@@ -253,7 +266,7 @@ final class View
           <article class="alert">
             <div class="alert-when"><?= e(formatDate($a['event_at'], true)) ?></div>
             <div class="alert-body">
-              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="<?= e(self::alertUrl($a)) ?>">tisk <?= (int)$a['ct'] ?><?= self::isPastPeriod($a) ? ' (' . (int)$a['obdobi'] . '. období)' : '' ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
+              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="<?= e(self::alertUrl($a)) ?>"><?= (int)$a['ct'] > 0 ? 'tisk ' . (int)$a['ct'] : 'připravovaný zákon' ?><?= self::isPastPeriod($a) ? ' (' . (int)$a['obdobi'] . '. období)' : '' ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
               <h3><a href="<?= e(self::alertUrl($a)) ?>"><?= e($a['title']) ?></a></h3>
               <p><?= e($a['body']) ?></p>
             </div>

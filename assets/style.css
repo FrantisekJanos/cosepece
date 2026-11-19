@@ -298,3 +298,4 @@ table.vote-clubs td:not(:first-child), table.vote-clubs th:not(:first-child) { t
 .search-group .card-head h2 { margin: 0; font-size: 18px; }
 .pn-item:target { background: #FFF7E0; border-radius: 6px; }
 @media (max-width: 640px) { .search-top, .search-top .search-box, .search-top input { width: 100%; } .search-top { display: flex; } .search-top .search-box { flex: 1; } }
+.upcoming-list li:target { background: #FFF7E0; }

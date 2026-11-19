@@ -61,13 +61,21 @@ final class Repo
     public function topFindings(int $minScore, int $limit): array
     {
         // hlavní nálezy: nejzávažnější rozpracované tisky (mohou se kdykoli rozhýbat)
-        // a uzavřené tisky s aktivitou za posledních 120 dní
+        // a uzavřené tisky s aktivitou za posledních 120 dní. Navíc tisky pod prahem, které mají
+        // nález AI se závažností aspoň finding_ai_min, ověřený silnějším modelem a doložený citací
+        // (jediný silný nález se ve skóre ztratí mezi ostatními signály, např. tisk 221)
         $since = date('Y-m-d', strtotime('-120 days'));
+        $strong = $this->strongAiFindings();
+        $params = [$minScore];
+        $extra = '';
+        if ($strong !== []) {
+            $extra = ' OR ct IN (' . implode(',', array_map('intval', array_keys($strong))) . ')';
+        }
         $rows = $this->db->all(
-            "SELECT * FROM tisky WHERE score >= ?
+            "SELECT * FROM tisky WHERE (score >= ?$extra)
                AND (faze NOT IN ('Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli') OR posledni >= ?)
              ORDER BY score DESC, posledni DESC LIMIT " . $limit,
-            [$minScore, $since]
+            [...$params, $since]
         );
         $surge = $this->surgeSet();
         $review = $this->reviewStatus();
@@ -75,8 +83,28 @@ final class Repo
             $row['flags'] = $this->flags($row, $surge, $review);
             $row['reasons_list'] = json_decode((string)$row['reasons'], true) ?: [];
             $row['headline'] = $this->headline((int)$row['ct']);
+            // pod prahem skóre: zařazeno kvůli ověřenému nálezu AI
+            $row['strong_ai'] = (int)$row['score'] < $minScore ? ($strong[(int)$row['ct']] ?? null) : null;
         }
         return $rows;
+    }
+
+    public function strongAiFindings(): array
+    {
+        // ct => nejvyšší ověřená závažnost AI (text návrhu nebo PN) od finding_ai_min, s ověřenou citací
+        $min = (int)Scorer::weights(config())['finding_ai_min'];
+        $verifier = AiReviewer::verifyModel(config());
+        $out = [];
+        foreach (['tisk_text', 'pn_text'] as $table) {
+            foreach ($this->db->all("SELECT ct, ai_score, ai_json FROM $table WHERE ai_score >= ? AND ai_model = ?", [$min, $verifier]) as $r) {
+                $ai = json_decode((string)$r['ai_json'], true) ?: [];
+                if (trim((string)(((array)($ai['citace'] ?? []))[0] ?? '')) === '') {
+                    continue;
+                }
+                $out[(int)$r['ct']] = max($out[(int)$r['ct']] ?? 0, (int)$r['ai_score']);
+            }
+        }
+        return $out;
     }
 
     public function headline(int $ct): ?array

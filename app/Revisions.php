@@ -98,11 +98,11 @@ final class Revisions
         $lastHash = $last !== null ? (string)$last['hash'] : null;
         if ($last === null && $row['ai_prev_json'] !== null) {
             // výsledek 1. kola před ověřením silnějším modelem (čas a verze promptu 1. kola se neuchovávaly)
-            $prevHash = self::aiHash((string)$row['ai_prev_json'], $row['ai_prev_model'], $row['ai_prompt']);
+            $prevHash = self::aiHash((string)$row['ai_prev_json'], $row['ai_prev_model'], $row['ai_prompt'], $textHash);
             $insert(++$verze, (string)$row['ai_prev_json'], $row['ai_prev_score'], $row['ai_prev_model'], $row['ai_prompt'], null, $prevHash, 'zaloha');
             $lastHash = $prevHash;
         }
-        $hash = self::aiHash((string)$row['ai_json'], $row['ai_model'], $row['ai_prompt']);
+        $hash = self::aiHash((string)$row['ai_json'], $row['ai_model'], $row['ai_prompt'], $textHash);
         if ($lastHash === $hash) {
             return false;
         }
@@ -110,9 +110,10 @@ final class Revisions
         return true;
     }
 
-    private static function aiHash(string $json, mixed $model, mixed $prompt): string
+    private static function aiHash(string $json, mixed $model, mixed $prompt, string $textHash): string
     {
-        return sha1((string)$model . '|' . (string)$prompt . '|' . $json);
+        // otisk zahrnuje i verzi textu: stejný rozbor nové verze textu je nová verze rozboru
+        return sha1((string)$model . '|' . (string)$prompt . '|' . $textHash . '|' . $json);
     }
 
     public static function snapshotAll(Db $db, string $source, ?int $obdobi = null): int
@@ -173,13 +174,15 @@ final class Revisions
         return $out;
     }
 
-    public static function counts(Db $db, string $kind, ?int $obdobi = null): array
+    public static function counts(Db $db, string $kind, ?int $obdobi = null, ?int $ct = null): array
     {
-        // počet verzí textu a rozborů na položku: [ref_id => ['text' => n, 'ai' => m]]
+        // počet verzí textu a rozborů na položku: [ref_id => ['text' => n, 'ai' => m]]; $ct omezí výběr na jeden tisk
         $obdobi ??= self::period($db);
         $out = [];
+        $where = $ct !== null ? ' AND ct = ?' : '';
+        $params = $ct !== null ? [$kind, $obdobi, $ct] : [$kind, $obdobi];
         foreach (['text' => 'text_revize', 'ai' => 'ai_revize'] as $type => $table) {
-            foreach ($db->all("SELECT ref_id, COUNT(*) AS n FROM $table WHERE druh = ? AND obdobi = ? GROUP BY ref_id", [$kind, $obdobi]) as $r) {
+            foreach ($db->all("SELECT ref_id, COUNT(*) AS n FROM $table WHERE druh = ? AND obdobi = ?$where GROUP BY ref_id", $params) as $r) {
                 $out[(int)$r['ref_id']] = ($out[(int)$r['ref_id']] ?? ['text' => 0, 'ai' => 0]);
                 $out[(int)$r['ref_id']][$type] = (int)$r['n'];
             }

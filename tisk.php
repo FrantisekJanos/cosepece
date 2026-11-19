@@ -31,8 +31,8 @@ $alerts = $repo->alerts(10, 0, $ct);
 $texts = $repo->pnTexts($ct);
 $billText = $repo->billText($ct);
 // počty uložených verzí textu a rozborů (odkaz „Historie“ jen u víc než jedné verze)
-$billRev = Revisions::counts(db(), 'tisk')[$ct] ?? ['text' => 0, 'ai' => 0];
-$pnRev = Revisions::counts(db(), 'pn');
+$billRev = Revisions::counts(db(), 'tisk', null, $ct)[$ct] ?? ['text' => 0, 'ai' => 0];
+$pnRev = Revisions::counts(db(), 'pn', null, $ct);
 $laws = array_filter(explode(',', (string)$t['zakony']));
 
 // délka projednávání od předložení po poslední krok

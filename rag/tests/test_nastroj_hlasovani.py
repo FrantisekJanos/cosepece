@@ -1,4 +1,4 @@
-"""Testy nástroje hlasovani_k_tisku (hlidac_rag.nastroje.hlasovani).
+"""Testy nástrojů hlasovani_k_tisku a get_hlasovani (hlidac_rag.nastroje.hlasovani).
 
 Logika nad databází běží nad PostgreSQL (bez DATABASE_URL se přeskočí): tabulky PHP webu (tisky, kroky,
 hlasovani, hlasovani_kluby) si test vytvoří ve vlastním dočasném schématu podle app/Db.php a nastaví na něj
@@ -61,6 +61,25 @@ def conn():
         cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
     c.commit()
     c.close()
+
+
+@pytest.fixture
+def steno(conn):
+    """Tabulka steno.projev (vytvoří ji db.migrate, když chybí); vložené řádky se na konci vrátí zpět rollbackem."""
+    from hlidac_rag import db
+
+    if conn.execute("SELECT to_regclass('steno.projev')").fetchone()[0] is None:
+        db.migrate(conn)
+    return conn
+
+
+def projev(conn, schuze: int, turn: int, aname: int, poradi: int, hlasovani: list[int] | None,
+           recnik: str = "Poslanec Test", obdobi: int = 10, zruseno: bool = False) -> None:
+    conn.execute("""INSERT INTO steno.projev (obdobi, schuze, turn, aname, datum, poradi, recnik, text, znaku, hash,
+                                              url, hlasovani, zruseno)
+                    VALUES (%s, %s, %s, %s, '2026-10-24', %s, %s, 'text', 4, 'h', 'u', %s,
+                            CASE WHEN %s THEN now() END)""",
+                 (obdobi, schuze, turn, aname, poradi, recnik, hlasovani, zruseno))
 
 
 def tisk(conn, ct: int, nazev: str) -> None:
@@ -243,6 +262,117 @@ def test_chybejici_tabulka_je_citelna_chyba(conn):
         h._hlasovani_k_tisku(conn, 231)
 
 
+# ---------------------------------------------------------------- get_hlasovani
+
+def _detail_s_kluby(conn):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39", vysledek="R", pro=81, proti=96, zdrzel=0, nehlasoval=0,
+         prihlaseno=177, kvorum=89, krok=1)
+    krok_historie(conn, 500, 231, "Odesíláno do Senátu", "souhlas", 88876)
+    klub(conn, 88876, "ODS", 23, 0, 0, 11)
+    klub(conn, 88876, "ANO2011", 0, 69, 0, 11)
+    klub(conn, 88876, "TOP09", 7, 0, 0, 2)
+
+
+@pg
+def test_get_hlasovani_plny_detail(steno):
+    _detail_s_kluby(steno)
+
+    out = h._get_hlasovani(steno, 88876)
+
+    assert out == {
+        "id_hlasovani": 88876, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk.php?ct=231",
+        "schuze": 34, "cislo": 287, "datum": "2026-10-24 04:39", "vysledek": "zamítnuto",
+        "pro": 81, "proti": 96, "zdrzel": 0, "nehlasoval": 0, "prihlaseno": 177, "kvorum": 89,
+        "krok": "Odesíláno do Senátu", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=88876",
+        "kluby": [{"klub": "ANO2011", "pro": 0, "proti": 69, "zdrzel": 0, "nepritomen": 11},
+                  {"klub": "ODS", "pro": 23, "proti": 0, "zdrzel": 0, "nepritomen": 11},
+                  {"klub": "TOP09", "pro": 7, "proti": 0, "zdrzel": 0, "nepritomen": 2}],
+        "projevy": [], "projevu_celkem": 0,
+    }
+
+
+@pg
+def test_get_hlasovani_nazev_z_hlasovani_pro_nesledovany_tisk(steno):
+    hlas(steno, 7, 999, 20, 1, "2026-06-01 10:00", nazev="Vl.n.z. o něčem**")
+    hlas(steno, 9, 999, 20, 3, "2026-06-01 10:02", nazev="Vl.n.z. o něčem")
+
+    out = h._get_hlasovani(steno, 7)
+
+    assert out["ct"] == 999 and out["nazev"] == "Vl.n.z. o něčem" and out["kluby"] == []
+
+
+@pg
+def test_get_hlasovani_projevy(steno):
+    tisk(steno, 231, NAZEV_231)
+    hlas(steno, 88876, 231, 34, 287, "2026-10-24 04:39")
+    hlas(steno, 88877, 231, 34, 288, "2026-10-24 04:40")
+    # řazení podle schůze a pořadí, ne podle turn/aname
+    projev(steno, 9991, 40, 2, 5, [88876], recnik="Poslanec Druhý")
+    projev(steno, 9990, 90, 9, 7, [88876, 88877], recnik="Poslanec První")
+    projev(steno, 9990, 10, 1, 3, [88877, 88876], recnik="Poslankyně Nultá")
+    # nepatří: zrušený, jiné období, jiné hlasování, bez hlasování
+    projev(steno, 9990, 11, 1, 4, [88876], zruseno=True)
+    projev(steno, 9990, 12, 1, 5, [88876], obdobi=9)
+    projev(steno, 9990, 13, 1, 6, [88877])
+    projev(steno, 9990, 14, 1, 8, None)
+
+    out = h._get_hlasovani(steno, 88876)
+
+    assert out["projevu_celkem"] == 3
+    assert [(p["klic"], p["recnik"]) for p in out["projevy"]] == [
+        ("10/9990/10/1", "Poslankyně Nultá"), ("10/9990/90/9", "Poslanec První"),
+        ("10/9991/40/2", "Poslanec Druhý")]
+    assert out["projevy"][0]["datum"] == "2026-10-24"
+    assert "poznamka" not in out
+
+
+@pg
+def test_get_hlasovani_projevy_se_orezou_na_50(steno):
+    tisk(steno, 231, NAZEV_231)
+    hlas(steno, 88876, 231, 34, 287, "2026-10-24 04:39")
+    for i in range(h.MAX_PROJEVU + 3):
+        projev(steno, 9990, 100 + i, 1, i, [88876])
+
+    out = h._get_hlasovani(steno, 88876)
+
+    assert out["projevu_celkem"] == h.MAX_PROJEVU + 3
+    assert len(out["projevy"]) == h.MAX_PROJEVU
+    assert out["projevy"][0]["klic"] == "10/9990/100/1"
+
+
+@pg
+def test_get_hlasovani_bez_tabulky_projevu(conn, monkeypatch):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39")
+    # skutečnou tabulku nechat být: nástroj se nasměruje na neexistující
+    monkeypatch.setattr(h, "PROJEVY_TABULKA", "steno.neexistujici_tabulka")
+
+    out = h._get_hlasovani(conn, 88876)
+
+    assert out["projevy"] == [] and out["projevu_celkem"] == 0
+    assert out["poznamka"]
+    assert out["ct"] == 231
+
+
+@pg
+def test_get_hlasovani_neznamy_id_je_valueerror(conn):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 88876, 231, 34, 287, "2026-10-24 04:39")
+
+    with pytest.raises(ValueError, match=r"Hlasování 1 neznám.*hlasovani_k_tisku\(ct\)"):
+        h._get_hlasovani(conn, 1)
+
+
+@pg
+def test_get_hlasovani_chybejici_tabulka_je_citelna_chyba(conn):
+    conn.execute("DROP TABLE hlasovani_kluby")
+    conn.execute(f"SET LOCAL search_path TO {SCHEMA}")
+
+    with pytest.raises(ValueError, match="hlasovani_kluby"):
+        h._get_hlasovani(conn, 88876)
+
+
 # ---------------------------------------------------------------- bez databáze
 
 def _velikost(obj) -> int:
@@ -277,3 +407,14 @@ def test_nastroj_je_registrovany_jen_pro_cteni():
     t = nastroje["hlasovani_k_tisku"]
     assert t.annotations.read_only_hint is True and t.annotations.open_world_hint is False
     assert f"nejvýš {h.MAX_LIMIT_HLASOVANI}" in t.description
+
+
+def test_get_hlasovani_je_registrovany_jen_pro_cteni():
+    from hlidac_rag import mcp_server
+
+    nastroje = {t.name: t for t in mcp_server.server._tool_manager.list_tools()}
+
+    assert "get_hlasovani" in nastroje
+    t = nastroje["get_hlasovani"]
+    assert t.annotations.read_only_hint is True and t.annotations.open_world_hint is False
+    assert list(t.parameters["properties"]) == ["id_hlasovani"]

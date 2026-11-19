@@ -30,7 +30,7 @@ if [ "$WITH_DATA" = 1 ] && [ -f data/hlidac.sqlite ]; then
   mkdir -p "$TMP/data"
   sqlite3 data/hlidac.sqlite "VACUUM INTO '$TMP/data/hlidac.sqlite'"
   # chybové texty mohou obsahovat URL s tokenem (starší verze je nemaskovaly) – do balíku nepatří
-  sqlite3 "$TMP/data/hlidac.sqlite" "UPDATE post_log SET error = NULL; UPDATE pn_text SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; UPDATE tisk_text SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; VACUUM;"
+  sqlite3 "$TMP/data/hlidac.sqlite" "UPDATE post_log SET error = NULL; UPDATE pn_text SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; UPDATE tisk_text SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; UPDATE pn_text_archiv SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; UPDATE tisk_text_archiv SET error = 'chyba (text odstraněn při balení)' WHERE error IS NOT NULL; VACUUM;"
   (cd "$TMP" && zip -q "$OUT" data/hlidac.sqlite)
   echo "Databáze přibalena: $(sqlite3 "$TMP/data/hlidac.sqlite" "SELECT (SELECT COUNT(*) FROM tisky) || ' tisků, ' || ((SELECT COUNT(*) FROM tisk_text WHERE ai_at IS NOT NULL) + (SELECT COUNT(*) FROM pn_text WHERE ai_at IS NOT NULL)) || ' rozborů AI, poslední synchronizace ' || (SELECT v FROM meta WHERE k = 'last_sync')")"
 fi

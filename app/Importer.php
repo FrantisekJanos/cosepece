@@ -103,7 +103,10 @@ final class Importer
     {
         // nové volební období: čísla tisků začínají znovu od 1, takže tisk 40 je jiný návrh než tisk 40
         // minulého období (#2 bod 2). Stará upozornění zůstanou v historii pod klíčem s číslem období
-        // (a odkazem na psp.cz), texty a rozbory starých tisků se smažou a nové období začne bootstrapem.
+        // (a odkazem na psp.cz). Texty a rozbory starých tisků se nemažou: zůstanou v historii verzí
+        // (text_revize, ai_revize s číslem období) a celé řádky v archivu (tisk_text_archiv, pn_text_archiv).
+        // Z pracovních tabulek zmizí, aby je detail tisku, skóre ani fronty nepoužily pro nový tisk stejného čísla.
+        // Nové období začne bootstrapem.
         foreach ($this->db->all('SELECT alert_key FROM alerts WHERE obdobi = ?', [$oldCislo]) as $a) {
             $key = (string)$a['alert_key'];
             if (str_starts_with($key, $oldCislo . '/')) {
@@ -113,6 +116,7 @@ final class Importer
             $this->db->run('UPDATE post_log SET alert_key = ? WHERE alert_key = ?', [$oldCislo . '/' . $key, $key]);
         }
         $this->db->run('UPDATE alerts SET posted = 3 WHERE posted = 0');
+        Revisions::archivePeriod($this->db, $oldCislo);
         $this->db->run('DELETE FROM tisk_text');
         $this->db->run('DELETE FROM pn_text');
         $this->db->run("DELETE FROM meta WHERE k = 'bootstrapped'");

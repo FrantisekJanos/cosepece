@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
@@ -66,6 +67,56 @@ def scrub(value: Any, key: str | None = None) -> Any:
     return s
 
 
+# Omezení objemu (free plán Sentry má 5 000 událostí měsíčně; ingest loguje výjimku za každý
+# neúspěšný dokument). Stejný otisk se v okně pošle jen jednou a událostí je nejvýš MAX_EVENTS.
+# MCP server běží trvale, proto se počítadla nuluje po hodině (okno podle time.monotonic());
+# ingest je každou hodinu nový proces, takže okno platí stejně. Paralela k PHP app/Sentry.php.
+MAX_EVENTS = 20
+WINDOW_SECONDS = 3600.0
+
+_seen: set[str] = set()
+_sent = 0
+_window_start: float | None = None
+
+
+def reset() -> None:
+    global _sent, _window_start
+    _seen.clear()
+    _sent = 0
+    _window_start = None
+
+
+def _fingerprint(event: dict) -> str:
+    # typ výjimky + šablona zprávy (před dosazením argumentů), jinak text zprávy
+    parts = []
+    values = (event.get("exception") or {}).get("values") or []
+    if values:
+        parts.append(str(values[-1].get("type", "")))
+    logentry = event.get("logentry") or {}
+    msg = logentry.get("message") or event.get("message")
+    if isinstance(msg, dict):
+        msg = msg.get("formatted")
+    if not msg and values:
+        msg = values[-1].get("value")
+    parts.append(str(msg or ""))
+    return "|".join(parts)
+
+
+def _allow(event: dict) -> bool:
+    global _sent, _window_start
+    now = time.monotonic()
+    if _window_start is None or now - _window_start >= WINDOW_SECONDS:
+        _seen.clear()
+        _sent = 0
+        _window_start = now
+    fp = _fingerprint(event)
+    if fp in _seen or _sent >= MAX_EVENTS:
+        return False
+    _seen.add(fp)
+    _sent += 1
+    return True
+
+
 def before_send(event: dict, hint: dict) -> dict | None:
     # chyby nástrojů MCP (neznámé číslo tisku, krátký dotaz…) jsou očekávané odpovědi, ne závady
     exc_info = (hint or {}).get("exc_info")
@@ -74,7 +125,7 @@ def before_send(event: dict, hint: dict) -> dict | None:
     for field in ("message", "logentry", "exception", "request", "extra", "breadcrumbs"):
         if field in event:
             event[field] = scrub(event[field])
-    return event
+    return event if _allow(event) else None
 
 
 def init(component: str) -> bool:

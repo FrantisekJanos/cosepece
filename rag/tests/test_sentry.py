@@ -1,7 +1,16 @@
 """Sentry v rag: filtr citlivých údajů shodný s PHP (app/Sentry.php) a vypnutí bez DSN."""
 from mcp.server.mcpserver.exceptions import ToolError
 
+import pytest
+
 from hlidac_rag import sentry
+
+
+@pytest.fixture(autouse=True)
+def _reset_sentry():
+    sentry.reset()
+    yield
+    sentry.reset()
 
 
 def test_scrub_klice():
@@ -52,3 +61,31 @@ def test_before_send_zahodi_tool_error():
 def test_init_bez_dsn(monkeypatch):
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     assert sentry.init("mcp") is False
+
+
+def test_before_send_dedup_stejneho_otisku():
+    udalost = lambda: {"logentry": {"message": "chyba %s", "params": ["a"]},
+                       "exception": {"values": [{"type": "ValueError", "value": "x"}]}}
+    assert sentry.before_send(udalost(), {}) is not None
+    assert sentry.before_send(udalost(), {}) is None
+
+
+def test_before_send_strop_20_udalosti():
+    prosly = [sentry.before_send({"message": f"jiná chyba {i}"}, {}) for i in range(25)]
+    assert sum(1 for e in prosly if e is not None) == 20
+
+
+def test_before_send_okno_se_po_hodine_nuluje(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(sentry.time, "monotonic", lambda: t[0])
+    assert sentry.before_send({"message": "opakovaná"}, {}) is not None
+    assert sentry.before_send({"message": "opakovaná"}, {}) is None
+    t[0] += sentry.WINDOW_SECONDS + 1
+    assert sentry.before_send({"message": "opakovaná"}, {}) is not None
+
+
+def test_tool_error_se_nepocita_do_stropu():
+    hint = {"exc_info": (ToolError, ToolError("x"), None)}
+    for _ in range(30):
+        assert sentry.before_send({"message": "x"}, hint) is None
+    assert sentry.before_send({"message": "skutečná chyba"}, {}) is not None

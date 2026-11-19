@@ -17,14 +17,15 @@ $verifyMin = (int)($ai['verify_min'] ?? 6);
 // skupiny signálů: název skupiny, klíč stropu, řádky [body, popis]
 $groups = [
     ['Postup projednávání', 'cap_procedure', [
-        [$w['mp_bill'], 'Poslanecký návrh: neprošel meziresortním připomínkovým řízením (ministerstva, legislativní rada vlády, odborná veřejnost).'],
+        [$w['mp_bill'], 'Poslanecký návrh, který postupuje projednáváním (2. čtení a dál nebo schválení v 1. čtení): neprošel meziresortním připomínkovým řízením (ministerstva, legislativní rada vlády, odborná veřejnost).'],
+        [$w['mp_bill_early'], 'Poslanecký návrh, který zatím nepostoupil do 2. čtení (většina takových návrhů nikdy neprojde).'],
         [$w['senate_bill'], 'Senátní návrh: také bez meziresortního připomínkového řízení.'],
         [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: také bez meziresortního připomínkového řízení.'],
-        [$w['p90_requested'], 'Navrženo schválit už v 1. čtení podle § 90 odst. 2 jednacího řádu.'],
+        [$w['p90_requested'], 'Navrženo schválit už v 1. čtení podle § 90 odst. 2 jednacího řádu (jen u tisku, který se ještě projednává).'],
         [$w['p90_passed'], 'Schváleno už v 1. čtení podle § 90 odst. 2, bez 2. a 3. čtení (místo bodů za pouhý návrh).'],
         [$w['deadline_cut'], 'Zkrácená lhůta při projednávání: lhůta pro výbory kratší než 60 dní, nebo Sněmovna lhůtu změnila během projednávání.'],
         [$w['short_gap'], 'Mezi pozměňovacími návrhy a zahájením 3. čtení méně než ' . (int)$w['short_gap_days'] . ' dní.'],
-        [$w['late_pn'], 'Aspoň ' . (int)$w['late_pn_min'] . ' pozměňovací návrhy podané v den konce podrobné rozpravy.'],
+        [$w['late_pn'], 'V den konce podrobné rozpravy podáno aspoň ' . (int)$w['late_pn_min'] . ' pozměňovacích návrhů a zároveň aspoň ' . (int)round(100 * (float)$w['late_pn_share']) . ' % všech pozměňovacích návrhů k tisku.'],
         [$w['surge'], 'Nával pozměňovacích návrhů: najednou jich přibylo hodně.'],
     ]],
     ['Obsah textu návrhu a pozměňovacích návrhů', 'cap_content', [
@@ -36,7 +37,7 @@ $groups = [
         ['0–' . (10 * (int)$w['ai_multiplier']), 'Rozbor nejzávažnějšího pozměňovacího návrhu umělou inteligencí: závažnost 0–10 × ' . (int)$w['ai_multiplier'] . ' (počítá se od závažnosti 4).'],
     ]],
     ['Kontext', 'cap_context', [
-        [$w['topic'], 'Citlivá oblast: ' . implode(', ', array_keys((array)$w['topics'])) . '.'],
+        [$w['topic'], 'Citlivá oblast podle názvu tisku: ' . implode(', ', array_keys((array)$w['topics'])) . '. Jde o redakční výběr oblastí, kde mají procedurální zkratky větší dopad; proto jen malý příplatek, ne hodnocení obsahu.'],
         [$w['omnibus'], 'Souhrnná novela měnící více zákonů najednou.'],
         [$w['watched'], 'Zákon, který web výslovně sleduje.'],
     ]],
@@ -105,7 +106,7 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
   <h2>Rozbor textu</h2>
   <p>Web stahuje texty návrhů zákonů a pozměňovacích návrhů ve Wordu. Pravidla v nich hledají odkazy na jiné zákony (přílepky), zpětné použití a změny lhůt pro vymáhání.</p>
   <?php if ($aiOn): ?>
-  <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností <?= $verifyMin ?> a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“.</p>
+  <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností <?= $verifyMin ?> a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“. U pozměňovacích návrhů se takový nález do skóre počítá naplno až po tomto ověření, do té doby nejvýš jako <?= $verifyMin - 1 ?>/10. Přílepek se posuzuje proti zákonům, které mění název i text samotného návrhu.</p>
   <?php endif; ?>
 </section>
 

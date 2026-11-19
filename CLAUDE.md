@@ -117,18 +117,18 @@ Výchozí váhy v `Scorer::defaults()`, přepis přes `config.php → scoring`. 
 
 | Signál | Body |
 |---|---|
-| Poslanecký návrh (bez připomínkového řízení) / senátní / krajský (podle `tisky.id_navrh`) | 15 / 5 / 5 |
-| § 90/2 navrženo (krok v historii nebo `tisky.rj = 1`) / schváleno v 1. čtení | 10 / 25 |
+| Poslanecký návrh: postupuje (2. čtení a dál) / zatím v 1. čtení; senátní / krajský (podle `tisky.id_navrh`) | 15 / 5; 5 / 5 |
+| § 90/2 navrženo (krok v historii nebo `tisky.rj = 1`, jen rozpracovaný tisk) / schváleno v 1. čtení | 10 / 25 |
 | Zkrácená lhůta (akce změny lhůty nebo lhůta pro výbory `tisky.lhuta` < 60 dní) | 15 |
 | Mezi PN a zahájením 3. čtení < 7 dní | 15 |
-| ≥ 3 PN v den konce podrobné rozpravy | 10 |
-| Nával PN (≥ surge_threshold za běh) | 5 |
-| PN mění jiný zákon než návrh (přílepek; nepočítá se, když AI potvrdí souvislost) / rozsáhlá nová úprava v PN | 20 / 10 |
+| ≥ 3 PN a ≥ 50 % všech PN tisku v den konce podrobné rozpravy | 10 |
+| Nával PN (≥ surge_threshold PN k tisku za kalendářní den) | 5 |
+| PN mění jiný zákon než návrh – podle názvu i textu návrhu (přílepek; nepočítá se, když AI potvrdí souvislost) / rozsáhlá nová úprava v PN | 20 / 10 |
 | ≥ 3 problematické PN | 5 |
 | Text návrhu nebo PN mění lhůtu vymáhání a použije ji i zpětně (retro + deadline) | 15 |
 | AI závažnost textu návrhu (0–10) × 3 | 0–30 |
-| AI závažnost PN (0–10) × 3 | 0–30 |
-| Citlivá oblast (střet zájmů, dotace/SZIF, veřejné zakázky, kontrolní instituce, policie a služby, volby, média…; samotný trestní zákoník ne) | 15 |
+| AI závažnost PN (0–10) × 3; nález ≥ `ai.verify_min` neověřený Sonnetem nejvýš 5/10 | 0–30 |
+| Citlivá oblast (redakční výběr: střet zájmů, dotace/SZIF, veřejné zakázky, kontrolní instituce, policie a služby, volby, média…; samotný trestní zákoník ne) | 5 |
 | Souhrnná novela / sledovaný zákon | 3 / 10 |
 
 ## Stav a další kroky

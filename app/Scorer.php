@@ -25,6 +25,8 @@ final class Scorer
         // výchozí váhy; v config.php je lze přepsat klíčem 'scoring'
         return [
             'mp_bill' => 15,
+            // poslanecký návrh, který zatím nepostoupil do 2. čtení (většina takových nikdy neprojde)
+            'mp_bill_early' => 5,
             'senate_bill' => 5,
             'region_bill' => 5,
             'p90_requested' => 10,
@@ -34,9 +36,12 @@ final class Scorer
             'short_gap_days' => 7,
             'late_pn' => 10,
             'late_pn_min' => 3,
+            // a zároveň aspoň tento podíl všech PN k tisku (běžná praxe je podávat PN v podrobné rozpravě)
+            'late_pn_share' => 0.5,
             'surge' => 5,
             'omnibus' => 3,
-            'topic' => 15,
+            // redakční výběr oblastí (střet zájmů, dotace, média…): malý příplatek, ne hodnocení obsahu
+            'topic' => 5,
             'watched' => 10,
             'pn_other_law' => 20,
             'pn_large' => 10,
@@ -96,7 +101,7 @@ final class Scorer
             $pnDates[(int)$p['ct']][] = substr((string)$p['cas'], 0, 10);
         }
         $pnText = [];
-        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.signals, x.ai_json, p.osoba FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
+        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.ai_model, x.signals, x.ai_json, p.osoba FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
             $pnText[(int)$x['ct']][] = $x;
         }
         $billText = [];
@@ -154,8 +159,22 @@ final class Scorer
         };
 
         // 1. obcházení připomínkového řízení
+        // plné body až když návrh skutečně postupuje (2. čtení a dál, nebo schválení v 1. čtení) (#7 bod 5)
+        $progressed = (int)$t['p90ok'] === 1;
+        foreach ($kroky as $k) {
+            $typ = (int)$k['typ_stavu'];
+            if (in_array($typ, Analyzer::STAV_2_3_CTENI, true) || in_array($typ, Analyzer::STAV_PO_SNEMOVNE, true) || $typ === 21) {
+                $progressed = true;
+                break;
+            }
+        }
+        $closed = in_array((string)$t['faze'], ['Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'], true);
         if ($t['typ_navrhu'] === 'poslanecký') {
-            $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením');
+            if ($progressed) {
+                $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh postupuje projednáváním – neprošel meziresortním připomínkovým řízením');
+            } else {
+                $add('mp_bill', (int)$w['mp_bill_early'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením (zatím nepostoupil do 2. čtení)');
+            }
         } elseif ($t['typ_navrhu'] === 'senátní') {
             $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – neprošel meziresortním připomínkovým řízením');
         } elseif ($t['typ_navrhu'] === 'krajský') {
@@ -165,7 +184,8 @@ final class Scorer
         // 2. zrychlené projednání
         if ((int)$t['p90ok']) {
             $add('p90_passed', (int)$w['p90_passed'], 'Schváleno už v 1. čtení (§ 90 odst. 2) bez 2. a 3. čtení');
-        } elseif ((int)$t['p90']) {
+        } elseif ((int)$t['p90'] && !$closed) {
+            // návrh na § 90/2 u tisku, který se ještě projednává (ne vzatý zpět, zamítnutý nebo vrácený)
             $add('p90_requested', (int)$w['p90_requested'], 'Navrženo schválit už v 1. čtení (§ 90 odst. 2)');
         }
         if ((int)$t['zl']) {
@@ -208,8 +228,9 @@ final class Scorer
         // 4. PN na poslední chvíli (v den ukončení podrobné rozpravy)
         if ($detailEnd !== null) {
             $late = count(array_filter($pnDates, fn(string $d): bool => $d === $detailEnd));
-            if ($late >= (int)$w['late_pn_min']) {
-                $add('late_pn', (int)$w['late_pn'], "$late pozměňovacích návrhů podaných v den konce podrobné rozpravy");
+            // relativně k tisku: aspoň late_pn_min a zároveň aspoň late_pn_share všech PN (#7 bod 5)
+            if ($late >= (int)$w['late_pn_min'] && $late >= (float)$w['late_pn_share'] * count($pnDates)) {
+                $add('late_pn', (int)$w['late_pn'], "$late z " . count($pnDates) . ' pozměňovacích návrhů podáno v den konce podrobné rozpravy');
             }
         }
         if ($surge) {
@@ -224,6 +245,10 @@ final class Scorer
         $otherLawsConfirmed = false;
         $aiWorst = null;
         $retroWhere = null;
+        $verifier = AiReviewer::verifyModel($this->config);
+        $verifyMin = (int)($this->config['ai']['verify_min'] ?? 6);
+        // zákony, které mění samotný text návrhu: PN k nim není přílepek (#7 bod 8)
+        $billLawsInText = $billText !== null ? (array)((json_decode((string)$billText['signals'], true) ?: [])['laws'] ?? []) : [];
         $billSignals = $billText !== null ? (json_decode((string)$billText['signals'], true) ?: []) : [];
         // body jen když text obsahuje změnu lhůty i ustanovení se zpětným použitím u vymáhání nebo kontroly (#2 bod 9)
         if (!empty($billSignals['retro_deadline']) && !empty($billSignals['deadline'])) {
@@ -240,6 +265,11 @@ final class Scorer
             $large = !empty($signals['large']);
             $anyLarge = $anyLarge || $large;
             $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
+            $signals['other_laws'] = array_values(array_diff((array)($signals['other_laws'] ?? []), $billLawsInText));
+            if ($signals['other_laws'] === []) {
+                unset($signals['other_laws']);
+            }
+            $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
             if (!$related) {
                 foreach ($signals['other_laws'] ?? [] as $law) {
                     $otherLaws[$law] = true;
@@ -252,6 +282,12 @@ final class Scorer
                 $retroWhere = 'Pozměňovací návrh č. ' . $x['cislo'];
             }
             $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : 0;
+            // nález od verify_min výš se naplno počítá až po ověření silnějším modelem; do té doby
+            // nejvýš verify_min − 1, aby jeden neověřený PN mezi desítkami nevytáhl skóre (#7 bod 6)
+            if ($ai >= $verifyMin && (string)($x['ai_model'] ?? '') !== $verifier) {
+                $ai = $verifyMin - 1;
+                $x['ai_score'] = $ai;
+            }
             if ($ruleFlag || $ai >= 6) {
                 $flagged++;
             }

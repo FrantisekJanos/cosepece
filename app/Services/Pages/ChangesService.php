@@ -9,6 +9,9 @@ final class ChangesService
     public function data(): array
     {
         $changes = [
+    ['2026-11-19', 'Připravované zákony',
+        'Nová stránka Připravované ukazuje návrhy zákonů, které ministerstva připravují a Sněmovna je ještě nedostala: zda jsou v připomínkovém řízení, po něm, u vlády, nebo je vláda už schválila. U každého je délka připomínkového řízení a počet připomínkových míst. Kratší připomínky a nedohledané připomínkové řízení označujeme stejně jako u tisků. Jakmile návrh dostane číslo sněmovního tisku, přesune se mezi tisky. Skóre se nemění. Data: otevřená data Úřadu vlády, také jako /api?pripravovane=1. Díky podnětu z GitHubu.',
+        [44], false],
             ['2026-11-19', 'Web se jmenuje Co se peče, nové menu',
                 'Web má nový název Co se peče. Hlavní menu je nižší a přehlednější: aktuální stránka je zvýrazněná, RSS je odděleně vpravo a na telefonu se menu otevírá tlačítkem. Adresy stránek ani data se nemění. Skóre se nemění.',
                 [25], false],

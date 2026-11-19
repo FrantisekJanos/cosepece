@@ -22,6 +22,7 @@ Route::get('/tisky/{ct}/dokumenty', [\App\Http\Controllers\DocumentController::c
 Route::get('/tisky/{ct}', [BillController::class, 'show'])->whereNumber('ct')->name('bill');
 Route::get('/upozorneni', [AlertController::class, 'index'])->name('alerts');
 Route::get('/metodika', [MethodologyController::class, 'index'])->name('methodology');
+Route::get('/pripravovane', [\App\Http\Controllers\UpcomingController::class, 'index'])->name('upcoming');
 Route::get('/zmeny', [\App\Http\Controllers\ChangesController::class, 'index'])->name('changes');
 Route::get('/revize/{druh}/{id}', [\App\Http\Controllers\RevisionController::class, 'show'])->where('druh', 'tisk|pn')->whereNumber('id')->name('revisions');
 Route::get('/api', [\App\Http\Controllers\PublicApiController::class, 'index'])->name('public-api');
@@ -29,6 +30,7 @@ Route::get('/rss', [FeedController::class, 'index'])->name('rss');
 Route::get('/og', [OgController::class, 'show'])->name('og');
 
 foreach ([
+    '/pripravovane.php' => [\App\Http\Controllers\UpcomingController::class, 'index'],
     '/zmeny.php' => [\App\Http\Controllers\ChangesController::class, 'index'],
     '/revize.php' => [\App\Http\Controllers\RevisionController::class, 'show'],
     '/api.php' => [\App\Http\Controllers\PublicApiController::class, 'index'],

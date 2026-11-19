@@ -10,6 +10,7 @@ use App\Models\Alert;
 use App\Models\Bill;
 use App\Models\Meta;
 use App\Services\Pages\BillListingService;
+use App\Services\Pages\UpcomingService;
 use Hlidac\Scorer;
 use Hlidac\View;
 
@@ -20,6 +21,7 @@ final class PublicApiService
 
     public function __construct(
         private BillListingService $listing,
+        private UpcomingService $upcoming,
         private BillPresentationService $presentation,
         private ReviewStatusService $reviews,
         private AlertPresentationService $alertPresentation,
@@ -32,10 +34,24 @@ final class PublicApiService
             $bill = $this->bill($dto->detailBill);
             return $bill === null ? [404, ['error' => 'Tisk nenalezen']] : [200, $this->wrap(['tisk' => $bill])];
         }
+        if ($dto->includeUpcoming) {
+            return [200, $this->wrap(['pripravovane' => $this->upcoming()])];
+        }
         $filters = $dto->filters();
         return $dto->includeAlerts
             ? [200, $this->wrap(['upozorneni' => $this->alerts($filters)])]
             : [200, $this->wrap(['tisky' => $this->bills($filters)])];
+    }
+
+    public function upcoming(): array
+    {
+        return array_map(fn(array $u) => [
+            'pid' => $u['pid'], 'nazev' => $u['nazev'], 'resort' => $u['resort'], 'faze' => $u['faze'], 'stav_odok' => $u['stav'],
+            'zalozeno' => $u['zalozeno'], 'zmeneno' => $u['zmeneno'],
+            'pripominky' => $u['dni'] !== null ? ['od' => $u['pripominky_od'], 'do' => $u['pripominky_do'], 'dni' => (int)$u['dni'], 'mist' => (int)$u['mist']] : null,
+            'vlada_projednala' => $u['vlada'], 'mimo_plan' => (bool)$u['mimo_plan'], 'vyjimka' => (bool)$u['vyjimka'],
+            'popis' => $u['popis'], 'duvod' => $u['duvod'], 'veklep_url' => \Hlidac\GovPrep::url((string)$u['pid']),
+        ], $this->upcoming->items());
     }
 
     public function bills(array $f): array

@@ -15,6 +15,7 @@ final class LayoutService
         $nav = [
             'prehled' => [route('home', [], false), 'Přehled'],
             'tisky' => [route('bills', [], false), 'Tisky'],
+            'pripravovane' => [route('upcoming', [], false), 'Připravované'],
             'upozorneni' => [route('alerts', [], false), 'Upozornění'],
             'metodika' => [route('methodology', [], false), 'Jak hodnotíme'],
         ];

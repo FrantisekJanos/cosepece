@@ -157,3 +157,5 @@ Neověřeno / TODO:
 5. GitHub: soukromé repo `moodixmarket/hlidac-zakonu` (kód) + veřejné `moodixmarket/hlidac-zakonu-podnety`
    (jen README a šablony issues – připravené v adresáři `podnety/` v tomto repu, k přesunu do vlastního repa).
 6. Účty na sociálních sítích a klíče (jen do `config.php` na hostingu, nikdy do gitu).
+
+Připravované zákony: `GovPrep` ukládá návrhy před předložením Sněmovně do `pripravovane`, verze seskupuje podle názvu a vyřazuje návrhy již ve Sněmovně. Eloquent model `UpcomingBill`, `UpcomingService`, `UpcomingController` s `UpcomingRequestDTO`, stránka `/pripravovane` a JSON `/api?pripravovane=1`. Do skóre nevstupují.

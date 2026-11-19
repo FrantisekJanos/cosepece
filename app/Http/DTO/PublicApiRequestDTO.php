@@ -34,6 +34,8 @@ final class PublicApiRequestDTO extends RequestDTO
         public readonly ?int $detailBill = null,
         #[MapInputName('upozorneni'), Sometimes, BooleanType]
         public readonly bool $includeAlerts = false,
+        #[MapInputName('pripravovane'), Sometimes, BooleanType]
+        public readonly bool $includeUpcoming = false,
     ) {
     }
 
@@ -55,7 +57,7 @@ final class PublicApiRequestDTO extends RequestDTO
             isset($data['min_score']) ? (int)$data['min_score'] : null,
             $data['zakon'] ?? null,
             isset($data['ct']) ? (int)$data['ct'] : null,
-            (int)($data['limit'] ?? 100), isset($data['tisk']) ? (int)$data['tisk'] : null, (bool)($data['upozorneni'] ?? false));
+            (int)($data['limit'] ?? 100), isset($data['tisk']) ? (int)$data['tisk'] : null, (bool)($data['upozorneni'] ?? false), (bool)($data['pripravovane'] ?? false));
     }
 
     public function filters(): array

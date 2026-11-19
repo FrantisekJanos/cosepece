@@ -117,6 +117,7 @@ Omezení: otevřená data obsahují u pozměňovacího návrhu jen číslo, auto
 |---|---|
 | `/api` | tisky aktuálního období od poslední změny: číslo, název, fáze, skóre, úroveň, důvody, příznaky, odkazy |
 | `/api?tisk=221` | detail tisku + hlasování (i podle klubů) + upozornění + stav rozboru textů |
+| `/api?pripravovane=1` | připravované zákony u vlády, které ještě nejsou ve Sněmovně |
 | `/api?upozorneni=1` | upozornění (bez `min_score` od úrovně „Pozor“) |
 
 Filtry: `since=YYYY-MM-DD` (poslední změna / datum upozornění), `min_score=0–100`, `zakon=159/2006`,

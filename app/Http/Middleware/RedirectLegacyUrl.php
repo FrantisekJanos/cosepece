@@ -14,6 +14,7 @@ final class RedirectLegacyUrl
     public function handle(Request $request, Closure $next): Response
     {
         $name = match ($request->path()) {
+            'pripravovane.php' => 'upcoming',
             'index.php' => 'home',
             'zmeny.php' => 'changes',
             'api.php' => 'public-api',

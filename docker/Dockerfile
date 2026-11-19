@@ -1,8 +1,9 @@
 FROM php:8.3-apache
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libzip-dev libpq-dev \
- && docker-php-ext-install zip pdo_pgsql \
+ && apt-get install -y --no-install-recommends libzip-dev libpq-dev libpng-dev libfreetype6-dev \
+ && docker-php-ext-configure gd --with-freetype \
+ && docker-php-ext-install zip pdo_pgsql gd \
  && rm -rf /var/lib/apt/lists/*
 
 RUN a2enmod rewrite headers remoteip \

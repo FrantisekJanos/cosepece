@@ -78,6 +78,10 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 
+Náhledy pro sítě: každá stránka má `og:`/`twitter:` značky (`View::header`, 4. parametr), obrázek 1200 × 630
+kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cache `data/cache/og`, bez GD
+`assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
+
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 

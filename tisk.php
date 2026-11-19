@@ -6,6 +6,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\Analyzer;
+use Hlidac\OgCard;
 use Hlidac\Repo;
 use Hlidac\View;
 
@@ -51,7 +52,15 @@ $dotClass = function (array $k): string {
     return '';
 };
 
-View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', $t['uplny_nazev']);
+// náhled pro sociální sítě: obrázek s aktuálním skóre (v = otisk obsahu, ať sítě po změně skóre stáhnou nový)
+$ogCard = OgCard::forBill($t, config());
+$ogDesc = 'Skóre závažnosti postupu ' . (int)$t['score'] . '/100. ' . $ogCard['text'] . ' ' . $t['uplny_nazev'];
+View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 0, 300), [
+    'url' => 'tisk.php?ct=' . $ct,
+    'image' => 'og.php?ct=' . $ct . '&v=' . OgCard::cacheKey($ogCard),
+    'title' => 'Tisk ' . $ct . ': ' . OgCard::cleanTitle((string)($t['uplny_nazev'] ?: $t['nazev'])),
+    'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
+]);
 ?>
 <p class="crumbs"><a href="tisky.php">Tisky</a> › Tisk <?= $ct ?></p>
 <section class="detail-head">

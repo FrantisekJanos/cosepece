@@ -1108,6 +1108,15 @@ foreach ([['web: starý nepoužitý', 'h1', $ago(8), null], ['web: nový nepouž
 check('úklid zruší jen nepoužívané tokeny z webu', [$tok->revokeStale(), array_column(db()->all('SELECT hash FROM mcp_token WHERE zrusen IS NOT NULL ORDER BY hash'), 'hash'), $tok->revokeStale()], [2, ['h1', 'h3'], 0]);
 check('bez tabulky služby rag/ (SQLite) se tokeny nevydávají', (new Hlidac\McpTokens(db(), config()))->available(), false);
 
+$_GET = [];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/mcp.php');
+$mcpHtml = (string)ob_get_clean();
+check('stránka MCP vysvětluje hledání podle významu a co odchází do OpenAI', str_contains($mcpHtml, 'id="jak-funguje"') && str_contains($mcpHtml, 'odchází text hledaného dotazu do OpenAI')
+    && str_contains($mcpHtml, 'rezim="fulltext"') && str_contains($mcpHtml, 'Text dotazů ani odpovědí neukládáme'), true);
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);

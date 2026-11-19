@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Jak funguje napojení pro AI asistenty',
+        'Stránka Pro AI asistenty (MCP) nově vysvětluje, kdo co dělá: odpovědi píše váš asistent, náš server jen vydává data. Popisuje hledání podle slov a nově i podle významu, které najde projevy řečené jinými slovy. Uvádí také, že při hledání podle významu odchází text hledaného dotazu do OpenAI, jak to vypnout a co si o voláních zaznamenáváme (jen nástroj, token a čas, ne text dotazů).',
+        [57], false],
     ['2026-11-19', 'Druhá bezpečnostní prověrka',
         'Po přidání hledání, stránek zákonů a tokenů pro AI asistenty jsme web znovu prověřili zvenku i nezávislou kontrolou kódu. Opravili jsme chybu, kdy příliš velké číslo v adrese skončilo chybou serveru, a zpřísnili vydávání tokenů: formulář jde odeslat jen z naší stránky a z adresy, která si ho načetla, souběžné pokusy limit nepřekročí a token z webu, který nikdo týden nepoužije nebo ho tři měsíce nepoužívá, přestane platit. Stránky odmítají jiné metody než čtení a soubory začínající tečkou nejsou dostupné.',
         [56], false],

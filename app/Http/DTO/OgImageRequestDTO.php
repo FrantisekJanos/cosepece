@@ -17,7 +17,7 @@ final class OgImageRequestDTO extends RequestDTO
     public function __construct(
         #[MapInputName('ct'), Sometimes, IntegerType, Min(1)]
         public readonly int $billNumber,
-        #[MapInputName('p'), Sometimes, StringType, In('prehled', 'tisky', 'upozorneni', 'metodika')]
+        #[MapInputName('p'), Sometimes, StringType, In('prehled', 'tisky', 'upozorneni', 'metodika', 'zmeny')]
         public readonly string $page,
         #[MapInputName('v'), Sometimes, StringType, Regex('/^[a-f0-9]{16}$/')]
         public readonly ?string $version,

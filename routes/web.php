@@ -20,10 +20,12 @@ Route::get('/tisky', [BillController::class, 'index'])->name('bills');
 Route::get('/tisky/{ct}', [BillController::class, 'show'])->whereNumber('ct')->name('bill');
 Route::get('/upozorneni', [AlertController::class, 'index'])->name('alerts');
 Route::get('/metodika', [MethodologyController::class, 'index'])->name('methodology');
+Route::get('/zmeny', [\App\Http\Controllers\ChangesController::class, 'index'])->name('changes');
 Route::get('/rss', [FeedController::class, 'index'])->name('rss');
 Route::get('/og', [OgController::class, 'show'])->name('og');
 
 foreach ([
+    '/zmeny.php' => [\App\Http\Controllers\ChangesController::class, 'index'],
     '/index.php' => [HomeController::class, 'index'],
     '/tisky.php' => [BillController::class, 'index'],
     '/tisk.php' => [BillController::class, 'show'],

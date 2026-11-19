@@ -34,6 +34,25 @@ final class WebTest extends TestCase
         $this->get('/tisky/90')->assertOk()->assertDontSee('aria-label="Rozbor textu návrhu"', false);
     }
 
+    public function test_votes_and_changes_page_use_laravel_routes(): void
+    {
+        $this->importFixtures();
+        $this->get('/tisky/78')->assertOk()->assertSee('Hlasování ve Sněmovně')
+            ->assertSee('ANO2011')->assertSee('hlasy.sqw?g=87174', false)
+            ->assertSee('href="/zmeny"', false);
+        $this->get('/zmeny')->assertOk()->assertSee('Co jsme změnili')
+            ->assertSee('Hlasování ve Sněmovně u každého tisku')
+            ->assertSee('href="/metodika"', false);
+        $this->get('/zmeny.php')->assertStatus(301)->assertRedirect('/zmeny');
+        $this->get('/og?p=zmeny')->assertOk()->assertHeader('Content-Type', 'image/png');
+        $bill = \App\Models\Bill::query()->where('ct', 78)->firstOrFail();
+        $vote = $bill->votes()->with('clubs.vote')->findOrFail(86762);
+        $this->assertSame(78, $vote->bill->ct);
+        $this->assertCount(3, $vote->clubs);
+        $this->assertSame(86762, $vote->clubs->first()->vote->getKey());
+        $this->assertIsInt($vote->clubs->first()->pro);
+    }
+
     public function test_legacy_urls_redirect_permanently_and_keep_filters(): void
     {
         foreach ([

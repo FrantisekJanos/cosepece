@@ -43,6 +43,11 @@ final class Bill extends Model
         ];
     }
 
+    public function votes(): HasMany
+    {
+        return $this->hasMany(Vote::class, 'ct', 'ct');
+    }
+
     public function steps(): HasMany
     {
         return $this->hasMany(BillStep::class, 'id_tisk', 'id_tisk');

@@ -16,13 +16,14 @@ final class BillStep extends Model
 
     protected $fillable = [
         'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav',
-        'akce_id', 'akce',
+        'akce_id', 'akce', 'id_hlasovani',
     ];
 
     protected function casts(): array
     {
         return [
             'id_hist' => 'integer',
+            'id_hlasovani' => 'integer',
             'id_tisk' => 'integer',
             'ct' => 'integer',
             'datum' => 'immutable_datetime',

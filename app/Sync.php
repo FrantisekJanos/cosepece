@@ -25,6 +25,13 @@ final class Sync
                 $config['source_dir'] ?? null
             );
             $import = (new Importer(db(), $source))->run();
+            try {
+                $votes = (new Votes(db(), $source))->run();
+            } catch (\Throwable $ex) {
+
+                $votes = ['error' => Http::redact($ex->getMessage())];
+            }
+
 
             $alerts = (new AlertBuilder(db(), $config))->run();
             $scorer = new Scorer(db(), $config);
@@ -37,6 +44,7 @@ final class Sync
             $posts = (new Publisher(db(), $config))->run();
             $result = [
                 'import' => $import,
+                'votes' => $votes,
                 'alerts_new' => $alerts,
                 'pn_text' => $pnText,
                 'tisk_text' => $tiskText,

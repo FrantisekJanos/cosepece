@@ -38,7 +38,7 @@ final class MigrationTest extends TestCase
             $this->assertSame($rows, $actual, $table);
         }
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
-        $this->assertSame(2, (int)db()->value('SELECT COUNT(*) FROM migrations'));
+        $this->assertSame(3, (int)db()->value('SELECT COUNT(*) FROM migrations'));
     }
 
     public function test_upstream_columns_preserve_existing_ai_results(): void
@@ -58,6 +58,19 @@ final class MigrationTest extends TestCase
         $this->assertSame('original', $row['ai_model']);
         $this->assertNull($row['ai_prev_score']);
         $this->assertNull($row['checked_at']);
+        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
+    }
+
+    public function test_existing_votes_survive_adoption_and_repeated_migrations(): void
+    {
+        $this->importFixtures();
+        $votes = db()->all('SELECT * FROM hlasovani ORDER BY id_hlasovani');
+        $clubs = db()->all('SELECT * FROM hlasovani_kluby ORDER BY id_hlasovani, klub');
+        $this->assertCount(4, $votes);
+        db()->run("DELETE FROM migrations WHERE migration = '2026_11_19_120000_add_bill_votes'");
+        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
+        $this->assertSame($votes, db()->all('SELECT * FROM hlasovani ORDER BY id_hlasovani'));
+        $this->assertSame($clubs, db()->all('SELECT * FROM hlasovani_kluby ORDER BY id_hlasovani, klub'));
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
     }
 

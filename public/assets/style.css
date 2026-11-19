@@ -175,3 +175,21 @@ a.plain:hover { text-decoration: underline; }
 }
 .steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
 .steps .small { display: block; margin-top: 2px; }
+
+/* hlasování u tisku */
+.votes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.vote { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+.vote:last-child { border-bottom: 0; padding-bottom: 0; }
+.vote-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+table.vote-clubs { width: auto; min-width: 0; font-size: 13px; }
+table.vote-clubs th, table.vote-clubs td { padding: 4px 18px 4px 0; text-align: left; white-space: nowrap; }
+table.vote-clubs td:not(:first-child), table.vote-clubs th:not(:first-child) { text-align: right; }
+.vote-scroll { overflow-x: auto; }
+.votes-more summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
+/* stránka změn */
+.changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.change { padding: 16px 0; border-bottom: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 6px; }
+.change:first-child { padding-top: 0; }
+.change:last-child { border-bottom: 0; }
+.change p { margin: 0; }
+.change-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }

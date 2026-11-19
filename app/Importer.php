@@ -81,7 +81,7 @@ final class Importer
                 'vyhlaseno', 'lhuta',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
-                'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce',
+                'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce', 'id_hlasovani',
             ], $kroky);
             $this->db->insertMany('pn', ['id_dokument', 'cislo', 'ct', 'id_osoba', 'osoba', 'cas'], $pn);
             $this->db->setMeta('obdobi_id', (string)$obdobiId);
@@ -242,6 +242,8 @@ final class Importer
                 'stav' => $typy[$typ] ?? '',
                 'akce_id' => $prechod['akce'],
                 'akce' => $akce[$prechod['akce']] ?? '',
+
+                'id_hlasovani' => (int)($c[3] ?? 0) ?: null,
 
                 '_sb' => trim($c[13] ?? '') !== '' ? trim($c[13]) . '/' . substr($this->czDate($c[11] ?? '') ?? '', 0, 4) : null,
 

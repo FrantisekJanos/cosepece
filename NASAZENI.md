@@ -149,3 +149,7 @@ Neúspěšné stažení textů se opakuje podle `pn_text.retry_hours` a `tisk_te
 `notify.hold_hours` určuje, jak dlouho upozornění pod prahem čeká na rozbor.
 Pravidlovou analýzu již uložených textů obnovíte příkazem `php artisan hlidac:texts --reanalyze`
 nebo kompatibilním `php bin/reanalyze.php`.
+
+Migrace `2026_11_19_120000_add_bill_votes` doplňuje tabulky `hlasovani` a `hlasovani_kluby`
+a vazbu `kroky.id_hlasovani`. Před spuštěním nové synchronizace proveďte `php artisan migrate --force`.
+Existující hlasování z původní aplikace zůstanou zachována.

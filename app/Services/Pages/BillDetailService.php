@@ -28,6 +28,7 @@ final class BillDetailService
             'amendments' => fn ($query) => $query->orderByDesc('cas'),
             'alerts' => fn ($query) => $query->orderByDesc('event_at')->limit(10),
             'text', 'amendmentTexts',
+            'votes' => fn ($query) => $query->with(['clubs' => fn ($clubs) => $clubs->orderBy('klub')])->orderByDesc('datum')->orderByDesc('id_hlasovani'),
         ])->where('ct', $ct)->first() : null;
         if ($bill === null) {
             return null;
@@ -36,6 +37,15 @@ final class BillDetailService
         $t = $this->presentation->present($bill);
         $obdobi = (int)(Meta::query()->whereKey('obdobi_cislo')->value('v') ?? '10');
         $steps = $bill->steps->map->getAttributes()->all();
+        $votes = $bill->votes->map(fn ($vote): array => $vote->getAttributes() + [
+            'kluby' => $vote->clubs->map->getAttributes()->all(),
+        ])->all();
+        $stepByVote = [];
+        foreach ($steps as $step) {
+            if (!empty($step['id_hlasovani'])) {
+                $stepByVote[(int)$step['id_hlasovani']] = $step['stav'] . ($step['akce'] !== '' ? ' – ' . $step['akce'] : '');
+            }
+        }
         $pn = $bill->amendments->map->getAttributes()->all();
         $authors = $bill->amendments()->select('osoba')->selectRaw('COUNT(*) AS n')
             ->groupBy('osoba')->orderByDesc('n')->orderBy('osoba')->get()->map->getAttributes()->all();
@@ -64,7 +74,7 @@ final class BillDetailService
             'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
         ];
 
-        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'pn', 'authors', 'alerts', 'texts', 'billText', 'review', 'laws', 'days');
+        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'votes', 'stepByVote', 'pn', 'authors', 'alerts', 'texts', 'billText', 'review', 'laws', 'days');
     }
     private function textData(BillText|AmendmentText $text): array
     {

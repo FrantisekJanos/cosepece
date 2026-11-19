@@ -35,6 +35,9 @@ Změny konfigurace se po `config:cache` projeví až po opětovném vytvoření 
 - Validaci DTO deklaruj pouze pomocí konkrétních atributů `Spatie\LaravelData\Attributes\Validation`. Mapování vstupních názvů patří do `MapInputName`. `config/data.php` používá jen `AttributesRuleInferrer`. PHPStan pravidlo `RequestDTOValidationAttributesRule` hlídá atributy a zakazuje `rules()`, `withValidator()`, ruční validátory, `WithoutValidation` a obecný `Rule`.
 - Synchronizace zachovává pořadí kroků a zámek sdílený s webcronem. Historie `pn_seen`, `alerts`, `post_log` a `meta` zabraňuje opakovanému rozesílání.
 
+Změny, které čtenář uvidí (oprava dat, jiné skóre, nová funkce), zapiš nahoru do `app/Services/Pages/ChangesService.php` (datum, nadpis,
+popis srozumitelně pro veřejnost, čísla PR, příznak „mění skóre“).
+
 ## Příkazy
 
 ```bash
@@ -54,6 +57,9 @@ Po změně logiky spusť `composer test`. Regresní scénáře vypíší `VŠE O
 ```
 SyncController / hlidac:sync → Hlidac\Sync::run()
   1. Importer      stáhne tisky.zip, sd.zip, poslanci.zip, přepíše tabulky tisky / kroky / pn (aktuální období)
+  1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
+                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
+                Do skóre nevstupuje; chyba nezastaví synchronizaci
   2. AlertBuilder  vytvoří upozornění s jednoznačným klíčem (bez duplicit); 1. běh = bootstrap (posted=2, nic se nepošle)
   3. Scorer        předběžné skóre (určuje pořadí front textů a AI)
   4. PnText        stáhne Word verze PN (sd.sqw → odkaz class="file docx"), pravidla: přílepek, rozsah,
@@ -70,6 +76,7 @@ SyncController / hlidac:sync → Hlidac\Sync::run()
                    rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“). Po změně promptu zvyš
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
+
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 
@@ -81,7 +88,7 @@ Soubory a příkazy jsou popsané v README.md. `data/` zůstává mimo veřejný
 Původní `.php` URL obsluhují Laravel routy, fyzické vstupní soubory v kořeni byly nahrazeny controllery.
 `bin/ai.php`, `bin/texts.php` a `bin/sync.php` jsou kompatibilní vstupy do Artisanu.
 
-Tabulky webu: `tisky`, `kroky`, `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
+Tabulky webu: `tisky`, `kroky`, `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `hlasovani`, `hlasovani_kluby`.
 Python vlastní schémata `steno` a `texty`, Laravel migrace je nemění. Podrobnosti při změnách MCP nebo ingestu čti v `rag/README.md`.
 
 ## Zdroj dat (psp.cz open data)

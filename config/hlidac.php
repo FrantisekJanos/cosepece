@@ -26,7 +26,7 @@ $defaults = [
         'domains' => '',
     ],
 
-    'issues_url' => 'https://github.com/moodixmarket/hlidac-zakonu-podnety/issues',
+    'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     'pn_text' => [
         'enabled' => true,

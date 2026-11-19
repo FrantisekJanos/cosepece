@@ -27,6 +27,7 @@ final class BillPresentationService
 
     public function presentMany(Collection $bills, bool $withHeadlines = false): array
     {
+        $bills->loadCount('votes');
         $surge = $this->surgeSet();
         $review = $this->reviews->statuses();
         return $bills->map(function (Bill $bill) use ($surge, $review, $withHeadlines): array {

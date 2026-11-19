@@ -10,7 +10,7 @@ if ($bills === []): ?>
   <table>
     <thead>
       <tr>
-        <th>Skóre</th><th>Tisk</th><th>Návrh</th><th>Předkladatel</th><th class="num">PN</th><th>Příznaky</th><th>Fáze</th><th>Poslední změna</th>
+        <th>Skóre</th><th>Tisk</th><th>Návrh</th><th>Předkladatel</th><th class="num">PN</th><th>Příznaky</th><th>Fáze</th><th>Hlasování</th><th>Poslední změna</th>
       </tr>
     </thead>
     <tbody>
@@ -23,6 +23,7 @@ if ($bills === []): ?>
           <td class="num strong">{{ (int)$b['pn_count'] }}</td>
           <td><span class="chips">{!! View::chips($b['flags']) !!}</span></td>
           <td class="muted">{{ $b['faze'] }}</td>
+          <td><a class="nowrap" href="{{ route('bill', ['ct' => (int)$b['ct']], false) }}#hlasovani">Hlasování ({{ (int)($b['votes_count'] ?? 0) }})</a></td>
           <td class="muted nowrap">{{ formatDate($b['posledni']) }}</td>
         </tr>
       <?php endforeach; ?>

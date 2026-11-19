@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', [HomeController::class, 'index'])->name('home');
 Route::get('/tisky', [BillController::class, 'index'])->name('bills');
+Route::get('/tisky/{ct}/dokumenty/word', [\App\Http\Controllers\DocumentController::class, 'word'])->whereNumber('ct')->name('bill-word');
+Route::get('/tisky/{ct}/dokumenty', [\App\Http\Controllers\DocumentController::class, 'show'])->whereNumber('ct')->name('bill-documents');
 Route::get('/tisky/{ct}', [BillController::class, 'show'])->whereNumber('ct')->name('bill');
 Route::get('/upozorneni', [AlertController::class, 'index'])->name('alerts');
 Route::get('/metodika', [MethodologyController::class, 'index'])->name('methodology');

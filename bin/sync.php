@@ -15,6 +15,7 @@ try {
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), "\n";
     exit(0);
 } catch (Throwable $ex) {
+    Hlidac\Sentry::capture($ex, ['kde' => 'bin/sync.php']);
     fwrite(STDERR, 'Chyba: ' . $ex->getMessage() . "\n");
     exit(1);
 }

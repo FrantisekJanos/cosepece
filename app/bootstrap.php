@@ -93,6 +93,9 @@ function siteUrl(string $path = ''): string
     return rtrim((string)config('site_url', ''), '/') . '/' . ltrim($path, '/');
 }
 
+// hlášení chyb do Sentry (prázdný klíč sentry.dsn = vypnuto, nic se neodesílá)
+\Hlidac\Sentry::init((array)config('sentry', []), PHP_SAPI === 'cli' ? 'sync' : 'web');
+
 if (PHP_SAPI !== 'cli') {
     // chyby jen do logu, nikdy do stránky (vypsaná cesta a kód pomáhají útočníkovi)
     ini_set('display_errors', '0');

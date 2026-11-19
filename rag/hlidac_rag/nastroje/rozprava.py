@@ -49,12 +49,13 @@ _VYSTOUPENI = """SELECT p.id, p.schuze, p.turn, p.aname, p.datum, p.id_osoba, p.
        {cteni} AS cteni
 FROM steno.projev p LEFT JOIN steno.osoba o ON o.id_osoba = p.id_osoba
 WHERE p.zruseno IS NULL AND NOT p.predsedajici
+  AND (p.id_osoba IS NOT NULL OR nullif(p.recnik, '') IS NOT NULL)
   AND p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)
 ORDER BY p.datum, p.schuze, p.poradi, p.id"""
-# celé texty stránky; ohlaseni = konec bezprostředně předchozího nezrušeného projevu schůze,
-# je-li to předsedající téhož dne
+# celé texty stránky; ohlaseni = konec bezprostředně předchozího nezrušeného projevu schůze, je-li to předsedající
+# téhož dne (o znak delší než OHLASENI, aby _ohlaseni poznalo zkrácený text)
 _TEXTY = f"""SELECT p.id, p.text, p.url,
-       CASE WHEN q.predsedajici AND q.datum = p.datum THEN right(q.text, {OHLASENI}) END AS ohlaseni
+       CASE WHEN q.predsedajici AND q.datum = p.datum THEN right(q.text, {OHLASENI + 1}) END AS ohlaseni
 FROM steno.projev p
 LEFT JOIN LATERAL (SELECT q.predsedajici, q.datum, q.text FROM steno.projev q
                    WHERE q.obdobi = p.obdobi AND q.schuze = p.schuze AND q.zruseno IS NULL
@@ -164,17 +165,24 @@ def _radek(r: dict, poradi: int, text: dict | None) -> dict:
                  reaguje_na_odhad=r["reaguje_na_odhad"] if r["druh"] == "fakticka" else None,
                  cteni=r["cteni"], neautorizovano=not r["autorizovano"])
     if text is not None:
-        radek.update(poznamka=meta.get("poznamka"), ohlaseni=_ohlaseni(text.get("ohlaseni")), url=text.get("url"),
+        ohlaseni = _ohlaseni(text.get("ohlaseni")) if r["druh"] == "fakticka" else None
+        radek.update(poznamka=meta.get("poznamka"), ohlaseni=ohlaseni, url=text.get("url"),
                      text=text.get("text") or "")
     return _kompaktni(radek)
 
 
 def _ohlaseni(konec: str | None) -> str | None:
-    """Konec projevu předsedajícího (nejvýš OHLASENI znaků), jen když ohlašuje faktickou poznámku."""
+    """Konec projevu předsedajícího (nejvýš OHLASENI znaků), jen když ohlašuje faktickou poznámku.
+
+    Dotaz vrací nejvýš OHLASENI + 1 znaků: delší text se zkrátí na posledních OHLASENI znaků od prvního celého
+    slova, text o délce nejvýš OHLASENI zůstane celý."""
     if not konec:
         return None
-    if len(konec) >= OHLASENI and " " in konec:     # konec delšího textu: od prvního celého slova
-        konec = "… " + konec.split(" ", 1)[1].lstrip()
+    if len(konec) > OHLASENI:
+        zbytek = konec[-OHLASENI:]
+        if not konec[-OHLASENI - 1].isspace() and " " in zbytek:   # první slovo je useknuté
+            zbytek = zbytek.split(" ", 1)[1]
+        konec = "… " + zbytek.lstrip()
     return konec if RE_FAKTICKA.search(konec) else None
 
 

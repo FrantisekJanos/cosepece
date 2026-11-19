@@ -110,6 +110,8 @@ def test_prehled_hlavicka_a_kompaktni_radky():
     # vystoupení přes projev_tisk bez předsedajících a zrušených, v pořadí datum, schůze, pořadí
     sql = conn.sql[1]
     assert "steno.projev_tisk" in sql and "zruseno IS NULL" in sql and "NOT p.predsedajici" in sql
+    # úsek bez řečníka (aname 0: začátek části bez kotvy) vystoupením není, stejně jako v přepočtu
+    assert "(p.id_osoba IS NOT NULL OR nullif(p.recnik, '') IS NOT NULL)" in sql
     assert "ORDER BY p.datum, p.schuze, p.poradi" in sql and "steno.projev_pn" in sql
     assert "kroky" not in sql                     # bez tabulky kroky se čtení neurčuje
     assert len(conn.sql) == 3                     # přehled nečte celé texty
@@ -214,19 +216,25 @@ def test_plny_prvni_vystoupeni_nad_rozpocet_se_zkrati():
 def test_ohlaseni_fakticke_jen_v_plnem_formatu():
     ohlaseni = "Děkuji. Nyní s faktickou poznámkou pan poslanec Berki. Prosím, vaše 2 minuty."
     dlouhe = "slovo " * 40 + ohlaseni                                            # konec delšího projevu (300 znaků)
-    rows = [_v(1, druh="fakticka"), _v(2, druh="fakticka"), _v(3)]
-    texty = [_t(rows[0], ohlaseni=ohlaseni), _t(rows[1], ohlaseni=dlouhe[-300:]),
-             _t(rows[2], ohlaseni="Děkuji. Další v rozpravě pan poslanec Haas, prosím.")]
+    presne = "x" * (300 - len(ohlaseni) - 1) + " " + ohlaseni                  # text předsedajícího přesně 300 znaků
+    rows = [_v(1, druh="fakticka"), _v(2, druh="fakticka"), _v(3), _v(4, druh="fakticka"), _v(5, druh="recnik")]
+    # dotaz vrací konec o znak delší než OHLASENI: delší text pozná podle 301. znaku
+    texty = [_t(rows[0], ohlaseni=ohlaseni), _t(rows[1], ohlaseni=dlouhe[-301:]),
+             _t(rows[2], ohlaseni="Děkuji. Další v rozpravě pan poslanec Haas, prosím."),
+             _t(rows[3], ohlaseni=presne),
+             _t(rows[4], ohlaseni="Faktické poznámky nejsou, nyní v rozpravě pan poslanec Haas.")]
     r = rozprava(_conn(rows, texty), 76, format="plny")
-    v1, v2, v3 = r["vystoupeni"]
+    v1, v2, v3, v4, v5 = r["vystoupeni"]
     assert v1["ohlaseni"] == ohlaseni
     assert v2["ohlaseni"].startswith("… slovo") and v2["ohlaseni"].endswith(ohlaseni) and len(v2["ohlaseni"]) <= 302
     assert "ohlaseni" not in v3                       # předsedající faktickou neohlašuje
+    assert v4["ohlaseni"] == presne                   # přesně 300 znaků = celý text, první slovo zůstane
+    assert "ohlaseni" not in v5                       # zmínka o faktických u vystoupení jiného druhu
     # konec předchozího projevu: jen předsedající téhož dne, zrušené se přeskočí
     conn = _conn([_v(1, druh="fakticka")], [_t(_v(1), ohlaseni=ohlaseni)])
     rozprava(conn, 76, format="plny")
     assert "q.predsedajici" in conn.sql[3] and "q.datum = p.datum" in conn.sql[3]
-    assert "q.zruseno IS NULL" in conn.sql[3] and "right(q.text, 300)" in conn.sql[3]
+    assert "q.zruseno IS NULL" in conn.sql[3] and "right(q.text, 301)" in conn.sql[3]
     r = rozprava(_conn([_v(1, druh="fakticka")]), 76)
     assert "ohlaseni" not in r["vystoupeni"][0]
 
@@ -564,3 +572,17 @@ def test_pg_cteni_3_od_nejdrivejsiho_kroku(pgconn, ukonceno):
     assert [v["cteni"] for v in r["vystoupeni"]] == ["1", "2", "2", "3", "3", "3", "3"]
     assert [v["klic"] for v in rozprava(pgconn, 198, cteni="3")["vystoupeni"]] == [
         "10/983/4/1", "10/983/5/1", "10/983/6/1", "10/983/7/1"]
+
+
+@pytest.mark.pg
+@bez_db
+def test_pg_usek_bez_recnika_neni_vystoupeni(pgconn):
+    """Úsek bez řečníka (aname 0, recnik i id_osoba NULL) se ve výpisu ani v souhrnu neobjeví (jako v přepočtu)."""
+    bez_recnika = (None, None, None)
+    with pgconn.cursor() as cur:
+        _vloz_projevy(cur, [(984, 1, DEN2, bez_recnika, False, "recnik", None, True, False, [76], [],
+                             "…a proto navrhuji zamítnutí.")])
+    pgconn.commit()
+    r = rozprava(pgconn, 76)
+    assert "10/984/1/1" not in [v["klic"] for v in r["vystoupeni"]] and r["celkem"] == 5
+    assert all(s.get("jmeno") for s in r["souhrn"]["recnici"])

@@ -166,6 +166,19 @@ final class View
         return '<span class="chip chip-' . e($class) . '">' . e($label) . '</span>';
     }
 
+    public static function aiRounds(array $x): string
+    {
+        // kdo rozbor udělal; po ověření silnějším modelem i výsledek 1. kola
+        if (($x['ai_model'] ?? null) === null || $x['ai_score'] === null) {
+            return '';
+        }
+        if ((string)$x['ai_model'] !== AiReviewer::verifyModel(config())) {
+            return '<span class="muted small">Rozbor: ' . e((string)$x['ai_model']) . '</span>';
+        }
+        $prev = $x['ai_prev_score'] !== null ? ' (první kolo ' . e((string)$x['ai_prev_model']) . ': ' . (int)$x['ai_prev_score'] . '/10)' : '';
+        return '<span class="muted small">Ověřeno druhým modelem ' . e((string)$x['ai_model']) . $prev . '</span>';
+    }
+
     public static function isPastPeriod(array $alert): bool
     {
         static $current = null;

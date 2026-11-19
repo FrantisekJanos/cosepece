@@ -119,7 +119,7 @@ final class Repo
     public function pnTexts(int $ct): array
     {
         $out = [];
-        foreach ($this->db->all('SELECT id_dokument, rule_score, ai_score, signals, ai_json, error FROM pn_text WHERE ct = ?', [$ct]) as $x) {
+        foreach ($this->db->all('SELECT id_dokument, rule_score, ai_score, signals, ai_json, ai_model, ai_prev_score, ai_prev_model, error FROM pn_text WHERE ct = ?', [$ct]) as $x) {
             $x['signals'] = json_decode((string)$x['signals'], true) ?: [];
             $x['ai'] = json_decode((string)$x['ai_json'], true) ?: null;
             $out[(int)$x['id_dokument']] = $x;
@@ -130,7 +130,7 @@ final class Repo
     public function billText(int $ct): ?array
     {
         // stažený text návrhu zákona s pravidlovými signály a rozborem AI
-        $x = $this->db->one('SELECT ct, docx_url, chars, signals, ai_score, ai_json, ai_at, fetched_at, error FROM tisk_text WHERE ct = ?', [$ct]);
+        $x = $this->db->one('SELECT ct, docx_url, chars, signals, ai_score, ai_json, ai_model, ai_prev_score, ai_prev_model, ai_at, fetched_at, error FROM tisk_text WHERE ct = ?', [$ct]);
         if ($x === null) {
             return null;
         }

@@ -11,40 +11,67 @@ final class WebTest extends TestCase
     public function test_public_pages_and_rss_keep_existing_addresses(): void
     {
         $this->importFixtures();
-        foreach (['/', '/index.php', '/tisky.php?f=p90', '/tisky.php?q=221&sort=recent', '/tisk.php?ct=90', '/upozorneni.php?vse=1', '/metodika.php'] as $url) {
+        foreach (['/', '/tisky?f=p90', '/tisky?q=221&sort=recent', '/tisky/90', '/upozorneni?vse=1', '/metodika'] as $url) {
             $this->get($url)->assertOk()->assertSee('Hlídač zákonů')->assertSee('assets/style.css', false);
         }
-        $this->get('/tisk.php?ct=90')->assertSee('https://hlidac.test/tisk.php?ct=90', false);
-        $this->get('/tisky.php')->assertSee('https://hlidac.test/tisky.php', false);
-        $this->get('/metodika.php')->assertSee('<title>Jak hodnotíme – Hlídač zákonů</title>', false);
-        $rss = $this->get('/rss.php?vse=1')->assertOk()->assertHeader('Content-Type', 'application/rss+xml; charset=utf-8');
+        $this->get('/tisky/90')->assertSee('https://hlidac.test/tisky/90', false);
+        $this->get('/tisky')->assertSee('https://hlidac.test/tisky', false);
+        $this->get('/metodika')->assertSee('<title>Jak hodnotíme – Hlídač zákonů</title>', false);
+        $rss = $this->get('/rss?vse=1')->assertOk()->assertHeader('Content-Type', 'application/rss+xml; charset=utf-8');
         $xml = simplexml_load_string($rss->getContent());
         $this->assertNotFalse($xml);
         $this->assertGreaterThan(0, count($xml->channel->item));
     }
 
+    public function test_legacy_urls_redirect_permanently_and_keep_filters(): void
+    {
+        foreach ([
+            '/index.php' => '/',
+            '/tisky.php?f=p90&q=stretu&sort=recent&min=25' => '/tisky?f=p90&q=stretu&sort=recent&min=25',
+            '/tisk.php?ct=221' => '/tisky/221',
+            '/tisk.php?ct=221&source=rss' => '/tisky/221?source=rss',
+            '/upozorneni.php?p=2&vse=1' => '/upozorneni?p=2&vse=1',
+            '/metodika.php' => '/metodika',
+            '/rss.php?vse=1' => '/rss?vse=1',
+            '/og.php?ct=221&v=0123456789abcdef' => '/og?ct=221&v=0123456789abcdef',
+        ] as $old => $new) {
+            $this->get($old)->assertStatus(301)->assertRedirect($new);
+        }
+    }
+
+    public function test_detail_uses_route_number_and_links_work_from_nested_urls(): void
+    {
+        $this->importFixtures();
+        $response = $this->get('/tisky/90?ct=221')->assertOk();
+        $response->assertSee('Tisk 90')->assertSee('https://hlidac.test/tisky/90', false)
+            ->assertSee('href="/tisky"', false)->assertSee('/assets/style.css', false)
+            ->assertDontSee('tisk.php')->assertDontSee('tisky.php')->assertDontSee('og.php');
+        $this->get('/tisky/abc')->assertNotFound();
+        $this->get('/tisky/0')->assertUnprocessable();
+    }
+
     public function test_upstream_search_history_and_ai_rounds_are_rendered(): void
     {
         $this->importFixtures();
-        $this->get('/tisky.php?q=STRETU+ZAJMU&sort=recent&min=1')->assertOk()
-            ->assertSee('tisk.php?ct=221', false)->assertSee('name="sort" value="recent"', false)
+        $this->get('/tisky?q=STRETU+ZAJMU&sort=recent&min=1')->assertOk()
+            ->assertSee('/tisky/221', false)->assertSee('name="sort" value="recent"', false)
             ->assertSee('name="min" value="1"', false);
         db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, score, obdobi) VALUES ('9/old', 'pn', 90, '2026-11-19 12:00:00', '2026-11-19 12:00:00', 'Historický nález', 'Minulé období', 80, 9)");
-        $this->get('/upozorneni.php?vse=1')->assertOk()->assertSee('Historický nález')
+        $this->get('/upozorneni?vse=1')->assertOk()->assertSee('Historický nález')
             ->assertSee('https://www.psp.cz/sqw/historie.sqw?o=9&amp;T=90', false)->assertSee('9. období');
-        $rss = $this->get('/rss.php?vse=1')->assertOk();
+        $rss = $this->get('/rss?vse=1')->assertOk();
         $xml = simplexml_load_string($rss->getContent());
         $old = $xml->xpath('//item[title="Historický nález"]');
         $this->assertSame('https://www.psp.cz/sqw/historie.sqw?o=9&T=90', (string)$old[0]->link);
-        $this->get('/tisk.php?ct=90')->assertOk()->assertDontSee('Historický nález');
+        $this->get('/tisky/90')->assertOk()->assertDontSee('Historický nález');
         db()->run("INSERT INTO tisk_text (ct, text, ai_json, ai_score, ai_model, ai_at, ai_prev_score, ai_prev_model) VALUES (90, 'Text', ?, 6, ?, '2026-11-19 12:00:00', 9, 'first-model')",
             ['{"shrnuti":"Ověřený rozbor","citace":["Text"]}', \Hlidac\AiReviewer::verifyModel(hlidacConfig())]);
-        $this->get('/tisk.php?ct=90')->assertOk()->assertSee('první kolo first-model: 9/10');
+        $this->get('/tisky/90')->assertOk()->assertSee('první kolo first-model: 9/10');
     }
 
     public function test_missing_bill_and_unknown_paths_return_404(): void
     {
-        $this->get('/tisk.php?ct=999999')->assertNotFound()->assertSee('Tisk nenalezen');
+        $this->get('/tisky/999999')->assertNotFound()->assertSee('Tisk nenalezen');
         $this->get('/does-not-exist')->assertNotFound();
         foreach (['/config.php', '/.env', '/data/hlidac.sqlite', '/app/Db.php', '/rag/README.md'] as $url) {
             $this->get($url)->assertNotFound();
@@ -55,7 +82,7 @@ final class WebTest extends TestCase
     {
         $this->importFixtures();
         db()->run('UPDATE tisky SET nazev = ?, uplny_nazev = ?, navrhovatel = ? WHERE ct = 90', ['A & B <script>alert(1)</script>', 'A & B <script>alert(1)</script>', 'C & D']);
-        $this->get('/tisk.php?ct=90')->assertOk()
+        $this->get('/tisky/90')->assertOk()
             ->assertSee('A &amp; B &lt;script&gt;alert(1)&lt;/script&gt;', false)
             ->assertDontSee('<script>alert(1)</script>', false)
             ->assertDontSee('C &amp;amp; D', false);
@@ -64,7 +91,7 @@ final class WebTest extends TestCase
     public function test_og_endpoint_returns_png_and_cache_headers(): void
     {
         $this->importFixtures();
-        $response = $this->get('/og.php?ct=90')->assertOk()->assertHeader('Content-Type', 'image/png');
+        $response = $this->get('/og?ct=90')->assertOk()->assertHeader('Content-Type', 'image/png');
         $this->assertStringContainsString('max-age=86400', $response->headers->get('Cache-Control'));
         $file = $response->baseResponse->getFile()->getPathname();
         $size = getimagesize($file);

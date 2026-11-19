@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Upozornění na připravované zákony',
         'Upozornění nově hlídají i přípravu zákonů u vlády: připomínkové řízení kratší než 3 týdny (úroveň Pozor, kratší než 10 dní Závažné a jde i na sociální sítě), návrh předložený mimo plán legislativních prací vlády (Pozor) a schválení návrhu vládou (běžná agenda). Upozornění vedou na stránku Připravované, a jakmile návrh dostane číslo sněmovního tisku, do VeKLEP. Jsou v přehledu upozornění, v RSS i v API. Dosavadní případy se zapsaly bez rozeslání.',
-        [0], false],
+        [52], false],
     ['2026-11-19', 'Spolehlivější rozbor AI: opakované běhy a namátková kontrola',
         'Text, kterému rychlý model dá hraniční závažnost 3–7 (tam se rozhoduje, zda dostane body), posoudí třikrát a platí prostřední hodnota; jedno nahodilé hodnocení tak skóre neurčí. Každý desátý text s nízkým hodnocením nově posoudí i silnější model, aby se ukázalo, kolik problémů rychlý model přehlíží; když najde závažný problém, jeho rozbor platí. Na stránce Jak hodnotíme je nový oddíl Jak ověřujeme rozbor AI s průběžnými čísly o shodě modelů. Skóre některých tisků se může změnit, jak doběhnou opakované běhy. Díky podnětu z GitHubu (#7).',
         [50], true],

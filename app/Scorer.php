@@ -220,7 +220,8 @@ final class Scorer
             $typ = (int)$k['typ_stavu'];
             $day = $k['datum'] ? substr((string)$k['datum'], 0, 10) : null;
             if ($typ === 21 && $pnDay === null && $day) {
-                $pnDay = $day;
+                // bez souhrnu PN den kroku „Pozměňovací návrhy“; se souhrnem čas jeho rozeslání (níže)
+                $pnDay = !empty($t['souhrn_pn_at']) ? substr((string)$t['souhrn_pn_at'], 0, 10) : $day;
             }
             if ($typ === 4 && (int)$k['akce_id'] === 23 && $day) {
                 $detailEnd = $day;
@@ -236,9 +237,15 @@ final class Scorer
         if ($pnDay && $thirdDay) {
             $gap = (int)round((strtotime($thirdDay) - strtotime($pnDay)) / 86400);
             if ($gap < (int)$w['short_gap_days']) {
-                $add('short_gap', (int)$w['short_gap'], $gap <= 0
-                    ? 'Pozměňovací návrhy a 3. čtení ve stejný den'
-                    : "Mezi pozměňovacími návrhy a 3. čtením jen $gap " . ($gap === 1 ? 'den' : ($gap < 5 ? 'dny' : 'dní')));
+                // se souhrnem PN měříme od jeho rozeslání (#2 menší opravy), bez něj od kroku „Pozměňovací návrhy“
+                $from = !empty($t['souhrn_pn_at']) ? 'rozesláním souhrnu pozměňovacích návrhů' : 'pozměňovacími návrhy';
+                $label = $gap <= 0
+                    ? (!empty($t['souhrn_pn_at']) ? 'Souhrn pozměňovacích návrhů rozeslán v den 3. čtení' : 'Pozměňovací návrhy a 3. čtení ve stejný den')
+                    : "Mezi $from a 3. čtením jen $gap " . ($gap === 1 ? 'den' : ($gap < 5 ? 'dny' : 'dní'));
+                if (empty($t['souhrn_pn_at'])) {
+                    $label .= ' (souhrn pozměňovacích návrhů nebyl rozeslán jako sněmovní tisk)';
+                }
+                $add('short_gap', (int)$w['short_gap'], $label);
             }
         }
 

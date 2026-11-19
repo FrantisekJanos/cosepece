@@ -641,6 +641,12 @@ def stav_dat(conn) -> dict:
                                     "texty_ok": texty.get("ok"),
                                     "texty": {k: v for k, v in texty.items() if k != "ok" and isinstance(v, int)
                                               and not isinstance(v, bool)} or None}
+        emb = raw.get("embeddingy")
+        if isinstance(emb, dict):
+            # indexování embeddingů: čísla a příznaky, místo textu chyby jen chyba True
+            out["steno_last_result"]["embeddingy"] = {
+                **{k: v for k, v in emb.items() if isinstance(v, (int, float, bool)) and k != "chyba"},
+                "chyba": bool(emb.get("chyba"))}
     else:
         out["steno_last_result"] = None
     r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
@@ -652,7 +658,16 @@ def stav_dat(conn) -> dict:
           (SELECT count(*) FROM texty.dokument WHERE chyba = %s) AS jen_pdf,
           (SELECT count(*) FROM texty.dokument WHERE verze = 'schvalene' AND text IS NOT NULL) AS schvalenych""",
                         (JEN_PDF,)) if _texty_ok(conn) else None
+    # embeddingy (hledání podle významu); None = schéma rag ještě není
+    out["embeddingy"] = _one(conn, """SELECT count(*) AS useku, count(DISTINCT projev_id) AS projevu,
+          count(DISTINCT cel_id) AS celku, mode() WITHIN GROUP (ORDER BY model) AS model, max(indexovano) AS posledni
+          FROM rag.usek""") if _embeddingy_ok(conn) else None
     return out
+
+
+def _embeddingy_ok(conn) -> bool:
+    """Tabulka rag.usek už existuje (MCP mohl naběhnout dřív, než rag-ingest provedl migraci)."""
+    return bool(_one(conn, "SELECT to_regclass('rag.usek') IS NOT NULL AS ok")["ok"])
 
 
 # ---------------------------------------------------------------- texty návrhů zákonů a PN (schéma texty)

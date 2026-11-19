@@ -1,5 +1,6 @@
 """Jeden běh ingestu stenoprotokolů: python -m hlidac_rag.run [--limit N] [--no-opendata] [--reassemble]
-                                                       [--prepocitej-rozpravu]
+                                                       [--prepocitej-rozpravu] [--embed-max-tokenu N]
+                                                       [--jen-embeddingy]
 
 1. otevřená data (osoby, kluby, schůze, body, kostra částí, rec) – nejvýš jednou za 20 hodin
 2. objevení nových částí podle indexu a jednacích dnů posledních schůzí
@@ -7,6 +8,10 @@
 4. složení projevů u schůzí, kde se něco změnilo, a přepočet rozpravy (projev_tisk, druh, projev_pn);
    všech schůzí po --reassemble, po importu otevřených dat a při prázdné projev_tisk (první běh po nasazení)
 5. texty návrhů zákonů a PN (schéma texty), samostatně: chyba neshodí běh stenoprotokolů
+6. embeddingy nových a změněných projevů a celků (schéma rag) do stropu tokenů EMBED_MAX_TOKENS_PER_RUN
+   (výchozí 3 mil., přepínač --embed-max-tokenu), samostatně; bez OPENAI_API_KEY se přeskočí
+--jen-embeddingy: jen krok 6 (úvodní indexace s vyšším stropem), bez stahování; stav_dat dál ukazuje
+poslední běh synchronizace.
 --prepocitej-rozpravu: jen krok 4 pro všechny schůze z uložených částí, bez sítě (po změně pravidel).
 Výsledek se zapíše do steno.beh a meta.steno_last_result (přepočet jen do steno.beh: stav_dat dál ukazuje
 poslední běh synchronizace).
@@ -16,10 +21,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 
 from . import db, sentry
+from .embed.indexer import indexuj
+from .embed.klient import Klient
 from .psp import ingest, opendata
 from .psp.http import Fetcher
 from .texty.ingest import sync_texty
@@ -52,6 +60,24 @@ def _bez_rozpravy(conn) -> bool:
         return cur.fetchone()[0]
 
 
+def _vychozi_strop() -> int:
+    """Strop tokenů embeddingů na běh z EMBED_MAX_TOKENS_PER_RUN (výchozí 3 mil.)."""
+    return int((os.environ.get("EMBED_MAX_TOKENS_PER_RUN") or "").strip() or 3_000_000)
+
+
+def _klient_z_prostredi():
+    return Klient.z_prostredi()
+
+
+def krok_embeddingy(conn, max_tokenu: int) -> dict:
+    """Doindexování embeddingů; bez klíče přeskočí, chyba API se vrátí ve výsledku (ok False)."""
+    klient = _klient_z_prostredi()
+    if klient is None:
+        return {"ok": False, "duvod": "bez OPENAI_API_KEY"}
+    r = indexuj(conn, klient, max_tokenu=max_tokenu)
+    return {"ok": not r.get("chyba"), **r}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=1500, help="nejvýš částí ke stažení za běh")
@@ -62,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--texty-limit", type=int, default=40, help="nejvýš dokumentů textů ke stažení za běh")
     ap.add_argument("--prepocitej-rozpravu", action="store_true",
                     help="jen znovu složit projevy všech schůzí z uložených částí a přepočítat rozpravu, bez stahování")
+    ap.add_argument("--embed-max-tokenu", type=int, default=None,
+                    help="strop tokenů embeddingů za běh (výchozí EMBED_MAX_TOKENS_PER_RUN, jinak 3 000 000)")
+    ap.add_argument("--jen-embeddingy", action="store_true",
+                    help="jen doindexovat embeddingy, bez stahování a skládání projevů")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     sentry.init("ingest")
@@ -79,10 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     conn.commit()
 
     # přepočet rozpravy jde jen z uložených částí: bez stahování a bez textů
-    fetcher = None if args.prepocitej_rozpravu else Fetcher(delay=args.delay)
+    fetcher = None if args.prepocitej_rozpravu or args.jen_embeddingy else Fetcher(delay=args.delay)
     result: dict = {}
     try:
-        if fetcher is None:
+        if args.jen_embeddingy:
+            dirty = set()
+        elif fetcher is None:
             with conn.cursor() as cur:
                 obdobi = int(_meta(cur, "steno_obdobi") or 10)
             dirty = _schuze_s_html(conn, obdobi)
@@ -109,10 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         for s in sorted(dirty):
             st = ingest.assemble(conn, obdobi, s)
             assembled[s] = st
-        result["assemble"] = {k: sum(st[k] for st in assembled.values()) for k in ("nove", "zmenene", "zrusene", "smazane")}
-        result["assemble"]["schuze"] = len(assembled)
-        result["rozprava"] = {k: sum(st["rozprava"][k] for st in assembled.values())
-                              for k in ("projevu", "projev_tisk", "projev_pn")}
+        if not args.jen_embeddingy:
+            result["assemble"] = {k: sum(st[k] for st in assembled.values())
+                                  for k in ("nove", "zmenene", "zrusene", "smazane")}
+            result["assemble"]["schuze"] = len(assembled)
+            result["rozprava"] = {k: sum(st["rozprava"][k] for st in assembled.values())
+                                  for k in ("projevu", "projev_tisk", "projev_pn")}
         ok = True
     except Exception as e:
         log.exception("běh selhal")
@@ -129,11 +163,19 @@ def main(argv: list[str] | None = None) -> int:
             log.exception("texty selhaly")
             conn.rollback()
             result["texty"] = {"ok": False}
+    if not args.prepocitej_rozpravu:
+        # embeddingy po textech (indexují i nové celky); vlastní try, chyba neshodí běh
+        try:
+            result["embeddingy"] = krok_embeddingy(conn, args.embed_max_tokenu or _vychozi_strop())
+        except Exception:
+            log.exception("embeddingy selhaly")
+            conn.rollback()
+            result["embeddingy"] = {"ok": False}
     result["requests"] = fetcher.requests if fetcher else 0
     result["seconds"] = round(time.time() - started, 1)
     with conn.cursor() as cur:
         cur.execute("UPDATE steno.beh SET konec = now(), vysledek = %s WHERE id = %s", (json.dumps(result), run_id))
-        if not args.prepocitej_rozpravu:
+        if not args.prepocitej_rozpravu and not args.jen_embeddingy:
             # přepočet nemá crawl ani texty: stav_dat má dál ukazovat poslední běh synchronizace
             _meta(cur, "steno_last_result", json.dumps(result, ensure_ascii=False))
         cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_ID,))

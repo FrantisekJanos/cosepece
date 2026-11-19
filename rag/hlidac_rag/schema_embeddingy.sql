@@ -2,7 +2,7 @@
 -- Plní hlidac_rag.embed.indexer.indexuj v hodinovém běhu rag-ingest; čte hlidac_rag.embed.hledani.
 -- Úsek = souvislý kus textu zdroje (od_znaku/do_znaku), hlavička se embeduje spolu s ním. Filtry (ct, osoba, klub,
 -- datum…) jsou zkopírované ze zdroje, ať hustý dotaz nemusí joinovat; při změně textu nebo hlavičky se úseky
--- zdroje nahradí (text_hash), zrušený projev úseky ztratí při dalším běhu indexeru, smazaný přes ON DELETE CASCADE.
+-- zdroje nahradí (zdroj_hash), zrušený projev úseky ztratí při dalším běhu indexeru, smazaný přes ON DELETE CASCADE.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA IF NOT EXISTS rag;
@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS rag.usek (
   do_znaku    int NOT NULL,
   hlavicka    text NOT NULL,
   text_hash   text NOT NULL,
+  zdroj_hash  text NOT NULL,     -- otisk zdroje (text + údaje hlavičky a filtrů) spočítaný v SQL: změna = nové úseky
   model       text NOT NULL,
   embedding   halfvec(1024),
   ct          int,

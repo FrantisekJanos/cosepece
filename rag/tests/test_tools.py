@@ -182,7 +182,7 @@ def test_nejednoznacna_osoba_je_valueerror_s_kandidaty():
 
 def test_stav_dat_nevraci_text_chyby():
     raw = '{"error": "connection to 10.0.0.5 failed", "seconds": 1}'
-    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [{"v": "2026-11-19"}], [{"ok": False}]))
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [{"v": "2026-11-19"}], [{"ok": False}], [{"ok": False}]))
     assert "10.0.0.5" not in json.dumps(r, default=str)
     assert r["steno_last_result"]["ok"] is False and r["steno_last_result"]["seconds"] == 1
     assert "error" not in r["steno_last_result"]
@@ -626,10 +626,10 @@ def test_get_tisk_ma_texty():
 
 
 def test_stav_dat_ma_texty():
-    conn = FakeConn([{"projevu": 1}], [], [], _OK, [dict(dokumentu=3, celku=40, jen_pdf=1, schvalenych=1)])
+    conn = FakeConn([{"projevu": 1}], [], [], _OK, [dict(dokumentu=3, celku=40, jen_pdf=1, schvalenych=1)], [{"ok": False}])
     r = tools.stav_dat(conn)
     assert r["texty"] == {"dokumentu": 3, "celku": 40, "jen_pdf": 1, "schvalenych": 1}
-    r = tools.stav_dat(FakeConn([{"projevu": 1}], [], [], [{"ok": False}]))
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [], [], [{"ok": False}], [{"ok": False}]))
     assert r["texty"] is None
 
 
@@ -695,8 +695,30 @@ def test_klub_bez_uvodu_poslanecky_klub():
 
 def test_stav_dat_ma_vysledek_ingestu_textu():
     raw = json.dumps({"seconds": 1, "texty": {"ok": True, "prevzato": 2, "stazeno": 3, "chyby": 1}})
-    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [], [{"ok": False}]))
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [], [{"ok": False}], [{"ok": False}]))
     assert r["steno_last_result"]["texty_ok"] is True
     assert r["steno_last_result"]["texty"] == {"prevzato": 2, "stazeno": 3, "chyby": 1}
-    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": json.dumps({"texty": {"ok": False}})}], [], [{"ok": False}]))
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": json.dumps({"texty": {"ok": False}})}], [], [{"ok": False}],
+                                [{"ok": False}]))
     assert r["steno_last_result"]["texty_ok"] is False and r["steno_last_result"]["texty"] is None
+
+
+def test_stav_dat_embeddingy():
+    raw = json.dumps({"seconds": 1, "embeddingy": {"ok": True, "zdroju": 5, "useku": 12, "tokenu": 3000,
+                                                   "odhad_usd": 0.0004, "preruseno_stropem": False,
+                                                   "chyba": "OpenAI vrátilo HTTP 500 na 10.0.0.5"}})
+    emb = dict(useku=12, projevu=4, celku=1, model="text-embedding-3-large",
+               posledni=datetime(2026, 11, 19, 10, 0, tzinfo=timezone.utc))
+    conn = FakeConn([{"projevu": 1}], [{"v": raw}], [], [{"ok": False}], _OK, [emb])
+    r = tools.stav_dat(conn)
+    e = r["embeddingy"]
+    assert e["useku"] == 12 and e["projevu"] == 4 and e["celku"] == 1 and e["model"] == "text-embedding-3-large"
+    assert e["posledni"].startswith("2026-11-19")
+    assert "rag.usek" in conn.sql[-1]
+    # výsledek posledního běhu jen čísla a ok, bez textu chyby
+    b = r["steno_last_result"]["embeddingy"]
+    assert b["ok"] is True and b["zdroju"] == 5 and b["chyba"] is True
+    assert "10.0.0.5" not in json.dumps(r, default=str)
+    # bez tabulky rag.usek (MCP naběhl před migrací)
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [], [], [{"ok": False}], [{"ok": False}]))
+    assert r["embeddingy"] is None

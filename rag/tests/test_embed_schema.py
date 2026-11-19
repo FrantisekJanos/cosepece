@@ -41,8 +41,8 @@ def test_usek_prave_jeden_zdroj():
     try:
         db.migrate(c)
         with pytest.raises(psycopg.errors.CheckViolation):
-            c.execute("INSERT INTO rag.usek (zdroj, poradi, od_znaku, do_znaku, hlavicka, text_hash, model) "
-                      "VALUES ('projev', 0, 0, 1, 'h', 'x', 'm')")
+            c.execute("INSERT INTO rag.usek (zdroj, poradi, od_znaku, do_znaku, hlavicka, text_hash, zdroj_hash, model) "
+                      "VALUES ('projev', 0, 0, 1, 'h', 'x', 'z', 'm')")
     finally:
         c.rollback()
         c.close()

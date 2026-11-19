@@ -16,6 +16,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 
+from .indexer import DIM
 from .klient import VYCHOZI_MODEL, EmbedChyba, Klient
 
 log = logging.getLogger("hlidac_rag.embed")
@@ -64,8 +65,12 @@ def aktualni_model() -> str:
     return (os.environ.get("EMBED_MODEL") or "").strip() or VYCHOZI_MODEL
 
 
+DUVOD_BEZ_KLICE = "hledání podle významu není zapnuté (chybí OPENAI_API_KEY)"
+
+
 def _klient() -> Klient | None:
-    """Klient pro dotazy (1 pokus, timeout TIMEOUT); jeden na kombinaci klíče, modelu a dimenze."""
+    """Klient pro dotazy (1 pokus, timeout TIMEOUT); jeden na kombinaci klíče, modelu a dimenze.
+    Dimenze jiná než sloupec rag.usek.embedding (nebo nečitelná EMBED_DIM) = None, jinak by padal hustý dotaz."""
     klic = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if not klic:
         return None
@@ -73,8 +78,20 @@ def _klient() -> Klient | None:
     with _zamek:
         if k not in _klienti:
             _klienti.clear()
-            _klienti[k] = Klient.z_prostredi(timeout=TIMEOUT, pokusu=1)
+            try:
+                klient = Klient.z_prostredi(timeout=TIMEOUT, pokusu=1)
+            except ValueError:
+                klient = None
+            if klient is not None and klient.dim != DIM:
+                log.warning("embeddingy: EMBED_DIM=%s neodpovídá sloupci (%s), hledá se jen podle slov", klient.dim, DIM)
+                klient = None
+            _klienti[k] = klient
         return _klienti[k]
+
+
+def je_zapnuto() -> bool:
+    """Klíč je nastavený a konfigurace sedí (bez volání API)."""
+    return _klient() is not None
 
 
 def posledni_chyba() -> str | None:
@@ -95,7 +112,7 @@ def vektor_dotazu(dotaz: str) -> list[float] | None:
     _stav.chyba = None
     klient = _klient()
     if klient is None:
-        _stav.chyba = "hledání podle významu není zapnuté (chybí OPENAI_API_KEY)"
+        _stav.chyba = DUVOD_BEZ_KLICE
         return None
     klic = (klient.model, klient.dim, " ".join(dotaz.split()).lower())
     with _zamek:

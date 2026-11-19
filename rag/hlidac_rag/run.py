@@ -78,7 +78,7 @@ def krok_embeddingy(conn, max_tokenu: int) -> dict:
     return {"ok": not r.get("chyba"), **r}
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=1500, help="nejvýš částí ke stažení za běh")
     ap.add_argument("--no-opendata", action="store_true")
@@ -92,7 +92,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="strop tokenů embeddingů za běh (výchozí EMBED_MAX_TOKENS_PER_RUN, jinak 3 000 000)")
     ap.add_argument("--jen-embeddingy", action="store_true",
                     help="jen doindexovat embeddingy, bez stahování a skládání projevů")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def _strop(args) -> int:
+    """Strop tokenů embeddingů: --embed-max-tokenu (i 0 = nic neembedovat), jinak z prostředí."""
+    return args.embed_max_tokenu if args.embed_max_tokenu is not None else _vychozi_strop()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     sentry.init("ingest")
 
@@ -166,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.prepocitej_rozpravu:
         # embeddingy po textech (indexují i nové celky); vlastní try, chyba neshodí běh
         try:
-            result["embeddingy"] = krok_embeddingy(conn, args.embed_max_tokenu or _vychozi_strop())
+            result["embeddingy"] = krok_embeddingy(conn, _strop(args))
         except Exception:
             log.exception("embeddingy selhaly")
             conn.rollback()

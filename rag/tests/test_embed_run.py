@@ -35,3 +35,11 @@ def test_vychozi_strop_z_prostredi(monkeypatch):
     assert run._vychozi_strop() == 500
     monkeypatch.delenv("EMBED_MAX_TOKENS_PER_RUN")
     assert run._vychozi_strop() == 3_000_000
+
+
+
+def test_strop_nula_neni_vychozi(monkeypatch):
+    monkeypatch.delenv("EMBED_MAX_TOKENS_PER_RUN", raising=False)
+    ap_args = run._parser().parse_args(["--jen-embeddingy", "--embed-max-tokenu", "0"])
+    assert run._strop(ap_args) == 0
+    assert run._strop(run._parser().parse_args([])) == run._vychozi_strop()

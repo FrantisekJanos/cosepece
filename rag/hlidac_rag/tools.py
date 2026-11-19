@@ -550,7 +550,8 @@ def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_z
 REZIMY = ("auto", "fulltext", "vyznam")
 _POZN_PROJEVY = "Fulltext bez ohledu na diakritiku; uryvek_shoda je okolí první shody, shoda je v « »."
 _POZN_HYBRID = ("Výsledky podle slov i podle významu sloučené (RRF); shoda říká, čím se projev našel (slova, vyznam, "
-                "obe). U shody podle významu je uryvek_shoda začátek nejbližšího úseku projevu.")
+                "obe). U shody podle významu je uryvek_shoda začátek nejbližšího úseku projevu. celkem je počet "
+                "sloučených výsledků (nejvýš 100); úplný výčet všech projevů se slovy dá rezim=\"fulltext\".")
 
 
 def _rezim(rezim: str | None) -> str:
@@ -561,14 +562,37 @@ def _rezim(rezim: str | None) -> str:
     return r
 
 
-def _vektor_nebo_duvod(conn, dotaz: str, zdroj: str) -> tuple[list[float] | None, str | None]:
-    """Vektor dotazu pro hybridní hledání, nebo None a důvod, proč se hledá jen podle slov."""
+def _vektor_nebo_duvod(conn, dotaz: str, tsq: str | None, zdroj: str) -> tuple[list[float] | None, str | None]:
+    """Vektor dotazu pro hybridní hledání, nebo None a důvod, proč se hledá jen podle slov.
+
+    Pořadí kontrol šetří API: bez klíče nebo bez indexu se embedding dotazu vůbec nevolá. Dotaz jen z čísel
+    (předpisy „586/1992“, čísla tisků) se hledá jen podle slov, význam by přimíchal texty bez toho čísla."""
+    if not hledani.je_zapnuto():
+        return None, hledani.DUVOD_BEZ_KLICE
+    if tsq and all(any(ch.isdigit() for ch in t) for t in tsq.split(" & ")):
+        return None, "dotaz obsahuje jen čísla, ta se hledají přesně"
+    if not hledani.je_index(conn, zdroj):
+        return None, "index pro hledání podle významu zatím není naplněný"
     vektor = hledani.vektor_dotazu(dotaz)
     if vektor is None:
         return None, hledani.posledni_chyba() or "embedding dotazu není k dispozici"
-    if not hledani.je_index(conn, zdroj):
-        return None, "index pro hledání podle významu zatím není naplněný"
     return vektor, None
+
+
+def _zkus_husty(conn, fn) -> tuple[Any, str | None]:
+    """Spustí husté (a k němu lexikální top-50) hledání v savepointu; chyba databáze (rozměr vektoru, timeout,
+    starý pgvector) vrátí transakci do stavu před ním a nástroj pak hledá jen podle slov."""
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT husty")
+    try:
+        r = fn()
+    except psycopg.Error as e:
+        with conn.cursor() as cur:
+            cur.execute("ROLLBACK TO SAVEPOINT husty")
+        return None, f"hledání podle významu selhalo ({type(e).__name__})"
+    with conn.cursor() as cur:
+        cur.execute("RELEASE SAVEPOINT husty")
+    return r, None
 
 
 def _slouceni(lex: list[int], huste: list[dict], sloupec: str, rezim: str) -> tuple[list[int], dict[int, dict]]:
@@ -617,10 +641,19 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
     filtry, filtry_params = " AND ".join(where), list(params)
-    vektor, duvod = (None, None) if rezim == "fulltext" else _vektor_nebo_duvod(conn, dotaz, "projev")
+    vektor, duvod = (None, None) if rezim == "fulltext" else _vektor_nebo_duvod(conn, dotaz, tsq, "projev")
     fts = "to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)"
     off = _offset(offset)
-    if vektor is None:
+    nalezeno = None
+    if vektor is not None:
+        def hledej():
+            lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
+                SELECT p.id FROM steno.projev p WHERE {fts} AND {filtry}
+                ORDER BY ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) DESC,
+                         p.datum DESC, p.id LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
+            return lex, hledani.husty(conn, vektor, "projev", filtry, filtry_params)
+        nalezeno, duvod = _zkus_husty(conn, hledej)
+    if nalezeno is None:
         w = f"{fts} AND {filtry}"
         params = [tsq, *filtry_params]
         total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
@@ -637,11 +670,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
         poznamka = _POZN_PROJEVY + (f" Hledalo se jen podle slov: {duvod}." if duvod else "")
         return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
                 "pocet": len(rows), "projevy": _speech_rows(rows), "rezim_pouzity": "fulltext", "poznamka": poznamka}
-    lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
-        SELECT p.id FROM steno.projev p WHERE {fts} AND {filtry}
-        ORDER BY ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) DESC,
-                 p.datum DESC, p.id LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
-    huste = hledani.husty(conn, vektor, "projev", filtry, filtry_params)
+    lex, huste = nalezeno
     poradi, nejblizsi = _slouceni(lex, huste, "projev_id", rezim)
     stranka = poradi[off:off + _limit(limit, 20)]
     podle_id = {r["id"]: r for r in _rows(conn, f"""SELECT p.id, {_SPEECH_COLS}, p.text FROM steno.projev p
@@ -942,7 +971,7 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
                             SELECT 1 FROM texty.dokument s WHERE s.druh = 'tisk' AND s.ct = d.ct AND s.cislo_pn = 0
                               AND s.verze = 'schvalene' AND {_DOSTUPNY_S}))""")
     filtry, filtry_params = " AND ".join(where), list(params)
-    vektor, duvod = (None, None) if rezim == "fulltext" or not tsq else _vektor_nebo_duvod(conn, dotaz, "cel")
+    vektor, duvod = (None, None) if rezim == "fulltext" or not tsq else _vektor_nebo_duvod(conn, dotaz, tsq, "cel")
     off = _offset(offset)
     lim = min(_limit(limit, 20), MAX_LIMIT_TEXTY)
     sloupce = "d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url, c.text"
@@ -955,7 +984,16 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
                 "verze": r["verze"], "poradi": r["poradi"], "oznaceni": r["oznaceni"], "cesta": r["cesta"],
                 "uryvek": uryvek, "url_docx": r["docx_url"], "shoda": shoda}
 
-    if vektor is None:
+    nalezeno = None
+    if vektor is not None:
+        def hledej():
+            lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
+                SELECT c.id {spoj} WHERE c.tsv @@ to_tsquery('simple', %s) AND {filtry}
+                ORDER BY ts_rank(c.tsv, to_tsquery('simple', %s)) DESC, d.ct DESC, d.cislo_pn, c.poradi
+                LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
+            return lex, hledani.husty(conn, vektor, "cel", filtry, filtry_params)
+        nalezeno, duvod = _zkus_husty(conn, hledej)
+    if nalezeno is None:
         if tsq:
             where.insert(0, "c.tsv @@ to_tsquery('simple', %s)")
             params.insert(0, tsq)
@@ -974,11 +1012,7 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
         return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
                 "pocet": len(vysledky), "vysledky": vysledky, "rezim_pouzity": "fulltext",
                 "poznamka": poznamka + (f" Hledalo se jen podle slov: {duvod}." if duvod else "")}
-    lex = [] if rezim == "vyznam" else [r["id"] for r in _rows(conn, f"""
-        SELECT c.id {spoj} WHERE c.tsv @@ to_tsquery('simple', %s) AND {filtry}
-        ORDER BY ts_rank(c.tsv, to_tsquery('simple', %s)) DESC, d.ct DESC, d.cislo_pn, c.poradi
-        LIMIT {hledani.HUSTYCH}""", (tsq, *filtry_params, tsq))]
-    huste = hledani.husty(conn, vektor, "cel", filtry, filtry_params)
+    lex, huste = nalezeno
     poradi_id, nejblizsi = _slouceni(lex, huste, "cel_id", rezim)
     stranka = poradi_id[off:off + lim]
     podle_id = {r["id"]: r for r in _rows(conn, f"SELECT c.id, {sloupce} {spoj} WHERE c.id = ANY(%s)",

@@ -27,12 +27,12 @@ STRANKA = 500                  # kandidátů načtených najednou
 _OTISK_PROJEVU = """md5(concat_ws('|', md5(p.text), p.recnik, p.role, p.klub, p.datum::text, p.schuze::text, b.nazev,
         (SELECT string_agg(pt.ct::text, ',' ORDER BY pt.ct) FROM steno.projev_tisk pt WHERE pt.projev_id = p.id),
         p.id_osoba::text, p.druh, p.predsedajici::text))"""
-_PROJEV_OK = f"p.zruseno IS NULL AND p.znaku >= {MIN_ZNAKU_PROJEVU} AND length(btrim(p.text)) > 0"
+_PROJEV_OK = f"p.zruseno IS NULL AND p.znaku >= {MIN_ZNAKU_PROJEVU} AND p.text ~ '\\S'"
 
 _NAZEV_TISKU = "(SELECT t.nazev FROM tisky t WHERE t.ct = d.ct ORDER BY t.id_tisk LIMIT 1)"
 _OTISK_CELKU = f"""md5(concat_ws('|', md5(c.text), c.cesta, c.meni_zakon, c.typ, d.druh, d.ct::text, d.cislo_pn::text,
         d.verze, {_NAZEV_TISKU}))"""
-_CEL_OK = ("d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL AND d.chyba IS NULL AND length(btrim(c.text)) > 0")
+_CEL_OK = ("d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL AND d.chyba IS NULL AND c.text ~ '\\S'")
 
 
 def _tabulka(t: str) -> str:
@@ -201,9 +201,10 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
                         out["preruseno_stropem"] = True
                         break
                     odhad_celkem += odhad
-                    davka.append((zdroj, r["id"], useky))
-                    if sum(len(us) for _, _, us in davka) >= DAVKA_VSTUPU:
+                    # dávka nepřeroste jeden požadavek: při chybě by se ztratily už zaplacené tokeny
+                    if davka and sum(len(us) for _, _, us in davka) + len(useky) > DAVKA_VSTUPU:
                         odeslat()
+                    davka.append((zdroj, r["id"], useky))
             if davka:
                 odeslat()
     except EmbedChyba as e:

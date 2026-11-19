@@ -285,3 +285,23 @@ def test_omezeni_na_vybrane_zdroje(conn):
     assert r["zdroju"] == 1 and r["zbyva_zdroju"] == 0
     assert _useky(conn, "projev_id", a) == [] and len(_useky(conn, "projev_id", b)) == 1
     assert _useky(conn, "cel_id", cid) == []
+
+
+
+def test_text_jen_z_bilych_znaku_neni_kandidat(conn):
+    from hlidac_rag.embed.indexer import indexuj
+
+    _dokument(conn, [("clanek", "\n\n\t "), ("clanek", "Skutečný text.")])
+    r = indexuj(conn, FalesnyKlient())
+    assert r["zdroju"] == 1 and r["zbyva_zdroju"] == 0
+
+
+def test_davka_nepreroste_pozadavek(conn, monkeypatch):
+    from hlidac_rag.embed import indexer
+
+    monkeypatch.setattr(indexer, "DAVKA_VSTUPU", 4)
+    for i in range(1, 6):
+        _projev(conn, i, DLOUHY.replace("Věta", f"Věta{i}"))   # 4 úseky na projev
+    k = FalesnyKlient()
+    r = indexer.indexuj(conn, k, zdroje=("projev",))
+    assert r["zdroju"] == 5 and all(len(v) <= 4 for v in k.volani)

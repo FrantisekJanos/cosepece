@@ -153,6 +153,7 @@ def test_auto_bez_vektoru_fallback():
 
 def test_auto_bez_indexu_fallback(monkeypatch):
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1])
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     conn = FakeConn([dict(ok=False)], [dict(n=0)], [])
     r = tools.hledej_v_projevech(conn, "elektřiny")
     assert r["rezim_pouzity"] == "fulltext" and "index" in r["poznamka"]
@@ -173,6 +174,7 @@ def test_neplatny_rezim_valueerror():
 
 def test_hybrid_slouci_a_oznaci_shodu(monkeypatch):
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1])
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     text_vyznam = "Zdražování proudu dopadá na domácnosti. " * 20
     conn = FakeConn(
         [dict(ok=True)], [dict(ok=True)],                               # tabulka a index modelu
@@ -194,6 +196,7 @@ def test_hybrid_slouci_a_oznaci_shodu(monkeypatch):
 
 def test_hybrid_strankovani(monkeypatch):
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1])
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     conn = FakeConn([dict(ok=True)], [dict(ok=True)], [dict(id=i) for i in range(1, 6)], [],
                     [_speech(id=3, aname=3), _speech(id=4, aname=4)])
     r = tools.hledej_v_projevech(conn, "elektřiny", limit=2, offset=2)
@@ -277,6 +280,7 @@ def test_hybrid_najde_parafrazi(pgconn, monkeypatch):
     indexuj(pgconn, FalesnyKlient())
     vektor = _vektor_useku(pgconn, ids["elektrina"])
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: vektor)
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     r = tools.hledej_v_projevech(pgconn, "zdražování energií")
     assert r["rezim_pouzity"] == "hybrid"
     prvni = r["projevy"][0]
@@ -300,6 +304,7 @@ def test_hybrid_jmeno_slova(pgconn, monkeypatch):
     indexuj(pgconn, FalesnyKlient())
     vektor = _vektor_useku(pgconn, ids["elektrina"])
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: vektor)
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     r = tools.hledej_v_projevech(pgconn, "Žatecku")
     chmel = next(p for p in r["projevy"] if p["klic"] == "10/36/100/2")
     assert chmel["shoda"] in ("slova", "obe") and "«Žatecku»" in chmel["uryvek_shoda"]
@@ -316,6 +321,7 @@ def test_hybrid_v_textech(pgconn, monkeypatch):
     indexuj(pgconn, FalesnyKlient())
     v = _sql(pgconn, "SELECT embedding::text FROM rag.usek WHERE cel_id = %s", (cid,))[0][0]
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [float(x) for x in v.strip("[]").split(",")])
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
     r = tools.hledej_v_textech(pgconn, "zpětné vymáhání podpor")
     assert r["rezim_pouzity"] == "hybrid"
     assert r["vysledky"][0]["oznaceni"] == "Čl. 1" and r["vysledky"][0]["shoda"] == "vyznam"
@@ -353,7 +359,7 @@ def test_denni_strop_fallback_v_nastroji(monkeypatch):
     k, _ = _klient_s(_ok)
     monkeypatch.setattr(hledani, "_klient", lambda: k)
     monkeypatch.setenv("EMBED_DOTAZY_DEN", "0")
-    conn = FakeConn([dict(n=0)], [])
+    conn = FakeConn([dict(ok=True)], [dict(ok=True)], [dict(n=0)], [])
     r = tools.hledej_v_projevech(conn, "elektřiny")
     assert r["rezim_pouzity"] == "fulltext" and "denní limit sémantického hledání vyčerpán" in r["poznamka"]
 
@@ -363,3 +369,61 @@ def test_denni_strop_vychozi(monkeypatch):
     assert hledani._denni_strop() == 20000
     monkeypatch.setenv("EMBED_DOTAZY_DEN", "nesmysl")
     assert hledani._denni_strop() == 20000
+
+
+
+def test_bez_indexu_se_api_nevola(monkeypatch):
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
+    monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: pytest.fail("bez indexu se embedding nevolá"))
+    conn = FakeConn([dict(ok=True)], [dict(ok=False)], [dict(n=0)], [])
+    r = tools.hledej_v_projevech(conn, "elektřiny")
+    assert r["rezim_pouzity"] == "fulltext" and "index" in r["poznamka"]
+
+
+def test_dotaz_jen_cisla_fulltextem(monkeypatch):
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
+    monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: pytest.fail("čísla se neembedují"))
+    conn = FakeConn([dict(ok=True)], [dict(n=0)], [])
+    r = tools.hledej_v_textech(conn, "586/1992")
+    assert r["rezim_pouzity"] == "fulltext" and "čísla" in r["poznamka"]
+
+
+def test_spatna_dimenze_neni_zapnuto(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", KLIC)
+    monkeypatch.setenv("EMBED_DIM", "3072")
+    assert hledani.je_zapnuto() is False
+    hledani.vycisti_cache()
+    monkeypatch.setenv("EMBED_DIM", "nesmysl")
+    assert hledani.je_zapnuto() is False
+    hledani.vycisti_cache()
+    monkeypatch.delenv("EMBED_DIM")
+    assert hledani.je_zapnuto() is True
+
+
+def test_chyba_husteho_sql_fallback(monkeypatch):
+    import psycopg
+
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
+    monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1])
+
+    def spadne(*a, **k):
+        raise psycopg.errors.DataException("different halfvec dimensions 1024 and 3")
+    monkeypatch.setattr(hledani, "husty", spadne)
+    conn = FakeConn([dict(ok=True)], [dict(ok=True)], [dict(id=1)], [dict(n=1)], [dict(_speech(), rank=0.5)])
+    r = tools.hledej_v_projevech(conn, "elektřiny")
+    assert r["rezim_pouzity"] == "fulltext" and "selhalo" in r["poznamka"]
+    assert "ROLLBACK TO SAVEPOINT husty" in conn.sql and r["celkem"] == 1
+
+
+@pytest.mark.pg
+@bez_db
+def test_hybrid_spatny_vektor_fallback_pg(pgconn, monkeypatch):
+    from test_embed_indexer import FalesnyKlient
+    from hlidac_rag.embed.indexer import indexuj
+
+    _projevy(pgconn)
+    indexuj(pgconn, FalesnyKlient())
+    monkeypatch.setattr(hledani, "je_zapnuto", lambda: True)
+    monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1, 0.2, 0.3])   # jiný rozměr než sloupec
+    r = tools.hledej_v_projevech(pgconn, "Žatecku")
+    assert r["rezim_pouzity"] == "fulltext" and r["projevy"][0]["klic"] == "10/36/100/2"

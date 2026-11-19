@@ -156,6 +156,14 @@ final class PnText
         return $out;
     }
 
+    public static function lawsIn(string $normative): array
+    {
+        // zákony, které text výslovně mění („V zákoně č. X/YYYY Sb.“ / „Zákon č. X/YYYY Sb., … se mění“)
+        preg_match_all('~V\s+zákoně\s+č\.\s*(\d+/\d{4})\s*Sb\.~u', $normative, $m1);
+        preg_match_all('~Zákon\s+č\.\s*(\d+/\d{4})\s*Sb\.,[^\n]{0,400}?se\s+(?:mění|doplňuje)~u', $normative, $m2);
+        return array_values(array_unique(array_merge($m1[1], $m2[1])));
+    }
+
     public static function negatesRetro(string $sentence): bool
     {
         // „nemá zpětnou účinnost“, „zpětné použití se vylučuje“, „nelze použít zpětně“ = zpětnost výslovně vyloučená
@@ -169,9 +177,7 @@ final class PnText
         $normative = self::normativePart($text);
 
         // zákony, které PN výslovně mění („V zákoně č. X/YYYY Sb.“ / „Zákon č. X/YYYY Sb., … se mění“)
-        preg_match_all('~V\s+zákoně\s+č\.\s*(\d+/\d{4})\s*Sb\.~u', $normative, $m1);
-        preg_match_all('~Zákon\s+č\.\s*(\d+/\d{4})\s*Sb\.,[^\n]{0,400}?se\s+(?:mění|doplňuje)~u', $normative, $m2);
-        $laws = array_values(array_unique(array_merge($m1[1], $m2[1])));
+        $laws = self::lawsIn($normative);
 
         $signals = [];
         $score = 0;

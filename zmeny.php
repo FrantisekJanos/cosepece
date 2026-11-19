@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Chytré vyhledávání s našeptávačem',
+        'Vyhledávání na úvodní stránce a v hlavičce ostatních stránek našeptává už při psaní: tisky (i podle shrnutí rozboru AI, takže „dotace“ najde novelu zákona o střetu zájmů), pozměňovací návrhy a jejich autory, zákony podle čísla i názvu, připravované zákony u vlády a druhy problémů. Hledá se bez ohledu na diakritiku, stačí začátek slova, snese různé tvary slova i jeden překlep. Číslo tisku vede rovnou na tisk. Ovládá se i klávesnicí (šipky, Enter, Esc, „/“ skočí do hledání). Našeptávání běží v prohlížeči, dotazy se nikam neposílají ani neukládají. U tisku jsou nově vidět všechny pozměňovací návrhy, ne jen prvních 30.',
+        [0], false],
     ['2026-11-19', 'Upozornění: AI se může mýlit',
         'Na každé stránce je upozornění, že obsah vzniká automaticky a že rozbory, titulky a hodnocení závažnosti připravuje umělá inteligence, která se může mýlit. Stránka Jak hodnotíme má nový oddíl Upozornění a omezení odpovědnosti: co AI dělá a co může pokazit, že skóre není obvinění, že nejde o právní radu a že rozhodující je znění na psp.cz a v e-Sbírce.',
         [48], false],

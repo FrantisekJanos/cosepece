@@ -97,10 +97,32 @@ final class View
       <?php endforeach; ?>
       <a href="rss.php">RSS</a>
     </nav>
-    <div class="sync"><?= $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' ?></div>
+    <div class="top-row2">
+      <div class="sync"><?= $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' ?></div>
+      <?php if (!in_array($active, ['prehled', 'hledat', 'tisky'], true)): ?><?php self::searchForm('', 'top'); ?><?php endif; ?>
+    </div>
   </div>
 </header>
 <main class="wrap">
+<?php
+    }
+
+    /** Vyhledávací pole s našeptávačem (assets/search.js); bez JavaScriptu vede na stránku výsledků. */
+    public static function searchForm(string $q = '', string $variant = 'hero'): void
+    {
+        static $n = 0;
+        $id = 'q' . (++$n);
+        ?>
+<form class="search search-<?= e($variant) ?>" action="hledat.php" method="get" role="search" data-search="hledat.php?index=<?= e(substr(md5((string)db()->getMeta('last_sync', '')), 0, 10)) ?>">
+  <div class="search-box">
+    <label for="<?= $id ?>" class="sr-only">Hledat tisky, zákony, pozměňovací návrhy a témata</label>
+    <input id="<?= $id ?>" name="q" type="search" value="<?= e($q) ?>" placeholder="Tisk, zákon, téma nebo poslanec" autocomplete="off" spellcheck="false"
+      role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="<?= $id ?>-list">
+    <ul class="suggest" id="<?= $id ?>-list" role="listbox" aria-label="Návrhy" hidden></ul>
+  </div>
+  <button type="submit">Hledat</button>
+</form>
+<?php if ($n === 1): ?><script src="assets/search.js?v=<?= (int)@filemtime(APP_ROOT . '/assets/search.js') ?>" defer></script><?php endif; ?>
 <?php
     }
 

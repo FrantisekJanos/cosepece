@@ -92,8 +92,10 @@ TXT;
             return null;
         }
         $path = (string)($config['ai']['cli_path'] ?? 'claude');
-        if (str_contains($path, '/')) {
-            return is_file($path) && is_executable($path) ? $path : null;
+        if (str_contains($path, '/') || str_contains($path, '\\')) {
+
+            $prefixed = !empty($config['ai']['cli_prefix']);
+            return is_file($path) && ($prefixed || is_executable($path)) ? $path : null;
         }
         $dirs = array_merge(explode(PATH_SEPARATOR, (string)getenv('PATH')), [(string)getenv('HOME') . '/.local/bin', '/usr/local/bin', '/opt/homebrew/bin']);
         foreach ($dirs as $dir) {
@@ -208,11 +210,25 @@ TXT;
         if ($text === null) {
             throw new \RuntimeException('Neznámý text ' . $kind . ' ' . $id);
         }
+
+        $model = mb_substr($model ?? self::model($this->config), 0, 60);
+        $verifier = self::verifyModel($this->config);
+        if ($model !== $verifier) {
+            $current = $this->db->one("SELECT ai_model, ai_prompt FROM $table WHERE $column = ?", [$id]);
+            if ($current !== null && (string)$current['ai_model'] === $verifier && (int)$current['ai_prompt'] === self::PROMPT_VERSION) {
+                return;
+            }
+        }
+        if ($model === $verifier) {
+
+            $this->db->run("UPDATE $table SET ai_prev_json = ai_json, ai_prev_score = ai_score, ai_prev_model = ai_model
+                WHERE $column = ? AND ai_at IS NOT NULL AND (ai_model IS NULL OR ai_model <> ?)", [$id, $verifier]);
+        }
         $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
         $result = self::sanitize($result);
         $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
             [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
-                mb_substr($model ?? self::model($this->config), 0, 60), self::PROMPT_VERSION, $id]);
+                $model, self::PROMPT_VERSION, $id]);
     }
 
     public static function sanitize(array $result): array
@@ -400,7 +416,7 @@ TXT;
         if ($cli === null) {
             throw new \RuntimeException('claude CLI nenalezeno (nastavte ai.cli_path)');
         }
-        $cmd = [$cli, '-p', '--model', $model, '--tools', '',
+        $cmd = [...array_map('strval', (array)($cfg['cli_prefix'] ?? [])), $cli, '-p', '--model', $model, '--tools', '',
             '--output-format', 'json', '--no-session-persistence', '--setting-sources', '', '--strict-mcp-config',
             '--system-prompt', 'Jsi nestranný legislativní analytik. Odpovídáš pouze JSON objektem podle zadání.'];
 

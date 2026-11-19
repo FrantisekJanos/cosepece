@@ -19,7 +19,7 @@ final class BillListingService
         $filters = [
             '' => 'Všechny tisky',
             'flagged' => 'Všechny příznaky',
-            'mp' => 'Poslanecké a senátní návrhy',
+            'mp' => 'Poslanecké, senátní a krajské návrhy',
             'p90' => 'Zrychlené čtení',
             'cut' => 'Zkrácená lhůta',
             'surge' => 'Nával PN',
@@ -39,12 +39,27 @@ final class BillListingService
 
         return compact('title', 'active', 'filters', 'f', 'q', 'sort', 'min', 'bills');
     }
+    public static function fold(?string $text): string
+    {
+
+        static $map = [
+            'á' => 'a', 'č' => 'c', 'ď' => 'd', 'é' => 'e', 'ě' => 'e', 'í' => 'i', 'ň' => 'n', 'ó' => 'o',
+            'ř' => 'r', 'š' => 's', 'ť' => 't', 'ú' => 'u', 'ů' => 'u', 'ý' => 'y', 'ž' => 'z',
+            'ä' => 'a', 'ö' => 'o', 'ü' => 'u', 'ľ' => 'l', 'ĺ' => 'l', 'ŕ' => 'r', 'ô' => 'o',
+        ];
+        return strtr(mb_strtolower(trim((string)$text)), $map);
+    }
+
     public function bills(string $filter, string $search, int $limit, string $sort = 'score', int $minimumScore = 0): array
     {
-        $query = Bill::query()->procedureFilter($filter)->searchText($search)->ranked($sort);
+        $query = Bill::query()->procedureFilter($filter)->ranked($sort);
         if ($minimumScore > 0) {
             $query->where('score', '>=', $minimumScore);
         }
-        return $this->presentation->presentMany($query->limit($limit)->get());
+        $bills = $search === '' ? $query->limit($limit)->get() : $query->get()->filter(
+            fn (Bill $bill): bool => (string)$bill->ct === trim($search)
+                || str_contains(self::fold($bill->nazev . ' ' . $bill->uplny_nazev . ' ' . $bill->navrhovatel . ' ' . $bill->zakony), self::fold($search)),
+        )->take($limit);
+        return $this->presentation->presentMany($bills);
     }
 }

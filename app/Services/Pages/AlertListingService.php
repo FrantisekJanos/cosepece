@@ -9,6 +9,10 @@ use App\Models\Alert;
 
 final class AlertListingService
 {
+    public function __construct(private \App\Services\AlertPresentationService $alertPresentation)
+    {
+    }
+
     public function data(int $page, bool $includeAll): array
     {
         $all = $includeAll;
@@ -19,8 +23,8 @@ final class AlertListingService
         $total = Alert::query()->where('score', '>=', $min)->count();
         $pages = max(1, (int)ceil($total / $perPage));
         $page = min($page, $pages);
-        $alerts = Alert::query()->where('score', '>=', $min)->orderByDesc('event_at')
-            ->limit($perPage)->offset(($page - 1) * $perPage)->get()->map->getAttributes()->all();
+        $alerts = $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', $min)->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
+            ->limit($perPage)->offset(($page - 1) * $perPage)->get());
         $qs = $all ? '&vse=1' : '';
 
         $title = 'Upozornění';

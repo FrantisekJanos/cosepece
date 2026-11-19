@@ -31,17 +31,22 @@ $defaults = [
     'pn_text' => [
         'enabled' => true,
         'per_run' => 40,
+        'retry_hours' => 24,
     ],
 
     'tisk_text' => [
         'enabled' => true,
         'per_run' => 15,
+        'retry_hours' => 24,
+        'refresh_days' => 7,
+        'refresh_per_run' => 5,
     ],
 
     'ai' => [
         'enabled' => false,
         'backend' => 'cli',
         'cli_path' => 'claude',
+        'cli_prefix' => [],
         'remote_token' => '',
         'api_key' => '',
         'model' => 'claude-haiku-5-5',
@@ -61,6 +66,7 @@ $defaults = [
 
         'dry_run' => true,
         'max_posts_per_run' => 10,
+        'hold_hours' => 48,
 
         'post' => 'all',
         'hashtags' => '#Sněmovna',

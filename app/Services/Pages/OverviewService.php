@@ -17,6 +17,7 @@ final class OverviewService
     public function __construct(
         private BillPresentationService $presentation,
         private BillListingService $listing,
+        private \App\Services\AlertPresentationService $alertPresentation,
     ) {
     }
 
@@ -29,8 +30,8 @@ final class OverviewService
         $findings = $this->presentation->presentMany(
             Bill::query()->activeFindings((int)$w['level_major'])->ranked('score')->limit(60)->get(), true,
         );
-        $alerts = Alert::query()->where('score', '>=', (int)$w['level_watch'])->orderByDesc('event_at')
-            ->limit(8)->get()->map->getAttributes()->all();
+        $alerts = $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', (int)$w['level_watch'])->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
+            ->limit(8)->get());
         $suppressed = Alert::query()->where('score', '<', (int)$w['level_watch'])->count();
         $watch = $this->watchlist();
         $authors = Amendment::query()->select('osoba')->selectRaw('COUNT(*) AS n')

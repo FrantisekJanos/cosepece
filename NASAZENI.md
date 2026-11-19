@@ -139,3 +139,13 @@ HLIDAC_TEST_DSN='pgsql:host=127.0.0.1;dbname=hlidac_test' HLIDAC_TEST_USER=postg
 ```
 
 Testy nikdy nesměrujte na provozní databázi, import přepisuje tabulky zdrojových dat.
+
+Po převzetí upstream oprav spusťte `php artisan migrate --force`. Nová migrace doplní lhůtu výborů,
+volební období upozornění, datum kontroly textu a uložený výsledek prvního kola AI.
+Na MySQL rozšíří text dokumentu a AI JSON na MEDIUMTEXT. Před migrací zálohujte databázi.
+
+Neúspěšné stažení textů se opakuje podle `pn_text.retry_hours` a `tisk_text.retry_hours`.
+`tisk_text.refresh_days` a `refresh_per_run` řídí kontrolu změněného dokumentu na psp.cz.
+`notify.hold_hours` určuje, jak dlouho upozornění pod prahem čeká na rozbor.
+Pravidlovou analýzu již uložených textů obnovíte příkazem `php artisan hlidac:texts --reanalyze`
+nebo kompatibilním `php bin/reanalyze.php`.

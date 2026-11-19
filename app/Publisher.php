@@ -44,12 +44,19 @@ final class Publisher
         $dryRun = !empty($this->config['notify']['dry_run']);
 
         $mode = strtolower(trim((string)($this->config['notify']['post'] ?? 'all')));
-        $stats = ['sent' => 0, 'filtered' => 0, 'errors' => 0];
+
+        $holdUntil = date('Y-m-d H:i:s', time() - 3600 * max(0, (int)($this->config['notify']['hold_hours'] ?? 48)));
+        $stats = ['sent' => 0, 'filtered' => 0, 'held' => 0, 'errors' => 0];
 
         $pending = $this->db->all('SELECT * FROM alerts WHERE posted = 0 ORDER BY score DESC, event_at');
         foreach ($pending as $alert) {
             $modeOff = $mode === 'off' || ($mode === 'watch' && !(int)$alert['watched']);
-            if ($modeOff || (int)$alert['score'] < $minScore || in_array($alert['kind'], $kindsOff, true)) {
+            $kindOff = in_array($alert['kind'], $kindsOff, true);
+            if (!$modeOff && !$kindOff && (int)$alert['score'] < $minScore && (string)$alert['created_at'] > $holdUntil) {
+                $stats['held']++;
+                continue;
+            }
+            if ($modeOff || $kindOff || (int)$alert['score'] < $minScore) {
                 $this->db->run('UPDATE alerts SET posted = 3 WHERE alert_key = ?', [$alert['alert_key']]);
                 $stats['filtered']++;
                 continue;
@@ -73,7 +80,7 @@ final class Publisher
                 $text = $this->compose($alert, $notifier?->maxLength() ?? 300);
                 try {
                     if ($notifier === null) {
-                        file_put_contents(hlidacDataPath('posts.log'), date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
+                        file_put_contents($this->dryRunLog(), date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
                     } else {
                         $notifier->send($text, $url);
                     }
@@ -88,10 +95,18 @@ final class Publisher
                 }
             }
             if ($done) {
-                $this->db->run('UPDATE alerts SET posted = 1 WHERE alert_key = ?', [$alert['alert_key']]);
+
+                $delivered = (int)$this->db->value("SELECT COUNT(*) FROM post_log WHERE alert_key = ? AND status = 'ok'", [$alert['alert_key']]);
+                $this->db->run('UPDATE alerts SET posted = ? WHERE alert_key = ?', [$delivered > 0 ? 1 : 4, $alert['alert_key']]);
             }
         }
         return $stats;
+    }
+
+    public function dryRunLog(): string
+    {
+
+        return (string)($this->config['notify']['dry_run_log'] ?? hlidacDataPath('posts.log'));
     }
 
     /** @return array<int, Notifier|null> null = zkušební režim bez odesílání */

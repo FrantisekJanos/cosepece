@@ -23,15 +23,20 @@ final class PnText
         $limit = (int)($cfg['per_run'] ?? 40);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
+
+
+        $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, (int)($cfg['retry_hours'] ?? 24)));
         $rows = $this->db->all(
-            'SELECT p.*, t.zakony FROM pn p
+            "SELECT p.*, t.zakony FROM pn p
              LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
              LEFT JOIN pn_seen s ON s.id_dokument = p.id_dokument
              JOIN tisky t ON t.ct = p.ct
-             WHERE x.id_dokument IS NULL AND t.faze <> ?
-             ORDER BY CASE WHEN s.id_dokument IS NULL THEN 0 ELSE 1 END, p.cas DESC
-             LIMIT ' . $limit,
-            ['Vyhlášeno']
+             WHERE t.faze <> ? AND (x.id_dokument IS NULL
+                OR (x.error IS NOT NULL AND (x.text IS NULL OR x.text = '') AND x.fetched_at < ?))
+             ORDER BY CASE WHEN x.id_dokument IS NULL THEN 0 ELSE 1 END,
+                CASE WHEN s.id_dokument IS NULL THEN 0 ELSE 1 END, p.cas DESC
+             LIMIT " . $limit,
+            ['Vyhlášeno', $retryBefore]
         );
 
         $stats = ['fetched' => 0, 'errors' => 0];
@@ -76,6 +81,9 @@ final class PnText
         $xml = (string)$zip->getFromName('word/document.xml');
         $zip->close();
         @unlink($tmp);
+
+        $xml = preg_replace('~<w:(del|moveFrom)\b[^>]*/>|<w:(del|moveFrom)\b[^>]*>.*?</w:\2>~s', '', $xml) ?? $xml;
+        $xml = preg_replace('~<w:delText\b[^>]*>.*?</w:delText>~s', '', $xml) ?? $xml;
         $xml = str_replace(['</w:p>', '<w:tab/>', '<w:br/>'], ["\n", "\t", "\n"], $xml);
         $text = html_entity_decode(strip_tags($xml), ENT_QUOTES | ENT_XML1, 'UTF-8');
         return trim(preg_replace("~\n{3,}~", "\n\n", $text) ?? $text);
@@ -122,7 +130,7 @@ final class PnText
             }
 
             $isRetro = preg_match('~\bi\s+(?:tehdy|v\s+případech?|na\s+(?:případy|řízení|nároky|platby|dotace|práva|povinnosti))\b[^.]{0,300}?(?:před(?:e)?\s+dnem\s+nabytí\s+účinnosti|před\s+účinností)~ui', $sentence)
-                || preg_match('~\bzpětn(?:ě|á|é|ou)\s+(?:účinnost|použi)~ui', $sentence);
+                || (preg_match('~\bzpětn(?:ě|á|é|ou)\s+(?:účinnost|použi)~ui', $sentence) && !self::negatesRetro($sentence));
 
             $isDeadline = preg_match('~(?:lhůt|promlč|preklu|nejpozději\s+do|zanik(?:á|ne)\s+(?:nárok|právo|odpovědnost))~ui', $sentence)
                 && preg_match('~\b\d+\s+(?:let|roků|rok[uy]?|měsíců)\b~u', $sentence)
@@ -144,6 +152,13 @@ final class PnText
             }
         }
         return $out;
+    }
+
+    public static function negatesRetro(string $sentence): bool
+    {
+
+        return (bool)(preg_match('~\b(?:nemá|nemají|nemůže\s+mít|nemohou\s+mít|není|nejsou|nelze|bez|vylučuje\s+se|vyloučen[aáoéý]?|nepoužij\w*|nepoužívá\w*)\s+(?:\S+\s+){0,2}zpětn~ui', $sentence)
+            || preg_match('~\bzpětn\w*\s+(?:účinnost|použití)\s+(?:se\s+)?(?:vylučuje|je\s+vyloučen\w*|není\s+přípustn\w*)~ui', $sentence));
     }
 
     public static function analyze(string $text, array $billLaws, array $config): array

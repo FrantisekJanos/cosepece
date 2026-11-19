@@ -20,13 +20,7 @@ final class TiskText
         $limit = (int)($cfg['per_run'] ?? 15);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
-        $rows = $this->db->all(
-            "SELECT t.* FROM tisky t
-             LEFT JOIN tisk_text x ON x.ct = t.ct
-             WHERE x.ct IS NULL AND t.faze <> 'Vyhlášeno'
-             ORDER BY t.predlozeno DESC, t.ct DESC
-             LIMIT " . $limit
-        );
+        $rows = self::queue($this->db, $limit, (int)($cfg['retry_hours'] ?? 24));
 
         $stats = ['fetched' => 0, 'errors' => 0];
         foreach ($rows as $row) {
@@ -42,7 +36,57 @@ final class TiskText
             }
             usleep(300_000);
         }
+
+
+
+        $stats['refreshed'] = 0;
+        $room = min((int)($cfg['refresh_per_run'] ?? 5), max(0, $limit - count($rows)));
+        $stale = self::staleQueue($this->db, $room, (int)($cfg['refresh_days'] ?? 7));
+        foreach ($stale as $row) {
+            $ct = (int)$row['ct'];
+            try {
+                $docxUrl = $this->findDocxUrl($ct, $obdobi);
+                if ($docxUrl !== null && $docxUrl !== (string)$row['docx_url']) {
+                    $this->save($ct, $docxUrl, PnText::docxToText(Http::get($docxUrl)), null);
+                    $stats['refreshed']++;
+                }
+                $this->db->run('UPDATE tisk_text SET checked_at = ? WHERE ct = ?', [date('Y-m-d H:i:s'), $ct]);
+            } catch (\Throwable) {
+
+            }
+            usleep(300_000);
+        }
         return $stats;
+    }
+
+    public static function staleQueue(Db $db, int $limit, int $refreshDays = 7): array
+    {
+
+        if ($limit <= 0) {
+            return [];
+        }
+        return $db->all(
+            "SELECT x.ct, x.docx_url FROM tisk_text x JOIN tisky t ON t.ct = x.ct
+             WHERE t.faze <> 'Vyhlášeno' AND x.docx_url IS NOT NULL AND COALESCE(x.checked_at, x.fetched_at) < ?
+             ORDER BY COALESCE(x.checked_at, x.fetched_at) LIMIT " . $limit,
+            [date('Y-m-d H:i:s', time() - 86400 * max(1, $refreshDays))]
+        );
+    }
+
+    public static function queue(Db $db, int $limit, int $retryHours = 24): array
+    {
+
+
+        $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, $retryHours));
+        return $db->all(
+            "SELECT t.* FROM tisky t
+             LEFT JOIN tisk_text x ON x.ct = t.ct
+             WHERE t.faze <> 'Vyhlášeno' AND (x.ct IS NULL
+                OR (x.error IS NOT NULL AND (x.text IS NULL OR x.text = '') AND x.fetched_at < ?))
+             ORDER BY CASE WHEN x.ct IS NULL THEN 0 ELSE 1 END, t.predlozeno DESC, t.ct DESC
+             LIMIT " . $limit,
+            [$retryBefore]
+        );
     }
 
     private function findDocxUrl(int $ct, int $obdobi): ?string

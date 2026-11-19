@@ -94,6 +94,22 @@ final class Db
             klub VARCHAR(40) NOT NULL,
             pro INTEGER, proti INTEGER, zdrzel INTEGER, nepritomen INTEGER
         )$suffix");
+        // příprava návrhu u vlády (otevřená data ODok, app/GovPrep.php)
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS priprava (
+            ct INTEGER PRIMARY KEY,
+            druh VARCHAR(20) NOT NULL,
+            pid VARCHAR(20) NOT NULL,
+            pripominky_od VARCHAR(10),
+            pripominky_do VARCHAR(10),
+            dni INTEGER,
+            mist INTEGER NOT NULL DEFAULT 0,
+            vlada VARCHAR(10),
+            duvod $text,
+            poznamka $text,
+            mimo_plan INTEGER NOT NULL DEFAULT 0,
+            vyjimka INTEGER NOT NULL DEFAULT 0,
+            znovu INTEGER NOT NULL DEFAULT 0
+        )$suffix");
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn (
             id_dokument INTEGER PRIMARY KEY,
             cislo INTEGER NOT NULL,
@@ -165,6 +181,7 @@ final class Db
         // souhrn pozměňovacích návrhů po 2. čtení: číslo podtisku (X/n) a čas rozeslání
         $this->addColumn('tisky', 'souhrn_pn', 'INTEGER');
         $this->addColumn('tisky', 'souhrn_pn_at', 'VARCHAR(16)');
+        $this->addColumn('priprava', 'znovu', 'INTEGER NOT NULL DEFAULT 0');
         // kdy se naposledy ověřilo, že psp.cz má pořád stejný dokument tisku
         $this->addColumn('tisk_text', 'checked_at', 'VARCHAR(19)');
         $this->addColumn('tisky', 'reasons', $text);

@@ -208,3 +208,11 @@ table.vote-clubs td:not(:first-child), table.vote-clubs th:not(:first-child) { t
 .diff-skip { padding: 6px 12px; background: #F7F7F4; color: var(--muted); font-size: 13px; text-align: center; border-top: 1px solid var(--line-soft); }
 .diff-plus { color: #166534; font-weight: 700; }
 .diff-minus { color: #B91C1C; font-weight: 700; }
+
+/* příprava návrhu u vlády */
+.prep dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+.prep dt { color: var(--muted); }
+.prep dd { margin: 0; }
+.prep .bar { height: 8px; border-radius: 4px; background: var(--line-soft); position: relative; max-width: 360px; }
+.prep .bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); }
+@media (max-width: 640px) { .prep dl { grid-template-columns: 1fr; } .prep dt { margin-top: 6px; } }

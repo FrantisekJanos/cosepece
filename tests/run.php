@@ -15,6 +15,7 @@ $base['db_user'] = getenv('HLIDAC_TEST_USER') ?: null;
 $base['db_pass'] = getenv('HLIDAC_TEST_PASS') ?: null;
 $base['source_dir'] = $tmp . '/src';
 $base['notify']['dry_run_log'] = $tmp . '/posts.log';
+$base['odok'] = ['enabled' => true, 'local_dir' => $tmp . '/src/odok'];
 $base['site_url'] = 'https://hlidac.test';
 $base['notify']['dry_run'] = true;
 $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu testujeme přímo
@@ -881,6 +882,29 @@ db()->run("UPDATE kroky SET datum = '2026-11-08 00:00:00' WHERE id_hist = 990201
 (new Hlidac\Scorer(db(), config()))->scoreBills();
 check('bez souhrnu ve stejný den', $gapLabel(311), 'Pozměňovací návrhy a 3. čtení ve stejný den (souhrn pozměňovacích návrhů nebyl rozeslán jako sněmovní tisk)');
 db()->run('DELETE FROM kroky WHERE id_hist IN (990201, 990202)');
+
+echo "Příprava návrhu u vlády (otevřená data ODok)\n";
+$prepSource = new Hlidac\Source('', $tmp . '/cache-prep', $tmp . '/src');
+(new Hlidac\Importer(db(), $prepSource))->run();
+$pr = (new Hlidac\GovPrep(db(), $prepSource, config()))->run();
+$prepOf = fn(int $ct) => db()->one('SELECT druh, pid, pripominky_od, pripominky_do, dni, mist, vlada, mimo_plan FROM priprava WHERE ct = ?', [$ct]);
+check('vládní návrh: připomínky z verze se stejným názvem (bez „Vládní“)', $prepOf(90),
+    ['druh' => 'vladni', 'pid' => 'KORNDQGFVQKI', 'pripominky_od' => '2025-12-01', 'pripominky_do' => '2025-12-15', 'dni' => 14, 'mist' => 23, 'vlada' => '2026-01-26', 'mimo_plan' => 0]);
+check('vládní návrh bez nalezených připomínek, mimo plán', [$prepOf(311)['dni'], $prepOf(311)['mimo_plan']], [null, 1]);
+check('poslanecký návrh: připomínky ke stanovisku podle čísla tisku', [$prepOf(221)['druh'], $prepOf(221)['dni'], $prepOf(221)['mist']], ['stanovisko', 8, 7]);
+check('poslanecký návrh bez připomínek', [$prepOf(78)['druh'], $prepOf(78)['dni']], ['stanovisko', null]);
+check('materiál z minulého období se stejným číslem tisku se nepoužije', $prepOf(90)['druh'], 'vladni');
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$mp = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 221'), true) ?: [], fn($r) => $r['key'] === 'mp_bill'))[0]['label'] ?? '';
+check('popis bodů za poslanecký návrh uvádí připomínky ke stanovisku', str_contains($mp, 'vláda si ke stanovisku vyžádala připomínky 7 míst na 8 dní') && !str_contains($mp, 'neprošel'), true);
+$_GET = ['ct' => '90'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$prepHtml = (string)ob_get_clean();
+check('detail tisku ukazuje přípravu u vlády', str_contains($prepHtml, 'Příprava návrhu u vlády') && str_contains($prepHtml, 'Připomínky 14 dní (obvykle 4 týdny)')
+    && str_contains($prepHtml, 'odok.gov.cz/portal/veklep/material/KORNDQGFVQKI/'), true);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {

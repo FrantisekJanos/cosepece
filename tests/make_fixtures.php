@@ -16,6 +16,10 @@ function buildFixtures(string $outDir): void
 43434|8|0|311|1|0||174||výbor|Usnesení rozpočtového výboru k tisku 311|01.11.2026|01.11.2026|||Usnesení rozpočtového výboru k vládnímu návrhu zákona o daních z příjmů||||||2026-11-01 10:00|||
 42069|2|62|1|0|3||173||Vondráček R. a další|N. z. o lobbování|11.10.2021|15.11.2021|||Návrh poslanců Radka Vondráčka a dalších na vydání zákona o lobbování||||||2021-11-15 09:46|||
 UNL,
+            'tisk_eklep.unl' => <<<'UNL'
+KORNDQGFVQKI|52|26|1|43200|0|
+KORNDY5H6KU4|718|26|1|43433|0|
+UNL,
             'tisky_za.unl' => <<<'UNL'
 43433|1|212296|8|Usnesení RV k tisku 311/0|Usnesení rozpočtového výboru č. 172 k vládnímu návrhu zákona o daních z příjmů|2026-10-27 10:00||||||||||
 43433|3|212400|10|Pozměňovací a jiné návrhy  k tisku 311/0|Pozměňovací a jiné návrhy k vládnímu návrhu zákona, kterým se mění zákon č. 586/1992 Sb., o daních z příjmů|2026-11-05 10:24||||||||||
@@ -299,6 +303,24 @@ UNL,
     if (!is_dir($outDir)) {
         mkdir($outDir, 0775, true);
     }
+    // otevřená data Úřadu vlády (ODok) – zkrácené reálné záznamy tisků 90, 311, 221 a 78
+    $r = fn(string $pid, string $type, string $title, string $at, ?string $finish, int $reviewers, string $reason, ?string $gov) => [
+        'title' => $title, 'pid' => $pid, 'type' => ['id' => $type, 'name' => $type], 'date_authorized' => $at,
+        'author' => ['organization' => ['id' => 'X', 'name' => 'X']], 'status' => ['id' => 'B', 'name' => 'B - signováno'],
+        'reason' => $reason, 'notes' => '', 'government_program' => $gov !== null ? ['date' => $gov] : [],
+        'review_process' => $finish !== null ? ['date_finish' => $finish, 'reviewers' => array_fill(0, $reviewers, ['id' => 'M', 'name' => 'M'])] : null,
+    ];
+    @mkdir($outDir . '/odok', 0775, true);
+    file_put_contents($outDir . '/odok/requests_2025.json', json_encode(['requests' => [
+        $r('KORNDQAAAAAA', 'NZ', 'Vládní návrh zákona, kterým se mění některé zákony v oblasti veřejných rozpočtů', '2025-12-01T09:00:00Z', '2025-12-15T22:59:59Z', 23, 'Plán legislativních prací', null),
+    ]], JSON_UNESCAPED_UNICODE));
+    file_put_contents($outDir . '/odok/requests_2026.json', json_encode(['requests' => [
+        $r('KORNDQGFVQKI', 'NZ', 'Návrh zákona, kterým se mění některé zákony v oblasti veřejných rozpočtů', '2026-01-20T09:00:00Z', null, 0, 'Plán legislativních prací', '2026-01-26T10:00:00Z'),
+        $r('KORNDY5H6KU4', 'NZ', 'Návrh zákona, kterým se mění zákon č. 586/1992 Sb., o daních z příjmů', '2026-09-21T12:59:36Z', null, 0, 'Materiál je předkládán mimo Plán legislativních prací vlády na rok 2026 z důvodu mimořádné situace.', '2026-09-21T10:00:00Z'),
+        $r('ALBSDUW89Q2L', 'PNZ', 'Návrh poslanců na vydání zákona o střetu zájmů (sněmovní tisk č. 221)', '2026-06-10T08:00:00Z', '2026-06-18T21:59:59Z', 7, 'Žádost o stanovisko', '2026-06-29T10:00:00Z'),
+        $r('ALBSDQG99B8P', 'PNZ', 'Návrh poslance na vydání zákona o státních svátcích (sněmovní tisk č. 78)', '2026-01-19T08:00:00Z', null, 0, 'Žádost o stanovisko', null),
+        $r('ALBSOLD00001', 'PNZ', 'Návrh poslance z minulého období (sněmovní tisk č. 90)', '2024-03-01T08:00:00Z', '2024-03-10T21:59:59Z', 3, 'Žádost o stanovisko', null),
+    ]], JSON_UNESCAPED_UNICODE));
     foreach ($files as $zipName => $entries) {
         $zip = new ZipArchive();
         $path = $outDir . '/' . $zipName;

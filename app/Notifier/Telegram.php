@@ -1,5 +1,5 @@
 <?php
-// Telegram: zpráva do kanálu přes bota, který je v kanálu administrátorem.
+
 
 declare(strict_types=1);
 

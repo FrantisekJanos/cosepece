@@ -1,0 +1,55 @@
+{
+    "name": "hlidac/zakonu",
+    "type": "project",
+    "description": "Hlídač zákonů: legislativní monitoring PSP",
+    "require": {
+        "php": "^8.3",
+        "ext-curl": "*",
+        "ext-iconv": "*",
+        "ext-mbstring": "*",
+        "ext-pdo": "*",
+        "ext-zip": "*",
+        "laravel/framework": "^13.0",
+        "spatie/laravel-data": "^4.23"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "phpstan/phpstan": "^2.3",
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "Hlidac\\": "app/"
+        },
+        "files": [
+            "app/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/",
+            "Project\\PHPStan\\": "tools/phpstan/"
+        },
+        "classmap": [
+            "tests/PHPStan/Fixtures/"
+        ]
+    },
+    "scripts": {
+        "post-autoload-dump": [
+            "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+            "@php artisan package:discover --ansi"
+        ],
+        "test": [
+            "@php tests/run.php",
+            "@php tests/sentry_test.php",
+            "@php vendor/bin/phpunit"
+        ],
+        "analyse": "@php vendor/bin/phpstan analyse --no-progress"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true
+    }
+}

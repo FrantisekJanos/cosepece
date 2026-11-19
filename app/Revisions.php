@@ -1,7 +1,7 @@
 <?php
-// Historie verzí textů (návrh zákona, pozměňovací návrh) a rozborů AI (#2 bod 2).
-// Záznam přibude jen při skutečné změně (hash textu, resp. hash rozboru s modelem a verzí promptu);
-// nic se nemaže ani nepřepisuje. Na konci volebního období se pracovní tabulky textů zkopírují do archivu.
+
+
+
 
 declare(strict_types=1);
 
@@ -9,14 +9,14 @@ namespace Hlidac;
 
 final class Revisions
 {
-    // sloupce pracovních tabulek kopírované do archivu (při novém sloupci v tisk_text/pn_text doplnit i sem a do Db::migrate)
+
     public const TISK_COLUMNS = ['ct', 'docx_url', 'text', 'chars', 'signals', 'ai_json', 'ai_score', 'fetched_at', 'ai_at',
-        'error', 'checked_at', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model'];
+        'error', 'checked_at', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model', 'ai_runs', 'ai_run_count'];
     public const PN_COLUMNS = ['id_dokument', 'ct', 'cislo', 'docx_url', 'text', 'chars', 'laws', 'signals', 'rule_score',
         'ai_json', 'ai_score', 'fetched_at', 'ai_at', 'error', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score',
-        'ai_prev_model'];
+        'ai_prev_model', 'ai_runs', 'ai_run_count'];
 
-    // popisky zdroje záznamu pro web
+
     public const SOURCES = [
         'stazeni' => 'staženo z psp.cz',
         'zaloha' => 'stav před zavedením historie',
@@ -51,7 +51,7 @@ final class Revisions
 
     public static function recordText(Db $db, string $kind, int $id, string $source = 'stazeni', ?int $obdobi = null): bool
     {
-        // uloží současný text, pokud se liší od poslední uložené verze; prázdný text (chyba stažení) se neukládá
+
         [$table, $column] = self::target($kind);
         $cislo = $kind === 'pn' ? 'cislo' : 'NULL AS cislo';
         $row = $db->one("SELECT ct, $cislo, docx_url, text, fetched_at FROM $table WHERE $column = ?", [$id]);
@@ -76,8 +76,8 @@ final class Revisions
 
     public static function recordAi(Db $db, string $kind, int $id, string $source = 'rozbor', ?int $obdobi = null): bool
     {
-        // uloží současný rozbor AI, pokud se liší od posledního uloženého (obsah, model, verze promptu).
-        // Když položka ještě nemá žádný záznam a má uschované 1. kolo (ai_prev_json), uloží se nejdřív to.
+
+
         [$table, $column] = self::target($kind);
         $row = $db->one("SELECT ct, text, ai_json, ai_score, ai_model, ai_prompt, ai_at, ai_prev_json, ai_prev_score, ai_prev_model
             FROM $table WHERE $column = ?", [$id]);
@@ -97,7 +97,7 @@ final class Revisions
         $verze = (int)($last['verze'] ?? 0);
         $lastHash = $last !== null ? (string)$last['hash'] : null;
         if ($last === null && $row['ai_prev_json'] !== null) {
-            // výsledek 1. kola před ověřením silnějším modelem (čas a verze promptu 1. kola se neuchovávaly)
+
             $prevHash = self::aiHash((string)$row['ai_prev_json'], $row['ai_prev_model'], $row['ai_prompt'], $textHash);
             $insert(++$verze, (string)$row['ai_prev_json'], $row['ai_prev_score'], $row['ai_prev_model'], $row['ai_prompt'], null, $prevHash, 'zaloha');
             $lastHash = $prevHash;
@@ -112,13 +112,13 @@ final class Revisions
 
     private static function aiHash(string $json, mixed $model, mixed $prompt, string $textHash): string
     {
-        // otisk zahrnuje i verzi textu: stejný rozbor nové verze textu je nová verze rozboru
+
         return sha1((string)$model . '|' . (string)$prompt . '|' . $textHash . '|' . $json);
     }
 
     public static function snapshotAll(Db $db, string $source, ?int $obdobi = null): int
     {
-        // zapíše současný stav všech textů a rozborů, které ještě v historii nejsou (bez změny pracovních tabulek)
+
         $n = 0;
         foreach (['tisk', 'pn'] as $kind) {
             [$table, $column] = self::target($kind);
@@ -132,7 +132,7 @@ final class Revisions
 
     public static function backfill(Db $db): int
     {
-        // jednorázově: dosavadní texty a rozbory jako první verze historie (meta revize_backfill, opakování nic nezmění)
+
         if ($db->getMeta('revize_backfill') === '1') {
             return 0;
         }
@@ -157,10 +157,10 @@ final class Revisions
 
     public static function archivePeriod(Db $db, int $obdobi): array
     {
-        // konec volebního období: stav textů a rozborů do historie, celé řádky do archivních tabulek.
-        // Pracovní tabulky pak smí volající vyprázdnit; už archivované řádky se nepřepisují.
+
+
         self::snapshotAll($db, 'zaloha', $obdobi);
-        // hodnoty ve výběru vkládáme přímo (celé číslo a citovaný čas): PostgreSQL neumí odvodit typ parametru v SELECT
+
         $now = $db->pdo->quote(date('Y-m-d H:i:s'));
         $out = [];
         foreach (['tisk_text' => [self::TISK_COLUMNS, 'ct'], 'pn_text' => [self::PN_COLUMNS, 'id_dokument']] as $table => [$cols, $key]) {
@@ -176,7 +176,7 @@ final class Revisions
 
     public static function counts(Db $db, string $kind, ?int $obdobi = null, ?int $ct = null): array
     {
-        // počet verzí textu a rozborů na položku: [ref_id => ['text' => n, 'ai' => m]]; $ct omezí výběr na jeden tisk
+
         $obdobi ??= self::period($db);
         $out = [];
         $where = $ct !== null ? ' AND ct = ?' : '';
@@ -192,13 +192,13 @@ final class Revisions
 
     public static function hasHistory(array $count): bool
     {
-        // odkaz „Historie“ má smysl, až když je víc než jedna verze textu nebo rozboru
+
         return ($count['text'] ?? 0) > 1 || ($count['ai'] ?? 0) > 1;
     }
 
     public static function textVersions(Db $db, string $kind, int $id, int $obdobi): array
     {
-        // seznam verzí textu bez samotného textu
+
         return $db->all('SELECT verze, ct, cislo, docx_url, chars, hash, fetched_at, created_at, zdroj FROM text_revize
             WHERE druh = ? AND obdobi = ? AND ref_id = ? ORDER BY verze', [$kind, $obdobi, $id]);
     }
@@ -222,12 +222,12 @@ final class Revisions
 
     public static function versionsLabel(int $n): string
     {
-        // „2 verze“, „5 verzí“
+
         return $n . ' ' . ($n >= 2 && $n <= 4 ? 'verze' : ($n === 1 ? 'verze' : 'verzí'));
     }
 
     public static function url(string $kind, int $id): string
     {
-        return 'revize.php?druh=' . $kind . '&id=' . $id;
+        return route('revisions', ['druh' => $kind, 'id' => $id], false);
     }
 }

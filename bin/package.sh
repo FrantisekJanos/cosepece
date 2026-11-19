@@ -5,6 +5,11 @@
 # přes VACUUM INTO), aby se na hostingu nemuselo vše stahovat a posuzovat znovu. Neobsahuje tajné ani
 # místní soubory: config.php, deploy/ai-remote.env, logy, zálohy, cache, .git, testovací data.
 set -eu
+# Závislosti musí být součástí balíku pro hosting bez Composeru.
+if [ ! -f "$(dirname "$0")/../vendor/autoload.php" ]; then
+  echo "Nejdříve spusťte composer install --no-dev --optimize-autoloader" >&2
+  exit 1
+fi
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT=""
 WITH_DATA=1
@@ -20,8 +25,12 @@ rm -f "$OUT"
 cd "$DIR"
 zip -qr "$OUT" . \
   -x '.git/*' '.claude/*' '*.DS_Store' 'config.php' 'data/*' 'deploy/ai-remote.env' \
-     'tests/fixtures/*' '.hlidac_import.tgz' '*.zip' 'docker/.env' 'docker/config.php' 'pristupy.md'
-zip -q "$OUT" data/.htaccess
+     'tests/fixtures/*' '.hlidac_import.tgz' '*.zip' 'docker/.env' 'docker/config.php' 'pristupy.md' \
+     '.env' '.env.*' 'storage/*' 'bootstrap/cache/*' '.phpunit.cache/*' '.phpstan-cache/*' 'rag/.venv/*' 'node_modules/*' \
+     '*__pycache__/*'
+zip -q "$OUT" data/.htaccess .env.example storage/app/private/.gitignore storage/app/public/.gitignore \
+  storage/framework/cache/data/.gitignore storage/framework/sessions/.gitignore \
+  storage/framework/views/.gitignore storage/logs/.gitignore bootstrap/cache/.gitignore
 
 if [ "$WITH_DATA" = 1 ] && [ -f data/hlidac.sqlite ]; then
   # konzistentní a zmenšená kopie databáze (i když zrovna běží web nebo AI)

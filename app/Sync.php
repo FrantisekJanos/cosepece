@@ -1,5 +1,5 @@
 <?php
-// Celý běh synchronizace: import dat, tvorba upozornění, rozeslání. Chráněno zámkem proti souběhu.
+
 
 declare(strict_types=1);
 
@@ -11,38 +11,38 @@ final class Sync
 {
     public static function run(): array
     {
-        $lockFile = APP_ROOT . '/data/sync.lock';
+        $lockFile = hlidacDataPath('sync.lock');
         $lock = fopen($lockFile, 'c');
         if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
             throw new RuntimeException('Synchronizace už běží.');
         }
         try {
             $started = microtime(true);
-            $config = config();
+            $config = hlidacConfig();
             $source = new Source(
                 (string)$config['source_url'],
-                APP_ROOT . '/data/cache',
+                hlidacDataPath('cache'),
                 $config['source_dir'] ?? null
             );
-            // jednorázově: dosavadní texty a rozbory jako první verze historie (meta revize_backfill)
+
             $backfill = Revisions::backfill(db());
             $import = (new Importer(db(), $source))->run();
             try {
                 $prep = (new GovPrep(db(), $source, $config))->run();
             } catch (\Throwable $ex) {
-                // doplňkové údaje Úřadu vlády: chyba se zapíše, synchronizace pokračuje
+
                 Sentry::capture($ex, ['kde' => 'Sync/GovPrep']);
                 $prep = ['error' => Http::redact($ex->getMessage())];
             }
             try {
                 $votes = (new Votes(db(), $source))->run();
             } catch (\Throwable $ex) {
-                // hlasování jsou doplňková: chyba se zapíše, synchronizace pokračuje
+
                 Sentry::capture($ex, ['kde' => 'Sync/Votes']);
                 $votes = ['error' => Http::redact($ex->getMessage())];
             }
-            // nejdřív upozornění (kvůli „návalu“), pak předběžné skóre (pořadí fronty textů),
-            // texty PN a tisků, rozbor AI, konečné skóre, nakonec rozeslání
+
+
             $alerts = (new AlertBuilder(db(), $config))->run();
             $scorer = new Scorer(db(), $config);
             $scorer->scoreBills();
@@ -52,9 +52,9 @@ final class Sync
             $scorer->scoreBills();
             $scorer->scoreAlerts();
             try {
-                $searchItems = (new SearchIndex(db()))->rebuild();
+                $searchItems = app(SearchIndex::class)->rebuild();
             } catch (\Throwable $ex) {
-                $searchItems = ['error' => $ex->getMessage()];
+                $searchItems = ['error' => Http::redact($ex->getMessage())];
             }
             $posts = (new Publisher(db(), $config))->run();
             $result = [

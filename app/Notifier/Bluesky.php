@@ -1,5 +1,5 @@
 <?php
-// Bluesky (AT Protocol): přihlášení heslem aplikace a vytvoření příspěvku s klikatelným odkazem.
+
 
 declare(strict_types=1);
 
@@ -32,7 +32,6 @@ final class Bluesky implements Notifier
         $text = self::fit($text, $url);
         $full = $text . "\n" . $url;
 
-        // facet s odkazem; pozice se počítají v bajtech UTF-8
         $start = strlen($text . "\n");
         $record = [
             '$type' => 'app.bsky.feed.post',
@@ -55,7 +54,7 @@ final class Bluesky implements Notifier
 
     public static function fit(string $text, string $url, int $max = 300): string
     {
-        // Bluesky počítá limit 300 grafémů z celého příspěvku včetně odkazu (#2 bod 11)
+
         $len = fn(string $s): int => function_exists('grapheme_strlen') ? (int)grapheme_strlen($s) : mb_strlen($s);
         $room = $max - $len("\n" . $url);
         if ($len($text) <= $room) {

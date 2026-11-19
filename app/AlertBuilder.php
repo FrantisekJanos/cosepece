@@ -1,10 +1,11 @@
 <?php
-// Tvorba upozornění z importovaných dat. Každé upozornění má jednoznačný klíč,
-// takže opakované spuštění nevytvoří duplicity.
+
 
 declare(strict_types=1);
 
 namespace Hlidac;
+
+use App\Models\SeenAmendment;
 
 final class AlertBuilder
 {
@@ -14,7 +15,7 @@ final class AlertBuilder
 
     public function run(): int
     {
-        // při prvním běhu se historie jen zapíše (posted = 2), aby se na sítě neposlalo stovky starých zpráv
+
         $bootstrap = $this->db->getMeta('bootstrapped') === null;
         $posted = $bootstrap ? 2 : 0;
         $created = 0;
@@ -37,7 +38,7 @@ final class AlertBuilder
 
     private function fromBills(array $tisky, int $posted): int
     {
-        // nový poslanecký nebo senátní návrh zákona
+
         $n = 0;
         foreach ($tisky as $t) {
             if ($t['typ_navrhu'] === 'vládní' || (int)$t['druh'] !== 2) {
@@ -91,7 +92,7 @@ final class AlertBuilder
                     $posted);
             }
         }
-        // návrh na § 90/2 evidovaný u tisku (tisky.rj), ke kterému ještě není krok v historii
+
         foreach ($tisky as $ct => $t) {
             if ((int)$t['p90'] && !isset($seen["p90:$ct"])) {
                 $n += $this->add("p90:$ct", 'p90', $t, ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
@@ -105,15 +106,12 @@ final class AlertBuilder
 
     private function fromPublication(array $tisky, int $posted): int
     {
-        // „Vyhlášeno“ až podle doloženého data vyhlášení (hist.zaver_publik). Přechod do stavu Sbírka
-        // nastává už při doručení nebo odeslání k publikaci, tedy o dny až týdny dřív.
+
         $n = 0;
         foreach ($tisky as $ct => $t) {
             $day = (string)($t['vyhlaseno'] ?? '');
             if ($day === '') {
-                // starší verze vytvářela „Vyhlášeno“ už při doručení nebo odeslání k publikaci; bez doloženého
-                // data vyhlášení upozornění odstraníme (po vyhlášení vznikne znovu se správným datem).
-                // Skutečně odeslané na sítě (posted = 1) necháme kvůli historii.
+
                 $this->db->run("DELETE FROM alerts WHERE alert_key = ? AND kind = 'law' AND posted <> 1", ["law:$ct"]);
                 continue;
             }
@@ -123,7 +121,7 @@ final class AlertBuilder
                 : 'Zákon byl vyhlášen ve Sbírce zákonů ' . date('j. n. Y', (int)strtotime($day)) . '.';
             $added = $this->add("law:$ct", 'law', $t, $eventAt, 'Vyhlášeno ve Sbírce zákonů: ' . $t['nazev'], $body, $posted);
             if ($added === 0) {
-                // dřív vytvořené upozornění mohlo dostat datum doručení nebo odeslání – opravíme datum i text
+
                 $this->db->run("UPDATE alerts SET event_at = ?, body = ? WHERE alert_key = ? AND kind = 'law' AND (event_at <> ? OR body <> ?)",
                     [$eventAt, $body, "law:$ct", $eventAt, $body]);
             }
@@ -134,14 +132,13 @@ final class AlertBuilder
 
     private function fromAmendments(array $tisky, bool $bootstrap, int $posted): int
     {
-        // pozměňovací návrhy, které zatím nebyly v žádném upozornění
+
         $rows = $this->db->all('SELECT p.* FROM pn p LEFT JOIN pn_seen s ON s.id_dokument = p.id_dokument
                                 WHERE s.id_dokument IS NULL ORDER BY p.cas');
         if ($rows === []) {
             return 0;
         }
 
-        // při bootstrapu skupiny po dnech (historie), jinak jedna skupina na tisk za běh
         $groups = [];
         foreach ($rows as $r) {
             $key = $bootstrap ? $r['ct'] . '|' . substr((string)$r['cas'], 0, 10) : (string)$r['ct'];
@@ -149,8 +146,8 @@ final class AlertBuilder
         }
 
         $threshold = (int)($this->config['surge_threshold'] ?? 10);
-        // nával = aspoň $threshold PN k tisku v jednom kalendářním dni podle času podání (sd_dokument),
-        // nezávisle na tom, jak často běží synchronizace (#7 bod 9)
+
+
         $perDay = [];
         foreach ($this->db->all('SELECT ct, cas FROM pn') as $r) {
             $day = substr((string)$r['cas'], 0, 10);
@@ -163,12 +160,12 @@ final class AlertBuilder
             $t = $tisky[$ct] ?? null;
             $ids = array_map(fn($r) => (int)$r['id_dokument'], $list);
             if ($t === null) {
-                // PN k tisku, který zatím není v přehledu (dorazil dřív než předloha): počká na další běh (#2 bod 10)
+
                 continue;
             }
             if ($t !== null) {
                 $count = count($list);
-                // den s návalem, ke kterému ještě nebylo upozornění „Nával“
+
                 $surgeDay = null;
                 foreach (array_unique(array_map(fn($r) => substr((string)$r['cas'], 0, 10), $list)) as $day) {
                     if (($perDay[$ct][$day] ?? 0) >= $threshold && $this->db->value(
@@ -202,7 +199,7 @@ final class AlertBuilder
                 $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, $when, $title, $body, $posted);
             }
             foreach ($ids as $id) {
-                $this->db->run('INSERT INTO pn_seen (id_dokument) VALUES (?)', [$id]);
+                SeenAmendment::query()->create(['id_dokument' => $id]);
             }
         }
         $this->db->pdo->commit();
@@ -229,16 +226,16 @@ final class AlertBuilder
 
     /** Úrovně upozornění na připravované zákony: druh => [bonus ke skóre, popis] (skóre tisku tu není, je 0). */
     public const UPCOMING_KINDS = [
-        'prep_velmi' => 50, // připomínkové řízení kratší než 10 dní: Závažné (i na sítě)
-        'prep_kratke' => 30, // kratší než 3 týdny: Pozor
-        'prep_plan' => 30,   // předloženo mimo plán legislativních prací vlády: Pozor
-        'prep_vlada' => 0,   // vláda návrh schválila: běžná agenda
+        'prep_velmi' => 50,
+        'prep_kratke' => 30,
+        'prep_plan' => 30,
+        'prep_vlada' => 0,
     ];
 
     private function fromUpcoming(int $posted): int
     {
-        // připravované zákony u vlády (GovPrep): krátké připomínkové řízení, mimo plán, schválení vládou;
-        // při prvním běhu této funkce se dosavadní stav jen zapíše (posted = 2), na sítě se neposílá
+
+
         if ($this->db->getMeta('prep_alerts_bootstrapped') === null) {
             $posted = 2;
             $this->db->setMeta('prep_alerts_bootstrapped', date('Y-m-d H:i:s'));
@@ -249,7 +246,7 @@ final class AlertBuilder
         foreach ($this->db->all('SELECT * FROM pripravovane') as $u) {
             $pid = (string)$u['pid'];
             $name = self::shortTitle((string)$u['nazev']);
-            // „bill“ pro add(): bez čísla tisku, sledovaný podle čísel zákonů v názvu materiálu
+
             $t = ['ct' => 0, 'zakony' => implode(',', Laws::numbersIn((string)$u['nazev']))];
             $where = (string)$u['resort'] . ' · návrh ' . ($phase[$u['faze']] ?? $u['faze']) . '.';
             if ($u['dni'] !== null && (int)$u['dni'] < 21) {
@@ -276,7 +273,7 @@ final class AlertBuilder
 
     public static function shortTitle(string $title): string
     {
-        // „Návrh zákona, kterým se mění zákon č. 90/2024 Sb., o zbraních…, ve znění…“ → bez „ve znění…“, nejvýš 180 znaků
+
         $t = trim((string)preg_replace(['~,?\s*ve znění pozdějších předpisů~u', '~\s+~u'], ['', ' '], $title));
         return mb_strlen($t) > 180 ? rtrim(mb_substr($t, 0, 179)) . '…' : $t;
     }

@@ -13,56 +13,55 @@ Telegram, X). E-mail se záměrně nepoužívá.
 **Zásada neutrality:** skóre hodnotí *postup a formu* (jak se zákon prosazuje), nikdy politický obsah nebo stranu.
 Žádné váhy podle strany či jména poslance. Každý bod skóre musí mít čitelný důvod zobrazený na webu.
 
-## Nasazení (čti jako první, pokud jde o instalaci)
+## Nasazení
 
-Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. Shrnutí:
-
-- **Hosting (PHP, FTP):** obsah ZIPu do kořene webu, `config.php` z `config.example.php` (`site_url`, `cron_token`,
-  `ai.enabled = true`, `ai.remote_token`, `notify.dry_run = true`), `data/` zapisovatelné, ověřit 403 na
-  `config.php` a `data/`, první běh `cron.php?token=…`, pak cron/webcron každou hodinu.
-- **AI rozbor:** neběží na hostingu, ale na počítači s přihlášeným Claude Code (předplatné, ne API klíč):
-  `deploy/ai-remote.sh` (nastavení `deploy/ai-remote.env` podle `.example`) naplánovaný přes launchd
-  (`deploy/cz.hlidac.ai.plist`, nahradit `CESTA_K_PROJEKTU`) nebo cron na Linuxu. Skript volá
-  `bin/ai.php --remote … --all` (Haiku) a `--verify` (Sonnet); log `data/ai-remote.log`.
-- **Balík:** `bin/package.sh` vytvoří ZIP s hotovou databází `data/hlidac.sqlite` (texty + AI rozbor, čistá kopie
-  přes VACUUM INTO), ale bez `config.php`, logů, záloh, `deploy/ai-remote.env` a `.git` (`--bez-dat` = bez DB).
-  Přibalená DB funguje jen se SQLite; při aktualizaci webu se `data/` na hostingu nepřepisuje.
-- Tokeny a klíče sítí patří jen do `config.php` na hostingu a do `deploy/ai-remote.env`. Nikdy je nevypisuj
-  do chatu, nenahrávej do gitu ani nevkládej do URL mimo vlastní web.
-- Při nasazování neměň logiku skóre ani prompty AI; při chybě nejdřív `php tests/run.php` (musí vypsat `VŠE OK`).
+Při instalaci, aktualizaci, konfiguraci hostingu nebo převodu databáze čti **NASAZENI.md**.
+Web běží na Laravelu 13 a PHP 8.3+, DocumentRoot je `public/`. Docker zachovává původní datové volumes.
+`config/hlidac.php` obsahuje výchozí nastavení; `.env` předává provozní hodnoty.
+Původní konfiguraci lze načíst přes `HLIDAC_CONFIG`, její DSN platí pouze bez explicitního `DB_CONNECTION`.
+Změny konfigurace se po `config:cache` projeví až po opětovném vytvoření cache.
 
 ## Konvence
 
-- Komentáře v kódu **česky**, názvy funkcí, tříd a proměnných **anglicky**.
+- Běžné PHP komentáře `//`, `#` a `/* */` jsou v aplikačním kódu zakázané pravidlem PHPStan `code.comments`. PHPDoc `/** */` pro typové informace je povolený. Názvy funkcí, tříd a proměnných jsou anglicky.
 - Texty na webu a v příspěvcích **česky** (cílovka je česká veřejnost).
 - Při úpravách vždy dodávej **celé funkce**, ne fragmenty.
-- PHP 8.1+, bez frameworku a bez Composeru (cíl je sdílený PHP hosting přes FTP). `declare(strict_types=1)`.
-- Databáze přes `Hlidac\Db` (PDO); SQL musí fungovat v **SQLite i MySQL/MariaDB** (žádné `||`, `INSERT OR REPLACE`,
-  `ON CONFLICT`; nové sloupce přidávej přes `Db::addColumn()` v `migrate()`).
+- Laravel 13, PHP 8.3+, Composer. `declare(strict_types=1)`.
+- `Hlidac\Db` používá PDO ze spojení Laravelu. SQL webu musí fungovat v SQLite, PostgreSQL i MySQL/MariaDB.
+- Schéma měň novými migracemi v `database/migrations/`. Tabulky webu přímo čte Python MCP a ingest, zachovej jejich kontrakt.
+- Doménová konfigurace se čte přes `hlidacConfig()`, standardní `config()` patří Laravelu.
+- HTTP logiku dávej do pojmenovaných akcí controllerů, HTML do Blade šablon a příkazy do `app/Console/Commands/`. `__invoke()` v controllerech je zakázaný pravidlem PHPStan `controller.invokable`; routy uvádějí třídu i název metody.
+- Každá veřejná akce controlleru přijímá jako první parametr vlastní `App\Http\DTO\RequestDTO` s validací. Vstupní vlastnosti DTO jsou `readonly` a obsahují typované ověřené hodnoty; registruj ho v `RequestDTOServiceProvider`. Controller čte pouze jeho vlastnosti. I akce bez parametrů má vlastní DTO bez vstupních polí. Pravidlo `controller.requestDto` v `tools/phpstan/Rules/ControllerRequestDTORule.php` kontroluje tuto povinnost přes `composer analyse`.
+- Validaci DTO deklaruj pouze pomocí konkrétních atributů `Spatie\LaravelData\Attributes\Validation`. Mapování vstupních názvů patří do `MapInputName`. `config/data.php` používá jen `AttributesRuleInferrer`. PHPStan pravidlo `RequestDTOValidationAttributesRule` hlídá atributy a zakazuje `rules()`, `withValidator()`, ruční validátory, `WithoutValidation` a obecný `Rule`.
+- Synchronizace zachovává pořadí kroků a zámek sdílený s webcronem. Historie `pn_seen`, `alerts`, `post_log` a `meta` zabraňuje opakovanému rozesílání.
 
-Změny, které čtenář uvidí (oprava dat, jiné skóre, nová funkce), zapiš nahoru do `zmeny.php` (datum, nadpis,
+Změny, které čtenář uvidí (oprava dat, jiné skóre, nová funkce), zapiš nahoru do `app/Services/Pages/ChangesService.php` (datum, nadpis,
 popis srozumitelně pro veřejnost, čísla PR, příznak „mění skóre“).
 
 ## Příkazy
 
 ```bash
-php tests/run.php                 # end-to-end test nad reálnými řádky z psp.cz (bez sítě)
-php bin/sync.php                  # synchronizace (import → upozornění → texty PN a tisků → AI → skóre → sítě)
+composer test                     # regresní scénáře a PHPUnit HTTP/migrační testy
+php artisan hlidac:sync           # synchronizace (import → upozornění → texty PN a tisků → AI → skóre → sítě)
 php bin/ai.php --ct=221           # AI rozbor přes claude CLI (předplatné) nad místní DB
 HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (ai_api.php, token v hlavičce X-Hlidac-Token)
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
-php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
-HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099   # lokální náhled
+HLIDAC_CONFIG=/cesta/config.php php artisan serve --port=8099   # lokální náhled
 ```
 
-Test vypisuje `VŠE OK`; po každé změně logiky ho spusť a případně rozšiř.
+Po změně logiky spusť `composer test`. Regresní scénáře vypíší `VŠE OK`, PHPUnit musí skončit bez selhání.
 
 ## Architektura
 
 ```
-cron.php / bin/sync.php → Hlidac\Sync::run()
+SyncController / hlidac:sync → Hlidac\Sync::run()
   1. Importer      stáhne tisky.zip, sd.zip, poslanci.zip, přepíše tabulky tisky / kroky / pn (aktuální období)
+  1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
+                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
+                Do skóre nevstupuje; chyba nezastaví synchronizaci
+  1c. GovPrep     příprava návrhu u vlády z otevřených dat ODok, tabulka priprava.
+                  Chyba nezastaví synchronizaci; údaje upřesňují popis bodů, jejich výši nemění.
   2. AlertBuilder  vytvoří upozornění s jednoznačným klíčem (bez duplicit); 1. běh = bootstrap (posted=2, nic se nepošle)
   3. Scorer        předběžné skóre (určuje pořadí front textů a AI)
   4. PnText        stáhne Word verze PN (sd.sqw → odkaz class="file docx"), pravidla: přílepek, rozsah,
@@ -80,64 +79,31 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
                    Spolehlivost (#7 bod 7): hraniční hodnocení repeat_min–repeat_max (3–7) posoudí rychlý model
                    repeat_runs× (ai_runs, ai_run_count), platí medián; --verify bere i namátkový vzorek nízkých
                    hodnocení (< sample_below, číslo textu % sample_every = AiReviewer::SAMPLE_REMAINDER).
-                   Repo::aiReliability() počítá shodu modelů pro metodika.php#spolehlivost-ai. Po změně promptu zvyš
+                   AiReliabilityService::statistics() počítá shodu modelů pro /metodika#spolehlivost-ai. Po změně promptu zvyš
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
-  1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
-                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
-                Do skóre nevstupuje; chyba nezastaví synchronizaci
-  1c. GovPrep    příprava návrhu u vlády z otevřených dat Úřadu vlády (odok.gov.cz/opendata, JSON po letech, cache 20 h;
-                robots.txt portálu zakazuje procházení webu, proto jen tyto soubory): vládní návrhy přes tisk_eklep.unl
-                + stejný název verze v připomínkách, nevládní podle „(sněmovní tisk č. N)“; tabulka priprava.
-                Do skóre nevstupuje, upřesňuje jen popis bodů za poslanecký návrh. Z týchž dat tabulka pripravovane
-                (pripravovane.php, api.php?pripravovane=1): typ NZ z tohoto období, verze seskupené podle normTitle,
-                fáze z nejnovější verze (GovPrep::phaseOf), vyřazené už ve Sněmovně (pole psp, tisk_eklep, název tisku)
+
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 
 Náhledy pro sítě: každá stránka má `og:`/`twitter:` značky (`View::header`, 4. parametr), obrázek 1200 × 630
-kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cache `data/cache/og`, bez GD
-`assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
+kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `public/assets/fonts`, cache `data/cache/og`, bez GD
+`public/assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
 
-Hlavní nálezy (index.php, `Repo::findings`): řazení `?razeni=` (skore, ai = ověřená závažnost AI s citací, nove,
-hlasovani = podle fáze) a druh problému `?druh=` (`Repo::PROBLEM_GROUPS` z klíčů důvodů skóre + ověřené AI příznaky
-přílepku/zpětnosti + krátké připomínky u vlády). Skupiny drž úzké, jinak mezi nálezy nic neodfiltrují.
+Soubory a příkazy jsou popsané v README.md. `data/` zůstává mimo veřejný adresář; cestu mění `HLIDAC_DATA_PATH`.
+Původní `.php` URL obsluhují Laravel routy, fyzické vstupní soubory v kořeni byly nahrazeny controllery.
+`bin/ai.php`, `bin/texts.php` a `bin/sync.php` jsou kompatibilní vstupy do Artisanu.
 
-Vyhledávání: `app/SearchIndex.php` staví při synchronizaci index (tisky + titulky AI, PN a autoři, zákony z názvů
-tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-<db>.json`; `hledat.php?index=<otisk>`
-ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
-(PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
+Tabulky webu: `tisky`, `kroky`, `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `hlasovani`, `hlasovani_kluby`.
+Python vlastní schémata `steno` a `texty`, Laravel migrace je nemění. Podrobnosti při změnách MCP nebo ingestu čti v `rag/README.md`.
 
-Tokeny MCP z webu: `app/McpTokens.php` + formulář v `mcp.php`; zapisuje do `mcp.token` služby rag/ (jen sha256,
-jméno „web: datum · účel“), jen při PostgreSQL. Ochrana: podepsaný údaj formuláře (3 s – 1 h), skryté pole,
-3 tokeny/IP/den (RateLimit 'mcp_token', okno 86400 s), 200 tokenů/den celkem (`config.php → mcp`).
-
-Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
-skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh
-bootstrap (meta `prep_alerts_bootstrapped`). `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP.
-
-Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
-a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,
-připravované podle čísla v názvu. Hledání (`SearchIndex`) bere názvy zákonů ze stejného slovníku.
-
-Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
-`upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
-
-Nové volební období (`Importer::switchPeriod`): stará upozornění dostanou klíč `9/…` a odkaz na psp.cz (`alerts.obdobi`),
-texty a rozbory se nemažou: celé řádky se zkopírují do `tisk_text_archiv` / `pn_text_archiv` (sloupec `obdobi`) a z pracovních
-tabulek zmizí, takže detail tisku, skóre a fronty pracují jen s aktuálním obdobím. Nové období začne bootstrapem (nic se neposílá).
-
-Historie verzí (`app/Revisions.php`, #2 bod 2): `text_revize` (každé nové znění textu tisku nebo PN: stažení, obnova při
-změně idd) a `ai_revize` (každý uložený rozbor AI: 1. i 2. kolo, `--resanitize`; model, verze promptu, závažnost, ai_json,
-otisk textu). Záznam přibude jen při skutečné změně (sha1), klíč `(druh, obdobi, ref_id, verze)`, nic se nemaže. Stav, který
-v historii ještě není, se zapíše před přepsáním; jednorázové doplnění dosavadních dat `Revisions::backfill` na začátku
-`Sync::run` (meta `revize_backfill`, opakování nic nepřidá). Web: odkaz „Historie (N verzí)“ v detailu tisku (u textu návrhu
-i u PN, když je verzí textu nebo rozboru víc než jedna) → `revize.php?druh=tisk|pn&id=…` (seznam verzí, rozdíl dvou verzí
-textu po odstavcích a slovech přes `app/Diff.php`, změny závažnosti a titulku rozboru). Skóre historie neovlivňuje. Nával PN = ≥ `surge_threshold` PN k tisku
-za kalendářní den podle času podání, ne za běh synchronizace.
-
-Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `pripravovane`,
-`text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období).
+Historie verzí: `text_revize` a `ai_revize` uchovávají každou skutečnou změnu textu nebo rozboru,
+oddělenou klíčem `(druh, obdobi, ref_id, verze)`. `Revisions::backfill` doplní původní data na začátku
+synchronizace. Při změně volebního období se pracovní texty před vyprázdněním zkopírují do
+`tisk_text_archiv` a `pn_text_archiv`; historie se zachovává. Nové sloupce pracovních textů doplň
+i do archivní migrace a `Revisions::TISK_COLUMNS` / `PN_COLUMNS`.
+Web historii čte přes Eloquent modely a `RevisionService`; `/revize/{druh}/{id}` používá `RevisionRequestDTO`.
+Rozdíly textů generuje `Hlidac\Diff`, který escapuje obsah před vložením do HTML.
 
 ## Zdroj dat (psp.cz open data)
 
@@ -195,3 +161,5 @@ Neověřeno / TODO:
 5. GitHub: soukromé repo `moodixmarket/hlidac-zakonu` (kód) + veřejné `moodixmarket/hlidac-zakonu-podnety`
    (jen README a šablony issues – připravené v adresáři `podnety/` v tomto repu, k přesunu do vlastního repa).
 6. Účty na sociálních sítích a klíče (jen do `config.php` na hostingu, nikdy do gitu).
+
+Připravované zákony: `GovPrep` ukládá návrhy před předložením Sněmovně do `pripravovane`, verze seskupuje podle názvu a vyřazuje návrhy již ve Sněmovně. Eloquent model `UpcomingBill`, `UpcomingService`, `UpcomingController` s `UpcomingRequestDTO`, stránka `/pripravovane` a JSON `/api?pripravovane=1`. Do skóre nevstupují.

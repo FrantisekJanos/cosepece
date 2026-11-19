@@ -1,10 +1,10 @@
 <?php
-// Vydávání přístupových tokenů pro MCP server přímo na webu (mcp.php), bez registrace a bez osobních údajů.
-// Token má stejný tvar jako z `python -m hlidac_rag.tokens add` („hz_“ + 43 znaků base64url), do tabulky
-// mcp.token (schéma služby rag/) se ukládá jen jeho sha256; MCP server ho tak hned přijme. Rušení tokenů
-// zůstává na správcích (`python -m hlidac_rag.tokens revoke <id>`).
-// Ochrana: nejvýš per_ip tokenů za den z jedné adresy, denní strop pro všechny, podepsaný údaj formuláře
-// (stáří 3 s až 1 h, proti odeslání z cizího webu a robotům) a skryté pole, které člověk nevyplní.
+
+
+
+
+
+
 
 declare(strict_types=1);
 
@@ -18,7 +18,7 @@ final class McpTokens
 
     public function __construct(private Db $db, private array $config)
     {
-        // testy používají vlastní tabulku v SQLite; na produkci tabulka služby rag/ v PostgreSQL
+
         $this->table = (string)($config['mcp']['token_table'] ?? 'mcp.token');
     }
 
@@ -38,7 +38,7 @@ final class McpTokens
             return true;
         }
         try {
-            return $this->db->driver === 'pgsql' && $this->db->value("SELECT to_regclass('mcp.token')::text") !== null;
+            return $this->db->driver === 'pgsql' && \Illuminate\Support\Facades\Schema::hasTable('mcp.token');
         } catch (\Throwable) {
             return false;
         }
@@ -61,19 +61,21 @@ final class McpTokens
             return ['error' => $check];
         }
         $limits = $this->limits();
-        if (RateLimit::hit('mcp_token', $limits['per_ip'], 86400, $ip, null, false) !== null) {
+        if (RateLimit::hit('mcp_token', $limits['per_ip'], 86400, $ip, hlidacDataPath('cache/ratelimit'), false) !== null) {
             return ['error' => 'Z vaší adresy už dnes vzniklo nejvíc tokenů, kolik lze (' . $limits['per_ip'] . '). Zkuste to zítra, nebo použijte některý z nich.'];
         }
-        // časy v UTC s časovou zónou: PostgreSQL (timestamptz) je přečte správně, v SQLite se porovnávají jako text
+
         $since = gmdate('Y-m-d H:i:s', time() - 86400) . '+00:00';
-        $today = (int)$this->db->value("SELECT COUNT(*) FROM {$this->table} WHERE jmeno LIKE ? AND vytvoren >= ?", [self::PREFIX . '%', $since]);
+        $today = (new \App\Models\McpToken())->setTable($this->table)->newQuery()->where('jmeno', 'like', self::PREFIX . '%')->where('vytvoren', '>=', $since)->count();
         if ($today >= $limits['per_day']) {
             return ['error' => 'Dnešní počet nových tokenů je vyčerpaný. Zkuste to zítra.'];
         }
         $token = self::generate();
-        $this->db->run("INSERT INTO {$this->table} (jmeno, hash, vytvoren) VALUES (?, ?, ?)",
-            [self::label((string)($form['ucel'] ?? '')), hash('sha256', $token), gmdate('Y-m-d H:i:s') . '+00:00']);
-        RateLimit::hit('mcp_token', $limits['per_ip'], 86400, $ip);
+        (new \App\Models\McpToken())->setTable($this->table)->newQuery()->create([
+            'jmeno' => self::label((string)($form['ucel'] ?? '')), 'hash' => hash('sha256', $token),
+            'vytvoren' => gmdate('Y-m-d H:i:s') . '+00:00',
+        ]);
+        RateLimit::hit('mcp_token', $limits['per_ip'], 86400, $ip, hlidacDataPath('cache/ratelimit'));
         return ['token' => $token];
     }
 
@@ -117,7 +119,7 @@ final class McpTokens
 
     private function secret(): string
     {
-        // tajný klíč pro podpis formuláře: z cron_token (jen na serveru), jinak jednou vygenerovaný v meta
+
         $base = (string)($this->config['cron_token'] ?? '');
         if ($base === '' || str_starts_with($base, 'ZMENTE')) {
             $base = (string)$this->db->getMeta('form_secret', '');

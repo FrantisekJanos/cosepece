@@ -15,3 +15,9 @@ secrets*
 tests/fixtures/
 .DS_Store
 rag/
+vendor/
+node_modules/
+storage/
+bootstrap/cache/*
+.phpunit.cache/
+.phpstan-cache/

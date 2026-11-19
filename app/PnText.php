@@ -1,6 +1,5 @@
 <?php
-// Stažení textu pozměňovacích návrhů (Word ze stránky sněmovního dokumentu) a pravidlová analýza:
-// přílepek (PN mění jiný zákon než návrh), rozsah, nové paragrafy, zpětné použití a změny lhůt vymáhání.
+
 
 declare(strict_types=1);
 
@@ -24,8 +23,8 @@ final class PnText
         $limit = (int)($cfg['per_run'] ?? 40);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
-        // PN k tiskům, které ještě nejsou zákonem; přednost mají PN, které ještě nebyly v upozornění, pak nejnovější.
-        // Neúspěšné stažení (chyba sítě, chybějící Word) se zkusí znovu po retry_hours, až po nových textech.
+
+
         $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, (int)($cfg['retry_hours'] ?? 24)));
         $rows = $this->db->all(
             "SELECT p.*, t.zakony FROM pn p
@@ -52,14 +51,14 @@ final class PnText
                 $this->save($row, null, '', ['chars' => 0, 'laws' => [], 'signals' => [], 'score' => 0], $ex->getMessage());
                 $stats['errors']++;
             }
-            usleep(300_000); // šetrně k serveru psp.cz
+            usleep(300_000);
         }
         return $stats;
     }
 
     private function findDocxUrl(int $cislo, int $obdobi): ?string
     {
-        // na stránce dokumentu je odkaz <span class="file docx"><a href="/sqw/text/orig2.sqw?idd=...">
+
         $base = 'https://www.psp.cz';
         $html = Http::get($base . '/sqw/sd.sqw?cd=' . $cislo . '&o=' . $obdobi);
         $html = iconv('CP1250', 'UTF-8//IGNORE', $html) ?: $html;
@@ -71,7 +70,7 @@ final class PnText
 
     public static function docxToText(string $binary): string
     {
-        // text z word/document.xml: odstavce na řádky, značky pryč
+
         $tmp = tempnam(sys_get_temp_dir(), 'pn');
         file_put_contents($tmp, $binary);
         $zip = new ZipArchive();
@@ -82,7 +81,7 @@ final class PnText
         $xml = (string)$zip->getFromName('word/document.xml');
         $zip->close();
         @unlink($tmp);
-        // sledované změny: smazaný a přesunutý-odsud text do znění nepatří (#2 bod 9)
+
         $xml = preg_replace('~<w:(del|moveFrom)\b[^>]*/>|<w:(del|moveFrom)\b[^>]*>.*?</w:\2>~s', '', $xml) ?? $xml;
         $xml = preg_replace('~<w:delText\b[^>]*>.*?</w:delText>~s', '', $xml) ?? $xml;
         $xml = str_replace(['</w:p>', '<w:tab/>', '<w:br/>'], ["\n", "\t", "\n"], $xml);
@@ -92,7 +91,7 @@ final class PnText
 
     public static function normativePart(string $text): string
     {
-        // část před odůvodněním / důvodovou zprávou = to, co se skutečně mění
+
         $parts = preg_split(
             '~^\s*(Odůvodnění|Zdůvodnění|O\s*d\s*ů\s*v\s*o\s*d\s*n\s*ě\s*n\s*í|D\s*ů\s*v\s*o\s*d\s*o\s*v\s*á\s+z\s*p\s*r\s*á\s*v\s*a)\s*:?\s*$~mui',
             $text,
@@ -103,11 +102,11 @@ final class PnText
 
     public static function sentences(string $text): array
     {
-        // rozdělení na věty; Word mívá celý odstavec (i několik bodů novely) na jednom řádku
+
         $out = [];
         foreach (preg_split("~\n+~u", $text) ?: [] as $line) {
             $line = trim(preg_replace('~\s+~u', ' ', $line) ?? $line);
-            // konec věty: . ; nebo uzavírací uvozovka, za nimi velké písmeno, uvozovka nebo číslo bodu („15. V § …“)
+
             foreach (preg_split('~(?<=[.;“])\s+(?=[„"(]?\p{Lu}|\d+\.\s)~u', $line) ?: [] as $sentence) {
                 $sentence = trim($sentence);
                 if ($sentence !== '') {
@@ -120,8 +119,7 @@ final class PnText
 
     public static function procedureSignals(string $normative): array
     {
-        // věty s typickými procedurálními riziky; vrací doslovné citace pro web a pro AI.
-        // retro_deadline = zpětné použití přímo u lhůty, vymáhání nebo kontroly (body ve skóre jen za tento signál)
+
         $retro = [];
         $deadline = [];
         $retroDeadline = [];
@@ -130,10 +128,10 @@ final class PnText
             if (mb_strlen($sentence) > 800) {
                 continue;
             }
-            // nové pravidlo se výslovně použije i na situace vzniklé před účinností
+
             $isRetro = preg_match('~\bi\s+(?:tehdy|v\s+případech?|na\s+(?:případy|řízení|nároky|platby|dotace|práva|povinnosti))\b[^.]{0,300}?(?:před(?:e)?\s+dnem\s+nabytí\s+účinnosti|před\s+účinností)~ui', $sentence)
                 || (preg_match('~\bzpětn(?:ě|á|é|ou)\s+(?:účinnost|použi)~ui', $sentence) && !self::negatesRetro($sentence));
-            // změna lhůty pro vymáhání, kontrolu, promlčení nebo prekluzi (počet let/měsíců ve stejné větě)
+
             $isDeadline = preg_match('~(?:lhůt|promlč|preklu|nejpozději\s+do|zanik(?:á|ne)\s+(?:nárok|právo|odpovědnost))~ui', $sentence)
                 && preg_match('~\b\d+\s+(?:let|roků|rok[uy]?|měsíců)\b~u', $sentence)
                 && preg_match('~(?:vrácení|odvod|vymáh|kontrol|řízení|sankc|pokut|porušení\s+rozpočtové\s+kázně|přestup|promlč|preklu)~ui', $sentence);
@@ -158,7 +156,7 @@ final class PnText
 
     public static function lawsIn(string $normative): array
     {
-        // zákony, které text výslovně mění („V zákoně č. X/YYYY Sb.“ / „Zákon č. X/YYYY Sb., … se mění“)
+
         preg_match_all('~V\s+zákoně\s+č\.\s*(\d+/\d{4})\s*Sb\.~u', $normative, $m1);
         preg_match_all('~Zákon\s+č\.\s*(\d+/\d{4})\s*Sb\.,[^\n]{0,400}?se\s+(?:mění|doplňuje)~u', $normative, $m2);
         return array_values(array_unique(array_merge($m1[1], $m2[1])));
@@ -166,7 +164,7 @@ final class PnText
 
     public static function negatesRetro(string $sentence): bool
     {
-        // „nemá zpětnou účinnost“, „zpětné použití se vylučuje“, „nelze použít zpětně“ = zpětnost výslovně vyloučená
+
         return (bool)(preg_match('~\b(?:nemá|nemají|nemůže\s+mít|nemohou\s+mít|není|nejsou|nelze|bez|vylučuje\s+se|vyloučen[aáoéý]?|nepoužij\w*|nepoužívá\w*)\s+(?:\S+\s+){0,2}zpětn~ui', $sentence)
             || preg_match('~\bzpětn\w*\s+(?:účinnost|použití)\s+(?:se\s+)?(?:vylučuje|je\s+vyloučen\w*|není\s+přípustn\w*)~ui', $sentence));
     }
@@ -176,7 +174,7 @@ final class PnText
         $weights = $config['scoring'] ?? [];
         $normative = self::normativePart($text);
 
-        // zákony, které PN výslovně mění („V zákoně č. X/YYYY Sb.“ / „Zákon č. X/YYYY Sb., … se mění“)
+
         $laws = self::lawsIn($normative);
 
         $signals = [];
@@ -197,21 +195,21 @@ final class PnText
         if ($newSections > 0) {
             $signals['new_sections'] = $newSections;
         }
-        // zpětné použití a změny lhůt pro vymáhání; body za ně přiděluje Scorer (u PN i u textu tisku)
+
         $signals += self::procedureSignals($normative);
         return ['chars' => $chars, 'laws' => $laws, 'signals' => $signals, 'score' => min($score, 30)];
     }
 
     public function save(array $row, ?string $docxUrl, string $text, array $a, ?string $error): void
     {
-        // uložení (nového) znění PN; dosavadní text a rozbor zůstanou v historii verzí (#2 bod 2)
+
         $id = (int)$row['id_dokument'];
         $own = !$this->db->pdo->inTransaction();
         if ($own) {
             $this->db->pdo->beginTransaction();
         }
         try {
-            // stav, který v historii ještě není (data z doby před jejím zavedením), se zapíše dřív, než zmizí
+
             Revisions::recordText($this->db, 'pn', $id, 'zaloha');
             Revisions::recordAi($this->db, 'pn', $id, 'zaloha');
             $this->replaceRow($row, $docxUrl, $text, $a, $error);

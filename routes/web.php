@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+use App\Http\Controllers\AiController;
+use App\Http\Controllers\FeedController;
+use App\Http\Controllers\OgController;
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\BillController;
+use App\Http\Controllers\AlertController;
+use App\Http\Controllers\MethodologyController;
+use App\Http\Controllers\SyncController;
+use App\Http\Middleware\VerifyServiceToken;
+use App\Http\Middleware\EnsureAiEnabled;
+use App\Http\Middleware\ValidateAiTransport;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/', [HomeController::class, 'index'])->name('home');
+Route::get('/tisky', [BillController::class, 'index'])->name('bills');
+Route::get('/tisky/{ct}/dokumenty/word', [\App\Http\Controllers\DocumentController::class, 'word'])->whereNumber('ct')->name('bill-word');
+Route::get('/tisky/{ct}/dokumenty', [\App\Http\Controllers\DocumentController::class, 'show'])->whereNumber('ct')->name('bill-documents');
+Route::get('/tisky/{ct}', [BillController::class, 'show'])->whereNumber('ct')->name('bill');
+Route::get('/upozorneni', [AlertController::class, 'index'])->name('alerts');
+Route::get('/metodika', [MethodologyController::class, 'index'])->name('methodology');
+Route::get('/pripravovane', [\App\Http\Controllers\UpcomingController::class, 'index'])->name('upcoming');
+Route::get('/data', [\App\Http\Controllers\ApiDocumentationController::class, 'index'])->name('api-docs');
+Route::get('/hledat', [\App\Http\Controllers\SearchController::class, 'index'])->name('search');
+Route::get('/zakony', [\App\Http\Controllers\LawController::class, 'index'])->name('laws');
+Route::get('/zakony/{year}/{number}', [\App\Http\Controllers\LawController::class, 'show'])->where(['year' => '[0-9]{4}', 'number' => '[0-9]{1,4}'])->name('law');
+Route::post('/mcp', [\App\Http\Controllers\McpController::class, 'issue'])->name('mcp-issue');
+Route::get('/mcp', [\App\Http\Controllers\McpController::class, 'index'])->name('mcp-info');
+Route::get('/zmeny', [\App\Http\Controllers\ChangesController::class, 'index'])->name('changes');
+Route::get('/revize/{druh}/{id}', [\App\Http\Controllers\RevisionController::class, 'show'])->where('druh', 'tisk|pn')->whereNumber('id')->name('revisions');
+Route::get('/api', [\App\Http\Controllers\PublicApiController::class, 'index'])->name('public-api');
+Route::get('/rss', [FeedController::class, 'index'])->name('rss');
+Route::get('/og', [OgController::class, 'show'])->name('og');
+
+foreach ([
+    '/pripravovane.php' => [\App\Http\Controllers\UpcomingController::class, 'index'],
+    '/data.php' => [\App\Http\Controllers\ApiDocumentationController::class, 'index'],
+    '/hledat.php' => [\App\Http\Controllers\SearchController::class, 'index'],
+    '/zakon.php' => [\App\Http\Controllers\LawController::class, 'index'],
+    '/mcp.php' => [\App\Http\Controllers\McpController::class, 'index'],
+    '/zmeny.php' => [\App\Http\Controllers\ChangesController::class, 'index'],
+    '/revize.php' => [\App\Http\Controllers\RevisionController::class, 'show'],
+    '/api.php' => [\App\Http\Controllers\PublicApiController::class, 'index'],
+    '/index.php' => [HomeController::class, 'index'],
+    '/tisky.php' => [BillController::class, 'index'],
+    '/tisk.php' => [BillController::class, 'show'],
+    '/upozorneni.php' => [AlertController::class, 'index'],
+    '/metodika.php' => [MethodologyController::class, 'index'],
+    '/rss.php' => [FeedController::class, 'index'],
+    '/og.php' => [OgController::class, 'show'],
+] as $path => $action) {
+    Route::get($path, $action)->middleware(\App\Http\Middleware\RedirectLegacyUrl::class);
+}
+
+Route::match(['get', 'post'], '/ai_api.php', [AiController::class, 'handle'])
+    ->middleware([VerifyServiceToken::class . ':ai', EnsureAiEnabled::class, ValidateAiTransport::class])->name('ai');
+Route::get('/cron.php', [SyncController::class, 'run'])
+    ->middleware(VerifyServiceToken::class . ':cron')->name('webcron');

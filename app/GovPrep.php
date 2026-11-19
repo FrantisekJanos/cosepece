@@ -1,16 +1,4 @@
 <?php
-// Příprava návrhu u vlády z otevřených dat Úřadu vlády (portál ODok / VeKLEP, JSON po letech):
-// připomínkové řízení (od–do, počet připomínkových míst), schůze vlády, důvod předložení, výjimky.
-// Jen zobrazení u tisku; do skóre nevstupuje (upřesňuje jen popis důvodu „Poslanecký návrh“).
-// Z týchž dat i přehled připravovaných zákonů (pripravovane.php): návrhy zákonů ministerstev, které
-// do Sněmovny ještě nedorazily – od připomínkového řízení po schválení vládou.
-//
-// Párování s tisky:
-//  - vládní návrhy přes tisk_eklep.unl z otevřených dat PSP (PID materiálu v eKLEP), připomínkové
-//    řízení pak podle stejného názvu materiálu (verze před schůzí vlády mají jiný PID),
-//  - nevládní návrhy (žádost o stanovisko vlády) podle „(sněmovní tisk č. N)“ v názvu materiálu
-//    založeného v aktuálním volebním období.
-// robots.txt portálu ODok zakazuje procházení webu; používáme jen soubory z jeho stránky Otevřená data.
 
 declare(strict_types=1);
 
@@ -20,9 +8,9 @@ final class GovPrep
 {
     public const URL = 'https://www.odok.gov.cz/opendata/dataset/odok/requests_%d.json';
     public const VEKLEP = 'https://odok.gov.cz/portal/veklep/material/%s/';
-    // fáze připravovaného zákona od nejpokročilejší (pořadí na stránce)
+
     public const PHASES = ['schvaleno', 'vlada', 'po_pripominkach', 'pripominky'];
-    // stavy materiálu v ODok, kdy už je návrh ve Sněmovně, ve Sbírce, stažený nebo skartovaný
+
     private const DONE_STATES = ['CE', 'D', 'E', 'F', 'K', 'DZV', 'Y'];
 
     public function __construct(private Db $db, private Source $source, private array $config)
@@ -41,11 +29,10 @@ final class GovPrep
             return ['skipped' => true];
         }
 
-        // materiály od roku před začátkem období (připomínky k vládním návrhům bývají starší)
         $items = [];
         for ($year = (int)substr($start, 0, 4) - 2; $year <= (int)date('Y'); $year++) {
             foreach ($this->load($year, $cfg) as $m) {
-                // starší ročníky (2023) mají záznamy zabalené jako výsledek vyhledávání: {"_source": {…}}
+
                 $m = isset($m['_source']) && is_array($m['_source']) ? $m['_source'] : $m;
                 if (!empty($m['pid']) && isset($m['title'], $m['date_authorized'])) {
                     $items[(string)$m['pid']] = $m;
@@ -64,7 +51,6 @@ final class GovPrep
         $rows = [];
         $eklep = $this->eklepLinks($tisky);
 
-        // vládní návrhy: PID z otevřených dat PSP
         foreach ($eklep as $ct => $pid) {
             $m = $items[$pid] ?? null;
             if ($m === null) {
@@ -80,7 +66,6 @@ final class GovPrep
             $rows[$ct] = $this->row($ct, 'vladni', $m, $review);
         }
 
-        // nevládní návrhy: žádost o stanovisko vlády s číslem sněmovního tisku v názvu
         foreach ($items as $m) {
             if (!in_array($m['type']['id'] ?? '', ['PNZ', 'SNZ', 'NKZ'], true) || (string)$m['date_authorized'] < $start
                 || !preg_match('~sněmovní tisk č\.\s*(\d+)~u', (string)$m['title'], $mm)) {
@@ -114,7 +99,7 @@ final class GovPrep
 
     public static function phaseOf(string $status): ?string
     {
-        // kód stavu materiálu v ODok („2 - v připomínkovém řízení“, „B - signováno“…) → fáze, null = už mimo vládu
+
         $code = strtoupper(trim((string)preg_replace('~\s*[-–].*$~u', '', trim($status))));
         if ($code === '' || in_array($code, self::DONE_STATES, true)) {
             return null;
@@ -123,14 +108,13 @@ final class GovPrep
             in_array($code, ['1', '2'], true) => 'pripominky',
             $code === '3' => 'po_pripominkach',
             in_array($code, ['7', '8'], true) => 'vlada',
-            default => 'schvaleno', // 9 projednáno, B signováno (čeká na předložení Sněmovně)
+            default => 'schvaleno',
         };
     }
 
     private function upcoming(array $byTitle, string $start, array $tisky, array $eklepPids): array
     {
-        // návrhy zákonů ministerstev z tohoto období, které ještě nemají sněmovní tisk; verze téhož materiálu
-        // (k připomínkám, pro vládu) mají jiný PID a stejný název – rozhoduje nejnovější z nich
+
         $tiskTitles = [];
         foreach ($tisky as $t) {
             foreach ([(string)$t['uplny_nazev'], (string)$t['nazev']] as $title) {
@@ -153,8 +137,7 @@ final class GovPrep
             if ($phase === null || !empty($last['psp']) || (string)$last['date_authorized'] < $start) {
                 continue;
             }
-            // už ve Sněmovně: PID v otevřených datech PSP, nebo tisk se stejným názvem předložený po založení materiálu
-            // (název materiálu bývá i delší: „… na rok 2027 včetně rozpočtové dokumentace“)
+
             $since = substr((string)$first['date_authorized'], 0, 10);
             $inPsp = array_filter($versions, fn(array $m) => isset($eklepPids[(string)$m['pid']]) || !empty($m['psp'])) !== [];
             foreach ($tiskTitles as $title => $submitted) {
@@ -172,7 +155,7 @@ final class GovPrep
                 if ($review === null && !empty($m['review_process']['date_finish'])) {
                     $review = $m;
                 }
-                // schůze vlády z tohoto období (starší verze mohla projednat předchozí vláda)
+
                 if (!empty($m['government_program']['date']) && (string)$m['government_program']['date'] >= $start) {
                     $gov = max((string)$gov, substr((string)$m['government_program']['date'], 0, 10));
                 }
@@ -191,7 +174,7 @@ final class GovPrep
                 'pripominky_do' => $row['pripominky_do'],
                 'dni' => $row['dni'],
                 'mist' => $row['mist'],
-                // „projednáno“ a „signováno“ znamená schválení vládou i tam, kde datum schůze v datech chybí
+
                 'vlada' => $gov,
                 'duvod' => $row['duvod'],
                 'popis' => mb_substr(trim(preg_replace('~\s+~u', ' ', (string)($last['description'] ?? '')) ?? ''), 0, 600),
@@ -205,7 +188,7 @@ final class GovPrep
 
     public static function normTitle(string $title): string
     {
-        // název bez úvodního „Vládní“ a bez interpunkce: verze pro připomínky a pro vládu se liší jen v tom
+
         $t = mb_strtolower(trim($title));
         $t = preg_replace('~^vládní\s+~u', '', $t) ?? $t;
         return trim(preg_replace('~[^\p{L}\p{N}]+~u', ' ', $t) ?? $t);
@@ -231,7 +214,7 @@ final class GovPrep
             'poznamka' => mb_substr(trim(preg_replace('~\s+~u', ' ', (string)(($review['notes'] ?? '') ?: ($m['notes'] ?? ''))) ?? ''), 0, 500),
             'mimo_plan' => preg_match('~mimo\s+plán~ui', $text) ? 1 : 0,
             'vyjimka' => preg_match('~výjimk~ui', $text) ? 1 : 0,
-            // znovu předložený návrh: připomínky mohly proběhnout u předchozí verze (jiný materiál)
+
             'znovu' => preg_match('~znovu|opětovn|znovupředlož|nedokončen\w* legislativní\w* proces~ui', $text) ? 1 : 0,
             '_at' => (string)$m['date_authorized'],
         ];
@@ -239,12 +222,12 @@ final class GovPrep
 
     private function load(int $year, array $cfg): array
     {
-        // ročník z lokálního adresáře (testy) nebo stažený, v cache nejvýš 20 hodin
+
         if (!empty($cfg['local_dir'])) {
             $path = rtrim((string)$cfg['local_dir'], '/') . "/requests_$year.json";
             return is_file($path) ? (array)(json_decode((string)file_get_contents($path), true)['requests'] ?? []) : [];
         }
-        $cache = APP_ROOT . "/data/cache/odok_$year.json";
+        $cache = hlidacDataPath("cache/odok_$year.json");
         if (!is_file($cache) || filemtime($cache) < time() - 20 * 3600) {
             try {
                 $body = Http::get(sprintf(self::URL, $year), 30_000_000);
@@ -252,7 +235,7 @@ final class GovPrep
                     file_put_contents($cache, $body);
                 }
             } catch (\Throwable) {
-                // ročník nemusí existovat (začátek roku); starší cache zůstává
+
             }
         }
         return is_file($cache) ? (array)(json_decode((string)file_get_contents($cache), true)['requests'] ?? []) : [];
@@ -260,7 +243,7 @@ final class GovPrep
 
     private function eklepLinks(array $tisky): array
     {
-        // tisk_eklep.unl: PID | … | … | … | id_tisk | …
+
         $out = [];
         try {
             foreach ($this->source->rows('tisky', 'tisk_eklep.unl') as $c) {
@@ -270,7 +253,7 @@ final class GovPrep
                 }
             }
         } catch (\RuntimeException) {
-            // starší export bez souboru
+
         }
         return $out;
     }

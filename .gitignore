@@ -14,3 +14,9 @@ deploy/ai-remote.env
 *.env
 !deploy/ai-remote.env.example
 secrets*
+/vendor/
+/.phpunit.cache/
+/public/hot
+/public/storage
+!/.env.example
+/.phpstan-cache/

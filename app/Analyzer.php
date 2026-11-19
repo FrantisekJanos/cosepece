@@ -1,5 +1,5 @@
 <?php
-// Výpočet příznaků a fáze projednávání z historie tisku.
+
 
 declare(strict_types=1);
 
@@ -7,19 +7,18 @@ namespace Hlidac;
 
 final class Analyzer
 {
-    // typy stavů (typ_stavu.unl)
-    public const LHUTA_VYBORY = 60;                  // výchozí lhůta pro výbory ve dnech
-    public const STAV_P90 = [17, 18, 67];            // 1. čtení podle § 90 odst. 2
-    public const STAV_2_3_CTENI = [2, 3, 4, 5];      // 2. a 3. čtení
+
+    public const LHUTA_VYBORY = 60;
+    public const STAV_P90 = [17, 18, 67];
+    public const STAV_2_3_CTENI = [2, 3, 4, 5];
     public const STAV_PO_SNEMOVNE = [64, 12, 14, 63, 8, 13, 11];
     public const STAV_ODESLANO_SENATU = 64;
     public const STAV_SBIRKA = 11;
 
-    // typy akcí (typ_akce.unl)
-    public const AKCE_ZKRACENI = [47, 59, 72];       // změna lhůty, změna lhůty PN, vráceno + změna lhůty
+    public const AKCE_ZKRACENI = [47, 59, 72];
     public const AKCE_STAZENO = [26, 39, 50];
     public const AKCE_ZAMITNUTO = [8, 27, 28, 34, 45, 46, 49];
-    public const AKCE_VRACENO = [24, 38];             // vrácen, vráceno k přepracování (např. rozpočet, tisk 17)
+    public const AKCE_VRACENO = [24, 38];
 
     private const FAZE = [
         23 => 'Podáno', 7 => 'Organizační výbor', 15 => 'U vlády', 16 => 'Stanovisko vlády',
@@ -59,7 +58,7 @@ final class Analyzer
                 $zl = true;
             }
             if ($typ === 6) {
-                // KONEC: rozhoduje akce, jinak zůstává předchozí fáze (např. Vyhlášeno)
+
                 if (in_array($akce, self::AKCE_STAZENO, true)) {
                     $faze = 'Vzat zpět';
                 } elseif (in_array($akce, self::AKCE_ZAMITNUTO, true)) {
@@ -77,7 +76,7 @@ final class Analyzer
 
         return [
             'p90' => $p90,
-            // schváleno už v 1. čtení = návrh prošel Sněmovnou bez 2. a 3. čtení
+
             'p90ok' => $p90 && $poSnemovne && !$druheTreti,
             'zl' => $zl,
             'faze' => $faze,
@@ -87,8 +86,8 @@ final class Analyzer
 
     public static function typNavrhu(int $druh, string $uplnyNazev, int $idNavrh = 0): string
     {
-        // předkladatel podle číselníku typ_zakon (tisky.id_navrh): 1 vláda, 2–3 poslanci, 4 Senát,
-        // 6–19 kraje a hlavní město Praha; bez kódu podle druhu tisku a začátku úplného názvu
+
+
         if ($idNavrh === 1) {
             return 'vládní';
         }
@@ -115,13 +114,13 @@ final class Analyzer
 
     public static function committeeCut(?int $lhuta): bool
     {
-        // lhůta pro výbory kratší než výchozích 60 dní (§ 91 odst. 3 jednacího řádu)
+
         return $lhuta !== null && $lhuta > 0 && $lhuta < self::LHUTA_VYBORY;
     }
 
     public static function zakony(string $uplnyNazev): array
     {
-        // čísla zákonů uvedená v názvu, např. „č. 586/1992 Sb.“ → 586/1992
+
         preg_match_all('~č\.\s*(\d+/\d{4})\s*Sb\.~u', $uplnyNazev, $m);
         return array_values(array_unique($m[1]));
     }

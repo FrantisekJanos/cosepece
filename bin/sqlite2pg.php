@@ -1,7 +1,7 @@
 <?php
-// Jednorázový převod databáze ze SQLite do databáze z config.php (PostgreSQL nebo MySQL).
-// php bin/sqlite2pg.php /cesta/k/hlidac.sqlite
-// Cílové tabulky se založí (migrate) a jejich obsah se nahradí daty ze SQLite.
+
+
+
 
 declare(strict_types=1);
 
@@ -14,16 +14,18 @@ if ($file === '' || !is_file($file)) {
 }
 
 $src = new Hlidac\Db('sqlite:' . $file);
-$dst = new Hlidac\Db((string)config('db_dsn'), config('db_user'), config('db_pass'));
+$dst = db();
 if ($dst->driver === 'sqlite') {
     fwrite(STDERR, "Cíl v config.php je SQLite, převod nemá smysl.\n");
     exit(1);
 }
-$dst->migrate();
+Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
 
-$tables = array_column($src->all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"), 'name');
-// celý převod v jedné transakci: při chybě nebo nesouhlasu počtů zůstane cíl beze změny (#2 bod 12);
-// čtení ze SQLite také v transakci, aby šlo o jeden konzistentní snímek
+$tables = ['tisky', 'kroky', 'pn', 'pn_seen', 'pn_text', 'tisk_text', 'alerts', 'post_log', 'meta', 'hlasovani', 'hlasovani_kluby', 'text_revize', 'ai_revize', 'tisk_text_archiv', 'pn_text_archiv', 'priprava', 'pripravovane'];
+$available = array_column($src->all("SELECT name FROM sqlite_master WHERE type = 'table'"), 'name');
+$tables = array_values(array_intersect($tables, $available));
+
+
 $src->pdo->beginTransaction();
 $dst->pdo->beginTransaction();
 try {

@@ -1,5 +1,5 @@
 <?php
-// Import otevřených dat psp.cz do databáze pro aktuální volební období.
+
 
 declare(strict_types=1);
 
@@ -9,7 +9,7 @@ use RuntimeException;
 
 final class Importer
 {
-    // druhy tisků, které sledujeme: vládní návrh, návrh zákona (poslanecký/senátní/krajský), státní rozpočet
+
     private const DRUHY = [1, 2, 3];
 
     public function __construct(private Db $db, private Source $source)
@@ -26,7 +26,6 @@ final class Importer
         $souhrny = $this->loadSouhrny($tisky);
         $pn = $this->loadPn($obdobiId, $osoby);
 
-        // agregace PN podle čísla tisku
         $pnByCt = [];
         foreach ($pn as $row) {
             $ct = $row['ct'];
@@ -58,20 +57,19 @@ final class Importer
             ];
         }
 
-        // neúplný nebo poškozený export nesmí přepsat poslední úplná data (#2)
         $problem = $this->validate($obdobiId, $tiskyRows, $kroky, $pn);
         if ($problem !== null) {
             $this->db->setMeta('import_error', date('Y-m-d H:i:s') . ' ' . $problem);
             throw new RuntimeException('Import zastaven, data se nepřepsala: ' . $problem);
         }
 
-        // přepis tabulek se zdrojovými daty v jedné transakci
+
         $oldId = (int)$this->db->getMeta('obdobi_id', '0');
         $oldCislo = (int)$this->db->getMeta('obdobi_cislo', '0');
         $this->db->pdo->beginTransaction();
         try {
             if ($oldCislo > 0) {
-                // upozornění bez období patří k období předchozího importu
+
                 $this->db->run('UPDATE alerts SET obdobi = ? WHERE obdobi IS NULL', [$oldCislo]);
             }
             if ($oldId > 0 && $oldId !== $obdobiId) {
@@ -104,9 +102,9 @@ final class Importer
 
     private function loadSouhrny(array $tisky): array
     {
-        // souhrn pozměňovacích a jiných návrhů po 2. čtení (tisky_za.unl, druh 10 = sněmovní tisk X/n):
-        // soupis platně podaných PN s přesným časem rozeslání; bez souhrnu (zkrácené jednání) se PN
-        // jako sněmovní tisk nerozesílaly. Bere se první souhrn k tisku.
+
+
+
         $out = [];
         try {
             foreach ($this->source->rows('tisky', 'tisky_za.unl') as $c) {
@@ -120,19 +118,13 @@ final class Importer
                 }
             }
         } catch (RuntimeException) {
-            // starší export bez tisky_za.unl: bez souhrnů
+
         }
         return $out;
     }
 
     private function switchPeriod(int $oldCislo): void
     {
-        // nové volební období: čísla tisků začínají znovu od 1, takže tisk 40 je jiný návrh než tisk 40
-        // minulého období (#2 bod 2). Stará upozornění zůstanou v historii pod klíčem s číslem období
-        // (a odkazem na psp.cz). Texty a rozbory starých tisků se nemažou: zůstanou v historii verzí
-        // (text_revize, ai_revize s číslem období) a celé řádky v archivu (tisk_text_archiv, pn_text_archiv).
-        // Z pracovních tabulek zmizí, aby je detail tisku, skóre ani fronty nepoužily pro nový tisk stejného čísla.
-        // Nové období začne bootstrapem.
         foreach ($this->db->all('SELECT alert_key FROM alerts WHERE obdobi = ?', [$oldCislo]) as $a) {
             $key = (string)$a['alert_key'];
             if (str_starts_with($key, $oldCislo . '/')) {
@@ -150,7 +142,7 @@ final class Importer
 
     private function validate(int $obdobiId, array $tisky, array $kroky, array $pn): ?string
     {
-        // vrací důvod, proč import nepoužít, nebo null
+
         $samePeriod = (int)$this->db->getMeta('obdobi_id', '0') === $obdobiId;
         $before = [
             'tisky' => (int)$this->db->value('SELECT COUNT(*) FROM tisky'),
@@ -159,7 +151,7 @@ final class Importer
         ];
         $now = ['tisky' => count($tisky), 'kroky' => count($kroky), 'pn' => count($pn)];
         if ($samePeriod) {
-            // ve stejném období data jen přibývají; výrazný propad = chybějící nebo useknutý soubor
+
             foreach ($now as $table => $n) {
                 if ($before[$table] >= 20 && $n < $before[$table] * 0.8) {
                     return "propad počtu řádků $table z {$before[$table]} na $n";
@@ -176,7 +168,7 @@ final class Importer
             return 'export obsahuje tisky, ale žádné kroky historie';
         }
         if ($pn !== [] && $tisky !== []) {
-            // PN se musí aspoň zčásti vázat na tisky stejného období
+
             $cts = array_flip(array_map(fn(array $t): int => (int)$t['ct'], $tisky));
             $linked = count(array_filter($pn, fn(array $p): bool => isset($cts[(int)$p['ct']])));
             if ($linked === 0) {
@@ -188,7 +180,7 @@ final class Importer
 
     private function currentPeriod(): array
     {
-        // volební období Sněmovny = orgán typu 11 se zkratkou PSPn; aktuální nemá datum konce
+
         $best = null;
         foreach ($this->source->rows('poslanci', 'organy.unl') as $c) {
             if (($c[2] ?? '') !== '11' || !preg_match('~^PSP(\d+)$~', $c[3] ?? '', $m)) {
@@ -208,7 +200,7 @@ final class Importer
 
     private function loadOsoby(): array
     {
-        // id_osoba => „Jméno Příjmení“
+
         $out = [];
         foreach ($this->source->rows('poslanci', 'osoby.unl') as $c) {
             $out[(int)$c[0]] = trim(($c[3] ?? '') . ' ' . ($c[2] ?? ''));
@@ -220,7 +212,7 @@ final class Importer
     {
         $out = [];
         foreach ($this->source->rows('tisky', 'tisky.unl') as $c) {
-            // jen hlavní tisky (cislo_za = 0) aktuálního období a sledovaných druhů
+
             if ((int)($c[7] ?? 0) !== $obdobiId || (int)($c[4] ?? 1) !== 0 || !in_array((int)$c[1], self::DRUHY, true)) {
                 continue;
             }
@@ -235,9 +227,9 @@ final class Importer
                 'uplny_nazev' => $uplny,
                 'predlozeno' => $this->czDate($c[11] ?? ''),
                 'zakony' => implode(',', Analyzer::zakony($uplny)),
-                // rj = 1: předkladatel navrhl projednání podle § 90 odst. 2 (eviduje se dřív než krok v historii)
+
                 'rj' => trim($c[18] ?? '') === '1',
-                // lhůta pro výbory ve dnech (výchozí 60, Sněmovna ji může zkrátit)
+
                 'lhuta' => (int)($c[17] ?? 0) ?: null,
             ];
         }
@@ -274,15 +266,15 @@ final class Importer
                 'stav' => $typy[$typ] ?? '',
                 'akce_id' => $prechod['akce'],
                 'akce' => $akce[$prechod['akce']] ?? '',
-                // hlasování, kterým krok skončil (např. závěrečné hlasování ve 3. čtení)
+
                 'id_hlasovani' => (int)($c[3] ?? 0) ?: null,
-                // číslo ve Sbírce zákonů (sloupce zaver_sb_cislo a datum vyhlášení)
+
                 '_sb' => trim($c[13] ?? '') !== '' ? trim($c[13]) . '/' . substr($this->czDate($c[11] ?? '') ?? '', 0, 4) : null,
-                // den vyhlášení ve Sbírce (zaver_publik); datum kroku je jen doručení nebo odeslání k publikaci
+
                 '_vyhl' => $this->czDate($c[11] ?? ''),
             ];
         }
-        // chronologicky podle id historie (některé kroky nemají datum)
+
         usort($out, fn(array $a, array $b): int => $a['id_hist'] <=> $b['id_hist']);
         return $out;
     }
@@ -291,7 +283,7 @@ final class Importer
     {
         $out = [];
         foreach ($this->source->rows('sd', 'sd_dokument.unl') as $c) {
-            // typ 13 = písemné pozměňovací návrhy
+
             if ((int)($c[1] ?? 0) !== $obdobiId || (int)($c[3] ?? 0) !== 13) {
                 continue;
             }
@@ -320,7 +312,7 @@ final class Importer
 
     private function vyhlaseno(array $kroky): ?string
     {
-        // datum vyhlášení z posledního kroku, který ho uvádí
+
         foreach (array_reverse($kroky) as $krok) {
             if (!empty($krok['_vyhl'])) {
                 return $krok['_vyhl'];
@@ -331,7 +323,7 @@ final class Importer
 
     private function czDate(string $value): ?string
     {
-        // „27.01.2026“ → „2026-01-27“
+
         $value = trim($value);
         if (preg_match('~^(\d{2})\.(\d{2})\.(\d{4})$~', $value, $m)) {
             return "$m[3]-$m[2]-$m[1]";
@@ -341,7 +333,7 @@ final class Importer
 
     private function isoDate(string $value): ?string
     {
-        // „2026-11-13 16:38“ i „2026-11-13 16:38:00“ → „2026-11-13 16:38:00“
+
         $value = trim($value);
         if ($value === '') {
             return null;

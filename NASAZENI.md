@@ -1,230 +1,164 @@
-# Nasazení Hlídače zákonů
+# Nasazení webu Co se peče
 
-Návod pro toho, kdo web nasazuje. Celý projekt je v ZIPu; nic se nekompiluje ani neinstaluje přes Composer.
+Aplikace běží na Laravelu 13 a PHP 8.3+. Veřejným adresářem je výhradně `public/`.
+Python ingest a MCP zůstávají samostatnými službami, viz [rag/README.md](rag/README.md).
 
-**ZIP obsahuje i hotovou databázi** `data/hlidac.sqlite` (SQLite): všechny tisky a pozměňovací návrhy
-10. volebního období, stažené texty zákonů a PN a hotový AI rozbor (519 textů, nejzávažnější ověřené
-silnějším modelem), stav ke dni balení. Nic z toho se nemusí stahovat ani posuzovat znovu – synchronizace
-a AI jen doženou to, co přibylo od data balení. Databáze neobsahuje žádné tokeny ani hesla.
+## Místní spuštění
 
-## Jak to celé běží
+Potřebujete Composer 2, PHP 8.3+ a rozšíření `curl`, `iconv`, `mbstring`, `zip`, PDO a ovladač vybrané databáze.
+Pro generování obrázků nainstalujte také GD s FreeType. Bez něj se používá záložní PNG.
 
-Systém má dvě části na dvou místech:
-
-| Kde | Co tam běží | Jak často |
-|---|---|---|
-| **Webhosting** (PHP) | web, databáze, stahování dat z psp.cz, skóre, RSS, příspěvky na sítě | cron každou hodinu (`cron.php` nebo `bin/sync.php`) |
-| **Počítač s Claude Code** (Mac, případně Linux) | AI rozbor textů zákonů a pozměňovacích návrhů přes předplatné Claude | naplánovaná úloha každou hodinu (`deploy/ai-remote.sh`) |
-
-Proč dvě místa: AI rozbor používá program `claude` (Claude Code) přihlášený k předplatnému Claude.
-Ten na sdíleném hostingu spustit nejde. Počítač s Claude Code si proto každou hodinu stáhne z webu
-texty čekající na rozbor (`ai_api.php`), posoudí je a výsledky pošle zpět. Web sám ověří, že citace
-v rozboru jsou doslova v textu zákona, a přepočítá skóre.
-
-```
-hosting:  cron ─► cron.php ─► psp.cz ─► databáze ─► web / RSS / sítě
-                                           ▲ │
-                         výsledky (POST)   │ ▼ fronta textů (GET)
-počítač:  launchd/cron ─► deploy/ai-remote.sh ─► claude -p (Haiku, pak Sonnet na nejzávažnější)
+```bash
+composer install
+cp .env.example .env
+php artisan key:generate
+mkdir -p data
+touch data/hlidac.sqlite
+php artisan migrate
+php artisan serve
 ```
 
-Web funguje i bez AI části (skóre z postupu a pravidel), jen bez srozumitelných titulků a rozborů textu.
+Do `.env` nastavte `APP_URL` na adresu webu. Výchozí databáze je SQLite `data/hlidac.sqlite`.
+Pro celý systém včetně Python MCP použijte PostgreSQL. Připojení nastavují běžné proměnné
+`DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
+Nastavení sledovaných zákonů, vah a limitů je v `config/hlidac.php`; provozní hodnoty lze předat prostředím.
+Podporované proměnné jsou v mapě `$overrides` tohoto souboru.
 
----
+## Převod existující instalace
 
-## Část 1: Webhosting
+1. Zastavte původní cron, webcron a místní AI běhy. Zabraňte i přístupu k původnímu `cron.php`.
+2. Zálohujte databázi, původní aplikaci, konfiguraci a adresář `data/`. Pro PostgreSQL můžete použít `docker/backup.sh`.
+3. Připravte novou aplikaci v samostatném adresáři a nainstalujte závislosti pomocí `composer install --no-dev --prefer-dist --optimize-autoloader`.
+4. Připojte původní databázi a provozní data. SQLite soubor kopírujte při zastavených zápisech nebo přes SQLite backup/VACUUM INTO, nikoli kopírováním živého souboru bez WAL.
+5. Konfiguraci lze převzít jako `config.php` v kořeni nebo pomocí `HLIDAC_CONFIG=/cesta/config.php`. Když chcete převzít i její DSN, **nenastavujte `DB_CONNECTION`**. Explicitní Laravel `DB_CONNECTION` má přednost. `APP_URL`, AI a další hodnoty v prostředí mají přednost před hodnotami ze starého souboru.
+6. Nastavte `APP_ENV=production`, `APP_DEBUG=false` a `APP_KEY`. Provozní data lze nasměrovat přes `HLIDAC_DATA_PATH`; výchozí je `data/` v projektu.
+7. Spusťte `php artisan migrate --force`. Migrace převezme existující tabulky, doplní chybějící historické sloupce a indexy. Zachovává AI rozbory, upozornění, `pn_seen`, `post_log` a `meta`. Nevytváří nové klíče zdrojových záznamů.
+8. Nastavte DocumentRoot na `public/`. Uživateli webu povolte zápis do `data/`, `storage/` a `bootstrap/cache/`.
+9. Spusťte `php artisan config:cache`, `php artisan route:cache` a `php artisan view:cache`. Ověřte homepage, detail známého tisku, RSS, `/og?ct=221`, `/up` a Python MCP nad stejnou databází.
+10. Obnovte právě jeden plánovač synchronizace a místní AI úlohu. Nejprve ponechte `notify.dry_run=true` a ověřte výsledky. Potom vraťte původní nastavení publikování.
 
-### Požadavky
+Tabulky webu a jejich sloupce zůstávají kompatibilní s Pythonem, včetně JSON uloženého jako text.
+Schémata `steno` a `texty` migrace Laravelu nemění. Před nasazením vyzkoušejte tento postup na kopii databáze.
+Migrace schématu se neprovádí při veřejném HTTP požadavku.
 
-- PHP 8.1 nebo novější s rozšířeními `pdo_sqlite` (nebo `pdo_mysql`), `zip`, `curl`, `iconv`, `mbstring`
-- Apache s povoleným `.htaccess` (běžný sdílený hosting)
-- odchozí HTTPS na `https://www.psp.cz` (stahují se otevřená data a Word soubory)
-- cron na hostingu, nebo externí webcron (např. cron-job.org)
-- `memory_limit` aspoň 256 MB a delší běh skriptu (cron.php si sám nastaví 512 MB a 600 s, pokud to hosting dovolí)
+Základní migrace je záměrně nevratná, protože může převzít tabulky vytvořené původní aplikací.
+Pro návrat zastavte nové procesy, vraťte původní aplikaci, její konfiguraci a případně databázovou zálohu.
+Nepoužívejte `migrate:fresh` ani `migrate:refresh` na provozní databázi, smazaly by i sdílené tabulky.
 
-### Postup
+## Docker s PostgreSQL a MCP
 
-1. **Nahrajte obsah ZIPu** přes FTP do kořene webu (nebo do podadresáře). Adresář `deploy/` na hostingu
-   není potřeba, ale nevadí (je zakázaný přes `.htaccess`).
+Docker zachovává názvy služeb a volumes `appdata` a `pgdata`.
+Při aktualizaci spusťte Compose ve stejném projektu se stejným názvem projektu jako dosud.
+Nepoužívejte `down -v`, odstranilo by to data.
 
-2. **Vytvořte `config.php`**: zkopírujte `config.example.php` jako `config.php` a nastavte:
-   - `site_url` – veřejná adresa webu bez lomítka na konci, např. `https://hlidaczakonu.cz`
-   - `cron_token` – dlouhý náhodný řetězec (vygenerujte např. `openssl rand -hex 32`)
-   - `ai.enabled` → `true` (bez toho `ai_api.php` odmítne počítač s AI)
-   - `ai.remote_token` – další dlouhý náhodný řetězec pro AI část (prázdné = použije se `cron_token`)
-   - `notify.dry_run` nechte zatím `true` – nic se neposílá na sítě, příspěvky se jen zapisují do `data/posts.log`
-   - databáze: nechte výchozí SQLite (`db_dsn` beze změny) – jen tak se použije přibalená databáze.
-     MySQL/MariaDB (`db_dsn`, `db_user`, `db_pass`) je možná, ale začíná prázdná: stažení textů trvá
-     desítky hodinových běhů a AI rozbor celého období několik hodin.
-
-3. **Práva**: adresář `data/` i soubor `data/hlidac.sqlite` musí být zapisovatelné pro PHP
-   (adresář 775 / soubor 664, na některých hostinzích 777 / 666). SQLite si vedle databáze zakládá
-   pomocné soubory, proto musí jít zapisovat i do adresáře. Soubor nahrávejte přes FTP v **binárním** režimu.
-
-4. **Ověřte ochranu souborů** – tyto adresy musí vrátit chybu 403:
-   - `https://vas-web.cz/config.php`
-   - `https://vas-web.cz/data/hlidac.sqlite` (po prvním běhu)
-   - `https://vas-web.cz/app/Db.php`
-
-   Pokud se některý soubor zobrazí nebo stáhne, hosting ignoruje `.htaccess` – **nepokračujte** a řešte
-   s hostingem (jinak je veřejně dostupná konfigurace s tokeny).
-
-5. **První synchronizace** – v prohlížeči otevřete `https://vas-web.cz/cron.php?token=VAS_CRON_TOKEN`.
-   - Stáhne aktuální balíky dat Sněmovny (desítky sekund až minuty) a doplní, co přibylo od data balení.
-     Výsledkem je JSON s počty.
-   - Upozornění z přibalené historie jsou označená jako odeslaná, na sítě se nic zpětně nepošle.
-     Nové události od data balení vzniknou jako nová upozornění – dokud je `notify.dry_run = true`, jen se zapíšou.
-   - Pokud hosting běh utne (chyba 500/504), otevřete adresu znovu – import je opakovatelný.
-   - Web je hned plný: přehled, hlavní nálezy s titulky z AI, detaily tisků.
-
-6. **Pravidelné spouštění každou hodinu**, jednou z možností:
-   - cron na hostingu (má-li SSH/PHP CLI): `0 * * * * php /cesta/k/webu/bin/sync.php`
-   - webcron: `https://vas-web.cz/cron.php?token=VAS_CRON_TOKEN` každou hodinu, timeout co nejdelší
-
-   Každý běh stáhne nová data a k tomu až 40 textů PN a 15 textů zákonů (Word z psp.cz) – s přibalenou
-   databází jde jen o dokumenty přibylé od data balení. (Kdo začíná s prázdnou databází a má SSH, může
-   historii stáhnout najednou: `php bin/texts.php`, desítky minut.)
-
-7. **Kontrola**: na webu se objeví přehled, tisky a skóre. Datum „Data aktualizována“ v hlavičce
-   ukazuje poslední běh synchronizace.
-
----
-
-## Část 2: AI rozbor na počítači s Claude Code
-
-Ano, je to **naplánovaná úloha (cron)** – jen ne na hostingu, ale na počítači, kde je nainstalovaný
-a přihlášený Claude Code. Na Macu se místo cronu používá launchd (cron na macOS nemá přístup ke klíčence,
-kde je uložené přihlášení Claude Code).
-
-### Požadavky
-
-- Mac (nebo Linux), který je většinu času zapnutý. Když je vypnutý nebo spí, nic se nerozbije –
-  rozbor se dožene při dalším běhu.
-- **Claude Code** přihlášený k předplatnému Claude (Pro nebo Max): https://claude.com/claude-code
-- **PHP 8.1+** v příkazové řádce. Na Macu: `brew install php`
-- **Žádný `ANTHROPIC_API_KEY`** – skript ho záměrně maže, aby se rozbor účtoval z předplatného, ne z API.
-
-### Postup (macOS)
-
-1. **Rozbalte ZIP** do trvalé složky, např. `~/hlidac_zakonu`. Konfigurace `config.php` tu potřeba není
-   a přibalená databáze se tu nepoužívá (rozbor pracuje s databází na hostingu).
-
-2. **Přihlaste Claude Code** (jednou):
-   ```bash
-   claude
-   ```
-   V Claude Code zadejte `/login`, zvolte přihlášení předplatným a pak `/exit`.
-   Ověření, že funguje bez interakce:
-   ```bash
-   echo 'Odpověz jen: OK' | claude -p --model claude-haiku-5-5
-   ```
-
-3. **Nastavení připojení k webu**:
-   ```bash
-   cd ~/hlidac_zakonu
-   cp deploy/ai-remote.env.example deploy/ai-remote.env
-   ```
-   V `deploy/ai-remote.env` vyplňte `HLIDAC_URL` (adresa webu) a `HLIDAC_TOKEN` (hodnota `ai.remote_token`
-   z `config.php` na hostingu). Soubor obsahuje tajný token – nikam ho nenahrávejte.
-
-4. **Ruční zkušební běh**:
-   ```bash
-   bash deploy/ai-remote.sh
-   tail -n 30 data/ai-remote.log
-   ```
-   V logu uvidíte řádky `OK tisk 221 (tisk 221): závažnost 8/10`. Chyba `Neplatný token` = špatný token,
-   `AI rozbor je vypnutý` = na hostingu chybí `ai.enabled = true`.
-
-   S přibalenou databází posoudí jen texty přibylé od data balení (obvykle minuty; pokud žádné nejsou,
-   vypíše `{"reviewed":0,"errors":0}` – to je v pořádku). S prázdnou databází (MySQL) by první běh trval
-   ~3 hodiny; Mac pak nesmí usnout: `caffeinate -i bash deploy/ai-remote.sh`. Skript lze přerušit (Ctrl+C),
-   další běh naváže.
-
-5. **Naplánování každou hodinu (launchd)**:
-   ```bash
-   cd ~/hlidac_zakonu
-   sed "s#CESTA_K_PROJEKTU#$PWD#g" deploy/cz.hlidac.ai.plist > ~/Library/LaunchAgents/cz.hlidac.ai.plist
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/cz.hlidac.ai.plist
-   ```
-   Úloha se spustí hned a pak každou hodinu (po probuzení Macu dožene prošvihnutý termín).
-   Souběžné běhy hlídá zámek, takže dlouhý první běh se nepřekrývá s dalším.
-
-   Kontrola a správa:
-   ```bash
-   launchctl print gui/$(id -u)/cz.hlidac.ai | grep -E "state|last exit"   # stav úlohy
-   tail -f ~/hlidac_zakonu/data/ai-remote.log                               # průběh
-   launchctl kickstart gui/$(id -u)/cz.hlidac.ai                             # spustit hned
-   launchctl bootout gui/$(id -u)/cz.hlidac.ai                               # vypnout
-   ```
-
-### Postup (Linux)
-
-Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým poběží cron), pak `crontab -e`:
-
-```
-0 * * * * /bin/bash /home/UZIVATEL/hlidac_zakonu/deploy/ai-remote.sh
+```bash
+cp docker/.env.example docker/.env
+cp config.example.php docker/config.php
 ```
 
-### Co dělá jeden běh
+Do `docker/.env` nastavte `DB_PASSWORD` a `APP_KEY`, který získáte pomocí `php artisan key:generate --show`.
+Do `docker/config.php` nastavte veřejnou URL, tokeny, AI, sítě a připojení:
 
-1. `php bin/ai.php --remote=… --all` – texty bez rozboru posoudí levný model **Haiku** (`claude -p`, bez nástrojů,
-   bez přístupu k souborům; text jde do modelu jen jako vstup).
-2. `php bin/ai.php --remote=… --all --verify` – nálezy se závažností ≥ 6 znovu posoudí silnější model **Sonnet**;
-   jeho výsledek nahradí první rozbor (na webu „ověřeno druhým modelem“).
-3. Po každé dávce web přepočítá skóre.
+```php
+'db_dsn' => 'pgsql:host=db;port=5432;dbname=hlidac',
+'db_user' => 'hlidac',
+'db_pass' => getenv('DB_PASSWORD'),
+```
 
-Limit předplatného: při běžném provozu (desítky nových textů denně) se nepozná. Když se limit při prvním
-dohánění vyčerpá, rozbory skončí chybou a doženou se v dalších hodinách.
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
 
----
+Web před spuštěním Apache provede migrace. Scheduler počká na zdravý web a spouští synchronizaci každou hodinu.
+První synchronizaci lze provést ručně:
 
-## Část 3: Sociální sítě (až bude web odladěný)
+```bash
+docker compose -f docker/docker-compose.yml exec -u www-data web php artisan hlidac:sync
+```
 
-V `config.php` na hostingu vyplňte klíče sítí (`notify.bluesky`, `mastodon`, `telegram`, `x`), u každé
-`enabled => true` a nakonec `notify.dry_run => false`. Posílají se jen upozornění se skóre ≥ `notify.min_score`
-(výchozí 50), nejvýš `max_posts_per_run` za běh. Před přepnutím projděte `data/posts.log` (přes FTP),
-co by se posílalo. Klíče patří jen do `config.php` na hostingu, nikdy do gitu ani do ZIPu.
+Python služby `rag-ingest` a `mcp` dál používají stejnou PostgreSQL databázi.
+MCP tokeny spravujte podle `rag/README.md`. Databáze nemá veřejný port.
+Log aplikace jde v Dockeru na stderr, sledujte ho pomocí `docker compose logs web sync` v adresáři `docker/`.
+OG obrázky a stažené zdroje zůstávají ve volume `appdata`.
 
----
+## Cron a webcron
 
-## Aktualizace
+Na běžném serveru spouštějte Laravel scheduler každou minutu:
 
-Nahrajte nové soubory přes FTP **kromě** `config.php` a adresáře `data/` – při aktualizaci databázi z balíku
-nikdy nepřepisujte, na hostingu je novější než v ZIPu. Nové sloupce databáze se
-doplní samy při prvním běhu. Na počítači s AI stačí přepsat soubory ve složce (kromě `deploy/ai-remote.env`
-a `data/`).
+```cron
+* * * * * cd /cesta/k/projektu && php artisan schedule:run >> /dev/null 2>&1
+```
 
-## Hlášení chyb (Sentry, volitelné)
+Uvnitř scheduleru je synchronizace naplánovaná jednou za hodinu. Docker používá `schedule:work`, další cron není potřeba.
+Pro okamžitý běh slouží `php artisan hlidac:sync`. Původní `php bin/sync.php` funguje jako kompatibilní vstup.
+Pořadí importu, upozornění, skórování, textů, AI a publikování zůstalo zachováno.
+Sdílený souborový zámek v adresáři dat chrání i souběh webcronu a CLI.
 
-Vyplňte `sentry.dsn` v `config.php` (blok je v `config.example.php`); prázdné = vypnuto, nic se neodesílá.
-Prostředí určuje `sentry.environment`, verzi nasazení `SENTRY_RELEASE` (v Dockeru ji nastaví `docker/redeploy.sh`).
-Do událostí se citlivé údaje (tokeny, hesla z řetězců připojení, e-maily, IP, cesty serveru) před odesláním odstraňují.
-Limit pro web i synchronizaci dohromady: nejvýš 10 událostí za hodinu a stejná chyba jednou za hodinu (soubory
-v `data/cache/sentry/`; když adresář nejde zapsat, platí jen limit 20 událostí na jeden běh).
+Pro hosting bez cronu zůstává `GET /cron.php?token=...`. Podporuje i hlavičku `X-Hlidac-Token`,
+která nevkládá token do přístupového logu. Nastavte dlouhý náhodný `HLIDAC_CRON_TOKEN`.
 
-## Řešení problémů
+## Vzdálený AI rozbor
 
-| Příznak | Příčina / řešení |
-|---|---|
-| `cron.php` vrací `Neplatný token` | `cron_token` v adrese neodpovídá `config.php` |
-| `cron.php` končí 500/504 | hosting utne dlouhý běh; spusťte znovu, případně snižte `pn_text.per_run` a `tisk_text.per_run` |
-| na webu „Data zatím nebyla načtena“ | první synchronizace neproběhla; viz Část 1, bod 5 |
-| `data/` nelze zapisovat | práva adresáře `data/` (775/777) |
-| AI: `claude CLI nenalezeno` | `claude` není v `~/.local/bin`, `/opt/homebrew/bin` ani `/usr/local/bin`; doplňte cestu do PATH ve skriptu |
-| AI: `Not logged in` / chyba přihlášení | znovu `claude` → `/login` pod stejným uživatelem, pod kterým běží launchd |
-| AI: `AI rozbor je vypnutý` | na hostingu `ai.enabled => true` |
-| AI: nic se neděje | `launchctl print gui/$(id -u)/cz.hlidac.ai`, log `data/ai-launchd.log` a `data/ai-remote.log` |
-| na webu chybí titulky z AI | AI část ještě neproběhla, nebo tisk nemá text ve Wordu na psp.cz |
+Počítač s přihlášeným Claude CLI potřebuje také PHP 8.3+ a `composer install`.
+Místní databáze v režimu `--remote` nemusí obsahovat tabulky, ale aplikace potřebuje zapisovatelný adresář dat.
 
-## Bezpečnost
+```bash
+HLIDAC_TOKEN=... php artisan hlidac:ai --remote=https://web.cz --all
+HLIDAC_TOKEN=... php artisan hlidac:ai --remote=https://web.cz --verify --all
+php artisan hlidac:ai --resanitize
+php artisan hlidac:texts --reanalyze
+```
 
-- `config.php` a `deploy/ai-remote.env` obsahují tajné tokeny – nesdílet, neposílat e-mailem, nedávat do gitu.
-- `ai_api.php` přijímá jen požadavky s tokenem; výsledky AI web ukládá jen tehdy, když citace sedí na text zákona.
-- Při podezření na únik tokenu ho změňte v `config.php` (a v `deploy/ai-remote.env`).
-- Na hosting nahrávejte **ZIP z `bin/package.sh`**, ne celý pracovní adresář z gitu: balík neobsahuje `.git`,
-  testy, `docker/.env`, `deploy/ai-remote.env` ani místní logy.
-- Ochrana `config.php` a `data/` stojí na `.htaccess` (bod 4 výše). Pokud to hosting umožňuje, dejte citlivé
-  soubory **mimo veřejný kořen webu**: konfiguraci přes proměnnou prostředí, např. v `.htaccess`
-  `SetEnv HLIDAC_CONFIG /home/ucet/private/config.php`, a databázi přes `db_dsn`, např.
-  `'sqlite:/home/ucet/private/hlidac.sqlite'`. V `data/` pak zůstane jen cache a zámek synchronizace.
-- Zápis do `data/` dejte jen účtu, pod kterým běží PHP (775/664), 777/666 jen tam, kde to hosting jinak nedovolí.
+Původní `bin/ai.php` a `bin/texts.php` přijímají stejné argumenty a předávají je Artisanu.
+`deploy/ai-remote.sh` a plánování přes launchd mohou zůstat. Na webu nastavte `ai.enabled=true`
+a vlastní AI token. API zachovává `/ai_api.php?action=queue|result|done` a hlavičku `X-Hlidac-Token`.
+Ověření citací, verze promptů a druhé kolo rozboru zůstávají stejné.
+
+## Sdílený hosting a FTP
+
+Hosting musí umět PHP 8.3 a DocumentRoot v `public/`, případně umožnit uložit zbytek aplikace mimo veřejný adresář.
+Kořenové `.htaccess` aplikace přístup blokuje. Pouhé nahrání všech souborů do veřejného kořene původním postupem nestačí.
+Composer lze spustit lokálně a nahrát také `vendor/`. Před uploadem nevytvářejte konfigurační cache s místními cestami.
+Pro balík slouží `bin/package.sh`, který vynechává `.env`, provozní konfiguraci, cache a logy.
+Po nahrání je nutné provést migrace přes SSH nebo nástroje hostingu. Veřejný endpoint pro migrace aplikace neposkytuje.
+
+## Ověření
+
+```bash
+composer test
+php artisan view:cache
+php artisan route:cache
+```
+
+`tests/run.php` ověřuje import nad skutečnými řádky PSP, opakované synchronizace, skóre, AI pojistky a stránky.
+PHPUnit ověřuje HTTP rozhraní, tokeny, RSS, OG obrázky, převzetí staré databáze a příkazy.
+Pro kontrolu PostgreSQL použijte samostatnou prázdnou testovací databázi:
+
+```bash
+HLIDAC_TEST_DSN='pgsql:host=127.0.0.1;dbname=hlidac_test' HLIDAC_TEST_USER=postgres php tests/run.php
+```
+
+Testy nikdy nesměrujte na provozní databázi, import přepisuje tabulky zdrojových dat.
+
+Po převzetí upstream oprav spusťte `php artisan migrate --force`. Nová migrace doplní lhůtu výborů,
+volební období upozornění, datum kontroly textu a uložený výsledek prvního kola AI.
+Na MySQL rozšíří text dokumentu a AI JSON na MEDIUMTEXT. Před migrací zálohujte databázi.
+
+Neúspěšné stažení textů se opakuje podle `pn_text.retry_hours` a `tisk_text.retry_hours`.
+`tisk_text.refresh_days` a `refresh_per_run` řídí kontrolu změněného dokumentu na psp.cz.
+`notify.hold_hours` určuje, jak dlouho upozornění pod prahem čeká na rozbor.
+Pravidlovou analýzu již uložených textů obnovíte příkazem `php artisan hlidac:texts --reanalyze`
+nebo kompatibilním `php bin/reanalyze.php`.
+
+Migrace `2026_11_19_120000_add_bill_votes` doplňuje tabulky `hlasovani` a `hlasovani_kluby`
+a vazbu `kroky.id_hlasovani`. Před spuštěním nové synchronizace proveďte `php artisan migrate --force`.
+Existující hlasování z původní aplikace zůstanou zachována.
+
+Migrace `2026_11_19_140000_add_text_and_ai_revisions` zavádí historii textů a rozborů a archiv minulých
+období. Spusťte ji před novou synchronizací nebo AI příkazy. První synchronizace doplní dosavadní
+texty a rozbory do historie; pracovní data a fronta upozornění se tím nemění. Archiv a historie
+zvyšují objem databáze a musí být zahrnuté do záloh.
+
+## Hlášení chyb do Sentry
+
+PHP používá `sentry.dsn` a `sentry.environment` v konfiguraci nebo `SENTRY_DSN` a `SENTRY_ENVIRONMENT` v prostředí. Prázdné DSN hlášení vypíná. Laravel výjimky hlásí přes svůj handler; chyby pomocných importů a publikování se hlásí i při pokračování synchronizace. Odesílač filtruje citlivá data, deduplikuje chyby a omezuje počet událostí. `docker/redeploy.sh` nastaví `SENTRY_RELEASE` podle nasazeného commitu. Python ingest a MCP používají samostatné `SENTRY_DSN_RAG`, viz `rag/README.md`.

@@ -1,11 +1,11 @@
 <?php
-// Hlasování Sněmovny k tiskům z otevřených dat psp.cz (hl-{rok}ps.zip, schuze.zip, poslanci.zip):
-// výsledek, počty a rozdělení podle poslaneckých klubů. Do skóre nevstupuje, jen se zobrazuje u tisku.
-//
-// Párování hlasování s tiskem:
-//  1. krok v historii tisku (hist.unl, sloupec id_hlasovani) – závěrečná hlasování o tisku,
-//  2. bod schůze (bod_schuze.unl: schůze + číslo bodu → id_tisk) a zároveň stejný krátký název tisku
-//     v popisu hlasování; číslo bodu se mezi verzemi pořadu schůze opakuje, název to pojistí.
+
+
+
+
+
+
+
 
 declare(strict_types=1);
 
@@ -13,7 +13,7 @@ namespace Hlidac;
 
 final class Votes
 {
-    // kód hlasu poslance → sloupec souhrnu
+
     private const VOTE = [
         'A' => 'pro', 'B' => 'proti', 'N' => 'proti',
         'C' => 'zdrzel', 'F' => 'zdrzel', 'K' => 'zdrzel',
@@ -34,19 +34,19 @@ final class Votes
         $package = 'hl-' . $year . 'ps';
         $prefix = 'hl' . $year;
 
-        // tisky aktuálního období: id_tisk → ct a krátký název
+
         $tisky = [];
         foreach ($this->db->all('SELECT id_tisk, ct, nazev FROM tisky') as $t) {
             $tisky[(int)$t['id_tisk']] = ['ct' => (int)$t['ct'], 'nazev' => self::normName((string)$t['nazev'])];
         }
 
-        // 1. hlasování z kroků historie tisku
+
         $byStep = [];
         foreach ($this->db->all('SELECT ct, id_hlasovani FROM kroky WHERE id_hlasovani IS NOT NULL AND id_hlasovani > 0') as $k) {
             $byStep[(int)$k['id_hlasovani']] = (int)$k['ct'];
         }
 
-        // 2. body schůzí: „schůze|bod“ → tisky
+
         $schuze = [];
         foreach ($this->source->rows('schuze', 'schuze.unl') as $c) {
             if ((int)($c[1] ?? 0) === $obdobiId) {
@@ -66,7 +66,7 @@ final class Votes
             $byCt[$t['ct']] = $t;
         }
 
-        // souhrny hlasování
+
         $votes = [];
         foreach ($this->source->rows($package, $prefix . 's.unl') as $c) {
             if ((int)($c[1] ?? 0) !== $obdobiId) {
@@ -95,7 +95,7 @@ final class Votes
             ];
         }
 
-        // rozdělení podle klubů (klub poslance ke dni hlasování)
+
         $clubs = $this->clubs($obdobiId);
         $poslanci = $this->deputies($obdobiId);
         $perClub = [];
@@ -140,13 +140,13 @@ final class Votes
 
     public static function normName(string $name): string
     {
-        // krátký název bez hvězdiček (psp.cz jimi značí hlasování k PN) a mezer navíc
+
         return mb_strtolower(trim(preg_replace('~\s+~u', ' ', rtrim($name, " *")) ?? $name));
     }
 
     private static function isoDate(string $date, string $time): string
     {
-        // „03.03.2026“ + „21:01“ → „2026-03-03 21:01“
+
         if (!preg_match('~^(\d{2})\.(\d{2})\.(\d{4})$~', trim($date), $m)) {
             return '';
         }
@@ -155,7 +155,7 @@ final class Votes
 
     private function periodYear(int $obdobiId): string
     {
-        // rok začátku období (organy.unl, od_organ „04.10.2025“) je v názvu balíku hlasování
+
         foreach ($this->source->rows('poslanci', 'organy.unl') as $c) {
             if ((int)$c[0] === $obdobiId && preg_match('~(\d{4})$~', trim($c[6] ?? ''), $m)) {
                 return $m[1];
@@ -166,7 +166,7 @@ final class Votes
 
     private function deputies(int $obdobiId): array
     {
-        // id_poslanec → id_osoba v aktuálním období
+
         $out = [];
         foreach ($this->source->rows('poslanci', 'poslanec.unl') as $c) {
             if ((int)($c[4] ?? 0) === $obdobiId) {
@@ -178,7 +178,7 @@ final class Votes
 
     private function clubs(int $obdobiId): array
     {
-        // poslanecké kluby období (organy typu 1 pod orgánem období) a členství osob s daty
+
         $names = [];
         foreach ($this->source->rows('poslanci', 'organy.unl') as $c) {
             if ((int)($c[1] ?? 0) === $obdobiId && (int)($c[2] ?? 0) === 1) {

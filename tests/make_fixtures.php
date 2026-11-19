@@ -344,5 +344,7 @@ UNL,
     }
 }
 
-buildFixtures($argv[1] ?? __DIR__ . '/fixtures/src');
-echo "Fixtures OK\n";
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    buildFixtures($argv[1] ?? __DIR__ . '/fixtures/src');
+    echo "Fixtures OK\n";
+}

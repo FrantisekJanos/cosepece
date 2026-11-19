@@ -1,21 +1,11 @@
 <?php
-// Spuštění synchronizace z příkazové řádky / cronu: php bin/sync.php
 
 declare(strict_types=1);
-
-if (PHP_SAPI !== 'cli') {
-    http_response_code(403);
-    exit;
-}
-
-require dirname(__DIR__) . '/app/bootstrap.php';
-
-try {
-    $result = Hlidac\Sync::run();
-    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), "\n";
-    exit(0);
-} catch (Throwable $ex) {
-    Hlidac\Sentry::capture($ex, ['kde' => 'bin/sync.php']);
-    fwrite(STDERR, 'Chyba: ' . $ex->getMessage() . "\n");
-    exit(1);
-}
+require dirname(__DIR__) . '/vendor/autoload.php';
+$app = require dirname(__DIR__) . '/bootstrap/app.php';
+$kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+$input = new Symfony\Component\Console\Input\ArgvInput(array_merge([$argv[0], 'hlidac:sync'], array_slice($argv, 1)));
+$output = new Symfony\Component\Console\Output\ConsoleOutput();
+$status = $kernel->handle($input, $output);
+$kernel->terminate($input, $status);
+exit($status);

@@ -1,7 +1,5 @@
 <?php
-// Stažení textu samotného návrhu zákona (Word ze stránky sněmovního tisku) a pravidlová analýza:
-// zpětné použití a změny lhůt pro vymáhání. Zásadní změny bývají přímo v poslaneckých návrzích,
-// ne jen v pozměňovacích návrzích (např. tisk 221: lhůta pro vymáhání dotací 4 roky i zpětně).
+
 
 declare(strict_types=1);
 
@@ -36,11 +34,11 @@ final class TiskText
                 $this->save($ct, null, '', mb_substr($ex->getMessage(), 0, 500));
                 $stats['errors']++;
             }
-            usleep(300_000); // šetrně k serveru psp.cz
+            usleep(300_000);
         }
 
-        // stažené texty jednou za refresh_days znovu ověříme: když psp.cz dokument vymění (jiné idd),
-        // stáhne se nové znění a rozbor AI se udělá znovu (#2 bod 10)
+
+
         $stats['refreshed'] = 0;
         $room = min((int)($cfg['refresh_per_run'] ?? 5), max(0, $limit - count($rows)));
         $stale = self::staleQueue($this->db, $room, (int)($cfg['refresh_days'] ?? 7));
@@ -54,7 +52,7 @@ final class TiskText
                 }
                 $this->db->run('UPDATE tisk_text SET checked_at = ? WHERE ct = ?', [date('Y-m-d H:i:s'), $ct]);
             } catch (\Throwable) {
-                // dočasná chyba: zkusíme při další kontrole, uložený text zůstává
+
             }
             usleep(300_000);
         }
@@ -63,7 +61,7 @@ final class TiskText
 
     public static function staleQueue(Db $db, int $limit, int $refreshDays = 7): array
     {
-        // stažené texty rozpracovaných tisků, které se nejdéle neověřovaly proti psp.cz
+
         if ($limit <= 0) {
             return [];
         }
@@ -77,8 +75,8 @@ final class TiskText
 
     public static function queue(Db $db, int $limit, int $retryHours = 24): array
     {
-        // vše kromě tisků, které už jsou zákonem (vyhlášeno); od nejnověji předložených.
-        // Neúspěšné stažení (chyba sítě, chybějící Word) se zkusí znovu po $retryHours, až po nových textech.
+
+
         $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, $retryHours));
         return $db->all(
             "SELECT t.* FROM tisky t
@@ -93,7 +91,7 @@ final class TiskText
 
     private function findDocxUrl(int $ct, int $obdobi): ?string
     {
-        // stránka „Soubory sněmovního tisku“: <a href="/sqw/text/orig2.sqw?idd=..." title="Dokument DOCX">
+
         $base = 'https://www.psp.cz';
         $html = Http::get($base . '/sqw/text/tiskt.sqw?o=' . $obdobi . '&ct=' . $ct . '&ct1=0');
         $html = iconv('CP1250', 'UTF-8//IGNORE', $html) ?: $html;
@@ -105,10 +103,10 @@ final class TiskText
 
     public static function analyze(string $text): array
     {
-        // normativní část (bez důvodové zprávy) a signály zpětného použití a lhůt
+
         $normative = PnText::normativePart($text);
         $signals = PnText::procedureSignals($normative);
-        // zákony, které mění samotný návrh (pozměňovací návrh k nim pak není přílepek)
+
         $laws = PnText::lawsIn($normative);
         if ($laws !== []) {
             $signals['laws'] = $laws;
@@ -118,14 +116,14 @@ final class TiskText
 
     public function save(int $ct, ?string $docxUrl, string $text, ?string $error): void
     {
-        // uložení (nového) znění tisku; dosavadní text a rozbor zůstanou v historii verzí (#2 bod 2)
+
         $a = self::analyze($text);
         $own = !$this->db->pdo->inTransaction();
         if ($own) {
             $this->db->pdo->beginTransaction();
         }
         try {
-            // stav, který v historii ještě není (data z doby před jejím zavedením), se zapíše dřív, než zmizí
+
             Revisions::recordText($this->db, 'tisk', $ct, 'zaloha');
             Revisions::recordAi($this->db, 'tisk', $ct, 'zaloha');
             $this->replaceRow($ct, $docxUrl, $text, $a, $error);

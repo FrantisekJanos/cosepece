@@ -1,0 +1,43 @@
+name: PHP tests
+
+on:
+  push:
+    paths: ['**.php', 'composer.*', 'phpunit.xml', 'phpstan.neon', 'resources/**', '.github/workflows/php-tests.yml']
+  pull_request:
+    paths: ['**.php', 'composer.*', 'phpunit.xml', 'phpstan.neon', 'resources/**', '.github/workflows/php-tests.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: hlidac_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
+        with:
+          php-version: '8.3'
+          extensions: curl, mbstring, pdo_sqlite, pdo_pgsql, zip, gd
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist
+      - run: composer analyse
+      - run: composer test
+      - name: PostgreSQL regression
+        run: php tests/run.php
+        env:
+          HLIDAC_TEST_DSN: 'pgsql:host=127.0.0.1;dbname=hlidac_test'
+          HLIDAC_TEST_USER: postgres
+      - run: php artisan view:cache
+      - run: php artisan route:cache

@@ -1,5 +1,5 @@
 <?php
-// Odesílač chyb do Sentry bez závislostí: výjimky, varování a fatální chyby, s filtrem citlivých údajů.
+
 
 declare(strict_types=1);
 
@@ -9,11 +9,11 @@ use Throwable;
 
 final class Sentry
 {
-    private const MAX_EVENTS = 20;       // nejvýš událostí na jeden běh procesu
-    // sdílený strop přes všechny procesy (web je proces na každý požadavek, free plán má 5 000 událostí měsíčně)
-    private const SHARED_MAX_PER_HOUR = 10;  // nejvýš událostí za hodinu (podle hodin) ze všech procesů
-    private const SHARED_FP_SECONDS = 3600;  // stejný otisk nejvýš jednou za hodinu napříč procesy
-    private const MAX_STRING = 8000;     // delší řetězce se zkrátí
+    private const MAX_EVENTS = 20;
+
+    private const SHARED_MAX_PER_HOUR = 10;
+    private const SHARED_FP_SECONDS = 3600;
+    private const MAX_STRING = 8000;
     private const WARNING_MASK = E_WARNING | E_USER_WARNING | E_USER_ERROR | E_RECOVERABLE_ERROR;
     private const FATAL_MASK = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR;
 
@@ -25,13 +25,13 @@ final class Sentry
     private static string $environment = '';
     private static string $release = '';
     private static int $sent = 0;
-    private static bool $failed = false; // po selhání odeslání se pro zbytek procesu už nic neposílá
+    private static bool $failed = false;
     private static array $seen = [];
-    private static ?string $throttleDir = null; // adresář sdíleného omezení; null nebo '' = jen omezení v procesu
+    private static ?string $throttleDir = null;
     /** @var callable|null function (string $url, array $headers, string $body): ?bool; false = selhání */
     private static $transport = null;
 
-    public static function init(array $cfg, string $component): void
+    public static function init(array $cfg, string $component, bool $registerHandlers = true): void
     {
         $dsn = self::parseDsn((string)($cfg['dsn'] ?? ''));
         if ($dsn === null) {
@@ -44,8 +44,12 @@ final class Sentry
         self::$release = (string)(getenv('SENTRY_RELEASE') ?: '');
         self::$throttleDir = array_key_exists('throttle_dir', $cfg)
             ? (string)$cfg['throttle_dir']
-            : (defined('APP_ROOT') ? APP_ROOT . '/data/cache/sentry' : null);
+            : (defined('APP_ROOT') ? hlidacDataPath('cache/sentry') : null);
         self::$enabled = true;
+
+        if (!$registerHandlers) {
+            return;
+        }
 
         set_exception_handler(function (Throwable $ex): void {
             self::$exceptionHandled = true;
@@ -60,7 +64,7 @@ final class Sentry
             if (($no & self::WARNING_MASK) !== 0 && (error_reporting() & $no) !== 0) {
                 self::message($str, $no === E_USER_ERROR ? 'error' : 'warning', ['file' => self::relPath($file), 'line' => $line]);
             }
-            return false; // PHP chybu dál zaloguje
+            return false;
         });
         if (!self::$shutdownRegistered) {
             self::$shutdownRegistered = true;
@@ -152,7 +156,7 @@ final class Sentry
 
     public static function scrub(mixed $data, ?string $key = null): mixed
     {
-        // hodnota pod citlivým klíčem se zahodí celá
+
         if ($key !== null && preg_match('/token|pass|secret|key|cookie|authorization|auth/i', $key)) {
             return '[Filtered]';
         }
@@ -166,19 +170,19 @@ final class Sentry
         if (!is_string($data)) {
             return $data;
         }
-        // regexy běží jen nad začátkem textu (obří řetězce by je zbytečně zdržely), konečné zkrácení až po nich
+
         $long = mb_strlen($data) > self::MAX_STRING;
         $s = $long ? mb_substr($data, 0, 2 * self::MAX_STRING) : $data;
         $s = Http::redact(self::stripPaths($s));
         if ($s === '' && $data !== '') {
-            return '[unscrubbed]'; // Http::redact/stripPaths vrací '' při selhání regexu
+            return '[unscrubbed]';
         }
         $patterns = [
-            // hesla v řetězcích připojení (PDO, libpq "host=db password=…")
+
             '/\b(password|pass|pwd)=\S+/i' => '$1=***',
             '/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/' => '[email]',
             '/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/' => '[ip]',
-            // IPv6: se zkratkou "::" nebo aspoň 3 dvojtečky mezi hex skupinami (čas 12:30:45 tak zůstane)
+
             '/(?<![\w:])(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?![\w:])/i' => '[ip]',
             '/(?<![\w:])::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}(?![\w:])/i' => '[ip]',
             '/(?<![\w:])(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?![\w:])/i' => '[ip]',
@@ -186,7 +190,7 @@ final class Sentry
         foreach ($patterns as $rx => $repl) {
             $r = preg_replace($rx, $repl, $s);
             if ($r === null) {
-                return '[unscrubbed]'; // selhání regexu (např. neplatné UTF-8): surový text nikdy neodejde
+                return '[unscrubbed]';
             }
             $s = $r;
         }
@@ -232,20 +236,20 @@ final class Sentry
                 'X-Sentry-Auth: Sentry sentry_version=7, sentry_client=hlidac/1.0, sentry_key=' . self::$dsn['key'],
             ];
             $fn = self::$transport ?? [self::class, 'curlTransport'];
-            // transport vrací false při selhání (síť, HTTP >= 400); výjimka znamená totéž
+
             if ($fn(self::$dsn['endpoint'], $headers, $body) === false) {
                 self::$failed = true;
             }
         } catch (Throwable) {
             self::$failed = true;
-            // hlášení chyb nesmí samo shodit aplikaci
+
         }
     }
 
     private static function sharedAllow(string $fingerprint): bool
     {
-        // sdílené omezení přes soubory: otisk nejvýš jednou za hodinu a strop událostí za hodinu
-        // ze všech procesů; když adresář nejde použít, platí jen omezení v procesu (true)
+
+
         $dir = self::$throttleDir;
         if ($dir === null || $dir === '') {
             return true;
@@ -268,7 +272,7 @@ final class Sentry
             if ($h === false) {
                 return true;
             }
-            // zámek bez čekání, nejvýš 5 pokusů po 1 ms; obsazený zámek = jen omezení v procesu
+
             $locked = false;
             for ($i = 0; $i < 5 && !$locked; $i++) {
                 $locked = flock($h, LOCK_EX | LOCK_NB);
@@ -304,7 +308,7 @@ final class Sentry
 
     private static function cleanThrottleDir(string $dir, int $now): void
     {
-        // staré počítadlo hodin (> 2 h) a prošlé otisky (> 1 h) se mažou příležitostně
+
         foreach ((array)glob($dir . '/hour-*') as $f) {
             if (is_string($f) && $now - (int)@filemtime($f) > 7200) {
                 @unlink($f);
@@ -335,14 +339,14 @@ final class Sentry
 
     private static function stripPaths(string $text): string
     {
-        // absolutní cesty serveru se v událostech nesmí objevit
+
         $text = str_replace('\\', '/', $text);
         $prefixes = ['/var/www/html/', '/var/www/'];
         if (defined('APP_ROOT')) {
             $prefixes[] = str_replace('\\', '/', APP_ROOT) . '/';
         }
         foreach ($prefixes as $prefix) {
-            // jen celá cesta od začátku (ne uprostřed jiné cesty, např. /app/ v /var/www/html/app/)
+
             $text = (string)preg_replace('~(?<![\w./-])' . preg_quote($prefix, '~') . '~', '', $text);
         }
         return $text;
@@ -355,7 +359,7 @@ final class Sentry
 
     private static function frames(Throwable $ex): array
     {
-        // Sentry chce framy od nejstaršího volání; poslední je místo vyhození
+
         $frames = [];
         foreach (array_reverse($ex->getTrace()) as $t) {
             if (!isset($t['file'])) {

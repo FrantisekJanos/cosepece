@@ -1,6 +1,6 @@
 <?php
-// Jednoduchý rozdíl dvou textů po řádcích (a uvnitř změněných řádků po slovech), bez knihoven.
-// Myersův algoritmus s omezením počtu změn, aby porovnání dlouhých textů nezabralo moc paměti a času.
+
+
 
 declare(strict_types=1);
 
@@ -165,7 +165,7 @@ final class Diff
         $added = count(array_filter($ops, fn(array $o): bool => $o[0] === '+'));
         $removed = count(array_filter($ops, fn(array $o): bool => $o[0] === '-'));
 
-        // které stejné řádky ukázat jako kontext
+
         $show = [];
         foreach ($ops as $i => [$op]) {
             if ($op !== '=') {
@@ -202,7 +202,7 @@ final class Diff
                 $truncated = true;
                 break;
             }
-            // souvislý úsek smazaných a přidaných řádků; dvojice řádků porovnáme i po slovech
+
             $dels = [];
             $adds = [];
             while ($i < $count && $ops[$i][0] !== '=') {

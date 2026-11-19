@@ -76,7 +76,7 @@ final class Publisher
                 if ($this->isFinished($alert['alert_key'], $name)) {
                     continue;
                 }
-                $url = siteUrl('tisk.php?ct=' . (int)$alert['ct']);
+                $url = View::alertUrl($alert, true);
                 $text = $this->compose($alert, $notifier?->maxLength() ?? 300);
                 try {
                     if ($notifier === null) {

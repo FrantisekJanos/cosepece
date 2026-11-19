@@ -1079,6 +1079,30 @@ $states[] = is_int($peek());
 check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
 
+echo "Upozornění na připravované zákony\n";
+db()->run("DELETE FROM meta WHERE k = 'prep_alerts_bootstrapped'");
+(new Hlidac\AlertBuilder(db(), config()))->run();
+(new Hlidac\Scorer(db(), config()))->scoreAlerts();
+$prepAlerts = [];
+foreach (db()->all("SELECT alert_key, kind, ct, score, posted, title FROM alerts WHERE kind LIKE 'prep_%' AND alert_key NOT LIKE '%/%' ORDER BY alert_key") as $a) {
+    $prepAlerts[$a['alert_key']] = [$a['kind'], (int)$a['ct'], (int)$a['score'], (int)$a['posted']];
+}
+check('krátké připomínky (7 dní), mimo plán a schválení vládou; první běh se neposílá', $prepAlerts, [
+    'prep_plan:KORNUP000003' => ['prep_plan', 0, 30, 2],
+    'prep_review:KORNUP000003' => ['prep_velmi', 0, 50, 2],
+    'prep_vlada:KORNUP000003' => ['prep_vlada', 0, 0, 2],
+]);
+check('titulek s délkou připomínek', db()->value("SELECT title FROM alerts WHERE alert_key = 'prep_review:KORNUP000003'"),
+    'Připomínky k návrhu jen 7 dní: Návrh zákona, kterým se mění zákon č. 300/2013 Sb., o Vojenské policii.');
+check('druhý běh nic nepřidá', (new Hlidac\AlertBuilder(db(), config()))->run(), 0);
+$pa = db()->one("SELECT * FROM alerts WHERE alert_key = 'prep_review:KORNUP000003'");
+check('odkaz na připravovaný zákon, po odchodu do Sněmovny do VeKLEP', [Hlidac\View::alertUrl($pa),
+    (function () use ($pa) { db()->run("DELETE FROM pripravovane WHERE pid = 'KORNUP000003'"); return Hlidac\View::alertUrl($pa); })()],
+    ['pripravovane.php#prep-KORNUP000003', 'https://odok.gov.cz/portal/veklep/material/KORNUP000003/']);
+$apiPrep = array_values(array_filter((new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->alerts(Hlidac\Api::filters(['since' => '2026-09-29', 'min_score' => '50', 'limit' => '500'])),
+    fn($a) => $a['id'] === 'prep_review:KORNUP000003'));
+check('API: upozornění bez čísla tisku', array_key_exists(0, $apiPrep) ? [$apiPrep[0]['ct'], $apiPrep[0]['skore']] : 'chybí', [null, 50]);
+
 echo "Stránky\n";
 foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;

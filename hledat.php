@@ -13,12 +13,13 @@ use Hlidac\View;
 $search = new SearchIndex(db());
 
 if (!empty($_GET['index'])) {
-    $index = $search->load();
-    $etag = '"si' . SearchIndex::VERSION . '-' . md5((string)$index['built'] . '|' . ($index['sync'] ?? '')) . '"';
+    $body = $search->raw();
+    $etag = '"si' . SearchIndex::VERSION . '-' . md5($body) . '"';
     if (!headers_sent()) {
         header('Content-Type: application/json; charset=utf-8');
-        // adresa nese otisk synchronizace (View::searchForm), takže smí zůstat v mezipaměti déle
-        header('Cache-Control: public, max-age=' . (strlen((string)$_GET['index']) > 1 ? 86400 : 300));
+        // dlouhá mezipaměť jen pro adresu s otiskem aktuální synchronizace (View::searchForm);
+        // jiná hodnota by šla předem uhodnout a uložit pod ní starý index
+        header('Cache-Control: public, max-age=' . (hash_equals(SearchIndex::stamp(db()), (string)$_GET['index']) ? 86400 : 300));
         header('ETag: ' . $etag);
         header('X-Content-Type-Options: nosniff');
         if (trim((string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {
@@ -26,12 +27,11 @@ if (!empty($_GET['index'])) {
             exit;
         }
     }
-    $body = json_encode($index, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     // komprese (proxy před webem ji nemusí dělat); index je jinak několik set kB
     if (!headers_sent() && str_contains((string)($_SERVER['HTTP_ACCEPT_ENCODING'] ?? ''), 'gzip') && function_exists('gzencode')) {
         header('Content-Encoding: gzip');
         header('Vary: Accept-Encoding');
-        $body = gzencode((string)$body, 6);
+        $body = gzencode($body, 6);
     }
     echo $body;
     exit;

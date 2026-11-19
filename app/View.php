@@ -7,6 +7,9 @@ namespace Hlidac;
 
 final class View
 {
+    /** true = stránka nenačte měřicí skript (odpověď s čerstvě vydaným tokenem nemá číst žádný cizí skript) */
+    public static bool $noAnalytics = false;
+
     public const KIND_LABELS = [
         'newbill' => ['mp', 'Nový návrh'],
         'p90' => ['fast', '§ 90/2'],
@@ -83,7 +86,7 @@ final class View
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css?v=<?= (int)@filemtime(APP_ROOT . '/assets/style.css') ?>">
-<?php $umami = (array)config('umami', []); if (($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
+<?php $umami = (array)config('umami', []); if (!self::$noAnalytics && ($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
 <script defer src="<?= e($umami['src']) ?>" data-website-id="<?= e($umami['website_id']) ?>"<?php if (($umami['domains'] ?? '') !== ''): ?> data-domains="<?= e($umami['domains']) ?>"<?php endif; ?> data-do-not-track="true"></script>
 <?php endif; ?>
 </head>
@@ -117,7 +120,7 @@ final class View
         static $n = 0;
         $id = 'q' . (++$n);
         ?>
-<form class="search search-<?= e($variant) ?>" action="hledat.php" method="get" role="search" data-search="hledat.php?index=<?= e(substr(md5((string)db()->getMeta('last_sync', '')), 0, 10)) ?>">
+<form class="search search-<?= e($variant) ?>" action="hledat.php" method="get" role="search" data-search="hledat.php?index=<?= e(SearchIndex::stamp(db())) ?>">
   <div class="search-box">
     <label for="<?= $id ?>" class="sr-only">Hledat tisky, zákony, pozměňovací návrhy a témata</label>
     <input id="<?= $id ?>" name="q" type="search" value="<?= e($q) ?>" placeholder="Tisk, zákon, téma nebo poslanec" autocomplete="off" spellcheck="false"

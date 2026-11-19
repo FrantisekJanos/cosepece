@@ -9,10 +9,11 @@ require_once __DIR__ . '/app/bootstrap.php';
 use Hlidac\OgCard;
 use Hlidac\Repo;
 
-$send = function (string $path): never {
+// $fallback = záložní obrázek (limit dotazů, chyba): ten se pod adresou tisku nesmí uložit do mezipaměti
+$send = function (string $path, bool $fallback = false): never {
     header('Content-Type: image/png');
     header('Content-Length: ' . filesize($path));
-    header('Cache-Control: public, max-age=86400');
+    header('Cache-Control: ' . ($fallback ? 'no-store' : 'public, max-age=86400'));
     header('X-Content-Type-Options: nosniff');
     readfile($path);
     exit;
@@ -20,7 +21,7 @@ $send = function (string $path): never {
 
 // kreslení obrázku je náročnější: nad limit dotazů z jedné IP jen statický záložní obrázek
 if (!OgCard::available() || Hlidac\RateLimit::hit('og', Hlidac\RateLimit::limit('og', 120)) !== null) {
-    $send(__DIR__ . '/assets/og-default.png');
+    $send(__DIR__ . '/assets/og-default.png', true);
 }
 
 try {
@@ -34,5 +35,5 @@ try {
 } catch (Throwable $e) {
     error_log('og.php: ' . $e->getMessage());
     Hlidac\Sentry::capture($e, ['kde' => 'og.php']);
-    $send(__DIR__ . '/assets/og-default.png');
+    $send(__DIR__ . '/assets/og-default.png', true);
 }

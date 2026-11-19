@@ -23,13 +23,7 @@ final class RateLimit
         if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
             return null;
         }
-        // IPv6: celá /64 síť se počítá jako jeden klient (jinak by stačilo měnit adresu v rámci sítě)
-        if (str_contains($ip, ':')) {
-            $packed = @inet_pton($ip);
-            if ($packed !== false) {
-                $ip = bin2hex(substr($packed, 0, 8)) . '::/64';
-            }
-        }
+        $ip = self::client($ip);
         $salt = (string)config('cron_token', '') . APP_ROOT;
         $path = $dir . '/' . $bucket . '_' . substr(hash('sha256', $salt . '|' . $ip), 0, 32);
         $fh = @fopen($path, 'c+');
@@ -63,6 +57,21 @@ final class RateLimit
             self::cleanup($dir);
         }
         return $over;
+    }
+
+    /**
+     * Klient pro počítání limitů: IPv4 adresa, u IPv6 celá síť /56 (domácí přípojky dostávají /56 až /64;
+     * jinak by stačilo měnit adresu v rámci vlastní sítě a každá by měla plný limit).
+     */
+    public static function client(string $ip): string
+    {
+        if (str_contains($ip, ':')) {
+            $packed = @inet_pton($ip);
+            if ($packed !== false && strlen($packed) === 16) {
+                return bin2hex(substr($packed, 0, 7)) . '::/56';
+            }
+        }
+        return $ip;
     }
 
     /** Pošle odpověď 429 a ukončí běh (formát podle druhu výstupu). */
@@ -111,9 +120,11 @@ final class RateLimit
         return (int)(config('rate_limit', [])[$bucket] ?? $default);
     }
 
-    private static function cleanup(string $dir): void
+    /** Úklid prošlých záznamů (volá i synchronizace, aby se adresář nehromadil mezi návštěvami). */
+    public static function cleanup(?string $dir = null): void
     {
         // záznamy, jejichž okno skončilo, už nic neomezují (bez údaje o okně: po hodině)
+        $dir ??= APP_ROOT . '/data/cache/ratelimit';
         foreach (glob($dir . '/*') ?: [] as $file) {
             if (@filemtime($file) >= time() - 3600) {
                 continue;

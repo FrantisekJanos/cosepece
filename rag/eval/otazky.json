@@ -842,8 +842,280 @@
   "id": "E21",
   "otazka": "Jak hlasovaly kluby o zamítnutí tisku 231 v 1. čtení a o zkrácení lhůty u tisku 311?",
   "faze": "3",
-  "volani": [],
-  "rucne": "Neověřeno přes MCP (z docs/reels-styl.md): hlasování č. 287, 24. 10. 2026, pro zamítnutí 81, proti 96; tisk 311, 13. 11. 2026, pro 77, proti 23; tisk 88 č. 6: 130 pro, 0 proti. Data o hlasování MCP nemá."
+  "volani": [
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 231
+    },
+    "kontroly": [
+     {
+      "cesta": "celkem",
+      "rovna_se": 30
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88874
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88875
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88876
+     },
+     {
+      "cesta": "hlasovani.*.kluby.ANO2011",
+      "rovna_se": [
+       0,
+       69,
+       0,
+       11
+      ]
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 88876
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 231
+     },
+     {
+      "cesta": "schuze",
+      "rovna_se": 34
+     },
+     {
+      "cesta": "cislo",
+      "rovna_se": 287
+     },
+     {
+      "cesta": "datum",
+      "rovna_se": "2026-10-24 04:39"
+     },
+     {
+      "cesta": "vysledek",
+      "rovna_se": "zamítnuto"
+     },
+     {
+      "cesta": "pro",
+      "rovna_se": 81
+     },
+     {
+      "cesta": "proti",
+      "rovna_se": 96
+     },
+     {
+      "cesta": "prihlaseno",
+      "rovna_se": 177
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "ANO2011",
+       "pro": 0,
+       "proti": 69,
+       "zdrzel": 0,
+       "nepritomen": 11
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "SPD",
+       "pro": 0,
+       "proti": 14,
+       "zdrzel": 0,
+       "nepritomen": 1
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "MS",
+       "pro": 0,
+       "proti": 13,
+       "zdrzel": 0,
+       "nepritomen": 0
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "ODS",
+       "pro": 23,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 4
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "STAN",
+       "pro": 21,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 1
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "Piráti",
+       "pro": 16,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 2
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "KDU-ČSL",
+       "pro": 14,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 2
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "TOP09",
+       "pro": 7,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 2
+      }
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/477/11"
+     }
+    ]
+   },
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "cesta": "celkem",
+      "rovna_se": 8
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 89028
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 89028
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 311
+     },
+     {
+      "cesta": "schuze",
+      "rovna_se": 36
+     },
+     {
+      "cesta": "cislo",
+      "rovna_se": 3
+     },
+     {
+      "cesta": "datum",
+      "rovna_se": "2026-11-13 13:17"
+     },
+     {
+      "cesta": "vysledek",
+      "rovna_se": "přijato"
+     },
+     {
+      "cesta": "pro",
+      "rovna_se": 77
+     },
+     {
+      "cesta": "proti",
+      "rovna_se": 23
+     },
+     {
+      "cesta": "prihlaseno",
+      "rovna_se": 100
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "ANO2011",
+       "pro": 55,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 24
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "SPD",
+       "pro": 12,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 3
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "MS",
+       "pro": 10,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 3
+      }
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/36/26/13"
+     }
+    ]
+   },
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 88
+    },
+    "kontroly": [
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 86697
+     },
+     {
+      "cesta": "hlasovani.*.pro",
+      "rovna_se": 130
+     },
+     {
+      "cesta": "hlasovani.*.prihlaseno",
+      "rovna_se": 136
+     },
+     {
+      "cesta": "hlasovani.*.krok",
+      "rovna_se": "Odesíláno do Senátu / souhlas"
+     }
+    ]
+   }
+  ],
+  "rucne": "Ověřeno 19. 11. 2026 nad produkčními řádky: tisk 231 (Novela z. o České televizi a o Českém rozhlasu), 34. schůze č. 285–287 (88874–88876), 24. 10. 2026 04:38–04:39, vše 81 : 96, přihlášeno 177, zamítnuto; č. 285 znovuotevření rozpravy, 286 vrácení, 287 zamítnutí (projev 10/34/477/11). Tisk 311, 89028 = 36. schůze č. 3, 13. 11. 2026 13:17, 77 : 23, přihlášeno 100 (ne „přítomno“), proti ODS 4, STAN 3, Piráti 9, KDU-ČSL 5, TOP09 2; že jde o zkrácení lhůty, říká jen projev 10/36/26/13 (nástroj to nevrací). Tisk 88: 86697 = 9. schůze č. 6, 130 : 0, přihlášeno 136. Pozor: Motoristé jsou v datech MS, ANO je ANO2011, TOP 09 je TOP09; zdrzel klubu = zdržel + nehlasoval."
  },
  {
   "id": "E22",
@@ -915,5 +1187,677 @@
   "faze": "2b",
   "volani": [],
   "rucne": "Hodnotit ručně. projevy_k_tisku(311, od=2026-11-13, vcetne_predsedajicich, min_znaku=0) = 41 projevů, neautorizované. Musí zaznít Jakob 10/36/15/4, Svobodová 10/36/17/2, Sedmihradská 10/36/20/2, Vojáček 10/36/22/4. Plný seznam řečníků neověřen. Měřit počet volání a znaků."
+ },
+ {
+  "id": "E2b-1",
+  "otazka": "Kdo vystoupil ve sloučené rozpravě k tiskům 76 a 77 dne 14. 10. 2026 (hlasování o vetu prezidenta) a co řekl předkladatel?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 77,
+     "cteni": "prezident"
+    },
+    "kontroly": [
+     {
+      "cesta": "dalsi_od_poradi",
+      "rovna_se": null
+     },
+     {
+      "cesta": "vystoupeni.*.cteni",
+      "rovna_se": "prezident"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/35/16/4"
+     },
+     {
+      "cesta": "souhrn.recnici.*.jmeno",
+      "obsahuje": "Válková"
+     }
+    ]
+   },
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 76,
+     "cteni": "prezident"
+    },
+    "kontroly": [
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/35/10/6"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/35/16/4"
+     }
+    ]
+   }
+  ],
+  "rucne": "Měřeno na kopii 19. 11. 2026: rozprava(77, cteni=prezident) 38 vystoupení = sloučená rozprava bod 901 schůze 35; rozprava(76, cteni=prezident) 43 = bod 1 (jen tisk 76, R. Vondráček 10/35/10/6) + bod 901. H. Válková 10/35/16/4 je faktická ve sloučené rozpravě. Odpověď musí říct, že Vondráčkův projev patří k bodu 1 (tisk 76), ne ke sloučené rozpravě. Doplňuje E19."
+ },
+ {
+  "id": "E2b-2",
+  "otazka": "Shrň rozpravu ke 2. čtení tisku 311 (13. 11. 2026) po klubech: kdo mluvil, hlavní výhrady, které PN kdo ohlásil.",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 311,
+     "cteni": "2"
+    },
+    "kontroly": [
+     {
+      "cesta": "dalsi_od_poradi",
+      "rovna_se": null
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/36/15/4"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/36/17/2"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/36/20/2"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/36/22/4"
+     },
+     {
+      "cesta": "souhrn.kluby.*.klub",
+      "rovna_se": "KDU-ČSL"
+     },
+     {
+      "cesta": "souhrn.kluby.*.klub",
+      "rovna_se": "Piráti"
+     },
+     {
+      "cesta": "vystoupeni.*.pn_zminene.*",
+      "rovna_se": 2300
+     }
+    ]
+   },
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 311,
+     "cteni": "2",
+     "format": "plny"
+    },
+    "kontroly": [
+     {
+      "cesta": "vystoupeni.0.poradi",
+      "rovna_se": 1
+     },
+     {
+      "cesta": "vystoupeni.0.text"
+     }
+    ]
+   }
+  ],
+  "rucne": "Měřeno na kopii 19. 11. 2026: 20 vystoupení, 9 řečníků, kluby KDU-ČSL 7, Piráti 5, ANO2011 4, STAN 2, TOP09 2 (neautorizované). Plný formát má 3 vystoupení na první stránce, celé čtení = několik volání s od_poradi. Pozor: pn_zminene u Jurečky 10/36/26/6 je jen 2312, i když ohlásil 2312–2320 (seznam s popisy, pravidlo ho nečte); odpověď má PN ověřit v textu nebo přes pn_k_tisku(311). Měřit počet volání a znaků. Doplňuje E25."
+ },
+ {
+  "id": "E2b-3",
+  "otazka": "Co řekl ministr vnitra Lubomír Metnar k pozměňovacímu návrhu 1989 a kdo další PN v rozpravě zmínil?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "get_pn",
+    "argumenty": {
+     "cislo": 1989
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 213
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/370/9"
+     },
+     {
+      "cesta": "projevy.*.druh",
+      "rovna_se": "ministr"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_projev",
+    "argumenty": {
+     "klic": "10/34/370/9"
+    },
+    "kontroly": [
+     {
+      "cesta": "text",
+      "obsahuje": "pozměňovacího návrhu číslo 1989"
+     }
+    ]
+   }
+  ],
+  "rucne": "PN 1989 (tisk 213, autor Hubert Lang). Metnar je spolupředkladatel, důvod: nová evropská pravidla pro navracení cizinců. Na kopii 3 projevy: Metnar 10/34/370/9, H. Lang 10/34/371/6 a 10/34/374/1, všechny neautorizované. Vazba projev ↔ PN je odvozená z textu (steno.projev_pn)."
+ },
+ {
+  "id": "E2b-4",
+  "otazka": "Na koho reagovaly faktické poznámky v rozpravě k tisku 231 (zákon o ČT a ČRo)?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 231,
+     "druh": [
+      "fakticka"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "vystoupeni.*.druh",
+      "rovna_se": "fakticka"
+     },
+     {
+      "cesta": "vystoupeni.*.reaguje_na_odhad"
+     },
+     {
+      "cesta": "vystoupeni.*.klic",
+      "rovna_se": "10/34/460/6"
+     },
+     {
+      "cesta": "poznamka",
+      "obsahuje": "odvozené automaticky"
+     }
+    ]
+   }
+  ],
+  "rucne": "Na kopii 66 faktických (projevy_k_tisku s min_znaku=200 jich vrátí 60), reaguje_na_odhad má 12, např. I. Hendrych 10/34/460/6 → Jana Černochová, J. Černochová 10/34/460/12 → Igor Hendrych. Odpověď musí odhad označit jako odhad a u ostatních faktických adresáta neuvádět, nebo ho ověřit v textu (format=plny, pole ohlaseni)."
+ },
+ {
+  "id": "E2b-5",
+  "otazka": "Co zaznělo k tisku 78 v 1. čtení (§ 90/2) a co po vrácení Senátem?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 78,
+     "cteni": "1"
+    },
+    "kontroly": [
+     {
+      "cesta": "vystoupeni.*.cteni",
+      "rovna_se": "1"
+     },
+     {
+      "cesta": "dalsi_od_poradi",
+      "rovna_se": null
+     }
+    ]
+   },
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 78,
+     "cteni": "senat"
+    },
+    "kontroly": [
+     {
+      "cesta": "vystoupeni.*.cteni",
+      "rovna_se": "senat"
+     }
+    ]
+   },
+   {
+    "nastroj": "rozprava",
+    "argumenty": {
+     "ct": 78,
+     "cteni": "4"
+    },
+    "kontroly": [
+     {
+      "je_chyba": true
+     }
+    ]
+   }
+  ],
+  "rucne": "Na kopii: 1. čtení 3. 3. 2026 (schůze 10) 13 vystoupení, Sněmovna po Senátu 15. 4. 2026 (schůze 14) 17. Čtení se určuje z historie tisku (kroky), u § 90/2 i bez kroku „zahájeno“. Neplatné cteni = chyba s výčtem platných hodnot."
+ },
+ {
+  "id": "E26",
+  "otazka": "Kolika hlasy Sněmovna přehlasovala Senát (8. 9. 2026) a veto prezidenta (14. 10. 2026) u zákona o státních zaměstnancích (tisky 76 a 77) a jak hlasovaly kluby?",
+  "faze": "3",
+  "volani": [
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 76
+    },
+    "kontroly": [
+     {
+      "cesta": "celkem",
+      "rovna_se": 39
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88449
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88666
+     },
+     {
+      "cesta": "hlasovani.*.kvorum",
+      "rovna_se": 101
+     },
+     {
+      "cesta": "hlasovani.*.krok",
+      "rovna_se": "Prezident / setrváno"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 88666
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 76
+     },
+     {
+      "cesta": "schuze",
+      "rovna_se": 35
+     },
+     {
+      "cesta": "cislo",
+      "rovna_se": 4
+     },
+     {
+      "cesta": "datum",
+      "rovna_se": "2026-10-14 14:06"
+     },
+     {
+      "cesta": "vysledek",
+      "rovna_se": "přijato"
+     },
+     {
+      "cesta": "pro",
+      "rovna_se": 104
+     },
+     {
+      "cesta": "proti",
+      "rovna_se": 66
+     },
+     {
+      "cesta": "kvorum",
+      "rovna_se": 101
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "ANO2011",
+       "pro": 77,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 3
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "SPD",
+       "pro": 15,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 0
+      }
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "MS",
+       "pro": 12,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 1
+      }
+     }
+    ]
+   },
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 77
+    },
+    "kontroly": [
+     {
+      "cesta": "celkem",
+      "rovna_se": 25
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88450
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88667
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 88450
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 77
+     },
+     {
+      "cesta": "schuze",
+      "rovna_se": 30
+     },
+     {
+      "cesta": "cislo",
+      "rovna_se": 33
+     },
+     {
+      "cesta": "pro",
+      "rovna_se": 104
+     },
+     {
+      "cesta": "proti",
+      "rovna_se": 69
+     },
+     {
+      "cesta": "kvorum",
+      "rovna_se": 101
+     },
+     {
+      "cesta": "krok",
+      "rovna_se": "Prezident / setrváno"
+     },
+     {
+      "cesta": "kluby.*",
+      "rovna_se": {
+       "klub": "ANO2011",
+       "pro": 79,
+       "proti": 0,
+       "zdrzel": 0,
+       "nepritomen": 1
+      }
+     }
+    ]
+   }
+  ],
+  "rucne": "Senát: 88449 (tisk 76, 30. schůze č. 32, 8. 9. 2026 20:26, 104 : 68) a 88450 (tisk 77, č. 33, 20:28, 104 : 69), krok „Prezident / setrváno“ (krok historie tisku). Veto: 88666 (76, 35. schůze č. 4, 14. 10. 2026 14:06, 104 : 66) a 88667 (77, č. 5, 14:08, 104 : 70), krok null (nejsou v historii tisku). Kvórum 101 = nadpoloviční většina všech poslanců (čl. 47 a 50 Ústavy), ne přihlášených. Pro ANO2011, SPD, MS; proti ODS, STAN, Piráti, KDU-ČSL, TOP09. 88666 nemá odkaz ve stenozáznamu (projevu_celkem 0). Každé hlasování patří jen jednomu tisku: hlasování k 76 nevrací 77 a naopak."
+ },
+ {
+  "id": "E27",
+  "otazka": "Kolik hlasování proběhlo ke stavebnímu zákonu (tisk 67) a jak dopadlo závěrečné hlasování a přehlasování Senátu?",
+  "faze": "3",
+  "volani": [
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 67,
+     "limit": 70
+    },
+    "kontroly": [
+     {
+      "cesta": "celkem",
+      "rovna_se": 171
+     },
+     {
+      "cesta": "pocet",
+      "rovna_se": 70
+     },
+     {
+      "cesta": "dalsi_offset",
+      "rovna_se": 70
+     },
+     {
+      "cesta": "nazev",
+      "rovna_se": "Novela z. - stavební zákon"
+     }
+    ]
+   },
+   {
+    "nastroj": "hlasovani_k_tisku",
+    "argumenty": {
+     "ct": 67,
+     "limit": 70,
+     "offset": 160
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 11
+     },
+     {
+      "cesta": "dalsi_offset",
+      "rovna_se": null
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88252
+     },
+     {
+      "cesta": "hlasovani.*.id_hlasovani",
+      "rovna_se": 88454
+     },
+     {
+      "cesta": "hlasovani.*.krok",
+      "rovna_se": "Odesíláno do Senátu / souhlas"
+     },
+     {
+      "cesta": "hlasovani.*.krok",
+      "rovna_se": "Prezident / setrváno"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 88252
+    },
+    "kontroly": [
+     {
+      "cesta": "schuze",
+      "rovna_se": 27
+     },
+     {
+      "cesta": "cislo",
+      "rovna_se": 117
+     },
+     {
+      "cesta": "pro",
+      "rovna_se": 88
+     },
+     {
+      "cesta": "proti",
+      "rovna_se": 79
+     },
+     {
+      "cesta": "krok",
+      "rovna_se": "Odesíláno do Senátu / souhlas"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_hlasovani",
+    "argumenty": {
+     "id_hlasovani": 1
+    },
+    "kontroly": [
+     {
+      "je_chyba": true
+     }
+    ]
+   }
+  ],
+  "rucne": "Tisk 67 má nejvíc hlasování (171), odpověď se musí stránkovat (limit nejvýš 70, 3 stránky, první asi 28 000 znaků). Závěrečné hlasování 88252 (27. schůze č. 117, 10. 7. 2026 13:04, 88 : 79, přijato), přehlasování Senátu 88454 (30. schůze č. 36, 9. 9. 2026 18:47, 105 : 52, kvórum 101). Neznámé id hlasování = čitelná chyba s odkazem na hlasovani_k_tisku. Počet 171 se změní, jen když web doplní chybějící hlasování (Votes.php páruje podle názvu)."
+ },
+ {
+  "id": "E28",
+  "otazka": "Stojí v tisku 221 doslova „i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona“? Ve kterém ustanovení? Platí to i pro znění zpaměti „platba dotací poskytnuta před dnem nabytí účinnosti“?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona",
+     "ct": 221,
+     "oznaceni": "Čl. VI"
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "presne"
+     },
+     {
+      "cesta": "oznaceni",
+      "rovna_se": "Čl. VI"
+     }
+    ]
+   },
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona",
+     "ct": 221
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "presne"
+     },
+     {
+      "cesta": "oznaceni",
+      "rovna_se": "Čl. VI"
+     }
+    ]
+   },
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "i tehdy, pokud byla neoprávněná platba dotací poskytnuta před dnem nabytí účinnosti tohoto zákona",
+     "ct": 221,
+     "oznaceni": "Čl. VI"
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "priblizne"
+     },
+     {
+      "cesta": "nalezeny_text",
+      "obsahuje": "platba dotace poskytnuta přede dnem"
+     }
+    ]
+   }
+  ],
+  "rucne": "Navazuje na E11. Ověřeno 19. 11. 2026 nad kopií produkčních dat: Čl. VI = poradi 12, cesta ČÁST TŘETÍ / Čl. VI, verze puvodni (schválené znění tisku 221 v DB není). Bez oznaceni se hledá v celém dokumentu včetně důvodové zprávy a první shoda je také Čl. VI. Třetí volání: přibližně, skóre 0,982. Odpověď cituje přesné znění z nalezeny_text (dotace, přede dnem), ne znění zpaměti, a uvede Čl. VI (přechodné ustanovení). Až přibude schválené znění, výchozí verze se přepne na schvalene: kontroly ověřit znovu, případně doplnit verze=\"puvodni\"."
+ },
+ {
+  "id": "E29",
+  "otazka": "Ověř před zveřejněním dva výroky z rozpravy k tisku 88 (13. 2. 2026): (1) poslankyně Pivoňka Vaňková řekla, že návrh byl „z důvodu časové tísně“ předložen jako poslanecký, nikoliv vládní; (2) Pivoňka Vaňková řekla „My určitě nebudeme chtít spolupracovat“. Kdo co skutečně řekl?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "který jsem byl nucen z důvodu časové tísně předložit jako poslanecký návrh, nikoliv jako návrh vládní",
+     "klic": "10/9/10/5"
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "nenalezeno"
+     }
+    ]
+   },
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "který jsem byl nucen z důvodu časové tísně předložit jako poslanecký návrh, nikoliv jako návrh vládní",
+     "klic": "10/9/10/1"
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "presne"
+     },
+     {
+      "cesta": "recnik",
+      "obsahuje": "Juchelka"
+     }
+    ]
+   },
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "My určitě nebudeme chtít spolupracovat, protože nám jde všem o společný zájem",
+     "klic": "10/9/10/5"
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "nenalezeno"
+     },
+     {
+      "cesta": "nalezeny_text",
+      "obsahuje": "budeme chtít spolupracovat"
+     }
+    ]
+   }
+  ],
+  "rucne": "Přisouzení výroku špatnému řečníkovi (E11, E22). Stejný bod 58233, schůze 9, všechny projevy autorizované. (1) Výrok patří ministru Juchelkovi 10/9/10/1, proti Pivoňka Vaňkové 10/9/10/5 nenalezeno (skóre 0,06). (2) Pivoňka Vaňková řekla „My určitě budeme chtít spolupracovat“; s „nebudeme“ nenalezeno i při skóre 0,89 (opačný význam). Odpověď výrok (1) nepřisoudí Pivoňka Vaňkové a výrok (2) opraví na skutečné znění. Jak model najde skutečného řečníka (hledej_v_projevech), hodnotit ručně."
+ },
+ {
+  "id": "E30",
+  "otazka": "Obsahuje PN 1256 k tisku 67 stejné přechodné ustanovení jako tisk 221 („i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona“)? A stojí v ní doslova, že povinná osoba nemusí pořídit informační model stavby, bylo-li zadávací řízení zahájeno do 5 let od účinnosti zákona?",
+  "faze": "2b",
+  "volani": [
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona",
+     "pn": 1256
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "nenalezeno"
+     }
+    ]
+   },
+   {
+    "nastroj": "over_citaci",
+    "argumenty": {
+     "citace": "zadávací řízení pro veřejnou zakázku na zhotovení stavby bude bylo zahájeno do 5 let ode dne nabytí účinnosti tohoto zákona, nemusí povinná osoba pořídit pro tento záměr informační model stavby",
+     "pn": 1256
+    },
+    "kontroly": [
+     {
+      "cesta": "shoda",
+      "rovna_se": "presne"
+     },
+     {
+      "cesta": "cesta",
+      "obsahuje": "důvodová zpráva"
+     }
+    ]
+   }
+  ],
+  "rucne": "Výkon a záměna dokumentů. PN 1256 je největší dokument (2 845 443 znaků, 1 565 celků); bez oznaceni se hledá v celém textu včetně důvodové zprávy. Lokálně (notebook) 0,8 s pro nenalezeno a 0,16 s pro přesnou shodu, cíl R2 ~3 s: sledovat sloupec ms. Druhá citace leží v platném znění s vyznačením změn (důvodová zpráva 885, poradi 1564, „bude bylo“ = vypuštěné a nové slovo), ne v normativní části: odpověď to musí říct a nevydávat ji za text PN. První: věta z tisku 221 v PN není (skóre 0,59, nejbližší kandidát Čl. XVI)."
  }
 ]

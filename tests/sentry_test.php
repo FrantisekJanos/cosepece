@@ -136,5 +136,25 @@ check('řádek 3 událost', $e['message']['formatted'] ?? null, 'obálka');
 check('event_id shodné', $e['event_id'] ?? null, $h0['event_id'] ?? 'x');
 cleanup();
 
+echo "8. selhání vypne odesílání, cesty v textech
+";
+foreach (['false' => fn() => false, 'výjimka' => function (): void { throw new RuntimeException('x'); }] as $name => $tr) {
+    $calls = 0;
+    Sentry::setTransport(function () use (&$calls, $tr) { $calls++; return $tr(); });
+    Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+    Sentry::message('první');
+    Sentry::message('druhá');
+    Sentry::capture(new RuntimeException('třetí'));
+    check("po selhání ($name) se už neodesílá", $calls, 1);
+    cleanup();
+}
+Sentry::setTransport(function (): void {});
+Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+$ev = Sentry::buildEvent(new RuntimeException('open ' . APP_ROOT . '/data/x.sqlite a /var/www/html/app/Db.php'), 'error', []);
+check('cesty ve zprávě výjimky', $ev['exception']['values'][0]['value'], 'open data/x.sqlite a app/Db.php');
+$ev = Sentry::buildEvent('PDO /var/www/html/data/y.sqlite', 'error', []);
+check('cesty ve zprávě', $ev['message']['formatted'], 'PDO data/y.sqlite');
+cleanup();
+
 echo $failures === 0 ? "\nVŠE OK\n" : "\nSELHÁNÍ: $failures\n";
 exit($failures === 0 ? 0 : 1);

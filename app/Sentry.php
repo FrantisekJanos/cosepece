@@ -22,8 +22,9 @@ final class Sentry
     private static string $environment = '';
     private static string $release = '';
     private static int $sent = 0;
+    private static bool $failed = false; // po selhání odeslání se pro zbytek procesu už nic neposílá
     private static array $seen = [];
-    /** @var callable|null */
+    /** @var callable|null function (string $url, array $headers, string $body): ?bool; false = selhání */
     private static $transport = null;
 
     public static function init(array $cfg, string $component): void
@@ -158,7 +159,7 @@ final class Sentry
         if (!is_string($data)) {
             return $data;
         }
-        $s = Http::redact($data);
+        $s = Http::redact(self::stripPaths($data));
         $s = (string)preg_replace('/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/', '[email]', $s);
         $s = (string)preg_replace('/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/', '[ip]', $s);
         // IPv6: se zkratkou "::" nebo aspoň 3 dvojtečky mezi hex skupinami (čas 12:30:45 tak zůstane)
@@ -181,11 +182,12 @@ final class Sentry
         self::$sent = 0;
         self::$seen = [];
         self::$exceptionHandled = false;
+        self::$failed = false;
     }
 
     private static function send(Throwable|string $what, string $level, array $extra, string $fingerprint): void
     {
-        if (!self::$enabled || self::$dsn === null) {
+        if (!self::$enabled || self::$dsn === null || self::$failed) {
             return;
         }
         try {
@@ -203,13 +205,17 @@ final class Sentry
                 'X-Sentry-Auth: Sentry sentry_version=7, sentry_client=hlidac/1.0, sentry_key=' . self::$dsn['key'],
             ];
             $fn = self::$transport ?? [self::class, 'curlTransport'];
-            $fn(self::$dsn['endpoint'], $headers, $body);
+            // transport vrací false při selhání (síť, HTTP >= 400); výjimka znamená totéž
+            if ($fn(self::$dsn['endpoint'], $headers, $body) === false) {
+                self::$failed = true;
+            }
         } catch (Throwable) {
+            self::$failed = true;
             // hlášení chyb nesmí samo shodit aplikaci
         }
     }
 
-    private static function curlTransport(string $url, array $headers, string $body): void
+    private static function curlTransport(string $url, array $headers, string $body): bool
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -220,20 +226,29 @@ final class Sentry
             CURLOPT_CONNECTTIMEOUT => 1,
             CURLOPT_TIMEOUT => 2,
         ]);
-        curl_exec($ch); // výsledek se ignoruje
+        $res = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        return $res !== false && curl_errno($ch) === 0 && $status < 400;
+    }
+
+    private static function stripPaths(string $text): string
+    {
+        // absolutní cesty serveru se v událostech nesmí objevit
+        $text = str_replace('\\', '/', $text);
+        $prefixes = ['/var/www/html/', '/var/www/'];
+        if (defined('APP_ROOT')) {
+            $prefixes[] = str_replace('\\', '/', APP_ROOT) . '/';
+        }
+        foreach ($prefixes as $prefix) {
+            // jen celá cesta od začátku (ne uprostřed jiné cesty, např. /app/ v /var/www/html/app/)
+            $text = (string)preg_replace('~(?<![\w./-])' . preg_quote($prefix, '~') . '~', '', $text);
+        }
+        return $text;
     }
 
     private static function relPath(string $file): string
     {
-        $root = defined('APP_ROOT') ? str_replace('\\', '/', APP_ROOT) . '/' : '';
-        $file = str_replace('\\', '/', $file);
-        if ($root !== '' && str_starts_with($file, $root)) {
-            return substr($file, strlen($root));
-        }
-        if (str_starts_with($file, '/var/www/')) {
-            return substr($file, strlen('/var/www/'));
-        }
-        return $file;
+        return self::stripPaths($file);
     }
 
     private static function frames(Throwable $ex): array

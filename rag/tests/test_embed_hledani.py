@@ -332,3 +332,34 @@ def test_mcp_nastroje_maji_rezim():
         t = nastroje[jmeno]
         assert t.parameters["properties"]["rezim"]["default"] == "auto"
         assert "rezim_pouzity" in t.description and "vyznam" in t.description
+
+
+def test_denni_strop_dotazu(monkeypatch):
+    k, volani = _klient_s(_ok)
+    monkeypatch.setattr(hledani, "_klient", lambda: k)
+    monkeypatch.setenv("EMBED_DOTAZY_DEN", "2")
+    assert hledani.vektor_dotazu("první dotaz") is not None
+    assert hledani.vektor_dotazu("druhý dotaz") is not None
+    assert hledani.vektor_dotazu("první dotaz") is not None      # z cache, do stropu se nepočítá
+    assert hledani.vektor_dotazu("třetí dotaz") is None
+    assert "denní limit sémantického hledání vyčerpán" in hledani.posledni_chyba()
+    assert len(volani) == 2
+    # nový den (UTC) = nové počítadlo
+    monkeypatch.setattr(hledani, "_dnes", lambda: "2099-01-01")
+    assert hledani.vektor_dotazu("třetí dotaz") is not None and len(volani) == 3
+
+
+def test_denni_strop_fallback_v_nastroji(monkeypatch):
+    k, _ = _klient_s(_ok)
+    monkeypatch.setattr(hledani, "_klient", lambda: k)
+    monkeypatch.setenv("EMBED_DOTAZY_DEN", "0")
+    conn = FakeConn([dict(n=0)], [])
+    r = tools.hledej_v_projevech(conn, "elektřiny")
+    assert r["rezim_pouzity"] == "fulltext" and "denní limit sémantického hledání vyčerpán" in r["poznamka"]
+
+
+def test_denni_strop_vychozi(monkeypatch):
+    monkeypatch.delenv("EMBED_DOTAZY_DEN", raising=False)
+    assert hledani._denni_strop() == 20000
+    monkeypatch.setenv("EMBED_DOTAZY_DEN", "nesmysl")
+    assert hledani._denni_strop() == 20000

@@ -1,5 +1,8 @@
 """Hledání podle významu: embedding dotazu, husté (vektorové) hledání v rag.usek a slučování RRF.
 
+Volání API pro dotazy mají denní strop EMBED_DOTAZY_DEN (výchozí 20 000, den = datum UTC, počítadlo v paměti procesu
+MCP, dotazy z cache se nepočítají); po vyčerpání se hledá jen podle slov.
+
 Embedding dotazu má tvrdý strop TIMEOUT (vlákno s future, ne jen timeout spojení) a jeden pokus; při chybě nebo bez
 klíče vrátí None a důvod nechá v posledni_chyba(), nástroj pak hledá lexikálně a řekne to v odpovědi.
 """
@@ -8,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from datetime import datetime, timezone
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -28,6 +32,31 @@ _cache: OrderedDict[tuple, list[float]] = OrderedDict()
 _zamek = threading.Lock()
 _stav = threading.local()
 _klienti: dict[tuple, Klient] = {}
+DOTAZY_DEN = 20000       # výchozí denní strop embeddingů dotazů (EMBED_DOTAZY_DEN), napříč všemi tokeny MCP
+_den = {"datum": None, "pocet": 0}   # počítadlo volání API za den (UTC) v paměti procesu MCP
+
+
+def _dnes() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _denni_strop() -> int:
+    """Denní strop embeddingů dotazů z EMBED_DOTAZY_DEN (výchozí DOTAZY_DEN; nečitelná hodnota = výchozí)."""
+    try:
+        return max(0, int((os.environ.get("EMBED_DOTAZY_DEN") or "").strip() or DOTAZY_DEN))
+    except ValueError:
+        return DOTAZY_DEN
+
+
+def _zapocti_dotaz() -> bool:
+    """Započte jedno volání API do denního stropu; False = strop pro dnešek (UTC) vyčerpán. Volá se pod zámkem."""
+    dnes = _dnes()
+    if _den["datum"] != dnes:
+        _den.update(datum=dnes, pocet=0)
+    if _den["pocet"] >= _denni_strop():
+        return False
+    _den["pocet"] += 1
+    return True
 
 
 def aktualni_model() -> str:
@@ -57,6 +86,7 @@ def vycisti_cache() -> None:
     with _zamek:
         _cache.clear()
         _klienti.clear()
+        _den.update(datum=None, pocet=0)
     _stav.chyba = None
 
 
@@ -72,6 +102,9 @@ def vektor_dotazu(dotaz: str) -> list[float] | None:
         if klic in _cache:
             _cache.move_to_end(klic)
             return _cache[klic]
+        if not _zapocti_dotaz():
+            _stav.chyba = "denní limit sémantického hledání vyčerpán"
+            return None
     fut = _pool.submit(klient.embed, [dotaz])
     try:
         vektory, _ = fut.result(timeout=TIMEOUT)

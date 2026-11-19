@@ -114,9 +114,33 @@ final class TiskText
         return ['chars' => mb_strlen($normative), 'signals' => $signals];
     }
 
-    private function save(int $ct, ?string $docxUrl, string $text, ?string $error): void
+    public function save(int $ct, ?string $docxUrl, string $text, ?string $error): void
     {
+
         $a = self::analyze($text);
+        $own = !$this->db->pdo->inTransaction();
+        if ($own) {
+            $this->db->pdo->beginTransaction();
+        }
+        try {
+
+            Revisions::recordText($this->db, 'tisk', $ct, 'zaloha');
+            Revisions::recordAi($this->db, 'tisk', $ct, 'zaloha');
+            $this->replaceRow($ct, $docxUrl, $text, $a, $error);
+            Revisions::recordText($this->db, 'tisk', $ct, 'stazeni');
+            if ($own) {
+                $this->db->pdo->commit();
+            }
+        } catch (\Throwable $ex) {
+            if ($own) {
+                $this->db->pdo->rollBack();
+            }
+            throw $ex;
+        }
+    }
+
+    private function replaceRow(int $ct, ?string $docxUrl, string $text, array $a, ?string $error): void
+    {
         $this->db->run('DELETE FROM tisk_text WHERE ct = ?', [$ct]);
         $this->db->run(
             'INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, error) VALUES (?, ?, ?, ?, ?, ?, ?)',

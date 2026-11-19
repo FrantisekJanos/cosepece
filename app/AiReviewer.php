@@ -219,16 +219,34 @@ TXT;
                 return;
             }
         }
-        if ($model === $verifier) {
-
-            $this->db->run("UPDATE $table SET ai_prev_json = ai_json, ai_prev_score = ai_score, ai_prev_model = ai_model
-                WHERE $column = ? AND ai_at IS NOT NULL AND (ai_model IS NULL OR ai_model <> ?)", [$id, $verifier]);
-        }
         $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
         $result = self::sanitize($result);
-        $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
-            [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
-                $model, self::PROMPT_VERSION, $id]);
+        $own = !$this->db->pdo->inTransaction();
+        if ($own) {
+            $this->db->pdo->beginTransaction();
+        }
+        try {
+
+            Revisions::recordAi($this->db, $kind, $id, 'zaloha');
+            if ($model === $verifier) {
+
+                $this->db->run("UPDATE $table SET ai_prev_json = ai_json, ai_prev_score = ai_score, ai_prev_model = ai_model
+                    WHERE $column = ? AND ai_at IS NOT NULL AND (ai_model IS NULL OR ai_model <> ?)", [$id, $verifier]);
+            }
+            $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ?, ai_prompt = ?, error = NULL WHERE $column = ?",
+                [json_encode($result, JSON_UNESCAPED_UNICODE), (int)$result['zavaznost'], date('Y-m-d H:i:s'),
+                    $model, self::PROMPT_VERSION, $id]);
+
+            Revisions::recordAi($this->db, $kind, $id, 'rozbor');
+            if ($own) {
+                $this->db->pdo->commit();
+            }
+        } catch (\Throwable $ex) {
+            if ($own) {
+                $this->db->pdo->rollBack();
+            }
+            throw $ex;
+        }
     }
 
     public static function sanitize(array $result): array
@@ -288,8 +306,11 @@ TXT;
                 }
                 $clean = self::sanitize($ai);
                 if ($clean !== $ai || (int)$clean['zavaznost'] !== (int)$row['ai_score']) {
+
+                    Revisions::recordAi($this->db, $kind, (int)$row['id'], 'zaloha');
                     $this->db->run("UPDATE $table SET ai_json = ?, ai_score = ? WHERE $column = ?",
                         [json_encode($clean, JSON_UNESCAPED_UNICODE), (int)$clean['zavaznost'], (int)$row['id']]);
+                    Revisions::recordAi($this->db, $kind, (int)$row['id'], 'pojistky');
                     $n++;
                 }
             }

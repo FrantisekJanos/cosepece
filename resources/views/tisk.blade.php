@@ -49,7 +49,7 @@ use Hlidac\View;
   <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="{{ route('methodology', [], false) }}">Jak skóre počítáme.</a> <a href="{{ (string)hlidacConfig('issues_url', '') }}">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
-<?php if ($billText !== null && ($billText['ai'] !== null || array_diff_key($billText['signals'], ['laws' => true]) !== [])): ?>
+<?php if ($billText !== null && ($billText['ai'] !== null || array_diff_key($billText['signals'], ['laws' => true]) !== [] || \Hlidac\Revisions::hasHistory($billRev))): ?>
 <section class="card pad" aria-label="Rozbor textu návrhu">
   <h2>Rozbor textu návrhu</h2>
   <?php $bai = $billText['ai']; ?>
@@ -73,6 +73,10 @@ use Hlidac\View;
   <?php endforeach; ?>
   <p class="muted small">Citace jsou doslovně z textu návrhu{{ $billText['docx_url'] ? ' (<a href="' . $billText['docx_url'] . '">Word na psp.cz</a>)' : '' }}.
     {{ $bai !== null ? 'Rozbor připravil jazykový model; hodnotí formu a postup, ne politický obsah.' : 'Pasáže vybrala automatická pravidla.' }}</p>
+  @if (\Hlidac\Revisions::hasHistory($billRev))
+  <p class="small"><a href="{{ route('revisions', ['druh' => 'tisk', 'id' => $ct], false) }}">Historie ({{ \Hlidac\Revisions::versionsLabel($billRev['text'] + $billRev['ai']) }})</a> <span class="muted">– předchozí znění textu a rozbory</span></p>
+  @endif
+
 </section>
 <?php endif; ?>
 
@@ -116,6 +120,10 @@ use Hlidac\View;
                 <?php if ($x['ai_score'] !== null): ?><span class="chip {{ (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' }}">AI {{ (int)$x['ai_score'] }}/10</span><?php endif; ?>
               </span>
               {!! View::aiRounds($x) !!}
+              <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
+              @if (\Hlidac\Revisions::hasHistory($rev))
+              <a class="small" href="{{ route('revisions', ['druh' => 'pn', 'id' => (int)$p['id_dokument']], false) }}">Historie ({{ \Hlidac\Revisions::versionsLabel($rev['text'] + $rev['ai']) }})</a>
+              @endif
               <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary">{{ $x['ai']['shrnuti'] }}</span><?php endif; ?>
               <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small">{{ trim((string)$q) }}</blockquote><?php endforeach; ?>
             <?php endif; ?>

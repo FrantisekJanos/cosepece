@@ -91,6 +91,14 @@ Původní `.php` URL obsluhují Laravel routy, fyzické vstupní soubory v koře
 Tabulky webu: `tisky`, `kroky`, `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `hlasovani`, `hlasovani_kluby`.
 Python vlastní schémata `steno` a `texty`, Laravel migrace je nemění. Podrobnosti při změnách MCP nebo ingestu čti v `rag/README.md`.
 
+Historie verzí: `text_revize` a `ai_revize` uchovávají každou skutečnou změnu textu nebo rozboru,
+oddělenou klíčem `(druh, obdobi, ref_id, verze)`. `Revisions::backfill` doplní původní data na začátku
+synchronizace. Při změně volebního období se pracovní texty před vyprázdněním zkopírují do
+`tisk_text_archiv` a `pn_text_archiv`; historie se zachovává. Nové sloupce pracovních textů doplň
+i do archivní migrace a `Revisions::TISK_COLUMNS` / `PN_COLUMNS`.
+Web historii čte přes Eloquent modely a `RevisionService`; `/revize/{druh}/{id}` používá `RevisionRequestDTO`.
+Rozdíly textů generuje `Hlidac\Diff`, který escapuje obsah před vložením do HTML.
+
 ## Zdroj dat (psp.cz open data)
 
 - `https://www.psp.cz/eknih/cdrom/opendata/{tisky,sd,poslanci}.zip`, soubory `.unl`, oddělovač `|`, **windows-1250**.

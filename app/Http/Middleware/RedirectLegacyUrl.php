@@ -16,6 +16,7 @@ final class RedirectLegacyUrl
         $name = match ($request->path()) {
             'index.php' => 'home',
             'zmeny.php' => 'changes',
+            'revize.php' => 'revisions',
             'tisky.php' => 'bills',
             'tisk.php' => 'bill',
             'upozorneni.php' => 'alerts',
@@ -26,6 +27,11 @@ final class RedirectLegacyUrl
         $parameters = $request->query();
         if ($name === 'bill') {
             $parameters['ct'] = BillDetailRequestDTO::fromRequest($request)->billNumber;
+        }
+        if ($name === 'revisions') {
+            $dto = \App\Http\DTO\RevisionRequestDTO::fromRequest($request);
+            $parameters['druh'] = $dto->kind;
+            $parameters['id'] = $dto->documentId;
         }
         return redirect()->to(route($name, $parameters, false), 301);
     }

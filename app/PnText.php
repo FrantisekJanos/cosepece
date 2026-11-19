@@ -200,7 +200,32 @@ final class PnText
         return ['chars' => $chars, 'laws' => $laws, 'signals' => $signals, 'score' => min($score, 30)];
     }
 
-    private function save(array $row, ?string $docxUrl, string $text, array $a, ?string $error): void
+    public function save(array $row, ?string $docxUrl, string $text, array $a, ?string $error): void
+    {
+
+        $id = (int)$row['id_dokument'];
+        $own = !$this->db->pdo->inTransaction();
+        if ($own) {
+            $this->db->pdo->beginTransaction();
+        }
+        try {
+
+            Revisions::recordText($this->db, 'pn', $id, 'zaloha');
+            Revisions::recordAi($this->db, 'pn', $id, 'zaloha');
+            $this->replaceRow($row, $docxUrl, $text, $a, $error);
+            Revisions::recordText($this->db, 'pn', $id, 'stazeni');
+            if ($own) {
+                $this->db->pdo->commit();
+            }
+        } catch (\Throwable $ex) {
+            if ($own) {
+                $this->db->pdo->rollBack();
+            }
+            throw $ex;
+        }
+    }
+
+    private function replaceRow(array $row, ?string $docxUrl, string $text, array $a, ?string $error): void
     {
         $this->db->run('DELETE FROM pn_text WHERE id_dokument = ?', [(int)$row['id_dokument']]);
         $this->db->run(

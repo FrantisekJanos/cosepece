@@ -21,7 +21,7 @@ final class RequestDTOServiceProvider extends ServiceProvider
     public function register(): void
     {
         foreach ([
-            \App\Http\DTO\ChangesRequestDTO::class, AiRequestDTO::class, AlertListRequestDTO::class, BillDetailRequestDTO::class,
+            \App\Http\DTO\ChangesRequestDTO::class, \App\Http\DTO\RevisionRequestDTO::class, AiRequestDTO::class, AlertListRequestDTO::class, BillDetailRequestDTO::class,
             BillListRequestDTO::class, FeedRequestDTO::class, MethodologyRequestDTO::class,
             OgImageRequestDTO::class, OverviewRequestDTO::class, SyncRequestDTO::class,
         ] as $dtoClass) {

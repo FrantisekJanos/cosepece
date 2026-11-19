@@ -35,7 +35,7 @@ pokud není explicitně nastavena `DB_CONNECTION`.
 Synchronizaci spustíte pomocí `php artisan hlidac:sync`. Pro pravidelný provoz použijte Laravel scheduler.
 Docker Compose obsahuje web, scheduler, PostgreSQL a samostatné Python služby pro ingest a MCP.
 Podrobný postup, převod existujících dat, FTP a AI plánování jsou v [NASAZENI.md](NASAZENI.md).
-Web používá pojmenované routy `/`, `/tisky`, `/tisky/221`, `/upozorneni`, `/metodika`, `/zmeny`, `/rss` a `/og`.
+Web používá pojmenované routy `/`, `/tisky`, `/tisky/221`, `/upozorneni`, `/metodika`, `/zmeny`, `/revize/tisk/221`, `/rss` a `/og`.
 Původní `.php` adresy vracejí trvalé přesměrování 301 a zachovávají filtry.
 AI API, webcron a databázové tabulky čtené Pythonem zachovávají původní rozhraní.
 

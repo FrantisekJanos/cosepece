@@ -17,6 +17,7 @@ final class BillDetailService
     public function __construct(
         private BillPresentationService $presentation,
         private ReviewStatusService $reviews,
+        private RevisionService $revisions,
         private \App\Services\AlertPresentationService $alertPresentation,
     ) {
     }
@@ -36,6 +37,8 @@ final class BillDetailService
 
         $t = $this->presentation->present($bill);
         $obdobi = (int)(Meta::query()->whereKey('obdobi_cislo')->value('v') ?? '10');
+        $billRev = $this->revisions->counts('tisk', $ct, $obdobi)[$ct] ?? ['text' => 0, 'ai' => 0];
+        $pnRev = $this->revisions->counts('pn', $ct, $obdobi);
         $steps = $bill->steps->map->getAttributes()->all();
         $votes = $bill->votes->map(fn ($vote): array => $vote->getAttributes() + [
             'kluby' => $vote->clubs->map->getAttributes()->all(),
@@ -74,7 +77,7 @@ final class BillDetailService
             'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
         ];
 
-        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'votes', 'stepByVote', 'pn', 'authors', 'alerts', 'texts', 'billText', 'review', 'laws', 'days');
+        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'votes', 'stepByVote', 'pn', 'authors', 'alerts', 'texts', 'billText', 'billRev', 'pnRev', 'review', 'laws', 'days');
     }
     private function textData(BillText|AmendmentText $text): array
     {

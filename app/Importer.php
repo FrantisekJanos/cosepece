@@ -99,9 +99,6 @@ final class Importer
 
     private function switchPeriod(int $oldCislo): void
     {
-
-
-
         foreach ($this->db->all('SELECT alert_key FROM alerts WHERE obdobi = ?', [$oldCislo]) as $a) {
             $key = (string)$a['alert_key'];
             if (str_starts_with($key, $oldCislo . '/')) {
@@ -111,6 +108,7 @@ final class Importer
             $this->db->run('UPDATE post_log SET alert_key = ? WHERE alert_key = ?', [$oldCislo . '/' . $key, $key]);
         }
         $this->db->run('UPDATE alerts SET posted = 3 WHERE posted = 0');
+        Revisions::archivePeriod($this->db, $oldCislo);
         $this->db->run('DELETE FROM tisk_text');
         $this->db->run('DELETE FROM pn_text');
         $this->db->run("DELETE FROM meta WHERE k = 'bootstrapped'");

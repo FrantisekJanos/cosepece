@@ -21,11 +21,13 @@ Route::get('/tisky/{ct}', [BillController::class, 'show'])->whereNumber('ct')->n
 Route::get('/upozorneni', [AlertController::class, 'index'])->name('alerts');
 Route::get('/metodika', [MethodologyController::class, 'index'])->name('methodology');
 Route::get('/zmeny', [\App\Http\Controllers\ChangesController::class, 'index'])->name('changes');
+Route::get('/revize/{druh}/{id}', [\App\Http\Controllers\RevisionController::class, 'show'])->where('druh', 'tisk|pn')->whereNumber('id')->name('revisions');
 Route::get('/rss', [FeedController::class, 'index'])->name('rss');
 Route::get('/og', [OgController::class, 'show'])->name('og');
 
 foreach ([
     '/zmeny.php' => [\App\Http\Controllers\ChangesController::class, 'index'],
+    '/revize.php' => [\App\Http\Controllers\RevisionController::class, 'show'],
     '/index.php' => [HomeController::class, 'index'],
     '/tisky.php' => [BillController::class, 'index'],
     '/tisk.php' => [BillController::class, 'show'],

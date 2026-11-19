@@ -153,3 +153,8 @@ nebo kompatibilním `php bin/reanalyze.php`.
 Migrace `2026_11_19_120000_add_bill_votes` doplňuje tabulky `hlasovani` a `hlasovani_kluby`
 a vazbu `kroky.id_hlasovani`. Před spuštěním nové synchronizace proveďte `php artisan migrate --force`.
 Existující hlasování z původní aplikace zůstanou zachována.
+
+Migrace `2026_11_19_140000_add_text_and_ai_revisions` zavádí historii textů a rozborů a archiv minulých
+období. Spusťte ji před novou synchronizací nebo AI příkazy. První synchronizace doplní dosavadní
+texty a rozbory do historie; pracovní data a fronta upozornění se tím nemění. Archiv a historie
+zvyšují objem databáze a musí být zahrnuté do záloh.

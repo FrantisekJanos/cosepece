@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Připravované zákony',
+        'Nová stránka Připravované ukazuje návrhy zákonů, které ministerstva připravují a Sněmovna je ještě nedostala: zda jsou v připomínkovém řízení, po něm, u vlády, nebo je vláda už schválila. U každého je délka připomínkového řízení a počet připomínkových míst. Kratší připomínky a nedohledané připomínkové řízení označujeme stejně jako u tisků. Jakmile návrh dostane číslo sněmovního tisku, přesune se mezi tisky. Skóre se nemění. Data: otevřená data Úřadu vlády, také jako api.php?pripravovane=1. Díky podnětu z GitHubu.',
+        [44], false],
     ['2026-11-19', 'Příprava návrhu u vlády: připomínkové řízení',
         'U tisku je nově vidět, jak návrh prošel přípravou u vlády: kdy a jak dlouho probíhalo připomínkové řízení, kolik míst se k návrhu vyjadřovalo, kdy ho vláda schválila a proč byl předložen. U poslaneckých návrhů ukazujeme, zda si vláda ke svému stanovisku vyžádala připomínky. Popis bodů za poslanecký návrh jsme upřesnili: dřív tvrdil, že návrh „neprošel připomínkovým řízením“, ale vláda si připomínky ke stanovisku vyžádala u většiny takových návrhů. Skóre se nemění. Data: otevřená data Úřadu vlády. Díky podnětu z GitHubu.',
         [43], false],

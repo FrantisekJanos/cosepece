@@ -117,6 +117,7 @@ Omezení: otevřená data obsahují u pozměňovacího návrhu jen číslo, auto
 | `api.php` | tisky aktuálního období od poslední změny: číslo, název, fáze, skóre, úroveň, důvody, příznaky, odkazy |
 | `api.php?tisk=221` | detail tisku + hlasování (i podle klubů) + upozornění + stav rozboru textů |
 | `api.php?upozorneni=1` | upozornění (bez `min_score` od úrovně „Pozor“) |
+| `api.php?pripravovane=1` | připravované zákony u vlády (ještě ne ve Sněmovně): fáze, připomínkové řízení, schválení vládou |
 
 Filtry: `since=YYYY-MM-DD` (poslední změna / datum upozornění), `min_score=0–100`, `zakon=159/2006`,
 `ct=221` (u upozornění), `limit` (nejvýš 500). Chybný filtr = HTTP 400, neznámý tisk = 404.

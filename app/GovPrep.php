@@ -2,6 +2,8 @@
 // Příprava návrhu u vlády z otevřených dat Úřadu vlády (portál ODok / VeKLEP, JSON po letech):
 // připomínkové řízení (od–do, počet připomínkových míst), schůze vlády, důvod předložení, výjimky.
 // Jen zobrazení u tisku; do skóre nevstupuje (upřesňuje jen popis důvodu „Poslanecký návrh“).
+// Z týchž dat i přehled připravovaných zákonů (pripravovane.php): návrhy zákonů ministerstev, které
+// do Sněmovny ještě nedorazily – od připomínkového řízení po schválení vládou.
 //
 // Párování s tisky:
 //  - vládní návrhy přes tisk_eklep.unl z otevřených dat PSP (PID materiálu v eKLEP), připomínkové
@@ -18,6 +20,10 @@ final class GovPrep
 {
     public const URL = 'https://www.odok.gov.cz/opendata/dataset/odok/requests_%d.json';
     public const VEKLEP = 'https://odok.gov.cz/portal/veklep/material/%s/';
+    // fáze připravovaného zákona od nejpokročilejší (pořadí na stránce)
+    public const PHASES = ['schvaleno', 'vlada', 'po_pripominkach', 'pripominky'];
+    // stavy materiálu v ODok, kdy už je návrh ve Sněmovně, ve Sbírce, stažený nebo skartovaný
+    private const DONE_STATES = ['CE', 'D', 'E', 'F', 'K', 'DZV', 'Y'];
 
     public function __construct(private Db $db, private Source $source, private array $config)
     {
@@ -52,13 +58,14 @@ final class GovPrep
         }
 
         $tisky = [];
-        foreach ($this->db->all('SELECT id_tisk, ct, typ_navrhu FROM tisky') as $t) {
+        foreach ($this->db->all('SELECT id_tisk, ct, typ_navrhu, nazev, uplny_nazev, predlozeno FROM tisky') as $t) {
             $tisky[(int)$t['id_tisk']] = $t;
         }
         $rows = [];
+        $eklep = $this->eklepLinks($tisky);
 
         // vládní návrhy: PID z otevřených dat PSP
-        foreach ($this->eklepLinks($tisky) as $ct => $pid) {
+        foreach ($eklep as $ct => $pid) {
             $m = $items[$pid] ?? null;
             if ($m === null) {
                 continue;
@@ -88,17 +95,112 @@ final class GovPrep
 
         $known = array_flip(array_map(fn(array $t) => (int)$t['ct'], $tisky));
         $rows = array_values(array_filter($rows, fn(array $r) => isset($known[$r['ct']])));
+        $upcoming = $this->upcoming($byTitle, $start, $tisky, array_flip($eklep));
         $this->db->pdo->beginTransaction();
         try {
             $this->db->run('DELETE FROM priprava');
             $this->db->insertMany('priprava', ['ct', 'druh', 'pid', 'pripominky_od', 'pripominky_do', 'dni', 'mist',
                 'vlada', 'duvod', 'poznamka', 'mimo_plan', 'vyjimka', 'znovu'], $rows);
+            $this->db->run('DELETE FROM pripravovane');
+            $this->db->insertMany('pripravovane', ['pid', 'nazev', 'resort', 'faze', 'stav', 'zalozeno', 'zmeneno', 'pripominky_od',
+                'pripominky_do', 'dni', 'mist', 'vlada', 'duvod', 'popis', 'mimo_plan', 'vyjimka', 'verzi'], $upcoming);
             $this->db->pdo->commit();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
         }
-        return ['materialy' => count($items), 'tisky' => count($rows)];
+        return ['materialy' => count($items), 'tisky' => count($rows), 'pripravovane' => count($upcoming)];
+    }
+
+    public static function phaseOf(string $status): ?string
+    {
+        // kód stavu materiálu v ODok („2 - v připomínkovém řízení“, „B - signováno“…) → fáze, null = už mimo vládu
+        $code = strtoupper(trim((string)preg_replace('~\s*[-–].*$~u', '', trim($status))));
+        if ($code === '' || in_array($code, self::DONE_STATES, true)) {
+            return null;
+        }
+        return match (true) {
+            in_array($code, ['1', '2'], true) => 'pripominky',
+            $code === '3' => 'po_pripominkach',
+            in_array($code, ['7', '8'], true) => 'vlada',
+            default => 'schvaleno', // 9 projednáno, B signováno (čeká na předložení Sněmovně)
+        };
+    }
+
+    private function upcoming(array $byTitle, string $start, array $tisky, array $eklepPids): array
+    {
+        // návrhy zákonů ministerstev z tohoto období, které ještě nemají sněmovní tisk; verze téhož materiálu
+        // (k připomínkám, pro vládu) mají jiný PID a stejný název – rozhoduje nejnovější z nich
+        $tiskTitles = [];
+        foreach ($tisky as $t) {
+            foreach ([(string)$t['uplny_nazev'], (string)$t['nazev']] as $title) {
+                if ($title !== '') {
+                    $tiskTitles[self::normTitle($title)] = max($tiskTitles[self::normTitle($title)] ?? '', (string)$t['predlozeno']);
+                }
+            }
+        }
+        $out = [];
+        foreach ($byTitle as $norm => $versions) {
+            $versions = array_values(array_filter($versions, fn(array $m) => ($m['type']['id'] ?? '') === 'NZ'
+                && preg_match('~^(vládní\s+)?návrh\s+(ústavního\s+)?zákona~ui', trim((string)$m['title']))));
+            if ($versions === []) {
+                continue;
+            }
+            usort($versions, fn(array $a, array $b) => strcmp((string)$b['date_authorized'], (string)$a['date_authorized']));
+            $last = $versions[0];
+            $first = $versions[count($versions) - 1];
+            $phase = self::phaseOf((string)($last['status']['name'] ?? ''));
+            if ($phase === null || !empty($last['psp']) || (string)$last['date_authorized'] < $start) {
+                continue;
+            }
+            // už ve Sněmovně: PID v otevřených datech PSP, nebo tisk se stejným názvem předložený po založení materiálu
+            // (název materiálu bývá i delší: „… na rok 2027 včetně rozpočtové dokumentace“)
+            $since = substr((string)$first['date_authorized'], 0, 10);
+            $inPsp = array_filter($versions, fn(array $m) => isset($eklepPids[(string)$m['pid']]) || !empty($m['psp'])) !== [];
+            foreach ($tiskTitles as $title => $submitted) {
+                if ($submitted >= $since && ($title === $norm || (mb_strlen($title) >= 30 && str_starts_with($norm, $title . ' ')))) {
+                    $inPsp = true;
+                    break;
+                }
+            }
+            if ($inPsp) {
+                continue;
+            }
+            $review = null;
+            $gov = null;
+            foreach ($versions as $m) {
+                if ($review === null && !empty($m['review_process']['date_finish'])) {
+                    $review = $m;
+                }
+                // schůze vlády z tohoto období (starší verze mohla projednat předchozí vláda)
+                if (!empty($m['government_program']['date']) && (string)$m['government_program']['date'] >= $start) {
+                    $gov = max((string)$gov, substr((string)$m['government_program']['date'], 0, 10));
+                }
+            }
+            $row = $this->row(0, 'vladni', $last, $review);
+            $changed = max(array_map(fn(array $m) => substr((string)($m['metadata']['date_modified'] ?? $m['date_authorized']), 0, 10), $versions));
+            $out[] = [
+                'pid' => (string)$last['pid'],
+                'nazev' => trim(preg_replace('~\s+~u', ' ', (string)$last['title']) ?? ''),
+                'resort' => (string)($last['author']['organization']['name'] ?? ''),
+                'faze' => $phase,
+                'stav' => mb_substr((string)($last['status']['name'] ?? ''), 0, 80),
+                'zalozeno' => substr((string)$first['date_authorized'], 0, 10),
+                'zmeneno' => $changed,
+                'pripominky_od' => $row['pripominky_od'],
+                'pripominky_do' => $row['pripominky_do'],
+                'dni' => $row['dni'],
+                'mist' => $row['mist'],
+                // „projednáno“ a „signováno“ znamená schválení vládou i tam, kde datum schůze v datech chybí
+                'vlada' => $gov,
+                'duvod' => $row['duvod'],
+                'popis' => mb_substr(trim(preg_replace('~\s+~u', ' ', (string)($last['description'] ?? '')) ?? ''), 0, 600),
+                'mimo_plan' => max(array_map(fn(array $m) => $this->row(0, 'vladni', $m, null)['mimo_plan'], $versions)),
+                'vyjimka' => max(array_map(fn(array $m) => $this->row(0, 'vladni', $m, null)['vyjimka'], $versions)),
+                'verzi' => count($versions),
+            ];
+        }
+        return $out;
     }
 
     public static function normTitle(string $title): string

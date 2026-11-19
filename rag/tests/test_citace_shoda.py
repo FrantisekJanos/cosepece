@@ -8,7 +8,7 @@ import unicodedata
 
 import pytest
 
-from hlidac_rag.citace_shoda import PRAH, najdi_citaci
+from hlidac_rag.citace_shoda import PRAH, UVOZOVKY, najdi_citaci, zkontroluj_delku
 
 PROJEV = (
     "Vážený pane předsedající, vážené kolegyně, vážení kolegové. Dovolte mi, abych se vyjádřil "
@@ -195,6 +195,100 @@ def test_zapor_v_dlouhe_citaci_neni_shoda():
     r = najdi_citaci(PROJEV, citace)
     assert r["shoda"] == "nenalezeno"
     assert "nemohl" in r["nalezeny_text"]
+
+
+def test_zapor_odsunuty_o_slovo_na_okraji():
+    text = "My nebudeme totiž podporovat tento návrh zákona o dani z příjmů fyzických osob."
+    r = najdi_citaci(text, "budeme podporovat tento návrh zákona o dani z příjmů fyzických osob")
+    assert r["shoda"] == "nenalezeno"
+    assert r["nalezeny_text"] == "nebudeme totiž podporovat tento návrh zákona o dani z příjmů fyzických osob"
+    overeni_offsetu(text, r)
+
+
+def test_zapor_v_dlouhe_mezere():
+    # mezera mezi bloky je delší než MAX_MEZERA slov a zápor v ní neleží na stejné pozici
+    text = ("Poslanecký klub naší strany po dlouhé a velmi bouřlivé diskusi nebude podporovat tento návrh zákona "
+            "o dani z příjmů fyzických osob, který předložila vláda minulý týden a který podle nás zásadně mění "
+            "zdanění.")
+    citace = ("Poslanecký klub naší strany bude podporovat tento návrh zákona o dani z příjmů fyzických osob, "
+              "který předložila vláda minulý týden a který podle nás zásadně mění zdanění")
+    r = najdi_citaci(text, citace)
+    assert r["shoda"] == "nenalezeno"
+    assert r["skore"] >= PRAH                     # textově skoro stejné, význam obrácený
+
+
+def test_vynechany_zapor():
+    text = "Tento postup podle našeho klubu není v pořádku a nikdy nebyl."
+    r = najdi_citaci(text, "Tento postup podle našeho klubu v pořádku")
+    assert r["shoda"] == "nenalezeno"
+
+
+def test_okraj_konci_na_odpovidajicim_slove():
+    text = "Tento návrh je podle našeho klubu zcela jistě nepřijatelný."
+    r = najdi_citaci(text, "Tento návrh je podle našeho klubu přijatelný")
+    assert r["shoda"] == "nenalezeno"
+    assert r["nalezeny_text"] == "Tento návrh je podle našeho klubu zcela jistě nepřijatelný"
+    # bez záporu: jiná koncovka posledního slova o dvě slova dál
+    text = "Tento návrh je podle našeho klubu zcela jistě přijatelný."
+    r = najdi_citaci(text, "Tento návrh je podle našeho klubu přijatelná")
+    assert r["shoda"] == "priblizne"
+    assert r["nalezeny_text"] == "Tento návrh je podle našeho klubu zcela jistě přijatelný"
+
+
+LHUTA = "Řízení o odvodu lze zahájit nejpozději do 4 let ode dne porušení rozpočtové kázně podle § 44a odst. 3."
+
+
+@pytest.mark.parametrize("citace", [
+    "lze zahájit nejpozději do 10 let ode dne porušení rozpočtové kázně",
+    "lze zahájit nejpozději do 14 let ode dne porušení rozpočtové kázně",
+    "lze zahájit nejpozději do let ode dne porušení rozpočtové kázně",          # číslo chybí
+    "lze zahájit nejpozději do 4 4 let ode dne porušení rozpočtové kázně",      # číslo přebývá
+    "porušení rozpočtové kázně podle § 44b odst. 3",
+    "lze zahájit nejpozdeji do 10 let ode dne poruseni rozpoctove kazne",       # i bez diakritiky
+])
+def test_jine_cislo_neni_shoda(citace):
+    r = najdi_citaci(LHUTA, citace)
+    assert r["shoda"] == "nenalezeno"
+    assert r["skore"] > 0.5                       # skóre zůstává informativní
+    overeni_offsetu(LHUTA, r)
+
+
+def test_stejne_cislo_s_jinou_koncovkou_okolnich_slov_projde():
+    r = najdi_citaci(LHUTA, "lze zahájit nejpozději do 4 let ode dne porušením rozpočtové kázně")
+    assert r["shoda"] == "priblizne"
+
+
+def test_citace_v_rozlozenem_unicode_je_presne():
+    citace = unicodedata.normalize("NFD", "zkracuje lhůtu pro vymáhání dotací")
+    assert citace != "zkracuje lhůtu pro vymáhání dotací"
+    r = najdi_citaci(PROJEV, citace)
+    assert r["shoda"] == "presne"
+    assert r["nalezeny_text"] == "zkracuje lhůtu pro vymáhání dotací"
+
+
+def test_mekky_spojovnik_a_nulove_znaky_v_textu():
+    text = "Tato novela zkra\xadcuje lhů\xadtu​ pro﻿ vymá‍hání dota‌cí."
+    r = najdi_citaci(text, "zkracuje lhůtu pro vymáhání dotací")
+    assert r["shoda"] == "presne"
+    assert r["od_znaku"] == text.index("zkra")
+    assert r["nalezeny_text"] == "zkra\xadcuje lhů\xadtu​ pro﻿ vymá‍hání dota‌cí"
+    overeni_offsetu(text, r)
+    r = najdi_citaci(text, "zkracuje lhutu pro vymahani dotaci")
+    assert r["shoda"] == "priblizne" and r["skore"] == 1.0
+    assert r["nalezeny_text"] == "zkra\xadcuje lhů\xadtu​ pro﻿ vymá‍hání dota‌cí"
+
+
+def test_uvozovky_jsou_jedna_verejna_sada():
+    for q in UVOZOVKY:
+        text = f"Řekl {q}tohle je dobrý návrh{q} a odešel."
+        r = najdi_citaci(text, '"tohle je dobrý návrh"')
+        assert r["shoda"] == "presne", q
+
+
+def test_zkontroluj_delku():
+    with pytest.raises(ValueError, match="aspoň 3 slova"):
+        zkontroluj_delku("„dvě slova“")
+    zkontroluj_delku(unicodedata.normalize("NFD", "lhůtu pro vymáhání"))     # NFD nerozdělí slova
 
 
 def test_jiny_recnik_nenalezeno_s_kandidatem():

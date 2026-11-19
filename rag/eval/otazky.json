@@ -1,0 +1,907 @@
+[
+ {
+  "id": "E01",
+  "otazka": "Kdo je poslanec Vondráček?",
+  "faze": "pr2",
+  "volani": [
+   {
+    "nastroj": "najdi_osobu",
+    "argumenty": {
+     "jmeno": "Vondráček"
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 2
+     },
+     {
+      "cesta": "osoby.*.id_osoba",
+      "rovna_se": 6165
+     },
+     {
+      "cesta": "osoby.*.id_osoba",
+      "rovna_se": 7058
+     }
+    ]
+   },
+   {
+    "nastroj": "projevy_recnika",
+    "argumenty": {
+     "osoba": "Vondráček"
+    },
+    "kontroly": [
+     {
+      "je_chyba": true
+     }
+    ]
+   },
+   {
+    "nastroj": "projevy_recnika",
+    "argumenty": {
+     "osoba": "6165",
+     "limit": 1
+    },
+    "kontroly": [
+     {
+      "cesta": "id_osoba",
+      "rovna_se": 6165
+     }
+    ]
+   }
+  ],
+  "rucne": "Odpověď nesmí připsat projev jednomu Vondráčkovi, když jméno není jednoznačné. Radek (ANO2011) a Libor (SPD) musí být rozlišeni."
+ },
+ {
+  "id": "E02",
+  "otazka": "Pod jakým číslem tisku prošla novela jednacího řádu 157/2026 Sb., kdo ji podal a co s ní udělal Senát?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "tisk_podle_sbirky",
+    "argumenty": {
+     "sb": "157/2026"
+    },
+    "kontroly": [
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 72
+     }
+    ]
+   },
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 72,
+     "vcetne": [
+      "kroky"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 72
+     },
+     {
+      "cesta": "sbirka",
+      "rovna_se": "157/2026"
+     }
+    ]
+   }
+  ],
+  "rucne": "Předkladatelé (R. Vondráček a další), Senát 24. 8. 2026 se nezabýval, podpis 27. 8. 2026, 22 PN, skóre 40 (může se měnit)."
+ },
+ {
+  "id": "E03",
+  "otazka": "Které návrhy zákonů podal ministr práce Aleš Juchelka jako poslanec a jak dopadly?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "seznam_tisku",
+    "argumenty": {
+     "q": "Juchelka"
+    },
+    "kontroly": [
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 85
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 88
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 124
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 125
+     }
+    ]
+   },
+   {
+    "nastroj": "najdi_osobu",
+    "argumenty": {
+     "jmeno": "Juchelka"
+    },
+    "kontroly": [
+     {
+      "cesta": "osoby.*.id_osoba",
+      "rovna_se": 6463
+     }
+    ]
+   },
+   {
+    "nastroj": "projevy_recnika",
+    "argumenty": {
+     "osoba": "6463",
+     "limit": 1
+    },
+    "kontroly": [
+     {
+      "cesta": "projevy.0.role",
+      "obsahuje": "Ministr práce"
+     }
+    ]
+   }
+  ],
+  "rucne": "Odpověď musí doložit, že je navrhovatel ministr (pole role u projevů), u tisku to MCP neuvádí. 85 zamítnuto, 88 = 35/2026 Sb., 124 = 93/2026 Sb., 125 = 92/2026 Sb."
+ },
+ {
+  "id": "E04",
+  "otazka": "Jak rychle a jakým postupem prošel tisk 88 a co k tomu řekl sám předkladatel?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 88,
+     "vcetne": [
+      "kroky"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "p90",
+      "rovna_se": 1
+     },
+     {
+      "cesta": "p90ok",
+      "rovna_se": 1
+     },
+     {
+      "cesta": "score",
+      "rovna_se": 40
+     }
+    ]
+   },
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "nucen časové tísně poslanecký návrh"
+    },
+    "kontroly": [
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/9/10/1"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_projev",
+    "argumenty": {
+     "klic": "10/9/10/1"
+    },
+    "kontroly": [
+     {
+      "cesta": "",
+      "obsahuje": "nucen z důvodu časové tísně"
+     }
+    ]
+   }
+  ],
+  "rucne": "17 dní od předložení (27. 1. až 13. 2. 2026), § 90/2. Pro vyváženost uvést i P. Pivoňku Vaňkovou 10/9/10/5. Hlasování č. 6 neověřeno (viz E21)."
+ },
+ {
+  "id": "E05",
+  "otazka": "Jak proběhl tisk 163 ve stavu legislativní nouze: od předložení po Sbírku?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 163,
+     "vcetne": [
+      "kroky",
+      "body"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "sbirka",
+      "rovna_se": "63/2026"
+     }
+    ]
+   },
+   {
+    "nastroj": "pn_k_tisku",
+    "argumenty": {
+     "ct": 163
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 5
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 814
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 815
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 817
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 818
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 819
+     }
+    ]
+   },
+   {
+    "nastroj": "get_projev",
+    "argumenty": {
+     "klic": "10/14/46/2"
+    },
+    "kontroly": [
+     {
+      "cesta": "",
+      "obsahuje": "Za 12 hodin hotový zákon"
+     }
+    ]
+   }
+  ],
+  "rucne": "Časová osa 13. až 15. 4., Senát zamítl 22. 4., setrváno 24. 4., podpis 11. 5. Oddělit fakta z historie od tvrzení z rozpravy (K. Haas 10/14/15/2 má ct null). Čas a počty závěrečného hlasování neověřeny."
+ },
+ {
+  "id": "E06",
+  "otazka": "Které zákony Sněmovna přijala proti zamítnutí Senátu nebo vetu prezidenta?",
+  "faze": "pr2",
+  "volani": [
+   {
+    "nastroj": "seznam_tisku",
+    "argumenty": {
+     "faze": "Vyhlášeno",
+     "limit": 200
+    },
+    "kontroly": [
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 76
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 77
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 163
+     }
+    ]
+   }
+  ],
+  "rucne": "Ověřeno pro tisky 76 (195/2026), 77 (197/2026), 163 (63/2026). Úplnost seznamu neověřena, doplnit dotazem do DB (kroky.akce zamítnut, nepodepsal, setrváno). Cíl: jeden dotaz s filtrem místo tisk po tisku."
+ },
+ {
+  "id": "E07",
+  "otazka": "Kolik návrhů bylo navrženo ke schválení už v 1. čtení (§ 90 odst. 2), kolik tak prošlo a kolik z nich bylo vládních?",
+  "faze": "pr2",
+  "volani": [],
+  "rucne": "Neověřeno přes MCP. Podle docs/codebase.md k 18. 11. 2026: 45 ze 179 navrženo (28 z 94 nevládních, 17 z 85 vládních), 9 schváleno; přepočítat (nyní 180 tisků). Chybí filtr p90/p90ok v seznam_tisku. Příklady: 88 (p90ok=1), 15, 174."
+ },
+ {
+  "id": "E08",
+  "otazka": "Co se stalo s návrhem na schválení tisku 174 v 1. čtení a který pozměňovací návrh k němu mění jiný zákon?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 174,
+     "vcetne": [
+      "kroky",
+      "zakony"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 174
+     },
+     {
+      "cesta": "p90",
+      "rovna_se": 1
+     },
+     {
+      "cesta": "score",
+      "rovna_se": 85
+     }
+    ]
+   },
+   {
+    "nastroj": "pn_k_tisku",
+    "argumenty": {
+     "ct": 174
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 36
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 1740
+     }
+    ]
+   },
+   {
+    "nastroj": "get_pn",
+    "argumenty": {
+     "cislo": 1740
+    },
+    "kontroly": [
+     {
+      "cesta": "osoba",
+      "obsahuje": "Bendl"
+     }
+    ]
+   }
+  ],
+  "rucne": "§ 90/2 navrženo, 30. 6. 2026 nesouhlas s RJ, řádné 1. čtení. 24 PN v den konce rozpravy (20. 10. 2026). PN 1740 (P. Bendl) mění 242/2000 Sb.; nejvyšší AI závažnost má PN 2044 (5/10)."
+ },
+ {
+  "id": "E09",
+  "otazka": "Které tisky mění trestní zákoník (40/2009 Sb.) a v jaké jsou fázi?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "tisky_menici_zakon",
+    "argumenty": {
+     "sb": "40/2009"
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 7
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 115
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 173
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 216
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 207
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 111
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 329
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 196
+     }
+    ]
+   }
+  ],
+  "rucne": "Po PR 2 mají být tisky seřazené podle skóre (115: 78, 173: 73, 216: 15, 207: 0, 111: 18, 329: 5, 196: 0). Poslanecké, vládní i senátní."
+ },
+ {
+  "id": "E10",
+  "otazka": "Který návrh mění zákon o Státním zemědělském intervenčním fondu (256/2000 Sb.)?",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "tisky_menici_zakon",
+    "argumenty": {
+     "sb": "256/2000"
+    },
+    "kontroly": [
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 221
+     }
+    ]
+   },
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "",
+     "meni_zakon": "256/2000"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     },
+     {
+      "cesta": "",
+      "obsahuje": "221"
+     }
+    ]
+   }
+  ],
+  "rucne": "Správně tisk 221 (novela zákona o střetu zájmů). Dnešní odpověď žádný tisk je nepravdivá. Obdobně 234/2014 (služební zákon) u tisků 76/77, v textu neověřeno."
+ },
+ {
+  "id": "E11",
+  "otazka": "Co přesně říká tisk 221 o lhůtě pro vracení dotací a o jejím zpětném použití? Cituj.",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 221,
+     "vcetne": [
+      "rozbor",
+      "pn"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "score",
+      "rovna_se": 82
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 1344
+     },
+     {
+      "cesta": "pn.*.cislo",
+      "rovna_se": 1462
+     }
+    ]
+   },
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "přede dnem nabytí účinnosti",
+     "ct": 221
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     },
+     {
+      "cesta": "",
+      "obsahuje": "přede dnem nabytí účinnosti"
+     }
+    ]
+   }
+  ],
+  "rucne": "Citace z docs/reels-styl.md jsou neověřeny proti textu (§ 11a odst. 1 číslo 10 nahrazeno 4; přechodné ustanovení „i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti“). Uvést označení celku. Nenazývat přílepkem (je v původním textu). Skóre 82, ne 79."
+ },
+ {
+  "id": "E12",
+  "otazka": "Které ustanovení tisku 311 zavádí zpětné použití mimořádné sektorové daně? Doslovně a s označením.",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "cesta": "rozbor.ai.citace.*",
+      "obsahuje": "Ustanovení § 17c, § 20ba"
+     }
+    ]
+   },
+   {
+    "nastroj": "osnova_textu",
+    "argumenty": {
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   },
+   {
+    "nastroj": "get_cel",
+    "argumenty": {
+     "ct": 311,
+     "oznaceni": "Čl. II"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "Označení celku (Čl. II, bod přechodných ustanovení) neověřeno. Sazba 50 %. AI rozbor 6/10, zpetnost_smer nova_povinnost."
+ },
+ {
+  "id": "E13",
+  "otazka": "Jak byla u tisku 311 zkrácena lhůta a kolik pozměňovacích návrhů přišlo v poslední den? Kdo je podal?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 311,
+     "vcetne": [
+      "kroky",
+      "upozorneni"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "score",
+      "rovna_se": 85
+     }
+    ]
+   },
+   {
+    "nastroj": "pn_k_tisku",
+    "argumenty": {
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 30
+     }
+    ]
+   }
+  ],
+  "rucne": "26 ze 30 PN podáno 13. 11. 2026 mezi 08:31 a 12:14. Předkladatelé: Jurečka 9, Sedmihradská 5, Činčila 4, Papajanovský 4, Jakob 3 a další. Nesmí tvrdit, že pozdní PN podala koalice. Počet dní zkrácení (7) a hlasování neověřeno."
+ },
+ {
+  "id": "E14",
+  "otazka": "Kdo v rozpravě k tisku 311 namítal, že daň dopadne na jedinou firmu? Uveď citace.",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "jediná firma",
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/30/2"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/26/4"
+     },
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/32/2"
+     }
+    ]
+   }
+  ],
+  "rucne": "Správně: Munzar 10/34/30/2, Svobodová 10/34/30/4 (aut.) a 10/36/17/2 (neaut.), Vlček 10/34/32/2, Jakob 10/34/26/4 a 10/36/15/4 (neaut.). Falešné shody, které nepatří do odpovědi: Sedmihradská 10/36/20/2, Vojáček 10/36/22/4. Označit neautorizované projevy."
+ },
+ {
+  "id": "E15",
+  "otazka": "Co zavádí PN 2315 k tisku 311, které paragrafy vkládá a od kdy má platit?",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "get_pn",
+    "argumenty": {
+     "cislo": 2315
+    },
+    "kontroly": [
+     {
+      "cesta": "osoba",
+      "obsahuje": "Jurečka"
+     },
+     {
+      "cesta": "ct",
+      "rovna_se": 311
+     },
+     {
+      "cesta": "chars",
+      "rovna_se": 20623
+     }
+    ]
+   },
+   {
+    "nastroj": "osnova_textu",
+    "argumenty": {
+     "pn": 2315
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   },
+   {
+    "nastroj": "get_cel",
+    "argumenty": {
+     "pn": 2315,
+     "oznaceni": "§ 21j"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "Vkládá § 21j až 21m, § 34 odst. 5, § 38zl. Účinnost od 1. 1. 2028. Rozlišit AI rozbor od textu PN. Týž autor podal 13. 11. šest podobných variant (2312 až 2318)."
+ },
+ {
+  "id": "E16",
+  "otazka": "Co mění PN 894 a kdo ho podal?",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "get_pn",
+    "argumenty": {
+     "cislo": 894
+    },
+    "kontroly": [
+     {
+      "cesta": "osoba",
+      "obsahuje": "Radek Vondráček"
+     },
+     {
+      "cesta": "ct",
+      "rovna_se": 76
+     }
+    ]
+   },
+   {
+    "nastroj": "osnova_textu",
+    "argumenty": {
+     "pn": 894
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "Dnes je v datech jen autor a čas (17. 4. 2026 10:36:15), obsah ne. Obsah doplnit po ingestu."
+ },
+ {
+  "id": "E17",
+  "otazka": "Kterými pozměňovacími návrhy k tisku 77 přibyla změna u vedoucích stálých misí, zrušení dozorčí komise Národní sportovní agentury a funkční období tajemníků obcí? Kdo je podal?",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "pn_k_tisku",
+    "argumenty": {
+     "ct": 77
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 16
+     }
+    ]
+   },
+   {
+    "nastroj": "hledej_v_textech",
+    "argumenty": {
+     "dotaz": "stálých misí",
+     "ct": 77,
+     "druh": "pn"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "16 PN k tisku 77 (Ožanová 5, Šťastný 4, Stojanová 2, Olšáková 2, Juchelka 1, Žbánek 1, Dvořák 1). Přiřazení témat k číslům PN neověřeno. Výroky z rozpravy uvádět jako výroky (Haas 10/35/26/5, Válková 10/35/16/4)."
+ },
+ {
+  "id": "E18",
+  "otazka": "Platí, že doprovodný zákon ke služebnímu zákonu (tisk 77) narostl z 24 na 82 částí?",
+  "faze": "texty",
+  "volani": [
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "nabobtnal 82 částí"
+    },
+    "kontroly": [
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/30/33/9"
+     }
+    ]
+   },
+   {
+    "nastroj": "osnova_textu",
+    "argumenty": {
+     "ct": 77,
+     "verze": "puvodni"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   },
+   {
+    "nastroj": "osnova_textu",
+    "argumenty": {
+     "ct": 77,
+     "verze": "schvalene"
+    },
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "Výrok senátorky Sucharda Šípové (10/30/33/9, autorizováno) je ověřen. Počet celků typu část v původním a schváleném znění neověřen; odpověď uvede obě čísla a řekne, zda výrok sedí."
+ },
+ {
+  "id": "E19",
+  "otazka": "Kdo vystoupil ve sloučené rozpravě k tiskům 76 a 77 dne 14. 10. 2026 (hlasování o vetu) a co řekl předkladatel k připomínkovému řízení?",
+  "faze": "2b",
+  "volani": [],
+  "rucne": "program_schuze(35): bod 901 sloučená rozprava má ct null, 38 projevů. Po 2b musí rozprava(ct=77) vrátit i bod 901. R. Vondráček 10/35/10/6, H. Válková 10/35/16/4. Citaci o připomínkovém řízení ověřit proti textu."
+ },
+ {
+  "id": "E20",
+  "otazka": "V kolik hodin a na jakém základě skončila rozprava v 1. čtení tisku 231 a kdo schůzi řídil?",
+  "faze": "pr2",
+  "volani": [
+   {
+    "nastroj": "get_tisk",
+    "argumenty": {
+     "ct": 231,
+     "vcetne": [
+      "kroky",
+      "body"
+     ]
+    },
+    "kontroly": [
+     {
+      "cesta": "ct",
+      "rovna_se": 231
+     }
+    ]
+   },
+   {
+    "nastroj": "hledej_v_projevech",
+    "argumenty": {
+     "dotaz": "4.36 hodin",
+     "ct": 231,
+     "vcetne_predsedajicich": true
+    },
+    "kontroly": [
+     {
+      "cesta": "projevy.*.klic",
+      "rovna_se": "10/34/477/9"
+     }
+    ]
+   },
+   {
+    "nastroj": "get_projev",
+    "argumenty": {
+     "klic": "10/34/477/9"
+    },
+    "kontroly": [
+     {
+      "cesta": "",
+      "obsahuje": "4.36 hodin"
+     }
+    ]
+   }
+  ],
+  "rucne": "Projev 10/34/477/9, T. Okamura, 24. 10. 2026, neautorizováno, § 66 odst. 1 jednacího řádu. Známé vady: fulltext neumí čas 4.36, klub=ANO vrací 0 (je ANO2011), body_poradu uvádí jen schůzi 30. Poměr hlasování o usnesení neověřen."
+ },
+ {
+  "id": "E21",
+  "otazka": "Jak hlasovaly kluby o zamítnutí tisku 231 v 1. čtení a o zkrácení lhůty u tisku 311?",
+  "faze": "3",
+  "volani": [],
+  "rucne": "Neověřeno přes MCP (z docs/reels-styl.md): hlasování č. 287, 24. 10. 2026, pro zamítnutí 81, proti 96; tisk 311, 13. 11. 2026, pro 77, proti 23; tisk 88 č. 6: 130 pro, 0 proti. Data o hlasování MCP nemá."
+ },
+ {
+  "id": "E22",
+  "otazka": "Ověř tři citace před zveřejněním.",
+  "faze": "2b",
+  "volani": [],
+  "rucne": "over_citaci neexistuje. Případy: Zuna 10/14/46/2 přesně; Juchelka 10/9/10/1 přibližně (nástroj vrátí skutečné znění); stejná věta připsaná P. Pivoňce Vaňkové 10/9/10/5 = nenalezeno; Okamura 10/34/477/9 přesně + upozornění neautorizováno."
+ },
+ {
+  "id": "E23",
+  "otazka": "Které projevy se po prvním zveřejnění změnily?",
+  "faze": "dnes",
+  "volani": [
+   {
+    "nastroj": "zmeny_projevu",
+    "argumenty": {},
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   },
+   {
+    "nastroj": "zmeny_projevu",
+    "argumenty": {
+     "ct": 311
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 0
+     }
+    ]
+   },
+   {
+    "nastroj": "zmeny_projevu",
+    "argumenty": {
+     "ct": 231
+    },
+    "kontroly": [
+     {
+      "cesta": "pocet",
+      "rovna_se": 0
+     }
+    ]
+   },
+   {
+    "nastroj": "stav_dat",
+    "argumenty": {},
+    "kontroly": [
+     {
+      "je_chyba": false
+     }
+    ]
+   }
+  ],
+  "rucne": "Stav 19. 11. 2026: jeden změněný projev A. Vojtěcha 10/34/622/10 (verze 2, ct 285 je podezřelé přiřazení). Hodnoty se mění v čase, porovnat s minulým během. Pocet 0 u 311 a 231 platí, dokud neproběhne autorizace."
+ },
+ {
+  "id": "E24",
+  "otazka": "Najdi projevy, ve kterých předkladatel sám přiznává, že návrh neprošel připomínkovým řízením nebo že byl podán jako poslanecký místo vládního.",
+  "faze": "4",
+  "volani": [],
+  "rucne": "Mezi výsledky musí být Juchelka 10/9/10/1 (tisk 88) a R. Vondráček 10/35/10/6 (tisky 76/77). Odpověď rozliší člena vlády a poslance bez vládní funkce. Úplnost seznamu neověřena."
+ },
+ {
+  "id": "E25",
+  "otazka": "Shrň rozpravu ke 2. čtení tisku 311 (13. 11. 2026) po klubech: kdo mluvil, hlavní výhrady, které PN kdo ohlásil.",
+  "faze": "2b",
+  "volani": [],
+  "rucne": "Hodnotit ručně. projevy_k_tisku(311, od=2026-11-13, vcetne_predsedajicich, min_znaku=0) = 41 projevů, neautorizované. Musí zaznít Jakob 10/36/15/4, Svobodová 10/36/17/2, Sedmihradská 10/36/20/2, Vojáček 10/36/22/4. Plný seznam řečníků neověřen. Měřit počet volání a znaků."
+ }
+]

@@ -4,6 +4,7 @@
 2. objevení nových částí podle indexu a jednacích dnů posledních schůzí
 3. stažení částí s prošlou kontrolou, hlídání změn (hash)
 4. složení projevů u schůzí, kde se něco změnilo
+5. texty návrhů zákonů a PN (schéma texty), samostatně: chyba neshodí běh stenoprotokolů
 Výsledek se zapíše do steno.beh a meta.steno_last_result.
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ import time
 from . import db
 from .psp import ingest, opendata
 from .psp.http import Fetcher
+from .texty.ingest import sync_texty
 
 LOCK_ID = 74210001  # pg_advisory_lock proti souběhu dvou běhů
 
@@ -39,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--force-opendata", action="store_true")
     ap.add_argument("--reassemble", action="store_true", help="znovu složit projevy všech schůzí")
     ap.add_argument("--delay", type=float, default=1.0)
+    ap.add_argument("--texty-limit", type=int, default=40, help="nejvýš dokumentů textů ke stažení za běh")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -88,6 +91,15 @@ def main(argv: list[str] | None = None) -> int:
         conn.rollback()
         result["error"] = str(e)[:500]
         ok = False
+    try:
+        with conn.cursor() as cur:
+            obdobi = int(_meta(cur, "steno_obdobi") or 10)
+        conn.commit()
+        result["texty"] = {"ok": True, **sync_texty(conn, fetcher, obdobi, limit=args.texty_limit)}
+    except Exception:
+        log.exception("texty selhaly")
+        conn.rollback()
+        result["texty"] = {"ok": False}
     result["requests"] = fetcher.requests
     result["seconds"] = round(time.time() - started, 1)
     with conn.cursor() as cur:

@@ -44,6 +44,19 @@ final class Scorer
             'pn_large' => 10,
             'pn_large_chars' => 12000,
             'pn_many_flagged' => 5,
+
+
+            'pn_many_min' => 3,
+            'pn_many_share' => 0.2,
+            'pn_many_abs' => 10,
+
+            'pn_flag_ai_min' => 6,
+
+
+            'ai_pn_full_min' => 6,
+            'ai_pn_full_count' => 2,
+            'ai_pn_full_share' => 0.25,
+            'ai_pn_single_factor' => 0.5,
             'retro_deadline' => 15,
 
             'cap_procedure' => 40,
@@ -236,6 +249,10 @@ final class Scorer
         $otherLawsConfirmed = false;
         $aiWorst = null;
         $retroWhere = null;
+
+        $pnAiScores = [];
+
+        $pnTotal = max(count($pnDates), count($pnText));
         $verifier = AiReviewer::verifyModel($this->config);
         $verifyMin = (int)($this->config['ai']['verify_min'] ?? 6);
 
@@ -284,12 +301,15 @@ final class Scorer
                 $ai = $verifyMin - 1;
                 $x['ai_score'] = $ai;
             }
-            if ($ruleFlag || $ai >= 6) {
+            if ($ruleFlag || $ai >= (int)$w['pn_flag_ai_min']) {
                 $flagged++;
             }
-            if ($x['ai_score'] !== null && $ai > $maxAi) {
-                $maxAi = $ai;
-                $aiWorst = $x;
+            if ($x['ai_score'] !== null) {
+                $pnAiScores[] = $ai;
+                if ($ai > $maxAi) {
+                    $maxAi = $ai;
+                    $aiWorst = $x;
+                }
             }
         }
         if ($otherLaws !== []) {
@@ -301,8 +321,11 @@ final class Scorer
         if ($retroWhere !== null) {
             $add('retro_deadline', (int)$w['retro_deadline'], $retroWhere . ' mění lhůtu pro vymáhání nebo kontrolu a obsahuje ustanovení, které se výslovně vztahuje i na případy z doby před účinností');
         }
-        if ($flagged >= 3) {
-            $add('pn_many', (int)$w['pn_many_flagged'], "$flagged problematických pozměňovacích návrhů");
+
+
+        if ($flagged >= (int)$w['pn_many_min']
+            && ($flagged >= (float)$w['pn_many_share'] * $pnTotal || $flagged >= (int)$w['pn_many_abs'])) {
+            $add('pn_many', (int)$w['pn_many_flagged'], "$flagged z $pnTotal pozměňovacích návrhů je problematických");
         }
         if ($billText !== null && $billText['ai_score'] !== null && (int)$billText['ai_score'] >= 4) {
             $ai = json_decode((string)$billText['ai_json'], true) ?: [];
@@ -312,7 +335,18 @@ final class Scorer
         if ($aiWorst !== null && $maxAi >= 4) {
             $ai = json_decode((string)$aiWorst['ai_json'], true) ?: [];
             $why = trim((string)($ai['duvod'] ?? ''));
-            $add('ai', $maxAi * (int)$w['ai_multiplier'], 'Rozbor PN č. ' . $aiWorst['cislo'] . ' (' . $aiWorst['osoba'] . '): závažnost ' . $maxAi . '/10' . ($why !== '' ? ' – ' . $why : ''));
+
+
+            $level = min((int)$w['ai_pn_full_min'], $maxAi);
+            $reaching = count(array_filter($pnAiScores, fn(int $s): bool => $s >= $level));
+            $full = $reaching >= (int)$w['ai_pn_full_count'] || $reaching >= (float)$w['ai_pn_full_share'] * $pnTotal;
+            $points = $maxAi * (int)$w['ai_multiplier'];
+            if (!$full) {
+                $points = (int)round($points * (float)$w['ai_pn_single_factor']);
+            }
+            $add('ai', $points, 'Rozbor PN č. ' . $aiWorst['cislo'] . ' (' . $aiWorst['osoba'] . '): závažnost ' . $maxAi . '/10' . ($why !== '' ? ' – ' . $why : '')
+                . "; $reaching z $pnTotal PN se závažností ≥ $level"
+                . ($full ? '' : ' (ojedinělý nález mezi více PN: ' . (int)round(100 * (float)$w['ai_pn_single_factor']) . ' % bodů)'));
         }
 
         $title = $t['nazev'] . ' ' . $t['uplny_nazev'];

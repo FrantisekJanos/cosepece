@@ -9,6 +9,9 @@ final class ChangesService
     public function data(): array
     {
         $changes = [
+            ['2026-11-19', 'Víc pozměňovacích návrhů neznamená automaticky víc bodů',
+                'Čím víc pozměňovacích návrhů tisk má, tím spíš mezi nimi AI najde jeden závažný i náhodou. Plné body za rozbor nejhoršího návrhu proto dostane tisk jen tehdy, když jsou podobně závažné aspoň dva návrhy, nebo aspoň čtvrtina všech. Ojedinělý nález mezi více návrhy dá polovinu bodů. Body za „víc problematických návrhů“ vyžadují kromě aspoň tří takových návrhů i to, aby tvořily aspoň pětinu všech návrhů k tisku (od deseti stačí samotný počet). Na datech z 18. 11. to snížilo skóre dvou tisků, úroveň žádného se nezměnila.',
+                [35], true],
             ['2026-11-19', 'Historie verzí textů a rozborů',
                 'Web si pamatuje každé znění textu návrhu i pozměňovacího návrhu a každý rozbor AI. Když se text nebo hodnocení změní, je na detailu tisku odkaz „Historie“ se seznamem verzí a s vyznačeným rozdílem mezi nimi. Texty a rozbory z minulého volebního období se po jeho skončení archivují, nemažou.',
                 [34], false],

@@ -84,7 +84,7 @@ final class Repo
         // srozumitelný titulek z rozboru AI: z textu návrhu nebo z PN, podle toho, kde je závažnější nález
         $candidates = [];
         $bill = $this->db->one('SELECT ai_score, ai_json, ai_model FROM tisk_text WHERE ct = ? AND ai_at IS NOT NULL', [$ct]);
-        if ($bill !== null) {
+        if ($bill !== null && (int)$bill['ai_score'] >= 4) {
             $candidates[] = ['score' => (int)$bill['ai_score'], 'json' => $bill['ai_json'], 'model' => $bill['ai_model'], 'source' => 'text návrhu'];
         }
         $pn = $this->db->one('SELECT x.ai_score, x.ai_json, x.ai_model, x.cislo FROM pn_text x WHERE x.ct = ? AND x.ai_at IS NOT NULL ORDER BY x.ai_score DESC LIMIT 1', [$ct]);
@@ -95,11 +95,13 @@ final class Repo
         foreach ($candidates as $c) {
             $ai = json_decode((string)$c['json'], true) ?: [];
             $title = trim((string)($ai['titulek'] ?? ''));
-            if ($title !== '') {
+            // titulek na homepage jen u nálezu doloženého citací, která se ověřila v textu (#2 bod 4)
+            $quote = trim((string)(((array)($ai['citace'] ?? []))[0] ?? ''));
+            if ($title !== '' && $quote !== '') {
                 return [
                     'title' => $title,
                     'perex' => trim((string)($ai['perex'] ?? '')),
-                    'quote' => (string)(($ai['citace'] ?? [])[0] ?? ''),
+                    'quote' => $quote,
                     'source' => $c['source'],
                     // ověřeno druhým kolem silnějším modelem?
                     'verified' => (string)$c['model'] === AiReviewer::verifyModel(config()),

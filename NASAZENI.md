@@ -213,3 +213,10 @@ a `data/`).
 - `config.php` a `deploy/ai-remote.env` obsahují tajné tokeny – nesdílet, neposílat e-mailem, nedávat do gitu.
 - `ai_api.php` přijímá jen požadavky s tokenem; výsledky AI web ukládá jen tehdy, když citace sedí na text zákona.
 - Při podezření na únik tokenu ho změňte v `config.php` (a v `deploy/ai-remote.env`).
+- Na hosting nahrávejte **ZIP z `bin/package.sh`**, ne celý pracovní adresář z gitu: balík neobsahuje `.git`,
+  testy, `docker/.env`, `deploy/ai-remote.env` ani místní logy.
+- Ochrana `config.php` a `data/` stojí na `.htaccess` (bod 4 výše). Pokud to hosting umožňuje, dejte citlivé
+  soubory **mimo veřejný kořen webu**: konfiguraci přes proměnnou prostředí, např. v `.htaccess`
+  `SetEnv HLIDAC_CONFIG /home/ucet/private/config.php`, a databázi přes `db_dsn`, např.
+  `'sqlite:/home/ucet/private/hlidac.sqlite'`. V `data/` pak zůstane jen cache a zámek synchronizace.
+- Zápis do `data/` dejte jen účtu, pod kterým běží PHP (775/664), 777/666 jen tam, kde to hosting jinak nedovolí.

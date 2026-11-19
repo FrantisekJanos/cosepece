@@ -38,7 +38,41 @@ final class TiskText
             }
             usleep(300_000); // šetrně k serveru psp.cz
         }
+
+        // stažené texty jednou za refresh_days znovu ověříme: když psp.cz dokument vymění (jiné idd),
+        // stáhne se nové znění a rozbor AI se udělá znovu (#2 bod 10)
+        $stats['refreshed'] = 0;
+        $room = min((int)($cfg['refresh_per_run'] ?? 5), max(0, $limit - count($rows)));
+        $stale = self::staleQueue($this->db, $room, (int)($cfg['refresh_days'] ?? 7));
+        foreach ($stale as $row) {
+            $ct = (int)$row['ct'];
+            try {
+                $docxUrl = $this->findDocxUrl($ct, $obdobi);
+                if ($docxUrl !== null && $docxUrl !== (string)$row['docx_url']) {
+                    $this->save($ct, $docxUrl, PnText::docxToText(Http::get($docxUrl)), null);
+                    $stats['refreshed']++;
+                }
+                $this->db->run('UPDATE tisk_text SET checked_at = ? WHERE ct = ?', [date('Y-m-d H:i:s'), $ct]);
+            } catch (\Throwable) {
+                // dočasná chyba: zkusíme při další kontrole, uložený text zůstává
+            }
+            usleep(300_000);
+        }
         return $stats;
+    }
+
+    public static function staleQueue(Db $db, int $limit, int $refreshDays = 7): array
+    {
+        // stažené texty rozpracovaných tisků, které se nejdéle neověřovaly proti psp.cz
+        if ($limit <= 0) {
+            return [];
+        }
+        return $db->all(
+            "SELECT x.ct, x.docx_url FROM tisk_text x JOIN tisky t ON t.ct = x.ct
+             WHERE t.faze <> 'Vyhlášeno' AND x.docx_url IS NOT NULL AND COALESCE(x.checked_at, x.fetched_at) < ?
+             ORDER BY COALESCE(x.checked_at, x.fetched_at) LIMIT " . $limit,
+            [date('Y-m-d H:i:s', time() - 86400 * max(1, $refreshDays))]
+        );
     }
 
     public static function queue(Db $db, int $limit, int $retryHours = 24): array

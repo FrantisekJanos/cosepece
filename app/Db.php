@@ -144,6 +144,8 @@ final class Db
         $this->addColumn('tisky', 'score', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('tisky', 'vyhlaseno', 'VARCHAR(10)');
         $this->addColumn('tisky', 'lhuta', 'INTEGER');
+        // kdy se naposledy ověřilo, že psp.cz má pořád stejný dokument tisku
+        $this->addColumn('tisk_text', 'checked_at', 'VARCHAR(19)');
         $this->addColumn('tisky', 'reasons', $text);
         $this->addColumn('alerts', 'score', 'INTEGER NOT NULL DEFAULT 0');
         // volební období upozornění (čísla tisků se v každém období počítají znovu od 1)

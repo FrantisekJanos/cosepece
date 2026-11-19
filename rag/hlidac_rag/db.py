@@ -27,8 +27,16 @@ def connect(autocommit: bool = False) -> psycopg.Connection:
     return psycopg.connect(dsn(), autocommit=autocommit)
 
 
+def schema_files() -> list[str]:
+    """schema.sql a po něm schémata okruhů schema_<okruh>.sql v abecedním pořadí."""
+    pkg = resources.files("hlidac_rag")
+    dalsi = sorted(f.name for f in pkg.iterdir() if f.name.startswith("schema_") and f.name.endswith(".sql"))
+    return ["schema.sql", *dalsi]
+
+
 def migrate(conn: psycopg.Connection) -> None:
-    sql = resources.files("hlidac_rag").joinpath("schema.sql").read_text(encoding="utf-8")
+    pkg = resources.files("hlidac_rag")
     with conn.cursor() as cur:
-        cur.execute(sql)
+        for name in schema_files():
+            cur.execute(pkg.joinpath(name).read_text(encoding="utf-8"))
     conn.commit()

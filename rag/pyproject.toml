@@ -17,7 +17,7 @@ dev = ["pytest"]
 include = ["hlidac_rag*"]
 
 [tool.setuptools.package-data]
-hlidac_rag = ["schema.sql"]
+hlidac_rag = ["schema.sql", "schema_*.sql"]
 
 [build-system]
 requires = ["setuptools>=68"]

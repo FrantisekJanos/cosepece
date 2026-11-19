@@ -6,9 +6,11 @@ Přístup: hlavička Authorization: Bearer <token>; tokeny spravuje python -m hl
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import logging
 import os
+import pkgutil
 import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
@@ -245,6 +247,18 @@ def stav_dat() -> dict:
     """Stav dat: počty projevů a částí, poslední stažená schůze, výsledek posledního běhu synchronizace,
     texty: {dokumentu, celku, jen_pdf, schvalenych} (None, dokud se texty poprvé nenačtou)."""
     return _call("stav_dat", tools.stav_dat)
+
+
+def _registruj_moduly() -> list[str]:
+    """Zaregistruje nástroje z modulů balíčku hlidac_rag.nastroje (abecedně); vrátí jejich jména."""
+    from . import nastroje
+    jmena = sorted(m.name for m in pkgutil.iter_modules(nastroje.__path__) if not m.name.startswith("_"))
+    for jmeno in jmena:
+        importlib.import_module(f"{nastroje.__name__}.{jmeno}").register(server, _call, READ_ONLY)
+    return jmena
+
+
+MODULY_NASTROJU = _registruj_moduly()
 
 
 # ---------------------------------------------------------------- přístup a limity

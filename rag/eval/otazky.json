@@ -379,7 +379,7 @@
     "kontroly": [
      {
       "cesta": "pocet",
-      "rovna_se": 7
+      "rovna_se": 11
      },
      {
       "cesta": "tisky.*.ct",
@@ -408,11 +408,27 @@
      {
       "cesta": "tisky.*.ct",
       "rovna_se": 196
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 213
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 14
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 7
+     },
+     {
+      "cesta": "tisky.*.ct",
+      "rovna_se": 102
      }
     ]
    }
   ],
-  "rucne": "Po PR 2 mají být tisky seřazené podle skóre (115: 78, 173: 73, 216: 15, 207: 0, 111: 18, 329: 5, 196: 0). Poslanecké, vládní i senátní."
+  "rucne": "Po PR 2 mají být tisky seřazené podle skóre (115: 78, 173: 73, 216: 15, 207: 0, 111: 18, 329: 5, 196: 0). Poslanecké, vládní i senátní. Od 19. 11. i podle celků textu (zdroj text): 213 (Čl. XI), 14, 7, 102."
  },
  {
   "id": "E10",

@@ -58,53 +58,165 @@ final class Repo
         return (int)$this->db->value('SELECT COUNT(*) FROM alerts WHERE score >= ?', [$minScore]);
     }
 
-    public function topFindings(int $minScore, int $limit): array
+    // druhy procedurálních problémů pro filtr nálezů a tisků: klíč => [název, klíče důvodů skóre];
+    // úzké skupiny (jedna konkrétní věc), aby filtr mezi hlavními nálezy něco odfiltroval
+    public const PROBLEM_GROUPS = [
+        'prilepky' => ['Přílepky', ['pn_other_law']],
+        'zmeny_pn' => ['Rozsáhlé změny v PN', ['pn_large']],
+        'lhuty' => ['Zkrácené lhůty', ['deadline_cut', 'short_gap']],
+        'par90' => ['§ 90/2 bez 2. čtení', ['p90_passed', 'p90_requested']],
+        'pripominky' => ['Obcházení připomínek', ['mp_bill', 'senate_bill', 'region_bill']],
+        'zpetne' => ['Zpětné použití', ['retro_deadline']],
+    ];
+    // řazení hlavních nálezů: klíč => název
+    public const FINDING_SORTS = [
+        'skore' => 'Celkové skóre',
+        'ai' => 'Závažnost textu (AI)',
+        'nove' => 'Nejnovější dění',
+        'hlasovani' => 'Blíží se hlasování',
+    ];
+
+    public function topFindings(int $minScore, int $limit, string $sort = 'skore', string $group = ''): array
     {
-        // hlavní nálezy: nejzávažnější rozpracované tisky (mohou se kdykoli rozhýbat)
-        // a uzavřené tisky s aktivitou za posledních 120 dní. Navíc tisky pod prahem, které mají
-        // nález AI se závažností aspoň finding_ai_min, ověřený silnějším modelem a doložený citací
-        // (jediný silný nález se ve skóre ztratí mezi ostatními signály, např. tisk 221)
+        return array_slice($this->findings($minScore, $sort, $group)['rows'], 0, $limit);
+    }
+
+    /**
+     * Hlavní nálezy: nejzávažnější rozpracované tisky (mohou se kdykoli rozhýbat) a uzavřené tisky
+     * s aktivitou za posledních 120 dní. Navíc tisky pod prahem, které mají nález AI se závažností aspoň
+     * finding_ai_min, ověřený silnějším modelem a doložený citací (jediný silný nález se ve skóre ztratí
+     * mezi ostatními signály, např. tisk 221). Volitelně jen jeden druh problému a jiné řazení.
+     *
+     * @return array{rows: array, counts: array<string, int>, total: int}
+     */
+    public function findings(int $minScore, string $sort = 'skore', string $group = ''): array
+    {
         $since = date('Y-m-d', strtotime('-120 days'));
-        $strong = $this->strongAiFindings();
-        $params = [$minScore];
-        $extra = '';
-        if ($strong !== []) {
-            $extra = ' OR ct IN (' . implode(',', array_map('intval', array_keys($strong))) . ')';
-        }
+        $ai = $this->aiSignals();
+        $strongMin = (int)Scorer::weights(config())['finding_ai_min'];
+        $strong = array_keys(array_filter($ai, fn(array $a) => $a['score'] >= $strongMin));
+        $extra = $strong !== [] ? ' OR ct IN (' . implode(',', array_map('intval', $strong)) . ')' : '';
         $rows = $this->db->all(
             "SELECT * FROM tisky WHERE (score >= ?$extra)
                AND (faze NOT IN ('Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli') OR posledni >= ?)
-             ORDER BY score DESC, posledni DESC LIMIT " . $limit,
-            [...$params, $since]
+             ORDER BY score DESC, posledni DESC",
+            [$minScore, $since]
         );
+        $short = $this->shortReview();
+        $lastPn = [];
+        foreach ($this->db->all('SELECT ct, MAX(cas) AS cas FROM pn GROUP BY ct') as $r) {
+            $lastPn[(int)$r['ct']] = (string)$r['cas'];
+        }
+        $counts = array_fill_keys(array_keys(self::PROBLEM_GROUPS), 0);
+        foreach ($rows as &$row) {
+            $ct = (int)$row['ct'];
+            $row['reasons_list'] = json_decode((string)$row['reasons'], true) ?: [];
+            $row['ai_verified'] = $ai[$ct]['score'] ?? null;
+            // ověřený silný nález AI (štítek na kartě; pod prahem skóre je to důvod zařazení)
+            $row['strong_ai'] = ($ai[$ct]['score'] ?? 0) >= $strongMin ? $ai[$ct]['score'] : null;
+            $row['groups'] = $this->problemGroups($row, $ai[$ct] ?? null, isset($short[$ct]));
+            $row['activity'] = max((string)$row['posledni'], $lastPn[$ct] ?? '');
+            foreach ($row['groups'] as $g) {
+                $counts[$g]++;
+            }
+        }
+        unset($row);
+        $total = count($rows);
+        if ($group !== '' && isset(self::PROBLEM_GROUPS[$group])) {
+            $rows = array_values(array_filter($rows, fn(array $r) => in_array($group, $r['groups'], true)));
+        }
+        usort($rows, match ($sort) {
+            // nejdřív ověřené nálezy AI od nejzávažnějšího, při shodě (a bez nálezu) podle skóre
+            'ai' => fn(array $a, array $b) => [$b['ai_verified'] ?? -1, (int)$b['score']] <=> [$a['ai_verified'] ?? -1, (int)$a['score']],
+            'nove' => fn(array $a, array $b) => [$b['activity'], (int)$b['score']] <=> [$a['activity'], (int)$a['score']],
+            // tisky před hlasováním ve Sněmovně: 3. čtení a hlasování po Senátu či vetu, pak 2. a 1. čtení
+            'hlasovani' => fn(array $a, array $b) => [self::votePhaseRank((string)$a['faze']), -(int)$a['score']] <=> [self::votePhaseRank((string)$b['faze']), -(int)$b['score']],
+            default => fn(array $a, array $b) => [(int)$b['score'], (string)$b['posledni']] <=> [(int)$a['score'], (string)$a['posledni']],
+        });
         $surge = $this->surgeSet();
         $review = $this->reviewStatus();
         foreach ($rows as &$row) {
             $row['flags'] = $this->flags($row, $surge, $review);
-            $row['reasons_list'] = json_decode((string)$row['reasons'], true) ?: [];
             $row['headline'] = $this->headline((int)$row['ct']);
-            // ověřený silný nález AI (štítek na kartě; pod prahem skóre je to důvod zařazení)
-            $row['strong_ai'] = $strong[(int)$row['ct']] ?? null;
         }
-        return $rows;
+        return ['rows' => $rows, 'counts' => $counts, 'total' => $total];
     }
 
-    public function strongAiFindings(): array
+    public static function votePhaseRank(string $faze): int
     {
-        // ct => nejvyšší ověřená závažnost AI (text návrhu nebo PN) od finding_ai_min, s ověřenou citací
-        $min = (int)Scorer::weights(config())['finding_ai_min'];
+        return match ($faze) {
+            '3. čtení', 'Sněmovna po Senátu', 'Sněmovna po vetu' => 0,
+            '2. čtení' => 1,
+            '1. čtení', 'Organizační výbor', 'Podáno', 'U vlády', 'Stanovisko vlády' => 2,
+            default => 3, // Senát, prezident, vyhlášeno, uzavřeno – Sněmovna už nehlasuje
+        };
+    }
+
+    public function problemGroups(array $t, ?array $ai = null, bool $shortReview = false): array
+    {
+        // druhy problémů tisku z důvodů skóre (i těch ustřižených stropem skupiny) a z ověřeného rozboru AI
+        $keys = array_column(is_array($t['reasons_list'] ?? null) ? $t['reasons_list'] : (json_decode((string)($t['reasons'] ?? ''), true) ?: []), 'key');
+        $out = [];
+        foreach (self::PROBLEM_GROUPS as $group => [, $reasonKeys]) {
+            if (array_intersect($keys, $reasonKeys) !== []) {
+                $out[] = $group;
+            }
+        }
+        // ověřený nález AI: text nesouvisí s předmětem návrhu (přílepek) nebo se použije zpětně
+        if (!empty($ai['rider']) && !in_array('prilepky', $out, true)) {
+            $out[] = 'prilepky';
+        }
+        if (!empty($ai['retro']) && !in_array('zpetne', $out, true)) {
+            $out[] = 'zpetne';
+        }
+        // vládní návrh s připomínkovým řízením kratším než 3 týdny
+        if ($shortReview && !in_array('pripominky', $out, true)) {
+            $out[] = 'pripominky';
+        }
+        return array_values(array_intersect(array_keys(self::PROBLEM_GROUPS), $out));
+    }
+
+    public function shortReview(): array
+    {
+        // ct => true u vládních návrhů s připomínkovým řízením kratším než 21 dní
+        $out = [];
+        foreach ($this->db->all("SELECT ct FROM priprava WHERE druh = 'vladni' AND dni IS NOT NULL AND dni < 21") as $r) {
+            $out[(int)$r['ct']] = true;
+        }
+        return $out;
+    }
+
+    public function aiSignals(): array
+    {
+        // ct => nejvyšší ověřená závažnost AI (text návrhu nebo PN) s ověřenou citací a příznaky
+        // přílepku / zpětného použití z ověřených rozborů od verify_min (slabší nálezy se nepočítají)
         $verifier = AiReviewer::verifyModel(config());
+        $flagMin = (int)(config('ai', [])['verify_min'] ?? 6);
         $out = [];
         foreach (['tisk_text', 'pn_text'] as $table) {
-            foreach ($this->db->all("SELECT ct, ai_score, ai_json FROM $table WHERE ai_score >= ? AND ai_model = ?", [$min, $verifier]) as $r) {
+            foreach ($this->db->all("SELECT ct, ai_score, ai_json FROM $table WHERE ai_model = ? AND ai_score IS NOT NULL", [$verifier]) as $r) {
                 $ai = json_decode((string)$r['ai_json'], true) ?: [];
                 if (trim((string)(((array)($ai['citace'] ?? []))[0] ?? '')) === '') {
                     continue;
                 }
-                $out[(int)$r['ct']] = max($out[(int)$r['ct']] ?? 0, (int)$r['ai_score']);
+                $ct = (int)$r['ct'];
+                $score = (int)$r['ai_score'];
+                $out[$ct] ??= ['score' => 0, 'rider' => false, 'retro' => false];
+                $out[$ct]['score'] = max($out[$ct]['score'], $score);
+                if ($score >= $flagMin) {
+                    $out[$ct]['rider'] = $out[$ct]['rider'] || (isset($ai['souvisi_s_predmetem']) && $ai['souvisi_s_predmetem'] === false);
+                    $out[$ct]['retro'] = $out[$ct]['retro'] || !empty($ai['zpetna_ucinnost']);
+                }
             }
         }
         return $out;
+    }
+
+    public function strongAiFindings(): array
+    {
+        // ct => nejvyšší ověřená závažnost AI od finding_ai_min, s ověřenou citací
+        $min = (int)Scorer::weights(config())['finding_ai_min'];
+        return array_filter(array_map(fn(array $a) => $a['score'], $this->aiSignals()), fn(int $s) => $s >= $min);
     }
 
     public function headline(int $ct): ?array
@@ -262,8 +374,16 @@ final class Repo
         $order = $sort === 'recent' ? 'posledni DESC, ct DESC' : 'score DESC, posledni DESC, ct DESC';
         // hledání bez ohledu na velikost písmen a diakritiku („skolsky“ najde „Školský“) se dělá v PHP,
         // stejně v SQLite, MySQL i PostgreSQL; tisků jednoho období jsou stovky, ne tisíce
+        // druh problému (přílepky, zrychlení…) se pozná z důvodů skóre a z rozboru AI, filtruje se v PHP
+        $byGroup = isset(self::PROBLEM_GROUPS[$filter]);
         $rows = $this->db->all('SELECT * FROM tisky WHERE ' . implode(' AND ', $where)
-            . ' ORDER BY ' . $order . ($q === '' ? ' LIMIT ' . $limit : ''), $params);
+            . ' ORDER BY ' . $order . ($q === '' && !$byGroup ? ' LIMIT ' . $limit : ''), $params);
+        if ($byGroup) {
+            $ai = $this->aiSignals();
+            $short = $this->shortReview();
+            $rows = array_slice(array_values(array_filter($rows, fn(array $t): bool => in_array($filter,
+                $this->problemGroups($t, $ai[(int)$t['ct']] ?? null, isset($short[(int)$t['ct']])), true))), 0, $q === '' ? $limit : PHP_INT_MAX);
+        }
         if ($q !== '') {
             $needle = self::fold($q);
             $rows = array_slice(array_values(array_filter($rows, fn(array $t): bool => (string)$t['ct'] === trim($q)

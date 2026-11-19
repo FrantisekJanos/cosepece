@@ -249,9 +249,9 @@ db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, f
     date('Y-m-d H:i:s'), date('Y-m-d H:i:s'),
 ]);
 $scorer->scoreBills();
-check('tisk 221: zpětně použitá změna lhůty', in_array('retro_deadline', $keys(221), true), true);
+check('tisk 221: AI potvrdila zpětnou lhůtu → pravidlové body se nepřičtou podruhé', in_array('retro_deadline', $keys(221), true), false);
 check('tisk 221: rozbor textu návrhu', in_array('ai_bill', $keys(221), true), true);
-check('tisk 221: 45 + 15 + 8×3 = 84', $sc(221), 84);
+check('tisk 221: 45 + 8×3 = 69', $sc(221), 69);
 $html221 = testPage('/tisky/221');
 check('detail tisku ukazuje rozbor a citaci', str_contains($html221, 'Rozbor textu návrhu') && str_contains($html221, 'nejpozději do 4 let'), true);
 // celá cesta saveResult: nález bez ověřené citace se uloží se závažností 2 a do skóre tisku se nepromítne (issue #7, bod 2)
@@ -267,7 +267,7 @@ check('uložený rozbor bez klíče citace se nesníží', Hlidac\AiReviewer::sa
 db()->run('UPDATE tisk_text SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ? WHERE ct = 221',
     [$saved221['ai_json'], $saved221['ai_score'], $saved221['ai_at'], $saved221['ai_model']]);
 $scorer->scoreBills();
-check('tisk 221 po vrácení rozboru zase 84', $sc(221), 84);
+check('tisk 221 po vrácení rozboru zase 69', $sc(221), 69);
 
 echo "AI rozbor přes claude CLI (falešné CLI, bez sítě)\n";
 $fakeCli = $tmp . '/claude.php';

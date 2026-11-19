@@ -121,7 +121,10 @@ jinak by všichni návštěvníci sdíleli jeden limit.
 
 Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
 skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh
-bootstrap (meta `prep_alerts_bootstrapped`). `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP.
+bootstrap (meta `prep_alerts_bootstrapped`; zapíše se až s daty v tabulce `pripravovane`). Verze téhož materiálu mají
+jiný PID: `pripravovane.pidy` drží PID všech verzí, `addUpcoming()` nevydá upozornění, které už existuje pod kteroukoli
+z nich. `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP (tabulka PID `View::upcomingIndex()`,
+po změně tabulky `View::forgetUpcoming()`). Filtr `zakon=` v API a RSS páruje tato upozornění podle čísla zákona v názvu.
 
 Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
 a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,

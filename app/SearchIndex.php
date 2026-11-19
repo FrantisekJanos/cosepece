@@ -4,7 +4,8 @@
 // Staví se při synchronizaci do data/cache/search-index.json; prohlížeč ho stáhne jednou
 // (hledat.php?index=1) a našeptává sám, stránka výsledků (hledat.php) hledá stejným postupem v PHP.
 // Hledání: bez ohledu na diakritiku a velikost písmen, každé slovo dotazu musí být začátkem
-// některého slova položky; když nic, toleruje se jeden překlep u slov od 5 písmen.
+// některého slova položky; když nic, toleruje se jeden překlep u slov od 5 písmen (záměna, prohození,
+// chybějící nebo přebývající písmeno), i u slova v jiném tvaru.
 
 declare(strict_types=1);
 
@@ -277,8 +278,13 @@ final class SearchIndex
                 $best = max($best, 1.0);
             } elseif ($stem !== '' && str_starts_with($w, $stem)) {
                 $best = max($best, 0.9);
-            } elseif ($fuzzy && !$numeric && strlen($tok) >= 5 && self::nearlyEqual(substr($w, 0, strlen($tok)), $tok)) {
-                $best = max($best, 0.5);
+            } elseif ($fuzzy && !$numeric && strlen($tok) >= 5) {
+                if (self::fuzzyPrefix($tok, $w)) {
+                    $best = max($best, 0.5);
+                } elseif (strlen($stem) >= 5 && self::fuzzyPrefix($stem, $w)) {
+                    // překlep ve slově, které je v textu v jiném tvaru („zbarne“ → „zbraních“)
+                    $best = max($best, 0.4);
+                }
             }
         }
         return $best;
@@ -292,6 +298,22 @@ final class SearchIndex
         }
         $stem = (string)preg_replace('~(ich|ech|ami|emi|ovi|ove|ou|um|[aeiouy])$~', '', $tok);
         return $stem !== $tok && strlen($stem) >= 4 ? $stem : '';
+    }
+
+    /**
+     * Je $tok s nejvýš jedním překlepem začátkem slova $w? Zkouší začátky stejně dlouhé, o znak delší
+     * (v dotazu písmeno chybí: „rozpcet“) a o znak kratší (písmeno je navíc: „rozpoocet“).
+     */
+    public static function fuzzyPrefix(string $tok, string $w): bool
+    {
+        $n = strlen($tok);
+        $lw = strlen($w);
+        foreach ([$n, $n + 1, $n - 1] as $len) {
+            if ($len <= $lw && self::nearlyEqual(substr($w, 0, $len), $tok)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function nearlyEqual(string $a, string $b): bool

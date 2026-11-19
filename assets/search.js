@@ -1,6 +1,6 @@
 // Našeptávač vyhledávání: index (hledat.php?index=1) se stáhne jednou při prvním použití pole
 // a hledá se přímo v prohlížeči stejným postupem jako app/SearchIndex.php (bez diakritiky,
-// začátky slov, jeden překlep u slov od 5 písmen). Dotazy se nikam neposílají.
+// začátky slov, jeden překlep u slov od 5 písmen i u slova v jiném tvaru). Dotazy se nikam neposílají.
 // Ovládání: šipky, Enter, Esc; klávesa „/“ skočí do vyhledávání.
 (function () {
   'use strict';
@@ -37,6 +37,15 @@
     for (i = 0; i < t.length && s[i] === t[i]; i++);
     return s.slice(i + 1) === t.slice(i);
   }
+  function fuzzyPrefix(tok, w) {
+    // je tok s nejvýš jedním překlepem začátkem slova w? začátky stejně dlouhé, o znak delší
+    // (v dotazu písmeno chybí) a o znak kratší (písmeno je navíc)
+    var n = tok.length, lens = [n, n + 1, n - 1];
+    for (var i = 0; i < lens.length; i++) {
+      if (lens[i] <= w.length && nearlyEqual(w.slice(0, lens[i]), tok)) return true;
+    }
+    return false;
+  }
   function stem(tok) {
     // hrubé odříznutí české koncovky (jen u slov od 5 písmen), ať „zbraně“ najde „zbraní“
     if (tok.length < 5 || /\d/.test(tok)) return '';
@@ -50,7 +59,11 @@
       if (w === tok) return 1.5;
       if (!numeric && w.indexOf(tok) === 0) best = Math.max(best, 1);
       else if (st && w.indexOf(st) === 0) best = Math.max(best, 0.9);
-      else if (fuzzy && !numeric && tok.length >= 5 && nearlyEqual(w.slice(0, tok.length), tok)) best = Math.max(best, 0.5);
+      else if (fuzzy && !numeric && tok.length >= 5) {
+        if (fuzzyPrefix(tok, w)) best = Math.max(best, 0.5);
+        // překlep ve slově, které je v textu v jiném tvaru („zbarne“ → „zbraních“)
+        else if (st.length >= 5 && fuzzyPrefix(st, w)) best = Math.max(best, 0.4);
+      }
     }
     return best;
   }

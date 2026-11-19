@@ -238,7 +238,13 @@ final class AlertBuilder
     private function fromUpcoming(int $posted): int
     {
         // připravované zákony u vlády (GovPrep): krátké připomínkové řízení, mimo plán, schválení vládou;
-        // při prvním běhu této funkce se dosavadní stav jen zapíše (posted = 2), na sítě se neposílá
+        // při prvním běhu této funkce se dosavadní stav jen zapíše (posted = 2), na sítě se neposílá.
+        // Bez dat (ODok vypnutý nebo nedostupný) se první běh nepočítá: jinak by se celý dosavadní stav
+        // při příštím běhu rozeslal jako novinky.
+        $upcoming = $this->db->all('SELECT * FROM pripravovane');
+        if ($upcoming === []) {
+            return 0;
+        }
         if ($this->db->getMeta('prep_alerts_bootstrapped') === null) {
             $posted = 2;
             $this->db->setMeta('prep_alerts_bootstrapped', date('Y-m-d H:i:s'));
@@ -249,32 +255,47 @@ final class AlertBuilder
         $day = fn($value): string => preg_match('~^\d{4}-\d{2}-\d{2}$~', (string)$value) && strtotime((string)$value) !== false
             ? (string)$value : date('Y-m-d');
         $n = 0;
-        foreach ($this->db->all('SELECT * FROM pripravovane') as $u) {
-            $pid = (string)$u['pid'];
+        foreach ($upcoming as $u) {
+            // PID všech verzí materiálu: upozornění vydané k dřívější verzi se u nové verze neopakuje
+            $pids = array_values(array_unique(array_filter(array_merge([(string)$u['pid']], explode(',', (string)($u['pidy'] ?? ''))))));
             $name = self::shortTitle((string)$u['nazev']);
             // „bill“ pro add(): bez čísla tisku, sledovaný podle čísel zákonů v názvu materiálu
             $t = ['ct' => 0, 'zakony' => implode(',', Laws::numbersIn((string)$u['nazev']))];
             $where = (string)$u['resort'] . ' · návrh ' . ($phase[$u['faze']] ?? $u['faze']) . '.';
             if ($u['dni'] !== null && (int)$u['dni'] < 21) {
                 $days = (int)$u['dni'];
-                $n += $this->add('prep_review:' . $pid, $days < 10 ? 'prep_velmi' : 'prep_kratke', $t, $day($u['pripominky_od']) . ' 00:00:00',
+                $n += $this->addUpcoming('prep_review', $pids, $days < 10 ? 'prep_velmi' : 'prep_kratke', $t, $day($u['pripominky_od']) . ' 00:00:00',
                     'Připomínky k návrhu jen ' . $days . ' dní: ' . $name,
                     'Připomínkové řízení ' . formatDate($u['pripominky_od']) . ' – ' . formatDate($u['pripominky_do']) . ' (' . $days . ' dní, '
                     . (int)$u['mist'] . ' připomínkových míst); obvykle trvá 4 týdny. ' . $where, $posted);
             }
             if ((int)$u['mimo_plan'] === 1) {
                 $reason = trim((string)$u['duvod']);
-                $n += $this->add('prep_plan:' . $pid, 'prep_plan', $t, $day($u['zalozeno']) . ' 00:00:00',
+                $n += $this->addUpcoming('prep_plan', $pids, 'prep_plan', $t, $day($u['zalozeno']) . ' 00:00:00',
                     'Mimo plán legislativních prací vlády: ' . $name,
                     $where . ($reason !== '' ? ' Důvod podle předkladatele: ' . mb_substr($reason, 0, 300) : ''), $posted);
             }
             if ($u['faze'] === 'schvaleno' && !empty($u['vlada'])) {
-                $n += $this->add('prep_vlada:' . $pid, 'prep_vlada', $t, $day($u['vlada']) . ' 00:00:00',
+                $n += $this->addUpcoming('prep_vlada', $pids, 'prep_vlada', $t, $day($u['vlada']) . ' 00:00:00',
                     'Vláda schválila návrh: ' . $name,
                     (string)$u['resort'] . '. Návrh míří do Sněmovny, kde dostane číslo sněmovního tisku.', $posted);
             }
         }
         return $n;
+    }
+
+    /**
+     * Upozornění na připravovaný zákon: klíč „druh:PID“ nejnovější verze, ale jen když upozornění
+     * téhož druhu ještě nevzniklo pod PID kterékoli verze materiálu.
+     * @param string[] $pids PID verzí od nejnovější
+     */
+    private function addUpcoming(string $prefix, array $pids, string $kind, array $t, string $eventAt, string $title, string $body, int $posted): int
+    {
+        $keys = array_map(fn(string $pid) => $prefix . ':' . $pid, $pids);
+        if ($keys === [] || $this->db->value('SELECT 1 FROM alerts WHERE alert_key IN (' . implode(',', array_fill(0, count($keys), '?')) . ')', $keys) !== null) {
+            return 0;
+        }
+        return $this->add($keys[0], $kind, $t, $eventAt, $title, $body, $posted);
     }
 
     public static function shortTitle(string $title): string

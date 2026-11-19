@@ -141,6 +141,15 @@ TXT;
         ];
     }
 
+    /**
+     * Zbytek po dělení, podle kterého se vybírá namátkový vzorek (číslo textu % sample_every).
+     * U sample_every 2 a 3 by pevný zbytek 3 nikdy nenastal a vzorek by byl prázdný.
+     */
+    public static function sampleRemainder(int $every): int
+    {
+        return self::SAMPLE_REMAINDER % max(1, $every);
+    }
+
     /** Medián závažností; u sudého počtu nižší ze dvou prostředních (opatrnější). */
     public static function median(array $scores): int
     {
@@ -198,7 +207,7 @@ TXT;
             // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
             $where = 'x.ai_at IS NOT NULL AND x.ai_prompt = ? AND (x.ai_model IS NULL OR x.ai_model <> ?)'
                 . ' AND (x.ai_score >= ' . (int)($cfg['verify_min'] ?? 6) . ' OR (x.ai_score < ' . $r['sample_below']
-                . ' AND x.{ID} % ' . $r['sample_every'] . ' = ' . self::SAMPLE_REMAINDER . '))';
+                . ' AND x.{ID} % ' . $r['sample_every'] . ' = ' . self::sampleRemainder($r['sample_every']) . '))';
             $params = array_merge([self::PROMPT_VERSION, self::verifyModel($this->config)], $params);
             $orderBills = 't.score DESC, x.ai_score DESC, t.ct DESC';
             $orderPn = 't.score DESC, x.ai_score DESC, p.cas DESC';
@@ -279,6 +288,9 @@ TXT;
                 }
                 // závažnosti jednotlivých běhů jsou ve sloupci ai_runs (rozbor sám se nemění, historie verzí nebobtná)
                 $result['zavaznost'] = $median;
+                // pojistky mají přednost před mediánem: ponechaný rozbor může mít strop (zpětnost ve prospěch
+                // veřejnosti nejvýš 3, bez ověřené citace nejvýš 2), který medián ostatních běhů nesmí překročit
+                $result = self::sanitize($result);
             }
         }
         $own = !$this->db->pdo->inTransaction();

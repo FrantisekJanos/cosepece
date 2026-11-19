@@ -19,6 +19,7 @@ final class Analyzer
     public const AKCE_ZKRACENI = [47, 59, 72];       // změna lhůty, změna lhůty PN, vráceno + změna lhůty
     public const AKCE_STAZENO = [26, 39, 50];
     public const AKCE_ZAMITNUTO = [8, 27, 28, 34, 45, 46, 49];
+    public const AKCE_VRACENO = [24, 38];             // vrácen, vráceno k přepracování (např. rozpočet, tisk 17)
 
     private const FAZE = [
         23 => 'Podáno', 7 => 'Organizační výbor', 15 => 'U vlády', 16 => 'Stanovisko vlády',
@@ -63,6 +64,8 @@ final class Analyzer
                     $faze = 'Vzat zpět';
                 } elseif (in_array($akce, self::AKCE_ZAMITNUTO, true)) {
                     $faze = 'Zamítnuto';
+                } elseif (in_array($akce, self::AKCE_VRACENO, true)) {
+                    $faze = 'Vráceno předkladateli';
                 }
             } elseif (isset(self::FAZE[$typ])) {
                 $faze = self::FAZE[$typ];

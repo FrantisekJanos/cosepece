@@ -95,7 +95,9 @@ final class Publisher
                 }
             }
             if ($done) {
-                $this->db->run('UPDATE alerts SET posted = 1 WHERE alert_key = ?', [$alert['alert_key']]);
+                // 1 = doručeno aspoň na jednu síť, 4 = všechny pokusy selhaly (nic nedoručeno) (#2 bod 11)
+                $delivered = (int)$this->db->value("SELECT COUNT(*) FROM post_log WHERE alert_key = ? AND status = 'ok'", [$alert['alert_key']]);
+                $this->db->run('UPDATE alerts SET posted = ? WHERE alert_key = ?', [$delivered > 0 ? 1 : 4, $alert['alert_key']]);
             }
         }
         return $stats;

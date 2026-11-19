@@ -46,7 +46,9 @@ final class Repo
     public function alerts(int $limit, int $offset = 0, ?int $ct = null, int $minScore = 0): array
     {
         if ($ct !== null) {
-            return $this->db->all('SELECT * FROM alerts WHERE ct = ? ORDER BY event_at DESC, created_at DESC, alert_key DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$ct]);
+            // jen aktuální období: tisk se stejným číslem z minulého období je jiný návrh
+            return $this->db->all('SELECT * FROM alerts WHERE ct = ? AND (obdobi IS NULL OR obdobi = ?) ORDER BY event_at DESC, created_at DESC, alert_key DESC LIMIT ' . $limit . ' OFFSET ' . $offset,
+                [$ct, (int)$this->db->getMeta('obdobi_cislo', '0')]);
         }
         return $this->db->all('SELECT * FROM alerts WHERE score >= ? ORDER BY event_at DESC, created_at DESC, alert_key DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$minScore]);
     }
@@ -63,7 +65,7 @@ final class Repo
         $since = date('Y-m-d', strtotime('-120 days'));
         $rows = $this->db->all(
             "SELECT * FROM tisky WHERE score >= ?
-               AND (faze NOT IN ('Vyhlášeno', 'Vzat zpět', 'Zamítnuto') OR posledni >= ?)
+               AND (faze NOT IN ('Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli') OR posledni >= ?)
              ORDER BY score DESC, posledni DESC LIMIT " . $limit,
             [$minScore, $since]
         );
@@ -183,7 +185,8 @@ final class Repo
                 $where[] = 'zl = 1';
                 break;
             case 'surge':
-                $where[] = "ct IN (SELECT ct FROM alerts WHERE kind = 'surge')";
+                $where[] = "ct IN (SELECT ct FROM alerts WHERE kind = 'surge' AND (obdobi IS NULL OR obdobi = ?))";
+                $params[] = (int)$this->db->getMeta('obdobi_cislo', '0');
                 break;
             case 'flagged':
                 $where[] = "(typ_navrhu <> 'vládní' OR p90 = 1 OR zl = 1 OR pn_count > 0)";
@@ -239,7 +242,8 @@ final class Repo
     private function surgeSet(): array
     {
         $out = [];
-        foreach ($this->db->all("SELECT DISTINCT ct FROM alerts WHERE kind = 'surge'") as $r) {
+        foreach ($this->db->all("SELECT DISTINCT ct FROM alerts WHERE kind = 'surge' AND (obdobi IS NULL OR obdobi = ?)",
+            [(int)$this->db->getMeta('obdobi_cislo', '0')]) as $r) {
             $out[(int)$r['ct']] = true;
         }
         return $out;

@@ -166,6 +166,23 @@ final class View
         return '<span class="chip chip-' . e($class) . '">' . e($label) . '</span>';
     }
 
+    public static function isPastPeriod(array $alert): bool
+    {
+        static $current = null;
+        $current ??= (int)(db()->getMeta('obdobi_cislo', '0') ?? 0);
+        return !empty($alert['obdobi']) && $current > 0 && (int)$alert['obdobi'] !== $current;
+    }
+
+    public static function alertUrl(array $alert, bool $absolute = false): string
+    {
+        // upozornění minulého období vede na psp.cz (tisk se stejným číslem je teď jiný návrh)
+        if (self::isPastPeriod($alert)) {
+            return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);
+        }
+        $path = 'tisk.php?ct=' . (int)$alert['ct'];
+        return $absolute ? siteUrl($path) : $path;
+    }
+
     public static function pspTiskUrl(int $ct, int $obdobi): string
     {
         return 'https://www.psp.cz/sqw/historie.sqw?o=' . $obdobi . '&T=' . $ct;
@@ -186,8 +203,8 @@ final class View
           <article class="alert">
             <div class="alert-when"><?= e(formatDate($a['event_at'], true)) ?></div>
             <div class="alert-body">
-              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="tisk.php?ct=<?= (int)$a['ct'] ?>">tisk <?= (int)$a['ct'] ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
-              <h3><a href="tisk.php?ct=<?= (int)$a['ct'] ?>"><?= e($a['title']) ?></a></h3>
+              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="<?= e(self::alertUrl($a)) ?>">tisk <?= (int)$a['ct'] ?><?= self::isPastPeriod($a) ? ' (' . (int)$a['obdobi'] . '. období)' : '' ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
+              <h3><a href="<?= e(self::alertUrl($a)) ?>"><?= e($a['title']) ?></a></h3>
               <p><?= e($a['body']) ?></p>
             </div>
           </article>

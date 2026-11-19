@@ -25,6 +25,7 @@ MIN_OKEN = 8           # kolik oken textu se nejméně porovná podrobně
 SLOV_OKEN = 8_000      # kolik slov textu se v oknech nejvýš porovná (krátká citace = víc levných oken)
 MAX_HLASU = 50_000     # kolik výskytů kotevních slov se při předvýběru nejvýš projde
 MAX_MEZERA = 4         # nesouhlasný úsek do tolika slov se porovná po znacích (jiná koncovka)
+VAHA_DALSICH = 0.5     # po nalezené shodě se porovnají jen okna s aspoň takovou částí váhy nejsilnějšího
 
 _SLOVO = re.compile(r"\w+")
 _UVOZOVKY = re.compile("[\"'`´„“”‟«»‹›‚‘’‛″′]")
@@ -54,7 +55,10 @@ def najdi_citaci(text: str, citace: str) -> dict:
 
     slova = _slova(text)
     nejlepsi = None  # (skóre, první slovo, za posledním slovem)
-    for a, b in dict.fromkeys(_oblasti(slova_citace, slova)):
+    oblasti = _oblasti(slova_citace, slova)
+    for vaha, a, b in oblasti:
+        if nejlepsi and nejlepsi[0] >= PRAH and vaha < VAHA_DALSICH * oblasti[0][0]:
+            break
         usek = _nejlepsi_usek(slova_citace, slova, a, b)
         if usek and (nejlepsi is None or (-usek[0], usek[1]) < (-nejlepsi[0], nejlepsi[1])):
             nejlepsi = usek
@@ -154,8 +158,8 @@ def _kmen(slovo: str) -> str:
     return slovo[:4] if len(slovo) >= 5 and slovo.isalpha() else slovo
 
 
-def _oblasti(cit: list[str], slova: list[str]) -> list[tuple[int, int]]:
-    """Předvýběr: oblasti slov textu [a, b), kde citace nejspíš leží, od nejpravděpodobnější.
+def _oblasti(cit: list[str], slova: list[str]) -> list[tuple[float, int, int]]:
+    """Předvýběr: oblasti slov textu (váha okna, a, b) pro slova [a, b), kde citace nejspíš leží, od nejsilnější.
 
     Každý výskyt kmene slova citace (od nejvzácnějšího, dokud nepřekročí MAX_HLASU) hlasuje pro
     diagonálu = odhadnutý začátek citace v textu. Diagonály se sčítají do košů šířky `sirka` (tolerance
@@ -191,7 +195,7 @@ def _oblasti(cit: list[str], slova: list[str]) -> list[tuple[int, int]]:
     okna = {k: sum(vaha[i] for i in kose.get(k, prazdny) | kose.get(k + 1, prazdny))
             for k in set(kose) | {k - 1 for k in kose}}
     pocet = max(MIN_OKEN, SLOV_OKEN // (4 * sirka + m))
-    oblasti: list[tuple[int, int]] = []
+    oblasti: list[tuple[float, int, int]] = []
     obsazena: set[int] = set()
     for k in sorted(okna, key=lambda k: (-okna[k], k)):
         if obsazena.intersection((k - 1, k, k + 1)):
@@ -200,7 +204,8 @@ def _oblasti(cit: list[str], slova: list[str]) -> list[tuple[int, int]]:
         konec = min(len(slova), (k + 3) * sirka + m)
         v_okne = [d for d in range(k * sirka, (k + 2) * sirka) if d in diagonaly]
         nejsilnejsi = sorted(v_okne, key=lambda d: -sum(vaha[i] for i in diagonaly[d]))[:2]
-        oblasti += [(max(0, a), konec) for a in ((k - 1) * sirka, k * sirka, *nejsilnejsi)]
+        zacatky = dict.fromkeys(max(0, a) for a in ((k - 1) * sirka, k * sirka, *nejsilnejsi))
+        oblasti += [(okna[k], a, konec) for a in zacatky]
         if len(obsazena) == pocet:
             break
     return oblasti

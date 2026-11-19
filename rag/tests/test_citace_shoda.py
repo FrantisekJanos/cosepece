@@ -100,8 +100,11 @@ def test_offsety_za_zmenami_delky():
 
 
 def test_presna_shoda_nezacina_ani_nekonci_uprostred_slova():
+    # „proto“ není jiná koncovka slova „to“: není to přesná ani přibližná citace
     r = najdi_citaci("Řekl, že proto je chyba odejít.", "to je chyba")
-    assert r["shoda"] == "priblizne"
+    assert r["shoda"] == "nenalezeno"
+    assert r["skore"] < PRAH
+    assert r["nalezeny_text"] == "proto je chyba"
     r = najdi_citaci("Tohle je chybami posetý text.", "tohle je chyb")
     assert r["shoda"] == "priblizne"
     assert r["nalezeny_text"] == "Tohle je chybami"
@@ -169,6 +172,31 @@ def test_koncovka_v_prvnim_a_poslednim_slove():
     assert r["nalezeny_text"] == "novele zákona o střetu zájmů"
 
 
+@pytest.mark.parametrize("text, citace", [
+    # zápor na začátku citace
+    ("Za náš klub říkám, že nebudeme podporovat tento návrh zákona.", "budeme podporovat tento návrh zákona"),
+    ("Za náš klub říkám, že budeme podporovat tento návrh zákona.", "nebudeme podporovat tento návrh zákona"),
+    # zápor na konci citace
+    (PROJEV, "Považuji to za naprosto přijatelné"),
+    # zápor uprostřed citace
+    ("Podle nás to je nepřijatelné řešení pro obce.", "to je přijatelné řešení"),
+    ("Tento postup není v pořádku a nikdy nebyl.", "Tento postup je v pořádku"),
+    ("Náš klub bude hlasovat proti návrhu zákona o dani.", "klub bude hlasovat pro návrh zákona"),
+])
+def test_obraceny_vyznam_neni_shoda(text, citace):
+    r = najdi_citaci(text, citace)
+    assert r["shoda"] == "nenalezeno"
+    overeni_offsetu(text, r)
+
+
+def test_zapor_v_dlouhe_citaci_neni_shoda():
+    # jinak skoro stejný text: kvůli jedinému slovu by skóre bylo nad prahem, zápor ale mění význam
+    citace = "Ministerstvo nám to předložilo jako poslanecký návrh a nikdo z odborné veřejnosti se k tomu mohl vyjádřit"
+    r = najdi_citaci(PROJEV, citace)
+    assert r["shoda"] == "nenalezeno"
+    assert "nemohl" in r["nalezeny_text"]
+
+
 def test_jiny_recnik_nenalezeno_s_kandidatem():
     # jiný řečník řekl něco jiného, jen se pár slov překrývá
     citace = "Tento zákon podporujeme, protože konečně zpřísňuje pravidla pro politiky a dotace"
@@ -214,6 +242,10 @@ def test_priblizne_pri_shode_skore_vrati_prvni():
 
 
 # --- výkon (hrubé pojistky) -------------------------------------------------------------------
+# Cíl: text projevu do 60 000 znaků do 200 ms, spojený text zákona ~3 mil. znaků do ~3 s.
+# Limity v testech jsou 5× / 3× volnější, aby na sdíleném runneru CI test náhodně nepadal.
+LIMIT_60K = 1.0
+LIMIT_3M = 10.0
 
 _SLABIKY = ["ka", "ze", "po", "sně", "mov", "ní", "zá", "kon", "da", "ně", "pří", "spě", "vek", "ře",
             "še", "úř", "ad", "vlá", "dy", "ost", "ra", "va", "to", "je", "se", "čí", "lo", "ma"]
@@ -256,7 +288,7 @@ def test_rychlost_60k_znaku_citace_2000_znaku():
     trvani = time.perf_counter() - t0
     assert r["shoda"] == "priblizne"
     assert r["od_znaku"] == start
-    assert trvani < 0.2, trvani
+    assert trvani < LIMIT_60K, trvani
 
 
 def test_rychlost_60k_znaku_nenalezeno():
@@ -266,7 +298,7 @@ def test_rychlost_60k_znaku_nenalezeno():
     r = najdi_citaci(text, citace)
     trvani = time.perf_counter() - t0
     assert r["shoda"] == "nenalezeno"
-    assert trvani < 0.2, trvani
+    assert trvani < LIMIT_60K, trvani
 
 
 def test_rychlost_3m_znaku_citace_300_znaku():
@@ -277,4 +309,4 @@ def test_rychlost_3m_znaku_citace_300_znaku():
     trvani = time.perf_counter() - t0
     assert r["shoda"] == "priblizne"
     assert r["od_znaku"] == start
-    assert trvani < 3.0, trvani
+    assert trvani < LIMIT_3M, trvani

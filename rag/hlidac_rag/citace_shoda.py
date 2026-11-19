@@ -4,7 +4,8 @@ Dvě úrovně shody:
 - `presne`: po normalizaci (mezery a zalomení řádků, typografické uvozovky a pomlčky, „…“ = „...“,
   velikost písmen) je citace podřetězcem textu, který nezačíná ani nekončí uprostřed slova;
 - `priblizne`: porovnávají se jen slova bez diakritiky a interpunkce, drobné rozdíly (vynechané slovo,
-  jiná koncovka) se tolerují; skóre aspoň PRAH.
+  jiná koncovka) se tolerují; skóre aspoň PRAH. Jiný začátek slova se netoleruje a slovo s opačným
+  významem (budeme/nebudeme, je/není, pro/proti) znamená `nenalezeno` i při skóre nad PRAH.
 
 Offsety `od_znaku`/`do_znaku` jsou indexy do původního textu (konec exkluzivně), takže
 `text[od_znaku:do_znaku] == nalezeny_text`.
@@ -12,6 +13,7 @@ Offsety `od_znaku`/`do_znaku` jsou indexy do původního textu (konec exkluzivn�
 from __future__ import annotations
 
 import math
+import os
 import re
 import unicodedata
 from bisect import bisect_right
@@ -25,11 +27,13 @@ MIN_OKEN = 8           # kolik oken textu se nejméně porovná podrobně
 SLOV_OKEN = 8_000      # kolik slov textu se v oknech nejvýš porovná (krátká citace = víc levných oken)
 MAX_HLASU = 50_000     # kolik výskytů kotevních slov se při předvýběru nejvýš projde
 MAX_MEZERA = 4         # nesouhlasný úsek do tolika slov se porovná po znacích (jiná koncovka)
-VAHA_DALSICH = 0.5     # po nalezené shodě se porovnají jen okna s aspoň takovou částí váhy nejsilnějšího
+VAHA_DALSICH = 0.7     # po nalezené shodě se porovnají jen okna s aspoň takovou částí váhy nejsilnějšího
 
 _SLOVO = re.compile(r"\w+")
 _UVOZOVKY = re.compile("[\"'`´„“”‟«»‹›‚‘’‛″′]")
 _POMLCKY = re.compile("[‐‑‒–—―−]")
+# opačný význam, který nejde poznat podle předpony ne- (slova bez diakritiky)
+_OPACNA = {frozenset(p) for p in (("je", "neni"), ("pro", "proti"), ("ano", "ne"))}
 # místa, kde normalizace mění délku: víc bílých znaků za sebou, jiný bílý znak než mezera, výpustka
 _ZMENA_DELKY = re.compile(r"\s{2,}|[^\S ]|…")
 
@@ -39,7 +43,8 @@ def najdi_citaci(text: str, citace: str) -> dict:
 
     Vrací {shoda: presne | priblizne | nenalezeno, skore: 0–1, od_znaku, do_znaku, nalezeny_text}.
     U více shod vrací první přesnou, jinak přibližnou s nejvyšším skóre (při shodě skóre první).
-    `nenalezeno` nese nejbližšího kandidáta se skóre pod PRAH; bez jediného společného slova skóre 0
+    `nenalezeno` nese nejbližšího kandidáta se skóre pod PRAH, nebo i nad PRAH, když se kandidát liší
+    slovem s opačným významem (obrácený význam není citace); bez jediného společného slova skóre 0
     a offsety None. Citace kratší než MIN_SLOV slov = ValueError (krátké citace jsou nejednoznačné)."""
     slova_citace = _slova(citace)
     if len(slova_citace) < MIN_SLOV:
@@ -54,19 +59,23 @@ def najdi_citaci(text: str, citace: str) -> dict:
         return _vysledek(text, "presne", 1.0, norm.puvodni_od(i), norm.puvodni_do(i + len(hledana)))
 
     slova = _slova(text)
-    nejlepsi = None  # (skóre, první slovo, za posledním slovem)
+    # pořadí kandidátů: nejdřív úseky, které projdou (skóre ≥ PRAH bez opačného významu), pak vyšší
+    # skóre, pak dřívější úsek; klíč = (neprojde, -skóre, první slovo, za posledním slovem)
+    nejlepsi = None
     oblasti = _oblasti(slova_citace, slova)
     for vaha, a, b in oblasti:
-        if nejlepsi and nejlepsi[0] >= PRAH and vaha < VAHA_DALSICH * oblasti[0][0]:
+        if nejlepsi and not nejlepsi[0] and vaha < VAHA_DALSICH * oblasti[0][0]:
             break
         usek = _nejlepsi_usek(slova_citace, slova, a, b)
-        if usek and (nejlepsi is None or (-usek[0], usek[1]) < (-nejlepsi[0], nejlepsi[1])):
-            nejlepsi = usek
+        if usek:
+            skore, s, e, zapor = usek
+            klic = (zapor or skore < PRAH, -skore, s, e)
+            if nejlepsi is None or klic < nejlepsi:
+                nejlepsi = klic
     if nejlepsi is None:
         return {"shoda": "nenalezeno", "skore": 0.0, "od_znaku": None, "do_znaku": None, "nalezeny_text": None}
-    skore, s, e = nejlepsi
-    hranice = _hranice_slov(text, s, e)
-    return _vysledek(text, "priblizne" if skore >= PRAH else "nenalezeno", skore, *hranice)
+    neprojde, skore, s, e = nejlepsi
+    return _vysledek(text, "nenalezeno" if neprojde else "priblizne", -skore, *_hranice_slov(text, s, e))
 
 
 def _vysledek(text: str, shoda: str, skore: float, od: int, do: int) -> dict:
@@ -211,46 +220,83 @@ def _oblasti(cit: list[str], slova: list[str]) -> list[tuple[float, int, int]]:
     return oblasti
 
 
-def _nejlepsi_usek(cit: list[str], slova: list[str], a: int, b: int) -> tuple[float, int, int] | None:
-    """Nejpodobnější úsek slov textu v oblasti [a, b): (skóre, první slovo, za posledním slovem).
+def _nejlepsi_usek(cit: list[str], slova: list[str], a: int, b: int) -> tuple[float, int, int, bool] | None:
+    """Nejpodobnější úsek slov textu v oblasti [a, b): (skóre, první slovo, za posledním slovem, zápor).
 
-    Skóre 0–1 = podíl shodných znaků při zarovnání po slovech: shodná slova se počítají celá, nesouhlasné
-    úseky do MAX_MEZERA slov po znacích (jiná koncovka), delší nesouhlasné úseky jako neshoda."""
+    Skóre 0–1 = podíl shodných znaků při zarovnání po slovech: shodná slova se počítají celá, nesouhlasná
+    slova (mezery mezi bloky do MAX_MEZERA slov a nesouhlasný začátek a konec citace proti slovům textu
+    na stejném místě) jen společným začátkem při jiné koncovce (_shoda_slov). `zápor` = některé
+    spárované slovo má opačný význam (_zapor)."""
     oblast = slova[a:b]
     bloky = [x for x in SequenceMatcher(None, cit, oblast, autojunk=False).get_matching_blocks() if x.size]
     if not bloky:
         return None
-    # krajní bloky můžou být náhodné shody běžných slov v okolí: z prvních a posledních tří bloků
-    # vyber řadu s nejlepším poměrem shodných znaků
     znaky_citace = sum(map(len, cit))
     znaky_oblasti = list(accumulate(map(len, oblast), initial=0))
     znaky_bloku = list(accumulate((sum(map(len, cit[x.a:x.a + x.size])) for x in bloky), initial=0))
+    mezery = [_mezera(cit[x.a + x.size:y.a], oblast[x.b + x.size:y.b]) for x, y in zip(bloky, bloky[1:])]
+    znaky_mezer = list(accumulate((m[0] for m in mezery), initial=0))
 
-    def pomer(k1: int, k2: int) -> float:
-        shoda = znaky_bloku[k2 + 1] - znaky_bloku[k1]
-        usek = znaky_oblasti[bloky[k2].b + bloky[k2].size] - znaky_oblasti[bloky[k1].b]
-        return 2 * shoda / (znaky_citace + usek)
+    def zacatek(k: int) -> tuple[int, int, int, bool]:
+        """Úsek od bloku k včetně slov textu před ním proti nesouhlasnému začátku citace:
+        (první slovo, shodné znaky, znaky textu před blokem, zápor)."""
+        s = a + bloky[k].b
+        od = max(0, s - bloky[k].a)
+        shoda, zapor = _okraj(cit[:bloky[k].a][::-1], slova[od:s][::-1])
+        return od, shoda, sum(map(len, slova[od:s])), zapor
 
+    def konec(k: int) -> tuple[int, int, int, bool]:
+        """Totéž pro konec úseku za blokem k a nesouhlasný konec citace."""
+        e = a + bloky[k].b + bloky[k].size
+        do = min(len(slova), e + len(cit) - bloky[k].a - bloky[k].size)
+        shoda, zapor = _okraj(cit[bloky[k].a + bloky[k].size:], slova[e:do])
+        return do, shoda, sum(map(len, slova[e:do])), zapor
+
+    # krajní bloky můžou být náhodné shody běžných slov v okolí: z prvních a posledních tří bloků
+    # vyber řadu s nejvyšším skóre
     n = len(bloky)
-    k1, k2 = max(((k1, k2) for k1 in range(min(3, n)) for k2 in range(max(k1, n - 3), n)),
-                 key=lambda k: pomer(*k))
-    rada = bloky[k1:k2 + 1]
-    shoda = znaky_bloku[k2 + 1] - znaky_bloku[k1]
-    shoda += sum(_shoda_mezery(cit[x.a + x.size:y.a], oblast[x.b + x.size:y.b]) for x, y in zip(rada, rada[1:]))
-    s, e = a + rada[0].b, a + rada[-1].b + rada[-1].size
-    znaky_useku = znaky_oblasti[e - a] - znaky_oblasti[s - a]
-    # nesouhlasný začátek a konec citace (např. jiná koncovka prvního slova): úsek zkusit rozšířit
-    pred, za = cit[:rada[0].a], cit[rada[-1].a + rada[-1].size:]
-    s2, e2 = max(0, s - len(pred)), min(len(slova), e + len(za))
-    rozsireni_od = [(s, 0, 0), (s2, _shoda_mezery(pred, slova[s2:s]), sum(map(len, slova[s2:s])))]
-    rozsireni_do = [(e, 0, 0), (e2, _shoda_mezery(za, slova[e:e2]), sum(map(len, slova[e:e2])))]
-    return max(((round(2 * (shoda + sh1 + sh2) / (znaky_citace + znaky_useku + zn1 + zn2), 3), od, do)
-                for od, sh1, zn1 in rozsireni_od for do, sh2, zn2 in rozsireni_do), key=lambda u: u[0])
+    zacatky = {k: zacatek(k) for k in range(min(3, n))}
+    konce = {k: konec(k) for k in range(max(0, n - 3), n)}
+    nejlepsi = None
+    for k1, (od, sh1, zn1, zap1) in zacatky.items():
+        for k2, (do, sh2, zn2, zap2) in konce.items():
+            if k2 < k1:
+                continue
+            shoda = znaky_bloku[k2 + 1] - znaky_bloku[k1] + znaky_mezer[k2] - znaky_mezer[k1] + sh1 + sh2
+            usek = znaky_oblasti[bloky[k2].b + bloky[k2].size] - znaky_oblasti[bloky[k1].b] + zn1 + zn2
+            skore = round(2 * shoda / (znaky_citace + usek), 3)
+            if nejlepsi is None or skore > nejlepsi[0]:
+                zapor = zap1 or zap2 or any(m[1] for m in mezery[k1:k2])
+                nejlepsi = (skore, od, do, zapor)
+    return nejlepsi
 
 
-def _shoda_mezery(x: list[str], y: list[str]) -> int:
-    """Počet shodných znaků nesouhlasného úseku citace x a textu y; úsek delší než MAX_MEZERA slov = 0."""
-    if not x or not y or max(len(x), len(y)) > MAX_MEZERA:
-        return 0
-    bloky = SequenceMatcher(None, "".join(x), "".join(y), autojunk=False).get_matching_blocks()
-    return sum(blok.size for blok in bloky)
+def _mezera(x: list[str], y: list[str]) -> tuple[int, bool]:
+    """Nesouhlasná slova mezi dvěma bloky: (shodné znaky slov spárovaných po pořadí, zápor).
+
+    Úsek delší než MAX_MEZERA slov se nepočítá; zápor se v krátkém úseku hledá mezi všemi dvojicemi."""
+    if max(len(x), len(y)) > MAX_MEZERA:
+        return 0, any(map(_zapor, x, y))
+    return sum(map(_shoda_slov, x, y)), any(_zapor(p, q) for p in x for q in y)
+
+
+def _okraj(x: list[str], y: list[str]) -> tuple[int, bool]:
+    """Nesouhlasný začátek nebo konec citace x proti slovům textu y na stejném místě (od bloku ven)."""
+    return sum(map(_shoda_slov, x, y)), any(map(_zapor, x, y))
+
+
+def _shoda_slov(x: str, y: str) -> int:
+    """Shodné znaky dvou slov na stejném místě: stejné slovo celé, jiná koncovka (obě slova aspoň 4 znaky,
+    společný začátek aspoň 3 znaky, liší se nejvýš 3 poslední znaky) společný začátek, jinak 0
+    (jiný začátek slova není koncovka: „proto“ není „to“, „nebudeme“ není „budeme“, „proti“ není „pro“)."""
+    if x == y:
+        return len(x)
+    p = len(os.path.commonprefix((x, y)))
+    return p if min(len(x), len(y)) >= 4 and p >= 3 and max(len(x), len(y)) - p <= 3 else 0
+
+
+def _zapor(x: str, y: str) -> bool:
+    """Slova s opačným významem: zápor předponou ne- (budeme/nebudeme, přijatelné/nepřijatelné)
+    a nepravidelné dvojice z _OPACNA (je/není, pro/proti, ano/ne)."""
+    return ((x == "ne" + y and len(y) >= 2) or (y == "ne" + x and len(x) >= 2)
+            or frozenset((x, y)) in _OPACNA)

@@ -9,11 +9,15 @@ use Hlidac\Scorer;
 
 final class FeedService
 {
+    public function __construct(private \App\Services\AlertPresentationService $alertPresentation)
+    {
+    }
+
     public function alerts(bool $includeAll): array
     {
         $minimumScore = $includeAll ? 0 : (int)Scorer::weights(hlidacConfig())['level_watch'];
 
-        return Alert::query()->where('score', '>=', $minimumScore)->orderByDesc('event_at')
-            ->limit(50)->get()->map->getAttributes()->all();
+        return $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', $minimumScore)->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
+            ->limit(50)->get());
     }
 }

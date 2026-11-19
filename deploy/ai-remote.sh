@@ -44,16 +44,19 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
+STATUS=0
 {
   echo "=== $(date '+%F %T') start"
   # token přes prostředí, ne jako argument (argumenty procesu vidí ostatní uživatelé v ps)
   export HLIDAC_TOKEN
-  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all
-  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all --verify
-  echo "=== $(date '+%F %T') konec"
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all || STATUS=1
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all --verify || STATUS=1
+  # chyba některé fáze = nenulový návratový kód (launchd/cron ji pak ukáže), i když druhá fáze proběhla
+  echo "=== $(date '+%F %T') konec$([ "$STATUS" = 0 ] || echo ' s chybami')"
 } >> "$LOG" 2>&1
 
 # log držíme malý
 if [ "$(wc -l < "$LOG")" -gt 5000 ]; then
   tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 fi
+exit "$STATUS"

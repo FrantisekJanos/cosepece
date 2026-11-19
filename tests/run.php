@@ -14,6 +14,7 @@ $base['db_dsn'] = getenv('HLIDAC_TEST_DSN') ?: 'sqlite:' . $tmp . '/test.sqlite'
 $base['db_user'] = getenv('HLIDAC_TEST_USER') ?: null;
 $base['db_pass'] = getenv('HLIDAC_TEST_PASS') ?: null;
 $base['source_dir'] = $tmp . '/src';
+$base['notify']['dry_run_log'] = $tmp . '/data/posts.log';
 $base['site_url'] = 'https://hlidac.test';
 $base['notify']['dry_run'] = true;
 $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu testujeme přímo
@@ -205,7 +206,10 @@ $zip->close();
 $r4 = Hlidac\Sync::run();
 check('vzniklo upozornění', $r4['alerts_new'], 1);
 check('nic neodesláno (skóre 28 < 50)', $r4['posts']['sent'], 0);
-check('potlačeno', $r4['posts']['filtered'], 1);
+check('pod prahem čeká na rozbor textů (hold_hours)', [$r4['posts']['held'], $r4['posts']['filtered']], [1, 0]);
+db()->run('UPDATE alerts SET created_at = ? WHERE posted = 0', [date('Y-m-d H:i:s', time() - 49 * 3600)]);
+$r4b = (new Hlidac\Publisher(db(), hlidacConfig()))->run();
+check('po uplynutí čekání potlačeno', [$r4b['filtered'], $r4b['sent']], [1, 0]);
 
 echo "Text návrhu zákona (tisk 221: lhůta pro vymáhání dotací 4 roky i zpětně)\n";
 $billSample = "Návrh\nZÁKON\nkterým se mění zákon č. 159/2006 Sb., o střetu zájmů\n"
@@ -266,7 +270,7 @@ $scorer->scoreBills();
 check('tisk 221 po vrácení rozboru zase 94', $sc(221), 94);
 
 echo "AI rozbor přes claude CLI (falešné CLI, bez sítě)\n";
-$fakeCli = $tmp . '/claude';
+$fakeCli = $tmp . '/claude.php';
 file_put_contents($fakeCli, '#!' . PHP_BINARY . "\n" . <<<'FAKE'
 <?php
 $prompt = stream_get_contents(STDIN);
@@ -282,7 +286,7 @@ FAKE);
 chmod($fakeCli, 0755);
 putenv('ANTHROPIC_API_KEY=nesmi-se-pouzit');
 $aiConfig = hlidacConfig();
-$aiConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $fakeCli, 'model' => 'claude-haiku-5-5'];
+$aiConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $fakeCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5'];
 db()->run('UPDATE tisk_text SET ai_at = NULL, ai_score = NULL WHERE ct = 221');
 $reviewer = new Hlidac\AiReviewer(db(), $aiConfig);
 check('fronta: text tisku 221 s nápovědou pravidel', str_contains($reviewer->queue(5, 221)[0]['prompt'] ?? '', 'možné zpětné použití'), true);
@@ -299,6 +303,8 @@ $reviewer = new Hlidac\AiReviewer(db(), $aiConfig);
 check('fronta ověření: závažný nález 221', array_column($reviewer->queue(5, 221, true), 'id'), [221]);
 check('ověření silnějším modelem', $reviewer->run(5, 221, true), ['reviewed' => 1, 'errors' => 0]);
 check('výsledek ověření nahradí první kolo', [(int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), db()->value('SELECT ai_model FROM tisk_text WHERE ct = 221')], [7, 'claude-sonnet-5-5']);
+check('první kolo zůstane uložené', [(int)db()->value('SELECT ai_prev_score FROM tisk_text WHERE ct = 221'), db()->value('SELECT ai_prev_model FROM tisk_text WHERE ct = 221')], [9, 'claude-haiku-5-5']);
+check('na detailu je vidět i první kolo', str_contains(Hlidac\View::aiRounds(db()->one('SELECT * FROM tisk_text WHERE ct = 221')), 'první kolo claude-haiku-5-5: 9/10'), true);
 check('ověřený nález se znovu neověřuje', $reviewer->queue(5, 221, true), []);
 check('rozbor nese aktuální verzi promptu', (int)db()->value('SELECT ai_prompt FROM tisk_text WHERE ct = 221'), Hlidac\AiReviewer::PROMPT_VERSION);
 check('aktuální rozbor není ve frontě', $reviewer->queue(5, 221), []);
@@ -418,6 +424,142 @@ $gapRow(990004, '2026-07-08', 5, 238);  // zahájeno (datované později)
 $gap = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 311'), true),
     fn(array $r): bool => $r['key'] === 'short_gap'));
 check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny');
+
+echo "Předkladatel, § 90/2 a lhůta pro výbory z údajů tisku\n";
+check('kraj podle id_navrh', Hlidac\Analyzer::typNavrhu(2, 'Návrh Zastupitelstva Jihomoravského kraje na vydání zákona', 16), 'krajský');
+check('kraj podle názvu i s velkým Z', Hlidac\Analyzer::typNavrhu(2, 'Návrh Zastupitelstva hlavního města Prahy na vydání zákona'), 'krajský');
+check('skupina poslanců', Hlidac\Analyzer::typNavrhu(2, 'Návrh poslanců …', 3), 'poslanecký');
+check('vláda podle id_navrh', Hlidac\Analyzer::typNavrhu(1, 'Vládní návrh zákona', 1), 'vládní');
+check('lhůta pro výbory 30 dní = zkrácená', [Hlidac\Analyzer::committeeCut(30), Hlidac\Analyzer::committeeCut(60), Hlidac\Analyzer::committeeCut(null)], [true, false, false]);
+$imp = db()->one('SELECT p90, zl, lhuta, typ_navrhu FROM tisky WHERE ct = 221');
+check('importované tisky mají lhůtu a typ', is_array($imp) && array_key_exists('lhuta', $imp), true);
+db()->run("UPDATE tisky SET zl = 1, lhuta = 30 WHERE ct = 90");
+(new Hlidac\Scorer(db(), hlidacConfig()))->scoreBills();
+$cut = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 90'), true),
+    fn(array $r): bool => $r['key'] === 'deadline_cut'));
+check('důvod uvádí zkrácenou lhůtu pro výbory', $cut[0]['label'] ?? null, 'Zkrácená lhůta pro výbory: 30 dní místo 60');
+db()->run("UPDATE tisky SET p90 = 1 WHERE ct = 90");
+db()->run("DELETE FROM alerts WHERE alert_key = 'p90:90'");
+(new Hlidac\AlertBuilder(db(), hlidacConfig()))->run();
+check('návrh na § 90/2 z údajů tisku vytvoří upozornění', db()->value("SELECT kind FROM alerts WHERE alert_key = 'p90:90'"), 'p90');
+
+echo "Opakované stažení neúspěšných textů\n";
+$retryCt = (int)db()->value("SELECT ct FROM tisky WHERE faze <> 'Vyhlášeno' ORDER BY ct LIMIT 1");
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$retryCt]);
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, error) VALUES (?, NULL, '', 0, '[]', ?, 'Chyba sítě')", [$retryCt, date('Y-m-d H:i:s')]);
+$queue = fn(): array => array_map('intval', array_column(Hlidac\TiskText::queue(db(), 1000, 24), 'ct'));
+check('čerstvá chyba se hned neopakuje', in_array($retryCt, $queue(), true), false);
+db()->run('UPDATE tisk_text SET fetched_at = ? WHERE ct = ?', [date('Y-m-d H:i:s', time() - 25 * 3600), $retryCt]);
+check('po 24 h se stažení zopakuje', in_array($retryCt, $queue(), true), true);
+db()->run("UPDATE tisk_text SET text = 'obsah', error = NULL WHERE ct = ?", [$retryCt]);
+check('úspěšně stažený text se neopakuje', in_array($retryCt, $queue(), true), false);
+
+echo "Hledání bez diakritiky\n";
+check('fold', App\Services\Pages\BillListingService::fold('Školský ZÁKON'), 'skolsky zakon');
+$listing = app(App\Services\Pages\BillListingService::class);
+$nameWord = explode(' ', (string)db()->value('SELECT nazev FROM tisky WHERE ct = 221'));
+$hit = fn(string $q): bool => in_array(221, array_map(fn($t) => (int)$t['ct'], $listing->bills('', $q, 500)), true);
+check('hledání „střetu“ najde tisk 221', $hit('STŘETU'), true);
+check('hledání bez diakritiky „stretu zajmu“', $hit('stretu zajmu'), true);
+check('hledání podle čísla tisku', $hit('221'), true);
+
+echo "Čtvrtá várka: Word, zápor zpětnosti, ověřený rozbor, Bluesky\n";
+$docx = $tmp . '/tracked.docx';
+$dz = new ZipArchive();
+$dz->open($docx, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$dz->addFromString('word/document.xml', '<w:document><w:body><w:p><w:r><w:t>Lhůta činí </w:t></w:r>'
+    . '<w:del w:id="1" w:author="X"><w:r><w:delText>10 let</w:delText></w:r></w:del>'
+    . '<w:ins w:id="2" w:author="X"><w:r><w:t>4 roky</w:t></w:r></w:ins><w:r><w:t>.</w:t></w:r></w:p></w:body></w:document>');
+$dz->close();
+check('smazaný text ze sledovaných změn se nečte', Hlidac\PnText::docxToText((string)file_get_contents($docx)), 'Lhůta činí 4 roky.');
+check('„nemá zpětnou účinnost“ není zpětnost', Hlidac\PnText::procedureSignals('Toto rozhodnutí nemá zpětnou účinnost, a to ani v případě zajištění zvířete.'), []);
+check('„zpětné použití se vylučuje“ není zpětnost', Hlidac\PnText::negatesRetro('Zpětné použití se vylučuje.'), true);
+check('skutečná zpětná účinnost zůstává', isset(Hlidac\PnText::procedureSignals('Ustanovení má zpětnou účinnost ke dni 1. ledna 2020.')['retro']), true);
+
+$guardCt = (int)db()->value('SELECT ct FROM tisk_text ORDER BY ct LIMIT 1');
+$verifier = Hlidac\AiReviewer::verifyModel(hlidacConfig());
+db()->run("UPDATE tisk_text SET text = 'Lhůta činí 4 roky.', ai_json = '{}', ai_score = 7, ai_model = ?, ai_prompt = ?, ai_at = ? WHERE ct = ?",
+    [$verifier, Hlidac\AiReviewer::PROMPT_VERSION, date('Y-m-d H:i:s'), $guardCt]);
+$guard = new Hlidac\AiReviewer(db(), hlidacConfig());
+$guard->saveResult('tisk', $guardCt, ['zavaznost' => 1, 'titulek' => 'x', 'citace' => []], Hlidac\AiReviewer::model(hlidacConfig()));
+check('pozdní výsledek 1. kola nepřepíše ověřený rozbor', [(int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]),
+    db()->value('SELECT ai_model FROM tisk_text WHERE ct = ?', [$guardCt])], [7, $verifier]);
+$guard->saveResult('tisk', $guardCt, ['zavaznost' => 5, 'titulek' => 'y', 'citace' => ['Lhůta činí 4 roky.']], $verifier);
+check('ověřovací model rozbor přepsat smí', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]), 5);
+
+$bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
+$fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
+check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);
+check('Bluesky: krátký text beze změny', Hlidac\Notifier\Bluesky::fit('Krátce', $bskyUrl), 'Krátce');
+check('testy nepíšou do data/posts.log', is_file(APP_ROOT . '/data/posts.log') && filemtime(APP_ROOT . '/data/posts.log') >= $_SERVER['REQUEST_TIME'], false);
+
+echo "Pátá várka: vrácený tisk, nával podle dne, PN před předlohou, nové období\n";
+check('vrácený tisk (rozpočet 17)', Hlidac\Analyzer::analyze([
+    ['typ_stavu' => 1, 'akce_id' => 29, 'datum' => '2025-11-12 00:00:00'],
+    ['typ_stavu' => 6, 'akce_id' => 24, 'datum' => '2025-11-26 00:00:00'],
+])['faze'], 'Vráceno předkladateli');
+
+$surgeDay = date('Y-m-d', strtotime('-1 day'));
+$addPn = function (int $from, int $count, int $ct, string $day): void {
+    for ($i = 0; $i < $count; $i++) {
+        db()->run('INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas) VALUES (?, ?, ?, ?, ?, ?)',
+            [$from + $i, $from + $i, $ct, 1, 'Test Poslanec', $day . ' 1' . ($i % 10) . ':00:00']);
+    }
+};
+$builder = new Hlidac\AlertBuilder(db(), hlidacConfig());
+$addPn(970000, 6, 221, $surgeDay);
+$builder->run();
+check('6 PN za den ještě není nával', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 0);
+$addPn(970100, 5, 221, $surgeDay);
+$builder->run();
+check('11 PN téhož dne ve dvou bězích = nával', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 1);
+$addPn(970200, 3, 221, $surgeDay);
+$builder->run();
+check('další PN téhož dne už druhý nával nevytvoří', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 1);
+
+$addPn(970300, 1, 9999, $surgeDay);
+$builder->run();
+check('PN k tisku, který ještě není v přehledu, čeká', db()->value('SELECT 1 FROM pn_seen WHERE id_dokument = 970300'), null);
+db()->run('DELETE FROM pn WHERE id_dokument >= 970000 AND id_dokument < 980000');
+
+// přelom období: tisk 221 nového období je jiný návrh než tisk 221 minulého
+$keysBefore = (int)db()->value('SELECT COUNT(*) FROM alerts');
+db()->run('UPDATE alerts SET obdobi = 9');
+db()->setMeta('obdobi_id', '999');
+db()->setMeta('obdobi_cislo', '9');
+(new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-switch', $tmp . '/src')))->run();
+check('stará upozornění dostala klíč s obdobím', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key LIKE '9/%'"), $keysBefore);
+check('texty minulého období smazané', [(int)db()->value('SELECT COUNT(*) FROM tisk_text'), (int)db()->value('SELECT COUNT(*) FROM pn_text')], [0, 0]);
+check('nové období začne bootstrapem', db()->getMeta('bootstrapped'), null);
+$created = (new Hlidac\AlertBuilder(db(), hlidacConfig()))->run();
+check('nová upozornění vzniknou i se stejným číslem tisku', $created > 0 && db()->value("SELECT kind FROM alerts WHERE alert_key = 'newbill:221'") !== null, true);
+check('nová upozornění jsou bootstrap (neposílají se)', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE obdobi = 10 AND posted <> 2"), 0);
+$old = db()->one("SELECT * FROM alerts WHERE alert_key LIKE '9/%' LIMIT 1");
+check('staré upozornění vede na psp.cz', str_contains(Hlidac\View::alertUrl($old + ['is_past_period' => true]), 'psp.cz') && str_contains(Hlidac\View::alertUrl($old + ['is_past_period' => true]), 'o=9'), true);
+check('detail tisku ukazuje jen upozornění aktuálního období', array_unique(array_map(fn($a) => (int)$a['obdobi'],
+    App\Models\Alert::query()->currentPeriod()->where('ct', 221)->get()->map->getAttributes()->all())), [10]);
+
+echo "Šestá várka: titulek jen s citací, lhůta a zpětnost, obnova textu tisku\n";
+$hlCt = (int)db()->value("SELECT ct FROM tisky WHERE faze <> 'Vyhlášeno' ORDER BY ct LIMIT 1");
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$hlCt]);
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, ai_json, ai_score, ai_at) VALUES (?, 'https://www.psp.cz/x', 'text', 4, '{}', ?, ?, 7, ?)",
+    [$hlCt, date('Y-m-d H:i:s', time() - 8 * 86400), json_encode(['titulek' => 'Nález bez citace', 'citace' => []]), date('Y-m-d H:i:s')]);
+check('nález bez ověřené citace nedá titulek na homepage', app(App\Services\BillPresentationService::class)->headline($hlCt), null);
+db()->run('UPDATE tisk_text SET ai_json = ? WHERE ct = ?', [json_encode(['titulek' => 'Nález', 'perex' => '', 'citace' => ['doslovná věta']]), $hlCt]);
+check('nález s citací titulek dá', app(App\Services\BillPresentationService::class)->headline($hlCt)['title'] ?? null, 'Nález');
+check('text starší než týden se ověří proti psp.cz', in_array($hlCt, array_map('intval', array_column(Hlidac\TiskText::staleQueue(db(), 1000, 7), 'ct')), true), true);
+db()->run('UPDATE tisk_text SET checked_at = ? WHERE ct = ?', [date('Y-m-d H:i:s'), $hlCt]);
+check('právě ověřený text se znovu neověřuje', in_array($hlCt, array_map('intval', array_column(Hlidac\TiskText::staleQueue(db(), 1000, 7), 'ct')), true), false);
+
+db()->run("UPDATE tisk_text SET signals = ?, ai_score = NULL, ai_at = NULL WHERE ct = ?", [json_encode(['retro' => ['x'], 'retro_deadline' => ['x']]), $hlCt]);
+(new Hlidac\Scorer(db(), hlidacConfig()))->scoreBills();
+$keys = array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$hlCt]), true) ?: [], 'key');
+check('zpětnost bez změny lhůty v textu nedá body za lhůtu', in_array('retro_deadline', $keys, true), false);
+db()->run("UPDATE tisk_text SET signals = ? WHERE ct = ?", [json_encode(['retro' => ['x'], 'retro_deadline' => ['x'], 'deadline' => ['y']]), $hlCt]);
+(new Hlidac\Scorer(db(), hlidacConfig()))->scoreBills();
+$keys = array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$hlCt]), true) ?: [], 'key');
+check('změna lhůty i zpětné použití body dají', in_array('retro_deadline', $keys, true), true);
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$hlCt]);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {

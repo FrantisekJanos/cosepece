@@ -1,6 +1,8 @@
 <?php
 
 
+
+
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/bootstrap.php';
@@ -20,35 +22,43 @@ if ($dst->driver === 'sqlite') {
 Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
 
 $tables = ['tisky', 'kroky', 'pn', 'pn_seen', 'pn_text', 'tisk_text', 'alerts', 'post_log', 'meta'];
-foreach ($tables as $table) {
-    $srcCols = array_column($src->all("PRAGMA table_info($table)"), 'name');
-    $stmt = $dst->run('SELECT * FROM ' . $table . ' LIMIT 0');
-    $dstCols = [];
-    for ($i = 0; $i < $stmt->columnCount(); $i++) {
-        $dstCols[] = $stmt->getColumnMeta($i)['name'];
-    }
-    $cols = array_values(array_intersect($srcCols, $dstCols));
-    $dst->pdo->beginTransaction();
-    $dst->run("DELETE FROM $table");
-    $count = 0;
-    $read = $src->run('SELECT ' . implode(',', $cols) . " FROM $table");
-    $batch = [];
-    while ($row = $read->fetch()) {
-        $batch[] = $row;
-        if (count($batch) === 200) {
-            $dst->insertMany($table, $cols, $batch);
-            $count += count($batch);
-            $batch = [];
+
+
+$src->pdo->beginTransaction();
+$dst->pdo->beginTransaction();
+try {
+    foreach ($tables as $table) {
+        $srcCols = array_column($src->all("PRAGMA table_info($table)"), 'name');
+        $stmt = $dst->run('SELECT * FROM ' . $table . ' LIMIT 0');
+        $dstCols = [];
+        for ($i = 0; $i < $stmt->columnCount(); $i++) {
+            $dstCols[] = $stmt->getColumnMeta($i)['name'];
+        }
+        $cols = array_values(array_intersect($srcCols, $dstCols));
+        $dst->run("DELETE FROM $table");
+        $read = $src->run('SELECT ' . implode(',', $cols) . " FROM $table");
+        $batch = [];
+        while ($row = $read->fetch()) {
+            $batch[] = $row;
+            if (count($batch) === 200) {
+                $dst->insertMany($table, $cols, $batch);
+                $batch = [];
+            }
+        }
+        $dst->insertMany($table, $cols, $batch);
+        $srcCount = (int)$src->value("SELECT COUNT(*) FROM $table");
+        $dstCount = (int)$dst->value("SELECT COUNT(*) FROM $table");
+        printf("%-10s %6d řádků%s\n", $table, $dstCount, $dstCount === $srcCount ? '' : "  NESEDÍ (SQLite $srcCount)");
+        if ($dstCount !== $srcCount) {
+            throw new RuntimeException("Počet řádků v tabulce $table nesedí");
         }
     }
-    $dst->insertMany($table, $cols, $batch);
-    $count += count($batch);
     $dst->pdo->commit();
-    $srcCount = (int)$src->value("SELECT COUNT(*) FROM $table");
-    $dstCount = (int)$dst->value("SELECT COUNT(*) FROM $table");
-    printf("%-10s %6d řádků%s\n", $table, $dstCount, $dstCount === $srcCount ? '' : "  NESEDÍ (SQLite $srcCount)");
-    if ($dstCount !== $srcCount) {
-        exit(2);
-    }
+    $src->pdo->commit();
+} catch (Throwable $ex) {
+    $dst->pdo->rollBack();
+    $src->pdo->rollBack();
+    fwrite(STDERR, 'Převod zrušen, cílová databáze se nezměnila: ' . $ex->getMessage() . "\n");
+    exit(2);
 }
 echo "Hotovo.\n";

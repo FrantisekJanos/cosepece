@@ -23,6 +23,25 @@ final class WebTest extends TestCase
         $this->assertGreaterThan(0, count($xml->channel->item));
     }
 
+    public function test_upstream_search_history_and_ai_rounds_are_rendered(): void
+    {
+        $this->importFixtures();
+        $this->get('/tisky.php?q=STRETU+ZAJMU&sort=recent&min=1')->assertOk()
+            ->assertSee('tisk.php?ct=221', false)->assertSee('name="sort" value="recent"', false)
+            ->assertSee('name="min" value="1"', false);
+        db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, score, obdobi) VALUES ('9/old', 'pn', 90, '2026-11-19 12:00:00', '2026-11-19 12:00:00', 'Historický nález', 'Minulé období', 80, 9)");
+        $this->get('/upozorneni.php?vse=1')->assertOk()->assertSee('Historický nález')
+            ->assertSee('https://www.psp.cz/sqw/historie.sqw?o=9&amp;T=90', false)->assertSee('9. období');
+        $rss = $this->get('/rss.php?vse=1')->assertOk();
+        $xml = simplexml_load_string($rss->getContent());
+        $old = $xml->xpath('//item[title="Historický nález"]');
+        $this->assertSame('https://www.psp.cz/sqw/historie.sqw?o=9&T=90', (string)$old[0]->link);
+        $this->get('/tisk.php?ct=90')->assertOk()->assertDontSee('Historický nález');
+        db()->run("INSERT INTO tisk_text (ct, text, ai_json, ai_score, ai_model, ai_at, ai_prev_score, ai_prev_model) VALUES (90, 'Text', ?, 6, ?, '2026-11-19 12:00:00', 9, 'first-model')",
+            ['{"shrnuti":"Ověřený rozbor","citace":["Text"]}', \Hlidac\AiReviewer::verifyModel(hlidacConfig())]);
+        $this->get('/tisk.php?ct=90')->assertOk()->assertSee('první kolo first-model: 9/10');
+    }
+
     public function test_missing_bill_and_unknown_paths_return_404(): void
     {
         $this->get('/tisk.php?ct=999999')->assertNotFound()->assertSee('Tisk nenalezen');

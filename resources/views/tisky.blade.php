@@ -12,6 +12,8 @@ use Hlidac\View;
     <label for="q" class="sr-only">Hledat tisky</label>
     <input id="q" name="q" type="search" value="{{ $q }}" placeholder="Tisk, číslo zákona nebo poslanec">
     <?php if ($f !== ''): ?><input type="hidden" name="f" value="{{ $f }}"><?php endif; ?>
+    @if ($sort === 'recent')<input type="hidden" name="sort" value="recent">@endif
+    @if ($min > 0)<input type="hidden" name="min" value="{{ $min }}">@endif
     <button type="submit">Hledat</button>
   </form>
 </section>

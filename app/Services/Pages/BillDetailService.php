@@ -17,6 +17,7 @@ final class BillDetailService
     public function __construct(
         private BillPresentationService $presentation,
         private ReviewStatusService $reviews,
+        private \App\Services\AlertPresentationService $alertPresentation,
     ) {
     }
 
@@ -38,7 +39,7 @@ final class BillDetailService
         $pn = $bill->amendments->map->getAttributes()->all();
         $authors = $bill->amendments()->select('osoba')->selectRaw('COUNT(*) AS n')
             ->groupBy('osoba')->orderByDesc('n')->orderBy('osoba')->get()->map->getAttributes()->all();
-        $alerts = $bill->alerts->map->getAttributes()->all();
+        $alerts = $this->alertPresentation->presentMany($bill->alerts);
         $texts = $bill->amendmentTexts->mapWithKeys(fn (AmendmentText $text): array => [
             $text->id_dokument => $this->textData($text),
         ])->all();

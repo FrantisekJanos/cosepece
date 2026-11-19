@@ -38,12 +38,12 @@ final class BillPresentationService
         })->all();
     }
 
-    private function headline(int $ct): ?array
+    public function headline(int $ct): ?array
     {
 
         $candidates = [];
         $bill = BillText::query()->whereKey($ct)->whereNotNull('ai_at')->first();
-        if ($bill !== null) {
+        if ($bill !== null && (int)$bill['ai_score'] >= 4) {
             $candidates[] = ['score' => (int)$bill['ai_score'], 'json' => $bill['ai_json'], 'model' => $bill['ai_model'], 'source' => 'text návrhu'];
         }
         $pn = AmendmentText::query()->where('ct', $ct)->whereNotNull('ai_at')->orderByDesc('ai_score')->first();
@@ -54,11 +54,12 @@ final class BillPresentationService
         foreach ($candidates as $c) {
             $ai = $c['json'] ?: [];
             $title = trim((string)($ai['titulek'] ?? ''));
-            if ($title !== '') {
+            $quote = trim((string)(((array)($ai['citace'] ?? []))[0] ?? ''));
+            if ($title !== '' && $quote !== '') {
                 return [
                     'title' => $title,
                     'perex' => trim((string)($ai['perex'] ?? '')),
-                    'quote' => (string)(($ai['citace'] ?? [])[0] ?? ''),
+                    'quote' => $quote,
                     'source' => $c['source'],
 
                     'verified' => (string)$c['model'] === AiReviewer::verifyModel(hlidacConfig()),
@@ -77,6 +78,8 @@ final class BillPresentationService
             $flags[] = ['mp', 'Poslanecký návrh'];
         } elseif ($bill->typ_navrhu === 'senátní') {
             $flags[] = ['mp', 'Senátní návrh'];
+        } elseif ($bill->typ_navrhu === 'krajský') {
+            $flags[] = ['mp', 'Krajský návrh'];
         }
         if ($bill->p90ok) {
             $flags[] = ['fast', 'Schváleno v 1. čtení'];
@@ -99,6 +102,6 @@ final class BillPresentationService
 
     private function surgeSet(): array
     {
-        return array_fill_keys(Alert::query()->where('kind', 'surge')->distinct()->pluck('ct')->all(), true);
+        return array_fill_keys(Alert::query()->where('kind', 'surge')->currentPeriod()->distinct()->pluck('ct')->all(), true);
     }
 }

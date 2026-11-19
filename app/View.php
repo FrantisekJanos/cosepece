@@ -59,10 +59,10 @@ final class View
     {
 
         $short = [
-            'mp_bill' => 'poslanecký návrh', 'senate_bill' => 'senátní návrh', 'p90_passed' => 'schváleno v 1. čtení',
+            'mp_bill' => 'poslanecký návrh', 'senate_bill' => 'senátní návrh', 'region_bill' => 'krajský návrh', 'p90_passed' => 'schváleno v 1. čtení',
             'p90_requested' => 'návrh na § 90/2', 'deadline_cut' => 'zkrácená lhůta', 'short_gap' => 'málo času na PN',
             'late_pn' => 'PN na poslední chvíli', 'surge' => 'nával PN', 'pn_other_law' => 'přílepek', 'pn_large' => 'rozsáhlý PN',
-            'retro_deadline' => 'lhůta i zpětně', 'pn_many' => 'více sporných PN', 'ai_bill' => 'sporný text návrhu',
+            'retro_deadline' => 'lhůta a zpětné použití', 'pn_many' => 'více sporných PN', 'ai_bill' => 'sporný text návrhu',
             'ai' => 'sporné pozměňovací návrhy', 'topic' => 'citlivá oblast', 'omnibus' => 'souhrnná novela', 'watched' => 'sledovaný zákon',
         ];
         $labels = [];
@@ -91,6 +91,34 @@ final class View
     {
         [$class, $label] = self::KIND_LABELS[$kind] ?? ['surge', $kind];
         return '<span class="chip chip-' . e($class) . '">' . e($label) . '</span>';
+    }
+
+    public static function aiRounds(array $x): string
+    {
+
+        if (($x['ai_model'] ?? null) === null || $x['ai_score'] === null) {
+            return '';
+        }
+        if ((string)$x['ai_model'] !== AiReviewer::verifyModel(hlidacConfig())) {
+            return '<span class="muted small">Rozbor: ' . e((string)$x['ai_model']) . '</span>';
+        }
+        $prev = $x['ai_prev_score'] !== null ? ' (první kolo ' . e((string)$x['ai_prev_model']) . ': ' . (int)$x['ai_prev_score'] . '/10)' : '';
+        return '<span class="muted small">Ověřeno druhým modelem ' . e((string)$x['ai_model']) . $prev . '</span>';
+    }
+
+    public static function isPastPeriod(array $alert): bool
+    {
+        return (bool)($alert['is_past_period'] ?? false);
+    }
+
+    public static function alertUrl(array $alert, bool $absolute = false): string
+    {
+
+        if (self::isPastPeriod($alert)) {
+            return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);
+        }
+        $path = 'tisk.php?ct=' . (int)$alert['ct'];
+        return $absolute ? siteUrl($path) : $path;
     }
 
     public static function pspTiskUrl(int $ct, int $obdobi): string

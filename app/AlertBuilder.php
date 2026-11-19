@@ -49,7 +49,7 @@ final class AlertBuilder
                 $t,
                 ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
                 'Nový ' . $t['typ_navrhu'] . ' návrh: ' . $t['nazev'],
-                'Předkladatel: ' . $t['navrhovatel'] . '. Návrh poslanců ani senátorů neprochází meziresortním připomínkovým řízením.',
+                'Předkladatel: ' . $t['navrhovatel'] . '. Návrh poslanců, Senátu ani krajů neprochází meziresortním připomínkovým řízením.',
                 $posted
             );
         }
@@ -88,6 +88,15 @@ final class AlertBuilder
                 $n += $this->add("passed:$ct", 'passed', $t, $when,
                     'Sněmovna schválila: ' . $t['nazev'],
                     'Zákon míří do Senátu. Písemných pozměňovacích návrhů: ' . (int)$t['pn_count'] . '.',
+                    $posted);
+            }
+        }
+
+        foreach ($tisky as $ct => $t) {
+            if ((int)$t['p90'] && !isset($seen["p90:$ct"])) {
+                $n += $this->add("p90:$ct", 'p90', $t, ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
+                    'Navrženo schválit už v 1. čtení: ' . $t['nazev'],
+                    'Předkladatel navrhuje postup podle § 90 odst. 2 jednacího řádu: zákon může projít bez 2. a 3. čtení. Zablokovat to může námitka dvou poslaneckých klubů nebo 50 poslanců.',
                     $posted);
             }
         }
@@ -136,14 +145,34 @@ final class AlertBuilder
         }
 
         $threshold = (int)($this->config['surge_threshold'] ?? 10);
+
+
+        $perDay = [];
+        foreach ($this->db->all('SELECT ct, cas FROM pn') as $r) {
+            $day = substr((string)$r['cas'], 0, 10);
+            $perDay[(int)$r['ct']][$day] = ($perDay[(int)$r['ct']][$day] ?? 0) + 1;
+        }
         $n = 0;
         $this->db->pdo->beginTransaction();
         foreach ($groups as $list) {
             $ct = (int)$list[0]['ct'];
             $t = $tisky[$ct] ?? null;
             $ids = array_map(fn($r) => (int)$r['id_dokument'], $list);
+            if ($t === null) {
+
+                continue;
+            }
             if ($t !== null) {
                 $count = count($list);
+
+                $surgeDay = null;
+                foreach (array_unique(array_map(fn($r) => substr((string)$r['cas'], 0, 10), $list)) as $day) {
+                    if (($perDay[$ct][$day] ?? 0) >= $threshold && $this->db->value(
+                        "SELECT 1 FROM alerts WHERE kind = 'surge' AND ct = ? AND event_at LIKE ? AND (obdobi IS NULL OR obdobi = ?)",
+                        [$ct, $day . '%', (int)$this->db->getMeta('obdobi_cislo', '0')]) === null) {
+                        $surgeDay = $day;
+                    }
+                }
                 $authors = [];
                 foreach ($list as $r) {
                     $authors[$r['osoba']] = ($authors[$r['osoba']] ?? 0) + 1;
@@ -156,11 +185,17 @@ final class AlertBuilder
                 if (count($authors) > 5) {
                     $names[] = 'a další';
                 }
-                $kind = $count >= $threshold ? 'surge' : 'pn';
+                $kind = $surgeDay !== null ? 'surge' : 'pn';
                 $title = ($kind === 'surge' ? 'Nával pozměňovacích návrhů: ' : $this->pnLabel($count) . ' k tisku: ') . $t['nazev'];
                 $body = $count . ' ' . $this->pnWord($count) . ' od ' . count($authors) . ' ' . (count($authors) === 1 ? 'poslance' : 'poslanců')
                     . ': ' . implode(', ', $names) . '.';
-                $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, (string)end($list)['cas'], $title, $body, $posted);
+                if ($surgeDay !== null) {
+                    $dayTotal = $perDay[$ct][$surgeDay];
+                    $body = 'Dne ' . formatDate($surgeDay) . ' podáno ' . $dayTotal . ' ' . $this->pnWord($dayTotal) . '. ' . $body;
+                }
+                $when = $surgeDay !== null ? max(array_filter(array_map(fn($r) => (string)$r['cas'], $list),
+                    fn(string $c) => str_starts_with($c, $surgeDay))) : (string)end($list)['cas'];
+                $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, $when, $title, $body, $posted);
             }
             foreach ($ids as $id) {
                 SeenAmendment::query()->create(['id_dokument' => $id]);
@@ -194,8 +229,9 @@ final class AlertBuilder
             return 0;
         }
         $this->db->run(
-            'INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$key, $kind, (int)$t['ct'], $eventAt, date('Y-m-d H:i:s'), $title, $body, (int)$this->isWatched($t), $posted]
+            'INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted, obdobi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$key, $kind, (int)$t['ct'], $eventAt, date('Y-m-d H:i:s'), $title, $body, (int)$this->isWatched($t), $posted,
+                (int)$this->db->getMeta('obdobi_cislo', '0') ?: null]
         );
         return 1;
     }

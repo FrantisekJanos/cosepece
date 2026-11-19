@@ -18,19 +18,26 @@ final class Alert extends Model
 
     protected $fillable = [
         'alert_key', 'kind', 'ct', 'event_at', 'created_at', 'title',
-        'body', 'watched', 'posted', 'score',
+        'body', 'watched', 'posted', 'score', 'obdobi',
     ];
 
     protected function casts(): array
     {
         return [
             'ct' => 'integer',
+            'obdobi' => 'integer',
             'event_at' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',
             'watched' => 'boolean',
             'posted' => 'integer',
             'score' => 'integer',
         ];
+    }
+
+    public function scopeCurrentPeriod(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        $period = (int)(Meta::query()->whereKey('obdobi_cislo')->value('v') ?? 0);
+        return $query->where(fn ($periodQuery) => $periodQuery->whereNull('obdobi')->orWhere('obdobi', $period));
     }
 
     public function bill(): BelongsTo

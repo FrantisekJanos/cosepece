@@ -6,6 +6,7 @@ from pathlib import Path
 from hlidac_rag.psp.parser import page_text
 from hlidac_rag.texty.stahovani import (
     docx_to_text,
+    vycisti_kody_poli,
     odkaz_docx_pn,
     odkaz_docx_tisku,
     odkaz_originalu,
@@ -86,3 +87,33 @@ def test_stahni_text():
     assert stahni_text(f, "/sqw/text/orig2.sqw?idd=1") == "Ahoj"
     assert f.urls == ["https://www.psp.cz/sqw/text/orig2.sqw?idd=1"]
     assert stahni_text(FalesnyFetcher(None), "https://www.psp.cz/x") is None
+
+
+def test_docx_bez_kodu_poli_a_smazaneho_textu():
+    xml = (
+        '<w:document><w:body><w:p>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://www.e-sbirka.cz/" </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:r><w:t>Zákon č. 2/1969 Sb.</w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        '<w:del w:id="1"><w:r><w:delText xml:space="preserve">smazáno</w:delText></w:r></w:del>'
+        '</w:p></w:body></w:document>'
+    )
+    text = docx_to_text(vzor_docx(xml))
+    assert "Zákon č. 2/1969 Sb." in text
+    assert "HYPERLINK" not in text and "smazáno" not in text
+
+
+def test_vycisti_hyperlink_pageref_mergeformat():
+    assert vycisti_kody_poli(
+        'HYPERLINK "https://www.e-sbirka.cz/"Zákon č. 2/1969 Sb., o zřízení ministerstev'
+    ) == "Zákon č. 2/1969 Sb., o zřízení ministerstev"
+    assert vycisti_kody_poli(r'Čl. III HYPERLINK "https://x.cz/a?b=1" \l "Odkaz"Text') == "Čl. III Text"
+    assert vycisti_kody_poli(r"Úvod PAGEREF _Toc123456 \h 5") == "Úvod 5"
+    assert vycisti_kody_poli(r"Text \* MERGEFORMAT další") == "Text další"
+
+
+def test_vycisti_nesahá_na_normalni_text():
+    t = 'Podle „zákona“ a "§ 17c" odst. 2 se slova "a více" nahrazují.\nDruhý odstavec.'
+    assert vycisti_kody_poli(t) == t

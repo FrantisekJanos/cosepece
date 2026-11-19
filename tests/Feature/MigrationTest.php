@@ -23,16 +23,42 @@ final class MigrationTest extends TestCase
         db()->pdo->exec(file_get_contents(dirname(__DIR__) . '/Support/legacy-schema.sql'));
         foreach ($records as $table => $rows) {
             if ($rows !== []) {
-                db()->insertMany($table, array_keys($rows[0]), $rows);
+                $columns = array_column(db()->all('PRAGMA table_info(' . $table . ')'), 'name');
+                $records[$table] = array_map(fn (array $row): array => array_intersect_key($row, array_flip($columns)), $rows);
+                db()->insertMany($table, array_keys($records[$table][0]), $records[$table]);
             }
         }
         db()->run('DELETE FROM migrations');
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
         foreach ($records as $table => $rows) {
-            $this->assertSame($rows, db()->all('SELECT * FROM ' . $table), $table);
+            $actual = db()->all('SELECT * FROM ' . $table);
+            if ($rows !== []) {
+                $actual = array_map(fn (array $row): array => array_intersect_key($row, $rows[0]), $actual);
+            }
+            $this->assertSame($rows, $actual, $table);
         }
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
-        $this->assertSame(1, (int)db()->value('SELECT COUNT(*) FROM migrations'));
+        $this->assertSame(2, (int)db()->value('SELECT COUNT(*) FROM migrations'));
+    }
+
+    public function test_upstream_columns_preserve_existing_ai_results(): void
+    {
+        db()->run("INSERT INTO tisk_text (ct, text, ai_json, ai_score, ai_model) VALUES (221, 'Text', '{}', 7, 'original')");
+        db()->run("DELETE FROM migrations WHERE migration = '2026_11_19_100000_adopt_upstream_improvements'");
+        foreach (['tisk_text' => ['checked_at', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model'],
+            'pn_text' => ['ai_prev_json', 'ai_prev_score', 'ai_prev_model'], 'tisky' => ['lhuta'], 'alerts' => ['obdobi']] as $table => $columns) {
+            foreach ($columns as $column) {
+                db()->run('ALTER TABLE ' . $table . ' DROP COLUMN ' . $column);
+            }
+        }
+        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
+        $row = db()->one('SELECT * FROM tisk_text WHERE ct = 221');
+        $this->assertSame('Text', $row['text']);
+        $this->assertSame(7, (int)$row['ai_score']);
+        $this->assertSame('original', $row['ai_model']);
+        $this->assertNull($row['ai_prev_score']);
+        $this->assertNull($row['checked_at']);
+        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
     }
 
     public function test_older_schema_gets_missing_ai_columns_without_losing_data(): void

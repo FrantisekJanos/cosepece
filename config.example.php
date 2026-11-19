@@ -40,12 +40,16 @@ return [
     'pn_text' => [
         'enabled' => true,
         'per_run' => 40, // kolik PN zpracovat za jeden běh (první běh dožene historii postupně)
+        'retry_hours' => 24, // neúspěšné stažení (síť, chybějící Word) zkusit znovu po tolika hodinách
     ],
 
     // stahování textů samotných návrhů zákonů (Word); zásadní změny bývají přímo v poslaneckých návrzích
     'tisk_text' => [
         'enabled' => true,
         'per_run' => 15, // přednost mají poslanecké a senátní návrhy, § 90/2 a zkrácené lhůty
+        'retry_hours' => 24,
+        'refresh_days' => 7, // jednou za týden ověřit, jestli psp.cz nevyměnilo dokument (pak nové znění a nový rozbor)
+        'refresh_per_run' => 5,
     ],
 
     // rozbor textů návrhů zákonů a PN přes Claude (zpětná účinnost, zkrácení lhůt vymáhání, přílepky,
@@ -57,6 +61,7 @@ return [
         'enabled' => false,
         'backend' => 'cli',
         'cli_path' => 'claude', // v cronu bývá potřeba plná cesta, např. /Users/jmeno/.local/bin/claude
+        // 'cli_prefix' => [], // spouštěč před cli_path, např. [PHP_BINARY] pro skript .php (Windows, testy)
         'remote_token' => '',   // token pro ai_api.php; prázdné = cron_token
         'api_key' => '',
         'model' => 'claude-haiku-5-5',
@@ -85,6 +90,8 @@ return [
 
         // na sítě jdou jen upozornění se skóre od tohoto prahu (0–100); ostatní zůstanou na webu
         'min_score' => 50,
+        // upozornění pod prahem čeká tolik hodin na doběhnutí rozboru textů, pak se znovu posoudí skóre
+        'hold_hours' => 48,
         // typy upozornění, které se neposílají nikdy: newbill, p90, cut, surge, passed, law, pn
         'kinds_off' => [],
 

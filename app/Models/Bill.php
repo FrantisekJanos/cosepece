@@ -20,7 +20,7 @@ final class Bill extends Model
         'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev',
         'uplny_nazev', 'predlozeno', 'faze', 'posledni', 'p90', 'p90ok',
         'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka', 'score',
-        'reasons', 'vyhlaseno',
+        'reasons', 'vyhlaseno', 'lhuta',
     ];
 
     protected function casts(): array
@@ -28,6 +28,7 @@ final class Bill extends Model
         return [
             'id_tisk' => 'integer',
             'ct' => 'integer',
+            'lhuta' => 'integer',
             'druh' => 'integer',
             'p90' => 'boolean',
             'p90ok' => 'boolean',
@@ -64,7 +65,7 @@ final class Bill extends Model
 
     public function alerts(): HasMany
     {
-        return $this->hasMany(Alert::class, 'ct', 'ct');
+        return $this->hasMany(Alert::class, 'ct', 'ct')->currentPeriod();
     }
     public function scopeProcedureFilter(Builder $query, string $filter): Builder
     {
@@ -72,32 +73,18 @@ final class Bill extends Model
             'mp' => $query->where('typ_navrhu', '<>', 'vládní'),
             'p90' => $query->where('p90', 1),
             'cut' => $query->where('zl', 1),
-            'surge' => $query->whereIn('ct', Alert::query()->select('ct')->where('kind', 'surge')),
+            'surge' => $query->whereIn('ct', Alert::query()->select('ct')->where('kind', 'surge')->currentPeriod()),
             'flagged' => $query->where(fn (Builder $flags) => $flags->where('typ_navrhu', '<>', 'vládní')
                 ->orWhere('p90', 1)->orWhere('zl', 1)->orWhere('pn_count', '>', 0)),
             default => $query,
         };
     }
 
-    public function scopeSearchText(Builder $query, string $text): Builder
-    {
-        if ($text === '') {
-            return $query;
-        }
-        return $query->where(function (Builder $search) use ($text): void {
-            $like = '%' . $text . '%';
-            $search->whereLike('nazev', $like)->orWhereLike('uplny_nazev', $like)
-                ->orWhereLike('navrhovatel', $like)->orWhereLike('zakony', $like);
-            $cast = $search->getConnection()->getDriverName() === 'mysql' ? 'CHAR' : 'VARCHAR';
-            $search->orWhereRaw("CAST(ct AS $cast) = ?", [$text]);
-        });
-    }
-
     public function scopeRanked(Builder $query, string $sort): Builder
     {
         return $sort === 'recent'
             ? $query->orderByDesc('posledni')->orderByDesc('ct')
-            : $query->orderByDesc('score')->orderByDesc('posledni');
+            : $query->orderByDesc('score')->orderByDesc('posledni')->orderByDesc('ct');
     }
 
     public function scopeActiveFindings(Builder $query, int $minimumScore): Builder
@@ -105,6 +92,6 @@ final class Bill extends Model
         $since = date('Y-m-d', strtotime('-120 days'));
         return $query->where('score', '>=', $minimumScore)
             ->where(fn (Builder $active) => $active
-                ->whereNotIn('faze', ['Vyhlášeno', 'Vzat zpět', 'Zamítnuto'])->orWhere('posledni', '>=', $since));
+                ->whereNotIn('faze', ['Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'])->orWhere('posledni', '>=', $since));
     }
 }

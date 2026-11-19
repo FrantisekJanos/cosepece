@@ -29,6 +29,7 @@ final class Bluesky implements Notifier
     {
         $service = rtrim($this->cfg['service'] ?? 'https://bsky.social', '/');
         $session = $this->login($service);
+        $text = self::fit($text, $url);
         $full = $text . "\n" . $url;
 
         $start = strlen($text . "\n");
@@ -49,6 +50,18 @@ final class Bluesky implements Notifier
             'collection' => 'app.bsky.feed.post',
             'record' => $record,
         ]);
+    }
+
+    public static function fit(string $text, string $url, int $max = 300): string
+    {
+
+        $len = fn(string $s): int => function_exists('grapheme_strlen') ? (int)grapheme_strlen($s) : mb_strlen($s);
+        $room = $max - $len("\n" . $url);
+        if ($len($text) <= $room) {
+            return $text;
+        }
+        $cut = function_exists('grapheme_substr') ? (string)grapheme_substr($text, 0, max(0, $room - 1)) : mb_substr($text, 0, max(0, $room - 1));
+        return rtrim($cut) . '…';
     }
 
     private function login(string $service): array

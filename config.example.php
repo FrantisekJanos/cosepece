@@ -93,6 +93,12 @@ return [
         // body AI u PN: 'ai_pn_full_min' => 6, 'ai_pn_full_count' => 2, 'ai_pn_full_share' => 0.25, 'ai_pn_single_factor' => 0.5,
     ],
 
+    // Sentry: hlášení neošetřených chyb. Prázdné dsn = vypnuto (nic se neodesílá).
+    'sentry' => [
+        'dsn' => '',
+        'environment' => 'production',
+    ],
+
     'notify' => [
         // true = nic se neposílá, příspěvky se zapisují do data/posts.log
         'dry_run' => true,

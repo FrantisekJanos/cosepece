@@ -31,12 +31,14 @@ final class Sync
                 $prep = (new GovPrep(db(), $source, $config))->run();
             } catch (\Throwable $ex) {
                 // doplňkové údaje Úřadu vlády: chyba se zapíše, synchronizace pokračuje
+                Sentry::capture($ex, ['kde' => 'Sync/GovPrep']);
                 $prep = ['error' => Http::redact($ex->getMessage())];
             }
             try {
                 $votes = (new Votes(db(), $source))->run();
             } catch (\Throwable $ex) {
                 // hlasování jsou doplňková: chyba se zapíše, synchronizace pokračuje
+                Sentry::capture($ex, ['kde' => 'Sync/Votes']);
                 $votes = ['error' => Http::redact($ex->getMessage())];
             }
             // nejdřív upozornění (kvůli „návalu“), pak předběžné skóre (pořadí fronty textů),

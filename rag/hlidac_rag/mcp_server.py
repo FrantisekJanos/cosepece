@@ -25,7 +25,7 @@ from mcp.types import ToolAnnotations
 from mcp.server.transport_security import TransportSecuritySettings
 from psycopg_pool import ConnectionPool, PoolTimeout
 
-from . import db, tools
+from . import db, sentry, tools
 
 INSTRUCTIONS = """Hlídač zákonů (cosepece.cz): data Poslanecké sněmovny, 10. volební období (od 3. 11. 2025).
 Hlavní entita je sněmovní tisk (číslo ct). Z tisku vedou cesty na pozměňovací návrhy (PN), projevy ve stenoprotokolech,
@@ -359,6 +359,8 @@ def build_app():
 
 
 def main() -> None:
+    # Sentry hned na začátku, ať se nahlásí i selhání připojení k DB při startu
+    sentry.init("mcp")
     # migraci dělá jen rag-ingest; MCP má jen číst, ať dva procesy nemigrují souběžně
     conn = db.connect()
     try:

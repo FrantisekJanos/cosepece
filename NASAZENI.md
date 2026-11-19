@@ -194,6 +194,14 @@ nikdy nepřepisujte, na hostingu je novější než v ZIPu. Nové sloupce datab�
 doplní samy při prvním běhu. Na počítači s AI stačí přepsat soubory ve složce (kromě `deploy/ai-remote.env`
 a `data/`).
 
+## Hlášení chyb (Sentry, volitelné)
+
+Vyplňte `sentry.dsn` v `config.php` (blok je v `config.example.php`); prázdné = vypnuto, nic se neodesílá.
+Prostředí určuje `sentry.environment`, verzi nasazení `SENTRY_RELEASE` (v Dockeru ji nastaví `docker/redeploy.sh`).
+Do událostí se citlivé údaje (tokeny, hesla z řetězců připojení, e-maily, IP, cesty serveru) před odesláním odstraňují.
+Limit pro web i synchronizaci dohromady: nejvýš 10 událostí za hodinu a stejná chyba jednou za hodinu (soubory
+v `data/cache/sentry/`; když adresář nejde zapsat, platí jen limit 20 událostí na jeden běh).
+
 ## Řešení problémů
 
 | Příznak | Příčina / řešení |

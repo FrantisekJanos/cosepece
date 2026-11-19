@@ -94,3 +94,11 @@ MCP_TOKEN=… python -m eval.run --url https://<doména>/mcp --jen-faze dnes,pr2
 Token se čte jen z proměnné prostředí `MCP_TOKEN` (ne z argumentu ani souboru). Výsledek se zapíše
 do `eval/vysledky/RRRR-MM-DD.md` (výběr fází do `RRRR-MM-DD-<fáze>.md`) a porovná s posledním během stejného druhu.
 `--jen-faze` bez odpovídající otázky skončí kódem 2.
+
+## Sentry
+
+Ingest i MCP server hlásí neošetřené chyby do Sentry (`sentry-sdk`, modul `hlidac_rag/sentry.py`).
+Zapíná se proměnnou `SENTRY_DSN_RAG` v `docker/.env` (do kontejnerů jde jako `SENTRY_DSN`); prázdná = vypnuto.
+Události nesou tag `component` (`ingest` / `mcp`) a release z `SENTRY_RELEASE`. Před odesláním se z nich odstraní
+citlivé klíče, e-maily, IP adresy, tokeny a cesty serveru (stejná pravidla jako PHP `app/Sentry.php`);
+`ToolError` (očekávané chyby nástrojů) se neodesílá.

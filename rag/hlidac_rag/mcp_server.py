@@ -23,7 +23,7 @@ from mcp.types import ToolAnnotations
 from mcp.server.transport_security import TransportSecuritySettings
 from psycopg_pool import ConnectionPool, PoolTimeout
 
-from . import db, tools
+from . import db, sentry, tools
 
 INSTRUCTIONS = """Hlídač zákonů (cosepece.cz): data Poslanecké sněmovny, 10. volební období (od 3. 11. 2025).
 Hlavní entita je sněmovní tisk (číslo ct). Z tisku vedou cesty na pozměňovací návrhy (PN), projevy ve stenoprotokolech,
@@ -354,6 +354,7 @@ def main() -> None:
         conn.close()
     if chybi:
         raise SystemExit(f"Chybí schémata {', '.join(chybi)}: spusťte nejdřív rag-ingest (provede migraci).")
+    sentry.init("mcp")
     uvicorn.run(build_app(), host=os.environ.get("MCP_HOST", "0.0.0.0"), port=int(os.environ.get("MCP_PORT", "8000")),
                 proxy_headers=True, forwarded_allow_ips="*", log_level="info")
 

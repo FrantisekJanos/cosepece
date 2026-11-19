@@ -42,6 +42,8 @@ services:
       PGDATABASE: hlidac
       PGUSER: hlidac
       PGPASSWORD: ${DB_PASSWORD}
+      SENTRY_DSN: ${SENTRY_DSN_RAG:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     command: ["sh", "-c", "while true; do python -m hlidac_rag.run; sleep 3600; done"]
     depends_on: [db]
 

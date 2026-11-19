@@ -29,6 +29,14 @@ $authors = $repo->amendmentAuthors($ct);
 $alerts = $repo->alerts(10, 0, $ct);
 $texts = $repo->pnTexts($ct);
 $billText = $repo->billText($ct);
+$votes = $repo->votes($ct);
+// hlasování, kterým skončil krok projednávání (popis kroku místo obecného názvu)
+$stepByVote = [];
+foreach ($steps as $k) {
+    if (!empty($k['id_hlasovani'])) {
+        $stepByVote[(int)$k['id_hlasovani']] = $k['stav'] . ($k['akce'] !== '' ? ' – ' . $k['akce'] : '');
+    }
+}
 $laws = array_filter(explode(',', (string)$t['zakony']));
 
 // délka projednávání od předložení po poslední krok
@@ -186,6 +194,37 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     </section>
   </aside>
 </div>
+
+<?php if ($votes !== []): ?>
+<section class="card pad" aria-label="Hlasování">
+  <h2>Hlasování ve Sněmovně</h2>
+  <p class="muted small">Všechna hlasování k tomuto tisku, včetně hlasování o jednotlivých pozměňovacích návrzích. Otevřená data neříkají, o kterém pozměňovacím návrhu se hlasovalo; jmenovité výsledky a podrobnosti jsou na psp.cz. Hlasování do skóre nevstupují.</p>
+  <ul class="votes">
+    <?php foreach ($votes as $i => $v): ?>
+      <?php if ($i === 10): ?></ul><details class="votes-more"><summary>Další hlasování (<?= count($votes) - 10 ?>)</summary><ul class="votes"><?php endif; ?>
+      <li class="vote">
+        <div class="vote-head">
+          <span class="chip <?= $v['vysledek'] === 'A' ? 'chip-mp' : 'chip-cut' ?>"><?= $v['vysledek'] === 'A' ? 'Přijato' : 'Zamítnuto' ?></span>
+          <strong><?= e($stepByVote[(int)$v['id_hlasovani']] ?? 'Hlasování č. ' . (int)$v['cislo']) ?></strong>
+          <span class="muted small"><?= e(formatDate($v['datum'], true)) ?> · <?= (int)$v['schuze'] ?>. schůze · pro <?= (int)$v['pro'] ?>, proti <?= (int)$v['proti'] ?>, zdrželo se <?= (int)$v['zdrzel'] ?> (potřeba <?= (int)$v['kvorum'] ?>)</span>
+          <a class="small" href="https://www.psp.cz/sqw/hlasy.sqw?g=<?= (int)$v['id_hlasovani'] ?>">jmenovitě na psp.cz</a>
+        </div>
+        <?php if ($v['kluby'] !== []): ?>
+          <div class="vote-scroll"><table class="table-compact vote-clubs">
+            <thead><tr><th>Klub</th><th>Pro</th><th>Proti</th><th>Zdržel se / nehlasoval</th><th>Nepřítomen</th></tr></thead>
+            <tbody>
+              <?php foreach ($v['kluby'] as $c): ?>
+                <tr><td><?= e($c['klub']) ?></td><td><?= (int)$c['pro'] ?></td><td><?= (int)$c['proti'] ?></td><td><?= (int)$c['zdrzel'] ?></td><td><?= (int)$c['nepritomen'] ?></td></tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table></div>
+        <?php endif; ?>
+      </li>
+    <?php endforeach; ?>
+  </ul>
+  <?php if (count($votes) > 10): ?></details><?php endif; ?>
+</section>
+<?php endif; ?>
 
 <section class="card" aria-label="Upozornění k tisku">
   <div class="card-head"><h2>Upozornění k tisku</h2></div>

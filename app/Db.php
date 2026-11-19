@@ -77,6 +77,23 @@ final class Db
             akce_id INTEGER,
             akce VARCHAR(120)
         )$suffix");
+        // hlasování Sněmovny k tiskům (app/Votes.php) a jejich rozdělení podle poslaneckých klubů
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS hlasovani (
+            id_hlasovani INTEGER PRIMARY KEY,
+            ct INTEGER NOT NULL,
+            schuze INTEGER,
+            cislo INTEGER,
+            datum VARCHAR(16),
+            pro INTEGER, proti INTEGER, zdrzel INTEGER, nehlasoval INTEGER, prihlaseno INTEGER, kvorum INTEGER,
+            vysledek VARCHAR(1),
+            nazev VARCHAR(255),
+            krok INTEGER NOT NULL DEFAULT 0
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS hlasovani_kluby (
+            id_hlasovani INTEGER NOT NULL,
+            klub VARCHAR(40) NOT NULL,
+            pro INTEGER, proti INTEGER, zdrzel INTEGER, nepritomen INTEGER
+        )$suffix");
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn (
             id_dokument INTEGER PRIMARY KEY,
             cislo INTEGER NOT NULL,
@@ -144,6 +161,7 @@ final class Db
         $this->addColumn('tisky', 'score', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('tisky', 'vyhlaseno', 'VARCHAR(10)');
         $this->addColumn('tisky', 'lhuta', 'INTEGER');
+        $this->addColumn('kroky', 'id_hlasovani', 'INTEGER');
         // kdy se naposledy ověřilo, že psp.cz má pořád stejný dokument tisku
         $this->addColumn('tisk_text', 'checked_at', 'VARCHAR(19)');
         $this->addColumn('tisky', 'reasons', $text);
@@ -178,6 +196,8 @@ final class Db
         $this->createIndex('pn', 'idx_pn_ct', 'ct');
         $this->createIndex('alerts', 'idx_alerts_event', 'event_at');
         $this->createIndex('tisky', 'idx_tisky_ct', 'ct');
+        $this->createIndex('hlasovani', 'idx_hlasovani_ct', 'ct');
+        $this->createIndex('hlasovani_kluby', 'idx_hlasovani_kluby', 'id_hlasovani');
     }
 
     private function addColumn(string $table, string $column, string $definition): void

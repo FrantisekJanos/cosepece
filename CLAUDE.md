@@ -95,6 +95,10 @@ Náhledy pro sítě: každá stránka má `og:`/`twitter:` značky (`View::heade
 kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cache `data/cache/og`, bez GD
 `assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
 
+Hlavní nálezy (index.php, `Repo::findings`): řazení `?razeni=` (skore, ai = ověřená závažnost AI s citací, nove,
+hlasovani = podle fáze) a druh problému `?druh=` (`Repo::PROBLEM_GROUPS` z klíčů důvodů skóre + ověřené AI příznaky
+přílepku/zpětnosti + krátké připomínky u vlády). Skupiny drž úzké, jinak mezi nálezy nic neodfiltrují.
+
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 

@@ -12,10 +12,16 @@ use Hlidac\View;
 $w = Scorer::weights(config());
 $repo = new Repo(db());
 $s = $repo->stats();
-// hlavní nálezy: prvních 6 hned, další se odkrývají po 3 tlačítkem (bez JS odkazem ?n=)
-// hlavní nálezy: od skóre finding_min, hned vidět 9 karet (3 řady), další po trojicích
+// hlavní nálezy: od skóre finding_min, hned vidět 9 karet (3 řady), další po trojicích (bez JS odkazem ?n=);
+// řazení ?razeni= a druh problému ?druh= jsou v adrese, takže odkaz jde poslat dál
 $findingsShown = max(9, min(60, (int)($_GET['n'] ?? 9)));
-$findings = $repo->topFindings((int)$w['finding_min'], 60);
+$sort = (string)($_GET['razeni'] ?? 'skore');
+$sort = isset(Repo::FINDING_SORTS[$sort]) ? $sort : 'skore';
+$group = (string)($_GET['druh'] ?? '');
+$group = isset(Repo::PROBLEM_GROUPS[$group]) ? $group : '';
+$found = $repo->findings((int)$w['finding_min'], $sort, $group);
+$findings = array_slice($found['rows'], 0, 60);
+$findingsUrl = fn(array $set): string => '?' . http_build_query(array_filter(array_merge(['razeni' => $sort === 'skore' ? null : $sort, 'druh' => $group ?: null], $set))) . '#nalezy';
 $alerts = $repo->alerts(8, 0, null, (int)$w['level_watch']);
 $suppressed = $repo->suppressedCount((int)$w['level_watch']);
 $watch = $repo->watchlist(config('watch_laws', []), config('watch_tisky', []));
@@ -68,13 +74,34 @@ View::header('Přehled', 'prehled');
     </div>
     <a href="tisky.php?min=<?= (int)$w['finding_min'] ?>">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
   </div>
+  <?php if ($found['total'] > 0): ?>
+  <div class="finding-controls">
+    <div class="control-row" role="group" aria-label="Řazení nálezů">
+      <span class="control-label">Řadit</span>
+      <?php foreach (Repo::FINDING_SORTS as $key => $label): ?>
+        <a class="pill<?= $key === $sort ? ' active' : '' ?>" href="<?= e($findingsUrl(['razeni' => $key === 'skore' ? null : $key])) ?>"<?= $key === $sort ? ' aria-current="true"' : '' ?>><?= e($label) ?></a>
+      <?php endforeach; ?>
+    </div>
+    <div class="control-row" role="group" aria-label="Druh problému">
+      <span class="control-label">Co hledám</span>
+      <a class="pill<?= $group === '' ? ' active' : '' ?>" href="<?= e($findingsUrl(['druh' => null])) ?>">Vše <span class="pill-count"><?= (int)$found['total'] ?></span></a>
+      <?php foreach (Repo::PROBLEM_GROUPS as $key => [$label]): ?>
+        <?php if ($found['counts'][$key] === 0 && $group !== $key) continue; ?>
+        <a class="pill<?= $key === $group ? ' active' : '' ?>" href="<?= e($findingsUrl(['druh' => $key])) ?>"<?= $key === $group ? ' aria-current="true"' : '' ?>><?= e($label) ?> <span class="pill-count"><?= (int)$found['counts'][$key] ?></span></a>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($sort === 'ai'): ?><p class="muted small control-note">Podle nejzávažnějšího nálezu v rozboru textu návrhu nebo pozměňovacího návrhu; počítají se jen nálezy ověřené silnějším modelem a doložené citací. Tisky bez ověřeného nálezu jsou na konci.</p>
+    <?php elseif ($sort === 'hlasovani'): ?><p class="muted small control-note">Napřed tisky ve 3. čtení a před hlasováním po Senátu nebo po vetu, pak 2. a 1. čtení; tisky, o kterých už Sněmovna nehlasuje, jsou na konci.</p>
+    <?php elseif ($sort === 'nove'): ?><p class="muted small control-note">Podle posledního kroku v projednávání nebo nového pozměňovacího návrhu.</p><?php endif; ?>
+  </div>
+  <?php endif; ?>
   <?php if ($findings === []): ?>
-    <p class="empty">Žádný tisk nyní nemá skóre aspoň <?= (int)$w['finding_min'] ?> bodů.</p>
+    <p class="empty"><?= $group !== '' ? 'Mezi hlavními nálezy teď nic takového není.' : 'Žádný tisk nyní nemá skóre aspoň ' . (int)$w['finding_min'] . ' bodů.' ?></p>
   <?php endif; ?>
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
       <a class="finding" href="tisk.php?ct=<?= (int)$t['ct'] ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
-        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null): ?><span class="chip chip-cut" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['strong_ai'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
+        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null || ($sort === 'ai' && $t['ai_verified'] !== null)): ?><span class="chip <?= (int)$t['ai_verified'] >= 6 ? 'chip-cut' : 'chip-surge' ?>" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['ai_verified'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
           <strong class="finding-title"><?= e($h['title']) ?></strong>
@@ -92,7 +119,7 @@ View::header('Přehled', 'prehled');
   </div>
   <?php if (count($findings) > $findingsShown): ?>
     <div class="findings-more">
-      <a class="btn btn-ghost" id="findings-more" href="?n=<?= $findingsShown + 3 ?>#nalezy">Zobrazit další nálezy <span class="muted">(zbývá <?= count($findings) - $findingsShown ?>)</span></a>
+      <a class="btn btn-ghost" id="findings-more" href="<?= e($findingsUrl(['n' => $findingsShown + 3])) ?>">Zobrazit další nálezy <span class="muted">(zbývá <?= count($findings) - $findingsShown ?>)</span></a>
     </div>
     <script>
     // odkryje další 3 nálezy bez načtení stránky; bez JS funguje odkaz ?n=

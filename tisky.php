@@ -16,6 +16,10 @@ $filters = [
     'cut' => 'Zkrácená lhůta',
     'surge' => 'Nával PN',
 ];
+// druhy problémů z hlavních nálezů, které tu ještě nejsou (§ 90/2, lhůty a předkladatele pokrývají filtry výše)
+foreach (['prilepky', 'zmeny_pn', 'zpetne'] as $key) {
+    $filters[$key] = Repo::PROBLEM_GROUPS[$key][0];
+}
 $f = (string)($_GET['f'] ?? '');
 if (!array_key_exists($f, $filters)) {
     $f = '';

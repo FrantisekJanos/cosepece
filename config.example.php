@@ -34,7 +34,7 @@ return [
     ],
 
     // odkaz na veřejné issues (podněty a chyby)
-    'issues_url' => 'https://github.com/moodixmarket/hlidac-zakonu-podnety/issues',
+    'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     // stahování textů pozměňovacích návrhů (Word) a pravidlová analýza přílepků a rozsahu
     'pn_text' => [

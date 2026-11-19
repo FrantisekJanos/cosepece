@@ -84,13 +84,23 @@ kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cac
 `assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
 
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
-`upozorneni.php`, `rss.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
+`upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 
 Nové volební období (`Importer::switchPeriod`): stará upozornění dostanou klíč `9/…` a odkaz na psp.cz (`alerts.obdobi`),
-texty a rozbory se smažou a nové období začne bootstrapem (nic se neposílá). Nával PN = ≥ `surge_threshold` PN k tisku
+texty a rozbory se nemažou: celé řádky se zkopírují do `tisk_text_archiv` / `pn_text_archiv` (sloupec `obdobi`) a z pracovních
+tabulek zmizí, takže detail tisku, skóre a fronty pracují jen s aktuálním obdobím. Nové období začne bootstrapem (nic se neposílá).
+
+Historie verzí (`app/Revisions.php`, #2 bod 2): `text_revize` (každé nové znění textu tisku nebo PN: stažení, obnova při
+změně idd) a `ai_revize` (každý uložený rozbor AI: 1. i 2. kolo, `--resanitize`; model, verze promptu, závažnost, ai_json,
+otisk textu). Záznam přibude jen při skutečné změně (sha1), klíč `(druh, obdobi, ref_id, verze)`, nic se nemaže. Stav, který
+v historii ještě není, se zapíše před přepsáním; jednorázové doplnění dosavadních dat `Revisions::backfill` na začátku
+`Sync::run` (meta `revize_backfill`, opakování nic nepřidá). Web: odkaz „Historie (N verzí)“ v detailu tisku (u textu návrhu
+i u PN, když je verzí textu nebo rozboru víc než jedna) → `revize.php?druh=tisk|pn&id=…` (seznam verzí, rozdíl dvou verzí
+textu po odstavcích a slovech přes `app/Diff.php`, změny závažnosti a titulku rozboru). Skóre historie neovlivňuje. Nával PN = ≥ `surge_threshold` PN k tisku
 za kalendářní den podle času podání, ne za běh synchronizace.
 
-Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
+Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`,
+`text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období).
 
 ## Zdroj dat (psp.cz open data)
 

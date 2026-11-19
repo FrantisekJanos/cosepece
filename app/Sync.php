@@ -24,6 +24,8 @@ final class Sync
                 APP_ROOT . '/data/cache',
                 $config['source_dir'] ?? null
             );
+            // jednorázově: dosavadní texty a rozbory jako první verze historie (meta revize_backfill)
+            $backfill = Revisions::backfill(db());
             $import = (new Importer(db(), $source))->run();
             // nejdřív upozornění (kvůli „návalu“), pak předběžné skóre (pořadí fronty textů),
             // texty PN a tisků, rozbor AI, konečné skóre, nakonec rozeslání
@@ -42,6 +44,7 @@ final class Sync
                 'pn_text' => $pnText,
                 'tisk_text' => $tiskText,
                 'ai' => $ai,
+                'revize_backfill' => $backfill,
                 'posts' => $posts,
                 'seconds' => round(microtime(true) - $started, 1),
             ];

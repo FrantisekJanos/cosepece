@@ -173,7 +173,91 @@ final class Db
             }
         }
 
+        // historie verzí textů a rozborů AI (#2 bod 2): záznam přibude jen při skutečné změně (hash),
+        // nic se nemaže; obdobi odděluje stejná čísla tisků různých volebních období
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS text_revize (
+            druh VARCHAR(10) NOT NULL,
+            obdobi INTEGER NOT NULL,
+            ref_id INTEGER NOT NULL,
+            verze INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            cislo INTEGER,
+            docx_url VARCHAR(255),
+            text $text,
+            chars INTEGER NOT NULL DEFAULT 0,
+            hash VARCHAR(40) NOT NULL,
+            fetched_at VARCHAR(19),
+            created_at VARCHAR(19) NOT NULL,
+            zdroj VARCHAR(20) NOT NULL,
+            PRIMARY KEY (druh, obdobi, ref_id, verze)
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS ai_revize (
+            druh VARCHAR(10) NOT NULL,
+            obdobi INTEGER NOT NULL,
+            ref_id INTEGER NOT NULL,
+            verze INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            ai_json $text,
+            ai_score INTEGER,
+            ai_model VARCHAR(60),
+            ai_prompt INTEGER,
+            ai_at VARCHAR(19),
+            text_hash VARCHAR(40),
+            hash VARCHAR(40) NOT NULL,
+            created_at VARCHAR(19) NOT NULL,
+            zdroj VARCHAR(20) NOT NULL,
+            PRIMARY KEY (druh, obdobi, ref_id, verze)
+        )$suffix");
+        // archiv pracovních tabulek textů po skončení volebního období (celé řádky včetně signálů a rozborů)
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS tisk_text_archiv (
+            obdobi INTEGER NOT NULL,
+            archived_at VARCHAR(19) NOT NULL,
+            ct INTEGER NOT NULL,
+            docx_url VARCHAR(255),
+            text $text,
+            chars INTEGER,
+            signals $text,
+            ai_json $text,
+            ai_score INTEGER,
+            fetched_at VARCHAR(19),
+            ai_at VARCHAR(19),
+            error $text,
+            checked_at VARCHAR(19),
+            ai_model VARCHAR(60),
+            ai_prompt INTEGER,
+            ai_prev_json $text,
+            ai_prev_score INTEGER,
+            ai_prev_model VARCHAR(60),
+            PRIMARY KEY (obdobi, ct)
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn_text_archiv (
+            obdobi INTEGER NOT NULL,
+            archived_at VARCHAR(19) NOT NULL,
+            id_dokument INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            cislo INTEGER,
+            docx_url VARCHAR(255),
+            text $text,
+            chars INTEGER,
+            laws $text,
+            signals $text,
+            rule_score INTEGER,
+            ai_json $text,
+            ai_score INTEGER,
+            fetched_at VARCHAR(19),
+            ai_at VARCHAR(19),
+            error $text,
+            ai_model VARCHAR(60),
+            ai_prompt INTEGER,
+            ai_prev_json $text,
+            ai_prev_score INTEGER,
+            ai_prev_model VARCHAR(60),
+            PRIMARY KEY (obdobi, id_dokument)
+        )$suffix");
+
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
+        $this->createIndex('text_revize', 'idx_text_revize_ct', 'ct');
+        $this->createIndex('ai_revize', 'idx_ai_revize_ct', 'ct');
         $this->createIndex('pn_text', 'idx_pn_text_ct', 'ct');
         $this->createIndex('pn', 'idx_pn_ct', 'ct');
         $this->createIndex('alerts', 'idx_alerts_event', 'event_at');

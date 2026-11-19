@@ -8,6 +8,7 @@ require_once __DIR__ . '/app/bootstrap.php';
 use Hlidac\Analyzer;
 use Hlidac\OgCard;
 use Hlidac\Repo;
+use Hlidac\Revisions;
 use Hlidac\View;
 
 $repo = new Repo(db());
@@ -29,6 +30,9 @@ $authors = $repo->amendmentAuthors($ct);
 $alerts = $repo->alerts(10, 0, $ct);
 $texts = $repo->pnTexts($ct);
 $billText = $repo->billText($ct);
+// počty uložených verzí textu a rozborů (odkaz „Historie“ jen u víc než jedné verze)
+$billRev = Revisions::counts(db(), 'tisk')[$ct] ?? ['text' => 0, 'ai' => 0];
+$pnRev = Revisions::counts(db(), 'pn');
 $laws = array_filter(explode(',', (string)$t['zakony']));
 
 // délka projednávání od předložení po poslední krok
@@ -109,7 +113,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
-<?php if ($billText !== null && ($billText['ai'] !== null || array_diff_key($billText['signals'], ['laws' => true]) !== [])): ?>
+<?php if ($billText !== null && ($billText['ai'] !== null || array_diff_key($billText['signals'], ['laws' => true]) !== [] || Revisions::hasHistory($billRev))): ?>
 <section class="card pad" aria-label="Rozbor textu návrhu">
   <h2>Rozbor textu návrhu</h2>
   <?php $bai = $billText['ai']; ?>
@@ -133,6 +137,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <?php endforeach; ?>
   <p class="muted small">Citace jsou doslovně z textu návrhu<?= $billText['docx_url'] ? ' (<a href="' . e($billText['docx_url']) . '">Word na psp.cz</a>)' : '' ?>.
     <?= $bai !== null ? 'Rozbor připravil jazykový model; hodnotí formu a postup, ne politický obsah.' : 'Pasáže vybrala automatická pravidla.' ?></p>
+  <?php if (Revisions::hasHistory($billRev)): ?><p class="small"><a href="<?= e(Revisions::url('tisk', $ct)) ?>">Historie (<?= e(Revisions::versionsLabel($billRev['text'] + $billRev['ai'])) ?>)</a> <span class="muted">– předchozí znění textu a rozbory</span></p><?php endif; ?>
 </section>
 <?php endif; ?>
 
@@ -177,6 +182,8 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
               </span>
               <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
               <?= View::aiRounds($x) ?>
+              <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
+              <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
               <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
             <?php endif; ?>
           </li>

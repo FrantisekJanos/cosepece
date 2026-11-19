@@ -175,3 +175,19 @@ a.plain:hover { text-decoration: underline; }
 }
 .steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
 .steps .small { display: block; margin-top: 2px; }
+
+/* historie verzí (revize.php) */
+.diff-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 14px; }
+.diff-form select { height: 36px; padding: 0 8px; border: 1px solid #D6D6D0; border-radius: 8px; font: inherit; background: #fff; margin-left: 4px; }
+.diff { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 14px; }
+.diff-line { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 6px 12px 6px 6px; border-top: 1px solid var(--line-soft); overflow-wrap: anywhere; white-space: pre-wrap; }
+.diff-line:first-child { border-top: 0; }
+.diff-mark { color: var(--muted); font-weight: 700; text-align: center; }
+.diff-same { color: var(--ink-2); }
+.diff-del { background: #FEF2F2; }
+.diff-add { background: #ECFDF3; }
+.diff del { background: #FECACA; color: #7F1D1D; }
+.diff ins { background: #BBF7D0; color: #14532D; text-decoration: none; }
+.diff-skip { padding: 6px 12px; background: #F7F7F4; color: var(--muted); font-size: 13px; text-align: center; border-top: 1px solid var(--line-soft); }
+.diff-plus { color: #166534; font-weight: 700; }
+.diff-minus { color: #B91C1C; font-weight: 700; }

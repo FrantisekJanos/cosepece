@@ -343,12 +343,16 @@ def _speech_rows(rows: list[dict], excerpt: int = 400) -> list[dict]:
 def _resolve_klub(conn, klub: str) -> list[str]:
     """Zkratky klubů odpovídající prefixu zkratky nebo názvu (bez diakritiky a velikosti písmen).
 
-    Neznámý klub = ValueError s výčtem platných zkratek."""
+    Neznámý klub = ValueError s výčtem platných zkratek. Úvodní „Poslanecký klub“ se z názvu před porovnáním
+    odstraní (mají ho všechny kluby, „Posl“ by jinak sedělo na každý)."""
     rows = _rows(conn, "SELECT DISTINCT klub, klub_nazev FROM steno.klub_clenstvi ORDER BY klub")
     q = unaccent_py(klub.strip()).lower()
+
+    def nazev(r) -> str:
+        return re.sub(r"^poslanecky\s+klub\s+", "", unaccent_py(r["klub_nazev"] or "").lower().strip())
+
     found = sorted({r["klub"] for r in rows
-                    if q and (unaccent_py(r["klub"]).lower().startswith(q)
-                              or unaccent_py(r["klub_nazev"] or "").lower().startswith(q))})
+                    if q and (unaccent_py(r["klub"]).lower().startswith(q) or nazev(r).startswith(q))})
     if not found:
         platne = ", ".join(sorted({r["klub"] for r in rows}))
         raise ValueError(f"Neznámý klub {klub}. Platné: {platne}")
@@ -567,8 +571,13 @@ def stav_dat(conn) -> dict:
     raw = _json(r["v"]) if r else None
     if isinstance(raw, dict):
         # text chyby může obsahovat adresy a cesty, ven jde jen ok/ne a čísla
+        texty = raw.get("texty") if isinstance(raw.get("texty"), dict) else {}
         out["steno_last_result"] = {"ok": not raw.get("error"),
-                                    **{k: raw.get(k) for k in ("seconds", "requests", "discover", "crawl", "assemble")}}
+                                    **{k: raw.get(k) for k in ("seconds", "requests", "discover", "crawl", "assemble")},
+                                    # ingest textů: jen ok a počty, žádný text chyby
+                                    "texty_ok": texty.get("ok"),
+                                    "texty": {k: v for k, v in texty.items() if k != "ok" and isinstance(v, int)
+                                              and not isinstance(v, bool)} or None}
     else:
         out["steno_last_result"] = None
     r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
@@ -585,7 +594,9 @@ def stav_dat(conn) -> dict:
 
 # ---------------------------------------------------------------- texty návrhů zákonů a PN (schéma texty)
 
-_DOSTUPNY = "d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL"   # dokument má text rozdělený na celky
+# dokument má text rozdělený na celky; chyba = dělení selhalo (celky by mohly patřit ke staršímu textu)
+_DOSTUPNY = "d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL AND d.chyba IS NULL"
+_DOSTUPNY_S = _DOSTUPNY.replace("d.", "s.")   # totéž pro alias s (schválené znění v poddotazu)
 _BEZ_DUVODOVE = "c.typ <> 'duvodova_zprava'"
 MAX_LIMIT_TEXTY = 100   # víc celků na stránku by mohlo narazit na strop odpovědi 60 000 znaků
 _VERZE_CHYBA = 'verze je "puvodni" (předložené znění) nebo "schvalene" (znění schválené Sněmovnou).'
@@ -629,6 +640,8 @@ def _dokument(conn, ct: int | None, pn: int | None, verze: str | None) -> dict:
         raise ValueError(f"Text {nazev} zatím nemám (texty se stahují postupně). Zdroj: {url_psp}")
     if not d["ma_text"]:
         raise ValueError(f"Text {nazev} není k dispozici ({d['chyba'] or 'bez textu'}). Zdroj: {url_psp}")
+    if not d["dostupny"] and d["chyba"]:
+        raise ValueError(f"Text {nazev} se nepodařilo zpracovat ({d['chyba']}). Zdroj: {url_psp}")
     if not d["dostupny"]:
         raise ValueError(f"Text {nazev} se teprve dělí na celky, zkuste to po další synchronizaci. Zdroj: {url_psp}")
     return {"id": d["id"], "druh": d["druh"], "ct": d["ct"], "pn": d["cislo_pn"] if d["druh"] == "pn" else None,
@@ -747,6 +760,7 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
     if not _texty_ok(conn):
         raise ValueError(NEDOSTUPNE)
     where, params = (["c.tsv @@ to_tsquery('simple', %s)"], [tsq]) if tsq else ([], [])
+    where.append(_DOSTUPNY)     # celky dokumentu, který se právě převzal nebo jehož dělení selhalo, ne
     if not vcetne_duvodove:
         where.append(_BEZ_DUVODOVE)
     if ct is not None:
@@ -766,9 +780,9 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
         params.append(verze)
     else:
         # u tisku jen jedna verze, ať se výsledky nezdvojí: schválené znění, je-li rozdělené, jinak původní
-        where.append("""(d.druh = 'pn' OR d.verze = 'schvalene' OR NOT EXISTS (
+        where.append(f"""(d.druh = 'pn' OR d.verze = 'schvalene' OR NOT EXISTS (
                             SELECT 1 FROM texty.dokument s WHERE s.druh = 'tisk' AND s.ct = d.ct AND s.cislo_pn = 0
-                              AND s.verze = 'schvalene' AND s.text IS NOT NULL AND s.rozdeleno_at IS NOT NULL))""")
+                              AND s.verze = 'schvalene' AND {_DOSTUPNY_S}))""")
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id WHERE {w}",
                  params)["n"]

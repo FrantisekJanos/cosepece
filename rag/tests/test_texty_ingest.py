@@ -279,8 +279,122 @@ def test_nedostupne_psp_prerusi_jen_stahovani(conn):
     st = sync_texty(conn, f, 10)
     assert f.requests == 1 and st["chyby"] == 1
     assert st["prevzato"] == 1 and st["rozdeleno"] == 1
-    # nic se neuložilo, příští běh to zkusí znovu
-    assert sql(conn, "SELECT druh, ct FROM texty.dokument") == [("tisk", 311)]
+    # výpadek spojení stahování ukončí; chybu dostane jen dokument, u kterého k němu došlo
+    r = sql(conn, "SELECT druh, ct, chyba FROM texty.dokument ORDER BY druh, ct")
+    assert [x[:2] for x in r] == [("tisk", 76), ("tisk", 311)]
+    assert r[0][2].startswith("síť: URLError") and r[1][2] is None
+
+
+def _http_chyba(url: str, kod: int):
+    import urllib.error
+    return urllib.error.HTTPError(url, kod, "Service Unavailable", {}, None)
+
+
+def test_http_chyba_dokumentu_neblokuje_frontu(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    class Chyba503(FakeFetcher):
+        def get(self, url):
+            data = super().get(url)
+            if "ct=76" in url:
+                raise _http_chyba(url, 503)
+            return data
+
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (2, 76, 1, 'vládní', '1. čtení')")
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (4, 75, 1, 'vládní', '1. čtení')")
+    f = Chyba503([
+        ("tiskt.sqw", (HTML / "tiskt-76-0.html").read_bytes()),
+        ("idd=266516", vzor_docx("Čl. I\nNávrh.")),
+    ])
+    st = sync_texty(conn, f, 10)
+    assert st["chyby"] == 1 and st["stazeno"] == 1
+    r = sql(conn, "SELECT ct, chyba, text IS NOT NULL FROM texty.dokument ORDER BY ct")
+    assert r[0] == (75, None, True)
+    assert r[1][0] == 76 and r[1][1].startswith("síť: HTTPError: HTTP Error 503") and not r[1][2]
+    # v dalším běhu se 76 nezkouší (opakování po 7 dnech), po 7 dnech ano
+    sync_texty(conn, f, 10)
+    assert f.pocet("ct=76") == 1
+    sql(conn, "UPDATE texty.dokument SET zkontrolovano_at = now() - interval '8 days' WHERE ct = 76")
+    sync_texty(conn, f, 10)
+    assert f.pocet("ct=76") == 2
+
+
+def test_timeout_dokumentu_pokracuje_a_tri_za_sebou_konci(conn):
+    import urllib.error
+
+    from hlidac_rag.texty.ingest import sync_texty
+
+    class Pomaly(FakeFetcher):
+        def get(self, url):
+            super().get(url)
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+    for i, cislo in enumerate((891, 892, 893, 894, 895)):
+        sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (%s, %s, 76)", (500 + i, cislo))
+    f = Pomaly()
+    st = sync_texty(conn, f, 10)
+    # dva timeouty se zapíšou a běh pokračuje, třetí za sebou stahování ukončí
+    assert f.requests == 3 and st["chyby"] == 3
+    r = sql(conn, "SELECT cislo_pn, chyba FROM texty.dokument ORDER BY cislo_pn DESC")
+    assert [x[0] for x in r] == [895, 894, 893]
+    assert all(x[1].startswith("síť: URLError") for x in r)
+    # další běh začne dokumenty, které ještě nezkoušel
+    f2 = FakeFetcher([("cd=", b"<html></html>")])
+    sync_texty(conn, f2, 10)
+    assert f2.urls and "cd=892" in f2.urls[0]
+
+
+def test_timeout_jednoho_dokumentu_nezastavi_dalsi(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    class Pomaly(FakeFetcher):
+        def get(self, url):
+            data = super().get(url)
+            if "cd=895" in url:
+                raise TimeoutError("The read operation timed out")
+            return data
+
+    sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (500, 894, 76)")
+    sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (501, 895, 76)")
+    f = Pomaly([("cd=894", b"<html></html>")])
+    st = sync_texty(conn, f, 10)
+    assert st["chyby"] == 1 and st["jen_pdf"] == 1
+    r = sql(conn, "SELECT cislo_pn, chyba FROM texty.dokument ORDER BY cislo_pn")
+    assert r[0] == (894, "jen PDF") and r[1][1].startswith("síť: TimeoutError")
+
+
+def test_schvalene_http_chyba_za_24_h_vadny_docx_za_7_dni(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (1, 76, 1, 'vládní', 'Vyhlášeno')")
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (2, 311, 1, 'vládní', 'Vyhlášeno')")
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (76, 'Čl. I\nText.')")
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (311, 'Čl. I\nText.')")
+
+    class Mix(FakeFetcher):
+        def get(self, url):
+            data = super().get(url)
+            if "t=311" in url:
+                raise _http_chyba(url, 500)
+            return data
+
+    f = Mix([
+        ("historie.sqw", (HTML / "historie-76.html").read_bytes()),
+        ("v=PZ", (HTML / "tiskt-76-pz.html").read_bytes()),
+        ("orig2.sqw?idd=278472", b"%PDF-1.4 to neni docx"),
+    ])
+    st = sync_texty(conn, f, 10)
+    assert st["schvalene"] == 0 and st["chyby"] == 2
+    r = sql(conn, "SELECT ct, chyba FROM texty.dokument WHERE verze = 'schvalene' ORDER BY ct")
+    assert r[0] == (76, "DOCX nelze přečíst") and r[1][1].startswith("síť: HTTPError: HTTP Error 500")
+    # po 25 h: síťová chyba ano, vadný DOCX ne
+    sql(conn, "UPDATE texty.dokument SET zkontrolovano_at = now() - interval '25 hours' WHERE verze = 'schvalene'")
+    sync_texty(conn, f, 10)
+    assert f.pocet("historie.sqw?o=10&t=311") == 2 and f.pocet("historie.sqw?o=10&t=76") == 1
+    # po 8 dnech i vadný DOCX
+    sql(conn, "UPDATE texty.dokument SET zkontrolovano_at = now() - interval '8 days' WHERE verze = 'schvalene'")
+    sync_texty(conn, f, 10)
+    assert f.pocet("historie.sqw?o=10&t=76") == 2
 
 
 def test_selhani_deleni_neblokuje_frontu(conn, monkeypatch):
@@ -371,3 +485,37 @@ def test_faze_vice_radku_tisku(conn):
     f = FakeFetcher([("historie.sqw", (HTML / "historie-311.html").read_bytes())])
     sync_texty(conn, f, 10)
     assert f.pocet("historie.sqw") == 1
+
+
+def test_selhani_deleni_po_zmene_textu_smaze_stare_celky(conn, monkeypatch):
+    from hlidac_rag import tools
+    from hlidac_rag.texty import ingest
+
+    sql(conn, "INSERT INTO tisk_text (ct, docx_url, text) VALUES (311, 'https://x/stary', 'Čl. I\nStarý text o dani.')")
+    ingest.sync_texty(conn, FakeFetcher(), 10)
+    assert [c[1] for c in celky(conn, "tisk", 311)] == ["Čl. I"]
+    assert tools.hledej_v_textech(conn, "dani", ct=311)["celkem"] == 1
+    conn.commit()
+
+    # nový text: převzetí nastaví rozdeleno_at = NULL, staré celky se do rozdělení nevrací
+    sql(conn, "UPDATE tisk_text SET docx_url = 'https://x/novy', text = 'ROZBITÝ nový text o dani' WHERE ct = 311")
+    ingest._prevezmi(conn)
+    assert tools.hledej_v_textech(conn, "dani", ct=311)["celkem"] == 0
+    with pytest.raises(ValueError, match="teprve dělí"):
+        tools.osnova_textu(conn, ct=311)
+    conn.commit()
+
+    def rozdel(text):
+        raise ValueError("neočekávaná struktura")
+
+    monkeypatch.setattr(ingest, "rozdel", rozdel)
+    st = ingest.sync_texty(conn, FakeFetcher(), 10)
+    assert st["chyby"] == 1
+    # celky starého textu jsou pryč, nástroje vrací chybu dělení, ne starý text s novým url_docx
+    assert celky(conn, "tisk", 311) == []
+    with pytest.raises(ValueError, match="nepodařilo zpracovat.*dělení selhalo"):
+        tools.osnova_textu(conn, ct=311)
+    with pytest.raises(ValueError, match="dělení selhalo"):
+        tools.get_cel(conn, ct=311, oznaceni="Čl. I")
+    assert tools.hledej_v_textech(conn, "dani", ct=311)["celkem"] == 0
+    conn.commit()

@@ -558,3 +558,40 @@ def test_texty_limit_nejvys_100():
     conn = FakeConn(_OK, [_dok()], [dict(n=0)], [])
     tools.osnova_textu(conn, ct=311, limit=200)
     assert conn.params[-1][-2] == 100
+
+
+def test_dokument_s_chybou_deleni_neni_dostupny():
+    assert "d.chyba IS NULL" in tools._DOSTUPNY
+    dok = _dok(dostupny=False, chyba="dělení selhalo: chyba zpracování: ValueError: x")
+    with pytest.raises(ValueError, match=r"nepodařilo zpracovat \(dělení selhalo"):
+        tools.osnova_textu(FakeConn(_OK, [dok]), ct=311)
+    with pytest.raises(ValueError, match="dělení selhalo"):
+        tools.get_cel(FakeConn(_OK, [dict(dok)]), ct=311, poradi=0)
+
+
+def test_hledej_v_textech_jen_dostupne_dokumenty():
+    conn = FakeConn(_OK, [dict(n=0)], [])
+    tools.hledej_v_textech(conn, "daně", ct=311)
+    for sql in conn.sql[1:]:
+        assert tools._DOSTUPNY in sql and "s.chyba IS NULL" in sql
+
+
+_KLUBY_POSL = [dict(klub="ANO2011", klub_nazev="Poslanecký klub ANO 2011"),
+               dict(klub="ODS", klub_nazev="Poslanecký klub Občanské demokratické strany"),
+               dict(klub="SPD", klub_nazev="Poslanecký klub Svoboda a přímá demokracie")]
+
+
+def test_klub_bez_uvodu_poslanecky_klub():
+    assert tools._resolve_klub(FakeConn(_KLUBY_POSL), "Svoboda") == ["SPD"]
+    assert tools._resolve_klub(FakeConn(_KLUBY_POSL), "obcanske") == ["ODS"]
+    with pytest.raises(ValueError, match="Neznámý klub"):
+        tools._resolve_klub(FakeConn(_KLUBY_POSL), "Posl")
+
+
+def test_stav_dat_ma_vysledek_ingestu_textu():
+    raw = json.dumps({"seconds": 1, "texty": {"ok": True, "prevzato": 2, "stazeno": 3, "chyby": 1}})
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [], [{"ok": False}]))
+    assert r["steno_last_result"]["texty_ok"] is True
+    assert r["steno_last_result"]["texty"] == {"prevzato": 2, "stazeno": 3, "chyby": 1}
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": json.dumps({"texty": {"ok": False}})}], [], [{"ok": False}]))
+    assert r["steno_last_result"]["texty_ok"] is False and r["steno_last_result"]["texty"] is None

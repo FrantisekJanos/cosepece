@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import urllib.error
 import zipfile
 
 import psycopg
@@ -124,7 +125,33 @@ def _chyba_dokumentu(e: Exception) -> str:
     return f"chyba zpracování: {type(e).__name__}: {str(e)[:150]}"
 
 
-def _stahni_chybejici(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int, st: dict) -> int:
+# Po tolika síťových chybách jednotlivých dokumentů za sebou (timeout, HTTP 5xx) stahování v běhu skončí,
+# ať se psp.cz v potížích nezahltí; dokumenty, které chybu dostaly, se zkusí znovu podle svého rozvrhu.
+MAX_SITOVYCH_ZA_SEBOU = 3
+
+
+def _chyba_dokumentu_site(e: OSError) -> bool:
+    """Síťová chyba patří jednomu dokumentu (odpověď s HTTP stavem jiným než 404, timeout jednoho požadavku),
+    ne výpadku spojení s psp.cz (DNS, odmítnuté spojení), který by stejně postihl všechny další dokumenty."""
+    if isinstance(e, urllib.error.HTTPError) or isinstance(e, TimeoutError):
+        return True
+    return isinstance(e, urllib.error.URLError) and isinstance(e.reason, TimeoutError)
+
+
+def _sitova_chyba(conn: psycopg.Connection, e: OSError, st: dict, sit: list[int], **dokument) -> None:
+    """Zapíše síťovou chybu k dokumentu (posune ho do rozvrhu opakování, aby neblokoval frontu).
+    Výpadek spojení nebo několik chyb za sebou výjimku pošle dál: stahování v tomto běhu končí."""
+    conn.rollback()
+    _uloz(conn, **dokument, chyba=f"síť: {type(e).__name__}: {str(e)[:150]}")
+    sit[0] += 1
+    if not _chyba_dokumentu_site(e) or sit[0] >= MAX_SITOVYCH_ZA_SEBOU:
+        raise e
+    log.warning("text %s: síťová chyba %s, pokračuji dalším dokumentem", dokument, e)
+    st["chyby"] += 1
+
+
+def _stahni_chybejici(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int, st: dict,
+                      sit: list[int]) -> int:
     """Tisky a PN bez dokumentu `puvodni`, nejdřív tisky (základ pro PN), novější dřív.
     Chybové řádky bez textu (kromě „jen PDF“) se zkusí znovu po 7 dnech, až po nových. Vrací počet pokusů."""
     if limit <= 0:
@@ -150,8 +177,9 @@ def _stahni_chybejici(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, l
     for druh, ct, cislo in fronta:
         try:
             _stahni_puvodni(conn, fetcher, obdobi, druh, ct, cislo, st)
-        except OSError:
-            raise  # síť: stahování v tomto běhu končí (sync_texty)
+            sit[0] = 0
+        except OSError as e:
+            _sitova_chyba(conn, e, st, sit, druh=druh, ct=ct, cislo_pn=cislo, verze="puvodni")
         except Exception as e:
             conn.rollback()
             log.exception("text %s %s/%s se nepodařilo zpracovat", druh, ct, cislo)
@@ -186,8 +214,10 @@ def _stahni_puvodni(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, dru
         st["stazeno"] += 1
 
 
-def _schvalene(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int, st: dict) -> int:
-    """Schválené znění tisků po 3. čtení; bez odkazu se uloží jen čas kontroly (další za 24 h)."""
+def _schvalene(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int, st: dict,
+               sit: list[int]) -> int:
+    """Schválené znění tisků po 3. čtení; bez odkazu se uloží jen čas kontroly (další za 24 h).
+    Nečitelný DOCX (odkaz „Originál dokumentu“ nemusí být DOCX) se zkusí znovu až po 7 dnech."""
     if limit <= 0:
         return 0
     with conn.cursor() as cur:
@@ -201,16 +231,19 @@ def _schvalene(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: i
                    OR EXISTS (SELECT 1 FROM kroky k WHERE k.ct = t.ct AND k.typ_stavu = ANY(%s)))
               AND NOT coalesce(t.bez_schvaleni, false)
               AND (d.id IS NULL OR (d.text IS NULL
-                   AND (d.zkontrolovano_at IS NULL OR d.zkontrolovano_at < now() - interval '24 hours')))
+                   AND (d.zkontrolovano_at IS NULL
+                        OR d.zkontrolovano_at < now() - CASE WHEN d.chyba = %s THEN interval '7 days'
+                                                             ELSE interval '24 hours' END)))
             ORDER BY d.zkontrolovano_at NULLS FIRST, t.ct DESC
-            LIMIT %s""", (list(FAZE_BEZ_SCHVALENI), list(STAVY_PO_3_CTENI), limit))
+            LIMIT %s""", (list(FAZE_BEZ_SCHVALENI), list(STAVY_PO_3_CTENI), VADNY_DOCX, limit))
         fronta = [r[0] for r in cur.fetchall()]
     conn.commit()
     for ct in fronta:
         try:
             _stahni_schvalene(conn, fetcher, obdobi, ct, st)
-        except OSError:
-            raise
+            sit[0] = 0
+        except OSError as e:
+            _sitova_chyba(conn, e, st, sit, druh="tisk", ct=ct, cislo_pn=0, verze="schvalene")
         except Exception as e:
             conn.rollback()
             log.exception("schválené znění tisku %s se nepodařilo zpracovat", ct)
@@ -237,7 +270,8 @@ def _stahni_schvalene(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, c
 
 def _rozdel_dokumenty(conn: psycopg.Connection, st: dict) -> int:
     """Rozdělí dokumenty na celky. Selhání jednoho dokumentu se zapíše do chyba a dokument
-    dostane rozdeleno_at, aby neblokoval frontu; znovu se dělí až po změně textu (hashe)."""
+    dostane rozdeleno_at, aby neblokoval frontu; znovu se dělí až po změně textu (hashe).
+    Celky předchozího textu se při selhání smažou: patří ke starému znění, ne k uloženému textu a docx_url."""
     with conn.cursor() as cur:
         cur.execute("SELECT id, text FROM texty.dokument WHERE text IS NOT NULL AND rozdeleno_at IS NULL ORDER BY id")
         dokumenty = cur.fetchall()
@@ -263,6 +297,7 @@ def _rozdel_dokumenty(conn: psycopg.Connection, st: dict) -> int:
             conn.rollback()
             log.exception("dokument %s se nepodařilo rozdělit", dokument_id)
             with conn.cursor() as cur:
+                cur.execute("DELETE FROM texty.cel WHERE dokument_id = %s", (dokument_id,))
                 cur.execute("UPDATE texty.dokument SET rozdeleno_at = now(), chyba = %s WHERE id = %s",
                             ("dělení selhalo: " + _chyba_dokumentu(e), dokument_id))
             conn.commit()
@@ -273,14 +308,17 @@ def _rozdel_dokumenty(conn: psycopg.Connection, st: dict) -> int:
 def sync_texty(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int = 40) -> dict:
     """Převezme, doplní a rozdělí texty. Vrací počty {prevzato, stazeno, schvalene, rozdeleno, chyby, jen_pdf}.
 
-    Síťová chyba (psp.cz nedostupné) stahování v tomto běhu ukončí, převzaté texty se přesto rozdělí.
+    Síťová chyba jednoho dokumentu (HTTP 403/500/503, timeout) se zapíše do jeho sloupce chyba a běh pokračuje
+    dalším; výpadek spojení s psp.cz nebo MAX_SITOVYCH_ZA_SEBOU chyb za sebou stahování v tomto běhu ukončí
+    (dokument, u kterého k tomu došlo, chybu dostane také). Převzaté texty se přesto rozdělí.
     Jiná chyba u jednoho dokumentu se zapíše do jeho sloupce chyba a běh pokračuje dalším.
     """
     st = {"prevzato": 0, "stazeno": 0, "schvalene": 0, "rozdeleno": 0, "chyby": 0, "jen_pdf": 0}
     st["prevzato"] = _prevezmi(conn)
+    sit = [0]   # síťové chyby za sebou (napříč oběma frontami)
     try:
-        zbyva = limit - _stahni_chybejici(conn, fetcher, obdobi, limit, st)
-        _schvalene(conn, fetcher, obdobi, zbyva, st)
+        zbyva = limit - _stahni_chybejici(conn, fetcher, obdobi, limit, st, sit)
+        _schvalene(conn, fetcher, obdobi, zbyva, st, sit)
     except OSError as e:
         conn.rollback()
         log.warning("stahování textů z psp.cz přerušeno: %s", e)

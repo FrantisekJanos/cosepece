@@ -192,7 +192,7 @@ check('2 nová upozornění', $r3['alerts_new'], 2);
 check('tisk 221 nyní závažný (55)', $sc(221), 55);
 check('odesláno jen nad prahem (dry run)', $r3['posts']['sent'], 2);
 $log = (string)@file_get_contents(hlidacDataPath('posts.log'));
-check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisk.php?ct=221'), true);
+check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisky/221'), true);
 check('příspěvek o PN', str_contains($log, 'Nový pozměňovací návrh k tisku: Novela z. o střetu zájmů'), true);
 @unlink(hlidacDataPath('posts.log'));
 
@@ -252,7 +252,7 @@ $scorer->scoreBills();
 check('tisk 221: zpětně použitá změna lhůty', in_array('retro_deadline', $keys(221), true), true);
 check('tisk 221: rozbor textu návrhu', in_array('ai_bill', $keys(221), true), true);
 check('tisk 221: 55 + 15 + 8×3 = 94', $sc(221), 94);
-$html221 = testPage('/tisk.php', ['ct' => '221']);
+$html221 = testPage('/tisky/221');
 check('detail tisku ukazuje rozbor a citaci', str_contains($html221, 'Rozbor textu návrhu') && str_contains($html221, 'nejpozději do 4 let'), true);
 // celá cesta saveResult: nález bez ověřené citace se uloží se závažností 2 a do skóre tisku se nepromítne (issue #7, bod 2)
 $saved221 = db()->one('SELECT ai_json, ai_score, ai_at, ai_model FROM tisk_text WHERE ct = 221');
@@ -329,7 +329,7 @@ $hard = Hlidac\AiReviewer::sanitize(['titulek' => 'Daň se použije i zpětně z
 check('zpětná nová daň zůstane beze změny', [$hard['zavaznost'], $hard['titulek'], isset($hard['upravy'])], [8, 'Daň se použije i zpětně za rok 2026', false]);
 db()->run("UPDATE tisky SET posledni = '2020-01-01', faze = '1. čtení' WHERE ct = 221"); // rozpracovaný, dlouho bez aktivity
 $scorer->scoreBills();
-$home = testPage('/index.php');
+$home = testPage('/');
 check('homepage: srozumitelný titulek místo názvu novely', str_contains($home, 'Lhůta pro vymáhání dotací se zkracuje na 4 roky – i zpětně'), true);
 check('homepage: citace u nálezu', str_contains($home, 'nejpozději do 4 let'), true);
 check('bez CLI se AI přeskočí', (new Hlidac\AiReviewer(db(), $aiConfig))->run(), ['reviewed' => 0, 'errors' => 0, 'skipped' => true]);
@@ -487,7 +487,7 @@ check('pozdní výsledek 1. kola nepřepíše ověřený rozbor', [(int)db()->va
 $guard->saveResult('tisk', $guardCt, ['zavaznost' => 5, 'titulek' => 'y', 'citace' => ['Lhůta činí 4 roky.']], $verifier);
 check('ověřovací model rozbor přepsat smí', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]), 5);
 
-$bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
+$bskyUrl = 'https://hlidac.test/tisky/221';
 $fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
 check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);
 check('Bluesky: krátký text beze změny', Hlidac\Notifier\Bluesky::fit('Krátce', $bskyUrl), 'Krátce');
@@ -565,7 +565,11 @@ echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {
     try {
         $kernel = app(Illuminate\Contracts\Http\Kernel::class);
-        $request = Illuminate\Http\Request::create('/' . $page, 'GET', $get);
+        $path = match ($page) {
+            'index.php' => '/', 'tisky.php' => '/tisky', 'tisk.php' => '/tisky/90',
+            'upozorneni.php' => '/upozorneni', 'metodika.php' => '/metodika', 'rss.php' => '/rss',
+        };
+        $request = Illuminate\Http\Request::create($path, 'GET', $get);
         $response = $kernel->handle($request);
         $html = $response->getContent();
         check("$page se vyrenderuje", $response->getStatusCode() === 200 && strlen($html) > 500 && !str_contains($html, 'Warning') && !str_contains($html, 'Fatal'), true);
@@ -578,10 +582,10 @@ foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' 
 
 echo "Náhledy pro sociální sítě\n";
 $tiskHtml = (string)@file_get_contents($tmp . '/tisk.html');
-check('tisk má og:image s vlastním obrázkem', (bool)preg_match('~<meta property="og:image" content="[^"]*og\.php\?ct=90&amp;v=[0-9a-f]{16}"~', $tiskHtml), true);
+check('tisk má og:image s vlastním obrázkem', (bool)preg_match('~<meta property="og:image" content="[^"]*og\?ct=90&amp;v=[0-9a-f]{16}"~', $tiskHtml), true);
 check('tisk má twitter:card pro velký obrázek', str_contains($tiskHtml, '<meta name="twitter:card" content="summary_large_image">'), true);
-check('tisk má og:url na detail', (bool)preg_match('~<meta property="og:url" content="[^"]*tisk\.php\?ct=90"~', $tiskHtml), true);
-check('přehled má obrázek stránky', str_contains((string)@file_get_contents($tmp . '/index.html'), 'og.php?p=prehled'), true);
+check('tisk má og:url na detail', (bool)preg_match('~<meta property="og:url" content="[^"]*tisky/90"~', $tiskHtml), true);
+check('přehled má obrázek stránky', str_contains((string)@file_get_contents($tmp . '/index.html'), 'og?p=prehled'), true);
 check('název bez výčtu předkladatelů',
     Hlidac\OgCard::cleanTitle('Návrh poslanců Radka Vondráčka, Davida Pražáka a Filipa Turka na vydání zákona, kterým se mění zákon č. 159/2006 Sb., o střetu zájmů, ve znění pozdějších předpisů'),
     'Zákon, kterým se mění zákon č. 159/2006 Sb., o střetu zájmů');

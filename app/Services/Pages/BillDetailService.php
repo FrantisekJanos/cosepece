@@ -58,8 +58,8 @@ final class BillDetailService
         $active = 'tisky';
         $description = mb_substr($ogDesc, 0, 300);
         $og = [
-            'url' => 'tisk.php?ct=' . $ct,
-            'image' => 'og.php?ct=' . $ct . '&v=' . OgCard::cacheKey($ogCard),
+            'url' => route('bill', ['ct' => $ct], false),
+            'image' => route('og', ['ct' => $ct, 'v' => OgCard::cacheKey($ogCard)], false),
             'title' => 'Tisk ' . $ct . ': ' . OgCard::cleanTitle((string)($t['uplny_nazev'] ?: $t['nazev'])),
             'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
         ];

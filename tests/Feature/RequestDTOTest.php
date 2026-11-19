@@ -16,13 +16,13 @@ final class RequestDTOTest extends TestCase
     {
         foreach ([
             ['/?n[]=6', 'n'], ['/?n=61', 'n'],
-            ['/tisky.php?f=unknown', 'f'], ['/tisky.php?q[]=text', 'q'],
-            ['/tisky.php?sort=unknown', 'sort'], ['/tisky.php?min=101', 'min'],
-            ['/tisky.php?q=' . str_repeat('x', 101), 'q'],
+            ['/tisky?f=unknown', 'f'], ['/tisky?q[]=text', 'q'],
+            ['/tisky?sort=unknown', 'sort'], ['/tisky?min=101', 'min'],
+            ['/tisky?q=' . str_repeat('x', 101), 'q'],
             ['/tisk.php?ct=abc', 'ct'], ['/tisk.php?ct[]=221', 'ct'], ['/tisk.php', 'ct'],
-            ['/upozorneni.php?p=0', 'p'], ['/upozorneni.php?vse[]=1', 'vse'],
-            ['/rss.php?vse=unknown', 'vse'],
-            ['/og.php?ct=-1', 'ct'], ['/og.php?p=unknown', 'p'], ['/og.php?v=bad', 'v'],
+            ['/upozorneni?p=0', 'p'], ['/upozorneni?vse[]=1', 'vse'],
+            ['/rss?vse=unknown', 'vse'],
+            ['/og?ct=-1', 'ct'], ['/og?p=unknown', 'p'], ['/og?v=bad', 'v'],
         ] as [$url, $field]) {
             $this->getJson($url)->assertUnprocessable()->assertJsonValidationErrors($field);
         }
@@ -38,7 +38,7 @@ final class RequestDTOTest extends TestCase
 
     public function test_dtos_contain_typed_validated_values_and_do_not_leak_between_requests(): void
     {
-        $this->app->instance('request', Request::create('/tisky.php', 'GET', [
+        $this->app->instance('request', Request::create('/tisky', 'GET', [
             'f' => 'mp', 'q' => '  dotace  ', 'sort' => 'recent', 'min' => '25', 'untrusted' => 'ignored',
         ]));
         $dto = $this->app->make(BillListRequestDTO::class);
@@ -51,7 +51,7 @@ final class RequestDTOTest extends TestCase
             $this->assertTrue((new \ReflectionProperty($dto, $property))->isReadOnly());
         }
 
-        $this->app->instance('request', Request::create('/tisky.php'));
+        $this->app->instance('request', Request::create('/tisky'));
         $defaults = $this->app->make(BillListRequestDTO::class);
         $this->assertNotSame($dto, $defaults);
         $this->assertSame(['', '', 'score', 0], [$defaults->filter, $defaults->search, $defaults->sort, $defaults->minimumScore]);

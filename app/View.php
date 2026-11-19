@@ -117,7 +117,7 @@ final class View
         if (self::isPastPeriod($alert)) {
             return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);
         }
-        $path = 'tisk.php?ct=' . (int)$alert['ct'];
+        $path = route('bill', ['ct' => (int)$alert['ct']], false);
         return $absolute ? siteUrl($path) : $path;
     }
 

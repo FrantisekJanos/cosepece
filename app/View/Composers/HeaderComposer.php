@@ -16,7 +16,7 @@ final class HeaderComposer
     public function compose(View $view): void
     {
         $data = $view->getData();
-        $page = request()->path() === '/' ? 'index.php' : basename(request()->path());
+        $page = request()->path();
         $view->with($this->layout->header(
             $data['title'],
             $data['active'],

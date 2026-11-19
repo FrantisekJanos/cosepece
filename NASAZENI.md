@@ -34,7 +34,7 @@ Podporované proměnné jsou v mapě `$overrides` tohoto souboru.
 6. Nastavte `APP_ENV=production`, `APP_DEBUG=false` a `APP_KEY`. Provozní data lze nasměrovat přes `HLIDAC_DATA_PATH`; výchozí je `data/` v projektu.
 7. Spusťte `php artisan migrate --force`. Migrace převezme existující tabulky, doplní chybějící historické sloupce a indexy. Zachovává AI rozbory, upozornění, `pn_seen`, `post_log` a `meta`. Nevytváří nové klíče zdrojových záznamů.
 8. Nastavte DocumentRoot na `public/`. Uživateli webu povolte zápis do `data/`, `storage/` a `bootstrap/cache/`.
-9. Spusťte `php artisan config:cache`, `php artisan route:cache` a `php artisan view:cache`. Ověřte homepage, detail známého tisku, RSS, `/og.php?ct=221`, `/up` a Python MCP nad stejnou databází.
+9. Spusťte `php artisan config:cache`, `php artisan route:cache` a `php artisan view:cache`. Ověřte homepage, detail známého tisku, RSS, `/og?ct=221`, `/up` a Python MCP nad stejnou databází.
 10. Obnovte právě jeden plánovač synchronizace a místní AI úlohu. Nejprve ponechte `notify.dry_run=true` a ověřte výsledky. Potom vraťte původní nastavení publikování.
 
 Tabulky webu a jejich sloupce zůstávají kompatibilní s Pythonem, včetně JSON uloženého jako text.

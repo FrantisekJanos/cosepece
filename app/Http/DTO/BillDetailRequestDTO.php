@@ -17,6 +17,11 @@ final class BillDetailRequestDTO extends RequestDTO
     ) {
     }
 
+    protected static function validationData(\Illuminate\Http\Request $request): array
+    {
+        return ['ct' => $request->route('ct') ?? $request->query('ct')];
+    }
+
     protected static function fromValidated(array $data): static
     {
         return new static((int)$data['ct']);

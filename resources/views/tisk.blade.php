@@ -3,7 +3,7 @@
 <?php
 use Hlidac\View;
 ?>
-<p class="crumbs"><a href="tisky.php">Tisky</a> › Tisk {{ $ct }}</p>
+<p class="crumbs"><a href="{{ route('bills', [], false) }}">Tisky</a> › Tisk {{ $ct }}</p>
 <section class="detail-head">
   <span class="chips">{!! View::scoreBadge((int)$t['score']) !!}{!! View::chips($t['flags']) !!}</span>
   <h1>{{ $t['uplny_nazev'] ?: $t['nazev'] }}</h1>
@@ -46,7 +46,7 @@ use Hlidac\View;
   <?php if ($review['total'] > 0 && $review['done'] < $review['total']): ?>
     <p class="small"><strong>Rozbor textů není úplný:</strong> posouzeno {{ (int)$review['done'] }} z {{ (int)$review['total'] }} textů (návrh zákona a pozměňovací návrhy). Neposouzené texty do skóre zatím nepřispívají, nízké skóre proto neznamená „bez problému“.</p>
   <?php endif; ?>
-  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="{{ (string)hlidacConfig('issues_url', '') }}">Nesouhlasíte? Napište nám.</a></p>
+  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="{{ route('methodology', [], false) }}">Jak skóre počítáme.</a> <a href="{{ (string)hlidacConfig('issues_url', '') }}">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
 <?php if ($billText !== null && ($billText['ai'] !== null || $billText['signals'] !== [])): ?>

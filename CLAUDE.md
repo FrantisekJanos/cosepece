@@ -40,6 +40,9 @@ Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. 
 - Databáze přes `Hlidac\Db` (PDO); SQL musí fungovat v **SQLite i MySQL/MariaDB** (žádné `||`, `INSERT OR REPLACE`,
   `ON CONFLICT`; nové sloupce přidávej přes `Db::addColumn()` v `migrate()`).
 
+Změny, které čtenář uvidí (oprava dat, jiné skóre, nová funkce), zapiš nahoru do `zmeny.php` (datum, nadpis,
+popis srozumitelně pro veřejnost, čísla PR, příznak „mění skóre“).
+
 ## Příkazy
 
 ```bash

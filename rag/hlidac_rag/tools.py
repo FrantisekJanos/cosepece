@@ -234,6 +234,21 @@ def _speech_rows(rows: list[dict], excerpt: int = 400) -> list[dict]:
     return rows
 
 
+def _resolve_klub(conn, klub: str) -> list[str]:
+    """Zkratky klubů odpovídající prefixu zkratky nebo názvu (bez diakritiky a velikosti písmen).
+
+    Neznámý klub = ValueError s výčtem platných zkratek."""
+    rows = _rows(conn, "SELECT DISTINCT klub, klub_nazev FROM steno.klub_clenstvi ORDER BY klub")
+    q = unaccent_py(klub.strip()).lower()
+    found = sorted({r["klub"] for r in rows
+                    if q and (unaccent_py(r["klub"]).lower().startswith(q)
+                              or unaccent_py(r["klub_nazev"] or "").lower().startswith(q))})
+    if not found:
+        platne = ", ".join(sorted({r["klub"] for r in rows}))
+        raise ValueError(f"Neznámý klub {klub}. Platné: {platne}")
+    return found
+
+
 def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None = None, od: str | None = None,
                     do: str | None = None, min_znaku: int = 200, vcetne_predsedajicich: bool = False,
                     limit: int = 50, offset: int = 0) -> dict:
@@ -244,8 +259,8 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
         where.append("p.id_osoba = %s")
         params.append(id_osoba)
     if klub:
-        where.append("p.klub ILIKE %s")
-        params.append(klub)
+        where.append("p.klub = ANY(%s)")
+        params.append(_resolve_klub(conn, klub))
     if od:
         where.append("p.datum >= %s")
         params.append(_date(od, "od"))
@@ -282,6 +297,8 @@ def _resolve_person(conn, osoba: int | str) -> int:
     active = [o for o in found if o["projevu"]]
     if len(active) == 1:
         return active[0]["id_osoba"]
+    if not found:
+        raise ValueError(f"Osobu „{osoba}“ nenalezeno, zkuste najdi_osobu s jiným tvarem jména.")
     kand = "; ".join(f'{o["jmeno"]} {o["prijmeni"]} (id_osoba={o["id_osoba"]}, klub {o["klub"] or "?"})'
                      for o in found[:10])
     raise ValueError(f"Jméno není jednoznačné, zopakujte dotaz s id_osoba. Kandidáti: {kand}")
@@ -375,8 +392,8 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
         where.append("p.id_osoba = %s")
         params.append(id_osoba)
     if klub:
-        where.append("p.klub ILIKE %s")
-        params.append(klub)
+        where.append("p.klub = ANY(%s)")
+        params.append(_resolve_klub(conn, klub))
     if od:
         where.append("p.datum >= %s")
         params.append(_date(od, "od"))

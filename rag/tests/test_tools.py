@@ -191,3 +191,38 @@ def test_vsechny_nastroje_maji_readonly_anotaci():
     assert nastroje
     for t in nastroje:
         assert t.annotations.read_only_hint is True and t.annotations.open_world_hint is False, t.name
+
+
+_KLUBY = [dict(klub="ANO2011", klub_nazev="Klub hnutí ANO 2011"), dict(klub="ODS", klub_nazev="Občanská demokratická strana"),
+          dict(klub="KDU-ČSL", klub_nazev="Klub KDU-ČSL")]
+
+
+def test_klub_ano_najde_ano2011():
+    assert tools._resolve_klub(FakeConn(_KLUBY), "ANO") == ["ANO2011"]
+    assert tools._resolve_klub(FakeConn(_KLUBY), "kdu") == ["KDU-ČSL"]
+
+
+def test_klub_neznamy_vyjmenuje_platne():
+    with pytest.raises(ValueError, match="Platné:") as e:
+        tools._resolve_klub(FakeConn(_KLUBY), "XYZ")
+    assert "ANO2011" in str(e.value) and "ODS" in str(e.value)
+
+
+def test_projevy_k_tisku_filtruje_klub_podle_prefixu():
+    conn = FakeConn(_KLUBY, [dict(n=0)], [])
+    tools.projevy_k_tisku(conn, 76, klub="ano")
+    assert "p.klub = ANY(%s)" in conn.sql[1]
+
+
+def test_osoba_nejednoznacna_je_valueerror_s_kandidaty():
+    osoby = [dict(id_osoba=6165, jmeno="Radek", prijmeni="Vondráček", klub="ANO2011", projevu=5, pn=0),
+             dict(id_osoba=7058, jmeno="Jiří", prijmeni="Vondráček", klub="ODS", projevu=3, pn=0)]
+    with pytest.raises(ValueError) as e:
+        tools._resolve_person(FakeConn(osoby), "Vondráček")
+    assert "6165" in str(e.value) and "7058" in str(e.value)
+
+
+def test_osoba_nenalezena_je_valueerror_bez_kandidatu():
+    with pytest.raises(ValueError, match="nenalezeno") as e:
+        tools._resolve_person(FakeConn([]), "Neexistující")
+    assert "Kandidáti" not in str(e.value)

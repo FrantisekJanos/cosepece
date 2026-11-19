@@ -72,6 +72,11 @@ def conn():
     from hlidac_rag import db
 
     c = db.connect()
+    # pojistka: test maže tabulky texty, smí běžet jen nad testovací databází
+    jmeno = c.execute("SELECT current_database()").fetchone()[0]
+    if not jmeno.endswith("_test"):
+        c.close()
+        pytest.skip(f"databáze {jmeno} nekončí na _test")
     db.migrate(c)
     with c.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
@@ -276,3 +281,93 @@ def test_nedostupne_psp_prerusi_jen_stahovani(conn):
     assert st["prevzato"] == 1 and st["rozdeleno"] == 1
     # nic se neuložilo, příští běh to zkusí znovu
     assert sql(conn, "SELECT druh, ct FROM texty.dokument") == [("tisk", 311)]
+
+
+def test_selhani_deleni_neblokuje_frontu(conn, monkeypatch):
+    from hlidac_rag.texty import ingest
+
+    puvodni_rozdel = ingest.rozdel
+
+    def rozdel(text):
+        if "ROZBITÝ" in text:
+            raise ValueError("neočekávaná struktura")
+        return puvodni_rozdel(text)
+
+    monkeypatch.setattr(ingest, "rozdel", rozdel)
+    # rozbitý dokument má nižší id, takže by ve frontě stál první
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (1, 'ROZBITÝ text')")
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (2, 'Čl. I\nDobrý.')")
+    st = ingest.sync_texty(conn, FakeFetcher(), 10)
+    assert st["rozdeleno"] == 1 and st["chyby"] == 1
+    r = sql(conn, "SELECT ct, chyba, rozdeleno_at IS NOT NULL FROM texty.dokument ORDER BY ct")
+    assert r[0][0] == 1 and r[0][1].startswith("dělení selhalo: chyba zpracování: ValueError") and r[0][2]
+    assert r[1] == (2, None, True)
+    assert [c[1] for c in celky(conn, "tisk", 2)] == ["Čl. I"]
+    # druhý běh rozbitý dokument znovu nedělí
+    st = ingest.sync_texty(conn, FakeFetcher(), 10)
+    assert st["rozdeleno"] == 0 and st["chyby"] == 0
+    # po změně textu se dělí znovu
+    sql(conn, "UPDATE tisk_text SET text = 'Čl. I\nOpraveno.' WHERE ct = 1")
+    st = ingest.sync_texty(conn, FakeFetcher(), 10)
+    assert st["rozdeleno"] == 1
+    assert sql(conn, "SELECT chyba FROM texty.dokument WHERE ct = 1") == [(None,)]
+
+
+def test_neocekavana_chyba_stahovani_pokracuje(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    class Rozbity(FakeFetcher):
+        def get(self, url):
+            data = super().get(url)
+            if "ct=76" in url:
+                raise RuntimeError("encrypted ZIP")
+            return data
+
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (2, 76, 1, 'vládní', '1. čtení')")
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (4, 75, 1, 'vládní', '1. čtení')")
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (311, 'Čl. I\nText.')")
+    f = Rozbity([
+        ("tiskt.sqw", (HTML / "tiskt-76-0.html").read_bytes()),
+        ("idd=266516", vzor_docx("Čl. I\nNávrh.")),
+    ])
+    st = sync_texty(conn, f, 10)
+    assert st["chyby"] == 1 and st["stazeno"] == 1 and st["rozdeleno"] == 2
+    r = sql(conn, "SELECT ct, chyba FROM texty.dokument WHERE ct IN (75, 76) ORDER BY ct")
+    assert r[0] == (75, None) and r[1][1] == "chyba zpracování: RuntimeError: encrypted ZIP"
+
+
+def test_chybove_radky_znovu_po_7_dnech(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (500, 894, 76)")
+    sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (501, 895, 76)")
+    f = FakeFetcher([("cd=895", b"<html></html>")])  # 894: stránka 404, 895: jen PDF
+    st = sync_texty(conn, f, 10)
+    assert st["chyby"] == 1 and st["jen_pdf"] == 1
+    r = sql(conn, "SELECT cislo_pn, chyba, zkontrolovano_at IS NOT NULL FROM texty.dokument ORDER BY cislo_pn")
+    assert r == [(894, "stránka na psp.cz nenalezena", True), (895, "jen PDF", True)]
+    # do 7 dnů nic
+    sync_texty(conn, f, 10)
+    assert f.requests == 2
+    # po 7 dnech jen chybový řádek, „jen PDF“ ne
+    sql(conn, "UPDATE texty.dokument SET zkontrolovano_at = now() - interval '8 days'")
+    f.odpovedi = [
+        ("cd=894", (HTML / "sd-894.html").read_bytes()),
+        ("idd=269467", vzor_docx("1. V § 5 se slovo „a“ nahrazuje slovem „b“.")),
+    ]
+    st = sync_texty(conn, f, 10)
+    assert st["stazeno"] == 1
+    assert f.pocet("cd=895") == 1 and f.pocet("cd=894") == 2
+    assert sql(conn, "SELECT chyba, text IS NOT NULL FROM texty.dokument WHERE cislo_pn = 894") == [(None, True)]
+
+
+def test_faze_vice_radku_tisku(conn):
+    from hlidac_rag.texty.ingest import sync_texty
+
+    # dva řádky stejného ct: jeden vyhlášený, druhý s fází, která je abecedně „větší“
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (1, 311, 1, 'vládní', 'Vyhlášeno')")
+    sql(conn, "INSERT INTO tisky (id_tisk, ct, druh, typ_navrhu, faze) VALUES (2, 311, 1, 'vládní', 'Zařazeno')")
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (311, 'Čl. I\nText.')")
+    f = FakeFetcher([("historie.sqw", (HTML / "historie-311.html").read_bytes())])
+    sync_texty(conn, f, 10)
+    assert f.pocet("historie.sqw") == 1

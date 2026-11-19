@@ -30,6 +30,7 @@ BERKI = (1003, "Poslanec Jan Berki", "Poslanec", False)
 PLATENIK = (1004, "Poslanec Václav Pláteník", "Poslanec", False)
 MRAZOVA = (1005, "Ministryně pro místní rozvoj ČR Zuzana Mrázová", "Ministryně pro místní rozvoj ČR", False)
 BLAZEJ = (None, "Poslanec Blažej", "Poslanec", False)  # bez osoby: příjmení z posledního slova
+BEZ_RECNIKA = (None, None, None, False)  # úsek na začátku části bez kotvy řečníka (aname 0)
 
 SLOUCENA, BOD285 = 58222, 58300
 BODY = [(SLOUCENA, OBD, SCHUZE, 901, "Sloučená rozprava k bodům 1 a 2", "/sněmovní tisky 76 a 77/", None),
@@ -133,7 +134,7 @@ def vloz(conn, projevy, schuze=SCHUZE):
 
 
 def prepocitej(conn, schuze=SCHUZE):
-    from hlidac_rag.psp.ingest import prepocitej_rozpravu
+    from hlidac_rag.psp.rozprava_prepocet import prepocitej_rozpravu
 
     with conn.cursor() as cur:
         st = prepocitej_rozpravu(cur, OBD, schuze)
@@ -270,6 +271,19 @@ def test_adresat_jen_z_poslednich_15_recniku(conn, dalsich, ocekavano):
     vloz(conn, projevy)
     prepocitej(conn)
     assert sloupce(conn)[3 + dalsich] == ("fakticka", 2 + dalsich - 1, ocekavano)
+
+
+def test_usek_bez_recnika_neni_predchozi_ani_adresat(conn):
+    # 15 úseků bez řečníka (aname 0) mezi Haasem a faktickou: neberou místo v okně kandidátů
+    projevy = [p(1, HAAS, "Děkuji za slovo.")]
+    projevy += [p(2 + i, BEZ_RECNIKA, "…a proto navrhuji zamítnutí.") for i in range(15)]
+    projevy += [p(17, CHAIR, FAKTICKA_BERKI), p(18, BERKI, BERKI_NA_HAASE)]
+    vloz(conn, projevy)
+    prepocitej(conn)
+    s = sloupce(conn)
+    assert s[18] == ("fakticka", 1, "Karel Haas")
+    # úsek sám přepočet dostane, předchozím řečníkem je mu Haas
+    assert s[2] == ("recnik", 1, None) and s[16][1] == 1
 
 
 # --- volání z assemble a run.py ------------------------------------------------

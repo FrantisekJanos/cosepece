@@ -29,6 +29,7 @@ $defaults = [
     'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120, 'auth' => 10],
 
     'mcp_url' => '',
+    'mcp' => ['web_tokens' => true, 'tokens_per_ip' => 3, 'tokens_per_day' => 200],
 
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 

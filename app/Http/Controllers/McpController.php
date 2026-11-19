@@ -12,6 +12,10 @@ final class McpController
 {
     public function index(McpRequestDTO $dto, McpService $mcp): Response
     {
-        return response()->view('mcp', $mcp->data());
+        return response()->view('mcp', $mcp->data(), 200, ['Cache-Control' => 'no-store']);
+    }
+    public function issue(\App\Http\DTO\McpIssueRequestDTO $dto, McpService $mcp): Response
+    {
+        return response()->view('mcp', $mcp->data($mcp->issue($dto)), 200, ['Cache-Control' => 'no-store']);
     }
 }

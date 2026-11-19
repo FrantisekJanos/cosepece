@@ -9,6 +9,9 @@ propojuje projevy s tisky, body pořadu a poslanci a zpřístupňuje data přes 
 - Text projevů z HTML částí `…/stenprot/NNNschuz/sNNNTTT.htm` (windows-1250), jeden požadavek za sekundu.
 - Tabulky ve schématu `steno`: `osoba`, `klub_clenstvi`, `schuze`, `bod`, `cast`, `projev`, `projev_verze`, `rec`, `beh`.
   Stávající tabulky webu (`tisky`, `pn`, …) se nemění, vazba je hodnotou `ct`.
+- Rozprava (`schema_rozprava.sql`): `projev_tisk` (ke kterým tiskům projev patří: bod z `rec`, konec nebo název bodu,
+  nadpis), `projev_pn` (čísla PN zmíněná v textu) a sloupce `projev.druh`, `predchozi_recnik_id`, `reaguje_na_odhad`.
+  Plní je přepočet při každém složení schůze; hodnoty jsou odvozené z textu, ne z otevřených dat.
 
 ## Texty návrhů zákonů a PN (schéma `texty`)
 
@@ -47,6 +50,7 @@ pip install -e ".[dev]"
 python -m pytest tests                       # parser a skládání projevů nad uloženými stránkami
 python -m hlidac_rag.run                     # jeden běh ingestu (DATABASE_URL nebo PGHOST/PGUSER/PGPASSWORD)
 python -m hlidac_rag.run --reassemble        # znovu složit projevy všech schůzí
+python -m hlidac_rag.run --prepocitej-rozpravu   # znovu složit projevy všech schůzí z uložených částí a přepočítat rozpravu, bez sítě
 python -m hlidac_rag.tokens add <jméno>      # nový token pro MCP (vypíše se jen jednou)
 python -m hlidac_rag.mcp_server              # MCP server na :8000, endpoint /mcp
 ```
@@ -63,8 +67,8 @@ claude mcp add --transport http hlidac https://<doména>/mcp --header "Authoriza
 ```
 
 Nástroje: `get_tisk`, `seznam_tisku`, `tisky_menici_zakon`, `tisk_podle_sbirky`, `pn_k_tisku`, `get_pn`,
-`projevy_k_tisku`, `projevy_recnika`, `get_projev`, `hledej_v_projevech`, `najdi_osobu`, `program_schuze`,
-`zmeny_projevu`, `stav_dat` a nad texty návrhů a PN:
+`rozprava`, `projevy_k_tisku`, `projevy_recnika`, `get_projev`, `hledej_v_projevech`, `najdi_osobu`, `program_schuze`,
+`zmeny_projevu`, `stav_dat`, `over_citaci`, `hlasovani_k_tisku`, `get_hlasovani` a nad texty návrhů a PN:
 
 - `osnova_textu(ct | pn, verze, vcetne_duvodove, limit, offset)`: seznam celků textu (označení, cesta, začátek),
   stránkovaně. U tisku se bez `verze` vrací schválené znění, je-li, jinak původní (`verze="puvodni"|"schvalene"`).
@@ -72,6 +76,23 @@ Nástroje: `get_tisk`, `seznam_tisku`, `tisky_menici_zakon`, `tisk_podle_sbirky`
   nejvýš 8 000 znaků na volání, se sousedními celky.
 - `hledej_v_textech(dotaz, ct, pn, druh, meni_zakon, verze, vcetne_duvodove, limit, offset)`: fulltext nad celky
   s úryvkem kolem shody; prázdný dotaz s filtrem (`ct`, `pn` nebo `meni_zakon`) vrátí všechny celky filtru.
+- `over_citaci(citace, klic | ct | pn, oznaceni | poradi, verze)`: ověří, že citace (3 slova až 2 000 znaků) zazněla
+  v projevu, nebo stojí v celku textu; `shoda` presne | priblizne | nenalezeno, `nalezeny_text` k citování, `kontext`
+  a celek (`poradi`, `oznaceni`), kde shoda začíná. Bez `oznaceni` hledá v celém dokumentu (u největšího PN do ~1 s).
+
+Nad rozpravou:
+
+- `rozprava(ct, format, osoby, cteni, druh, od_poradi, max_znaku)`: celá rozprava k tisku v pořadí, jak zazněla
+  (bez předsedajících), s druhem vystoupení, čtením, zmíněnými PN a odhadem adresáta faktické poznámky. `format="prehled"`
+  (prvních 150 znaků) nebo `"plny"` (celé texty, u faktické i ohlášení předsedajícího). Souhrn řečníků a klubů platí pro
+  celou filtrovanou rozpravu. Stránkování `od_poradi` = `dalsi_od_poradi`, rozpočet stránky `max_znaku` 1 000–40 000.
+
+Nad hlasováním Sněmovny (tabulky webu `hlasovani`, `hlasovani_kluby`; data, párování a známé vady
+v [`docs/hlasovani-data.md`](docs/hlasovani-data.md)):
+
+- `hlasovani_k_tisku(ct, limit, offset)`: hlasování k tisku chronologicky (schůze, číslo, datum, výsledek, počty,
+  kvórum, krok historie, kluby `{klub: [pro, proti, zdrzel, nepritomen]}`), nejvýš 70 na stránku.
+- `get_hlasovani(id_hlasovani)`: detail jednoho hlasování s tiskem, všemi kluby a projevy, které ho zmiňují.
 
 Sémantické hledání (embeddingy) přijde v další fázi.
 
@@ -81,6 +102,17 @@ Sémantické hledání (embeddingy) přijde v další fázi.
 - `get_pn` už nemá parametr `s_textem`; text PN je přes `osnova_textu(pn=…)` a `get_cel` (`osnova_dostupna`).
 - Hledání odmítne příliš krátký dotaz (žádné slovo o 3 a více znacích) jako chybu nástroje.
 - Seznamy mají `celkem`, `offset` a `dalsi_offset`; `klub` se hledá podle začátku zkratky nebo názvu.
+
+### Změny rozhraní (větev mcp-rozprava)
+
+- `projevy_k_tisku` hledá přes `projev_tisk`: projevy sloučené rozpravy (tisky 76 a 77) vrátí u obou tisků; nový filtr
+  `druh` a pole `druh` v řádcích.
+- `hledej_v_projevech`, `projevy_recnika` a `zmeny_projevu` filtrují `ct` přes `projev_tisk` (projevy sloučené rozpravy
+  u obou tisků).
+- `get_tisk`: `projevy` a `body_poradu` počítá z `projev_tisk`; `body_poradu` má jednu položku na schůzi (`body` = čísla
+  bodů, `projevu`, `projevu_vse`), i u schůze bez projevů a u sloučené rozpravy.
+- `get_pn`: `projevy` (nejvýš 20 projevů, které PN zmiňují) a `projevy_celkem`.
+- Projev v bodu bez tisku (interpelace, volby) už nedědí tisk z nadpisu předchozího bodu.
 
 ## Eval
 

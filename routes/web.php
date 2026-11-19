@@ -27,6 +27,7 @@ Route::get('/data', [\App\Http\Controllers\ApiDocumentationController::class, 'i
 Route::get('/hledat', [\App\Http\Controllers\SearchController::class, 'index'])->name('search');
 Route::get('/zakony', [\App\Http\Controllers\LawController::class, 'index'])->name('laws');
 Route::get('/zakony/{year}/{number}', [\App\Http\Controllers\LawController::class, 'show'])->where(['year' => '[0-9]{4}', 'number' => '[0-9]{1,4}'])->name('law');
+Route::post('/mcp', [\App\Http\Controllers\McpController::class, 'issue'])->name('mcp-issue');
 Route::get('/mcp', [\App\Http\Controllers\McpController::class, 'index'])->name('mcp-info');
 Route::get('/zmeny', [\App\Http\Controllers\ChangesController::class, 'index'])->name('changes');
 Route::get('/revize/{druh}/{id}', [\App\Http\Controllers\RevisionController::class, 'show'])->where('druh', 'tisk|pn')->whereNumber('id')->name('revisions');

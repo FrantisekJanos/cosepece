@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS steno.projev (
   predsedajici boolean NOT NULL DEFAULT false,
   id_bod  int,
   ct      int,
-  ct_zdroj text,          -- rec | nadpis
+  ct_zdroj text,          -- rec | nadpis | bod
   text    text NOT NULL,
   znaku   int NOT NULL,
   hash    text NOT NULL,

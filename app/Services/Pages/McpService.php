@@ -6,13 +6,25 @@ namespace App\Services\Pages;
 
 final class McpService
 {
-    public function data(): array
+    public function issue(\App\Http\DTO\McpIssueRequestDTO $dto): array
+    {
+        return (new \Hlidac\McpTokens(db(), hlidacConfig()))->issue([
+            'ucel' => $dto->purpose, 'formular' => $dto->formToken, 'web' => $dto->web,
+        ], $dto->clientIp);
+    }
+
+    public function data(?array $issued = null): array
     {
         $mcpUrl = (string)hlidacConfig('mcp_url', '');
         if ($mcpUrl === '') {
             $host = (string)parse_url(siteUrl(), PHP_URL_HOST);
             $mcpUrl = $host !== '' ? 'https://mcp.' . preg_replace('~^www\.~', '', $host) . '/mcp' : '';
         }
+        $tokens = new \Hlidac\McpTokens(db(), hlidacConfig());
+        $canIssue = $tokens->available();
+        $formToken = $canIssue ? $tokens->formToken() : '';
+        $tokenLimits = $tokens->limits();
+        $tokenValue = $issued['token'] ?? 'VÁŠ_TOKEN';
         $issues = (string)hlidacConfig('issues_url', '');
 
 
@@ -53,7 +65,7 @@ final class McpService
         ];
         $toolCount = array_sum(array_map('count', $tools));
 
-        return compact('mcpUrl', 'issues', 'tools', 'toolCount') + [
+        return compact('issued', 'canIssue', 'formToken', 'tokenLimits', 'tokenValue', 'mcpUrl', 'issues', 'tools', 'toolCount') + [
             'title' => 'Pro AI asistenty (MCP)', 'active' => 'mcp',
             'description' => 'Napojení AI asistentů na data Co se peče přes MCP: návrhy zákonů, texty, pozměňovací návrhy, rozpravy a hlasování.',
         ];

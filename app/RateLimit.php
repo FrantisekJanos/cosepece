@@ -43,6 +43,7 @@ final class RateLimit
             if (!is_array($state) || (int)($state['start'] ?? 0) <= $now - $window) {
                 $state = ['start' => $now, 'count' => 0];
             }
+            $state['w'] = $window;
             if ($count) {
                 $state['count'] = (int)$state['count'] + 1;
                 ftruncate($fh, 0);
@@ -72,7 +73,12 @@ final class RateLimit
     {
 
         foreach (glob($dir . '/*') ?: [] as $file) {
-            if (@filemtime($file) < time() - 3600) {
+            if (@filemtime($file) >= time() - 3600) {
+                continue;
+            }
+            $state = json_decode((string)@file_get_contents($file), true);
+            $end = is_array($state) ? (int)($state['start'] ?? 0) + (int)($state['w'] ?? 3600) : 0;
+            if ($end < time()) {
                 @unlink($file);
             }
         }

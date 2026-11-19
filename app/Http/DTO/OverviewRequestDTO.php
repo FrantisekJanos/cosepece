@@ -13,13 +13,13 @@ use Spatie\LaravelData\Attributes\Validation\Sometimes;
 final class OverviewRequestDTO extends RequestDTO
 {
     public function __construct(
-        #[MapInputName('n'), Sometimes, IntegerType, Min(6), Max(60)]
+        #[MapInputName('n'), Sometimes, IntegerType, Min(9), Max(60)]
         public readonly int $findingsShown,
     ) {
     }
 
     protected static function fromValidated(array $data): static
     {
-        return new static((int)($data['n'] ?? 6));
+        return new static((int)($data['n'] ?? 9));
     }
 }

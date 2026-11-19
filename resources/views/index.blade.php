@@ -42,17 +42,17 @@ use Hlidac\View;
   <div class="card-head">
     <div>
       <h2>Hlavní nálezy</h2>
-      <p class="muted small head-note">Rozpracované tisky s nejvyšším skóre závažnosti (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od {{ (int)$w['finding_ai_min'] }}/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
+      <p class="muted small head-note">Rozpracované tisky se skóre od {{ (int)$w['finding_min'] }} bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od {{ (int)$w['finding_ai_min'] }}/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
     </div>
-    <a href="{{ route('bills', ['min' => (int)$w['level_major']], false) }}">Všechny závažné</a>
+    <a href="{{ route('bills', ['min' => (int)$w['finding_min']], false) }}">Všechny od {{ (int)$w['finding_min'] }} bodů</a>
   </div>
   <?php if ($findings === []): ?>
-    <p class="empty">Žádný tisk nyní nepřekračuje práh závažnosti {{ (int)$w['level_major'] }} bodů.</p>
+    <p class="empty">Žádný tisk nyní nemá skóre aspoň {{ (int)$w['finding_min'] }} bodů.</p>
   <?php endif; ?>
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
       <a class="finding" href="{{ route('bill', ['ct' => (int)$t['ct']], false) }}"{{ $i >= $findingsShown ? ' hidden' : '' }}>
-        <span class="finding-top">{!! View::scoreBadge((int)$t['score']) !!}@if ($t['strong_ai'] !== null)<span class="chip chip-cut" title="Pod prahem skóre, ale s nálezem AI ověřeným silnějším modelem a doloženým citací">Ověřený nález AI {{ (int)$t['strong_ai'] }}/10</span>@endif<span class="muted small">Tisk {{ (int)$t['ct'] }} · {{ $t['nazev'] }} · {{ $t['faze'] }}</span></span>
+        <span class="finding-top">{!! View::scoreBadge((int)$t['score']) !!}@if ($t['strong_ai'] !== null)<span class="chip chip-cut" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI {{ (int)$t['strong_ai'] }}/10</span>@endif<span class="muted small">Tisk {{ (int)$t['ct'] }} · {{ $t['nazev'] }} · {{ $t['faze'] }}</span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
           <strong class="finding-title">{{ $h['title'] }}</strong>

@@ -25,6 +25,8 @@ final class Scorer
 
             'finding_ai_min' => 8,
 
+            'finding_min' => 45,
+
             'mp_bill_early' => 5,
             'senate_bill' => 5,
             'region_bill' => 5,

@@ -24,6 +24,12 @@ final class StrongFindingsTest extends TestCase
         $this->assertNull($finding());
         BillText::query()->where('ct', 221)->update(['ai_model' => AiReviewer::verifyModel(hlidacConfig())]);
         $this->assertSame(9, $finding()['strong_ai']);
+        Bill::query()->where('ct', 221)->update(['score' => 55]);
+        $this->assertSame(9, $finding()['strong_ai']);
+        Bill::query()->where('ct', 221)->update(['score' => 10]);
+        $data = app(OverviewService::class)->data(9);
+        $this->assertSame(9, $data['findingsShown']);
+        $this->assertSame(45, $data['w']['finding_min']);
         $this->get('/')->assertOk()->assertSee('Ověřený nález AI 9/10')->assertSee('href="/tisky/221"', false);
         BillText::query()->where('ct', 221)->update(['ai_json' => '{"citace":[]}']);
         $this->assertNull($finding());

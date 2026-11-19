@@ -54,6 +54,6 @@ final class RequestDTOTest extends TestCase
         $defaults = $this->app->make(BillListRequestDTO::class);
         $this->assertNotSame($dto, $defaults);
         $this->assertSame(['', '', 'score', 0], [$defaults->filter, $defaults->search, $defaults->sort, $defaults->minimumScore]);
-        $this->assertSame(6, OverviewRequestDTO::fromRequest(Request::create('/'))->findingsShown);
+        $this->assertSame(9, OverviewRequestDTO::fromRequest(Request::create('/'))->findingsShown);
     }
 }

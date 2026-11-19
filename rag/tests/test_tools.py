@@ -579,6 +579,21 @@ def test_projevy_k_tisku_hleda_pres_projev_tisk():
     assert "p.druh" in conn.sql[1]
 
 
+@pytest.mark.parametrize("volani, vysledky", [
+    (lambda c: tools.hledej_v_projevech(c, "dotace", ct=77), ([dict(n=0)], [])),
+    (lambda c: tools.projevy_recnika(c, 6165, ct=77), ([dict(n=0)], [])),
+    (lambda c: tools.zmeny_projevu(c, ct=77), ([],)),
+])
+def test_filtr_ct_pres_projev_tisk(volani, vysledky):
+    """Filtr ct jde přes steno.projev_tisk (sloučená rozprava 76 a 77), ne přes vlastní ct projevu."""
+    conn = FakeConn(*vysledky)
+    volani(conn)
+    for q in conn.sql:
+        assert "p.ct = %s" not in q
+        assert "p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)" in q
+    assert all(77 in list(prm) for prm in conn.params)
+
+
 def test_projevy_k_tisku_filtr_druh():
     conn = FakeConn([dict(n=0)], [])
     tools.projevy_k_tisku(conn, 76, druh=["Fakticka", "ministr"])

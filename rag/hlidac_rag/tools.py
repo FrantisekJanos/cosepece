@@ -160,9 +160,12 @@ def _norm_sb(sb: str) -> str:
 
 # ---------------------------------------------------------------- tisky
 
-# nezrušené projevy k tisku podle steno.projev_tisk (bod z rec, konec bodu, nadpis), parametr ct
-_PROJEVY_TISKU = """SELECT p.schuze, p.id_bod, p.datum, p.id_osoba, p.predsedajici, p.znaku FROM steno.projev p
-                    WHERE p.zruseno IS NULL AND p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)"""
+# projev patří k tisku přes steno.projev_tisk (bod z rec, konec bodu, nadpis; sloučená rozprava 76 a 77 patří
+# k oběma, i když vlastní ct projevu je jen 76), parametr ct; i filtr ct v nástrojích nad projevy
+_PATRI_K_TISKU = "p.id IN (SELECT projev_id FROM steno.projev_tisk WHERE ct = %s)"
+# nezrušené projevy k tisku, parametr ct
+_PROJEVY_TISKU = f"""SELECT p.schuze, p.id_bod, p.datum, p.id_osoba, p.predsedajici, p.znaku FROM steno.projev p
+                     WHERE p.zruseno IS NULL AND {_PATRI_K_TISKU}"""
 # projevu = stejné podmínky jako výchozí projevy_k_tisku (bez předsedajících, od 200 znaků)
 _POCITANY = "NOT predsedajici AND znaku >= 200"
 
@@ -487,7 +490,7 @@ def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | Non
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     if q:
         where.append("to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)")
@@ -551,7 +554,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     if osoba:
         id_osoba = _resolve_person(conn, osoba)
@@ -605,7 +608,7 @@ def zmeny_projevu(conn, od: str | None = None, ct: int | None = None, limit: int
         where.append("p.zmeneno >= %s")
         params.append(_date(od, "od"))
     if ct:
-        where.append("p.ct = %s")
+        where.append(_PATRI_K_TISKU)
         params.append(ct)
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.zmeneno,
                                   (SELECT length(v.text) FROM steno.projev_verze v WHERE v.projev_id = p.id

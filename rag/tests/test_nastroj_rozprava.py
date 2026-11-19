@@ -586,3 +586,24 @@ def test_pg_usek_bez_recnika_neni_vystoupeni(pgconn):
     r = rozprava(pgconn, 76)
     assert "10/984/1/1" not in [v["klic"] for v in r["vystoupeni"]] and r["celkem"] == 5
     assert all(s.get("jmeno") for s in r["souhrn"]["recnici"])
+
+
+# ---------------------------------------------------------------- další nástroje nad projev_tisk (tools.py)
+
+@pytest.mark.pg
+@bez_db
+def test_pg_filtr_ct_pres_projev_tisk(pgconn):
+    """hledej_v_projevech, projevy_recnika a zmeny_projevu s ct najdou i projev sloučené rozpravy, který má
+    vlastní ct jiného tisku (nebo žádné): stejné vazby jako rozprava a projevy_k_tisku."""
+    with pgconn.cursor() as cur:
+        cur.execute("UPDATE steno.projev SET ct = 76, verze = 2, zmeneno = now() WHERE schuze = %s AND turn = 7",
+                    (SCHUZE,))
+    pgconn.commit()
+    for ct in (76, 77):
+        h = tools.hledej_v_projevech(pgconn, "sloučené rozpravě", ct=ct)
+        assert [p["klic"] for p in h["projevy"]] == ["10/980/7/1"] and h["celkem"] == 1, ct
+        assert [p["klic"] for p in tools.projevy_recnika(pgconn, 2001, ct=ct)["projevy"]
+                if p["klic"] == "10/980/7/1"] == ["10/980/7/1"], ct
+        assert [p["klic"] for p in tools.zmeny_projevu(pgconn, ct=ct)["projevy"]] == ["10/980/7/1"], ct
+    assert tools.projevy_recnika(pgconn, 2001, ct=77)["celkem"] == 1
+    assert tools.hledej_v_projevech(pgconn, "sloučené rozpravě", ct=78)["celkem"] == 0

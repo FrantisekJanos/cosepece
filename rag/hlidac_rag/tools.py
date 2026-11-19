@@ -52,6 +52,30 @@ def _limit(n: int | None, default: int = 50) -> int:
     return max(1, min(int(n or default), MAX_LIMIT))
 
 
+def _offset(n: int | None) -> int:
+    return max(0, int(n or 0))
+
+
+def _next_offset(total: int, offset: int, returned: int) -> int | None:
+    """Offset další stránky, None když už žádná další není."""
+    nxt = offset + returned
+    return nxt if returned and nxt < total else None
+
+
+def _tsquery(dotaz: str) -> str:
+    """Dotaz uživatele na tsquery pro fulltext nad `unaccent_simple(text)` (sdílí hledej_v_projevech a hledej_v_textech).
+
+    Slova bez diakritiky a malými písmeny; slova kratší než 4 znaky (předložky, spojky) se vyřadí, pokud
+    neobsahují číslici (např. 586, 2026). Slova od 5 znaků dostanou prefix `:*` kvůli skloňování.
+    Všechna zbylá slova musí být ve shodě (AND). Bez použitelných slov = ValueError."""
+    words = [w for w in re.findall(r"\w+", unaccent_py(dotaz.lower()))
+             if len(w) >= 4 or any(ch.isdigit() for ch in w)][:12]
+    if not words:
+        raise ValueError("Dotaz je příliš krátký: zadejte alespoň jedno slovo o 4 a více znacích "
+                         "(kratší slova, např. předložky, se ignorují).")
+    return " & ".join(w + ":*" if len(w) >= 5 else w for w in words)
+
+
 def _tisk_urls(ct: int) -> dict:
     return {
         "url_psp": f"{PSP}/sqw/historie.sqw?o={OBDOBI}&t={ct}",
@@ -145,20 +169,31 @@ def seznam_tisku(conn, q: str = "", min_skore: int = 0, faze: str = "", typ_navr
     return {"pocet": len(rows), "tisky": rows}
 
 
-def tisky_menici_zakon(conn, sb: str) -> dict:
+_ZAKON_CTE = """WITH x AS (
+    SELECT ct, 'nazev' AS zdroj FROM tisky WHERE ',' || zakony || ',' LIKE %s
+    UNION ALL
+    SELECT ct, 'pn' AS zdroj FROM pn_text WHERE ',' || laws || ',' LIKE %s)"""
+
+
+def tisky_menici_zakon(conn, sb: str, limit: int = 50, offset: int = 0) -> dict:
+    """Tisky měnící zákon, řazené podle skóre sestupně (stránkovaně)."""
     sb = _norm_sb(sb)
-    rows = _rows(conn, """SELECT ct, nazev, typ_navrhu, faze, sbirka, score, 'nazev' AS zdroj FROM tisky
-                          WHERE ',' || zakony || ',' LIKE %s""", (f"%,{sb},%",))
-    found = {r["ct"] for r in rows}
-    for r in _rows(conn, """SELECT DISTINCT t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score, 'pn' AS zdroj
-                            FROM pn_text p JOIN tisky t ON t.ct = p.ct WHERE ',' || p.laws || ',' LIKE %s""", (f"%,{sb},%",)):
-        if r["ct"] not in found:
-            rows.append(r)
-            found.add(r["ct"])
+    pat = (f"%,{sb},%", f"%,{sb},%")
+    total = _one(conn, f"{_ZAKON_CTE} SELECT count(DISTINCT ct) AS n FROM x", pat)["n"]
+    off = _offset(offset)
+    rows = _rows(conn, f"""{_ZAKON_CTE}
+                           SELECT t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score,
+                                  CASE WHEN bool_or(x.zdroj = 'nazev') THEN 'nazev' ELSE 'pn' END AS zdroj
+                           FROM x JOIN tisky t ON t.ct = x.ct
+                           GROUP BY t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score
+                           ORDER BY score DESC NULLS LAST, ct LIMIT %s OFFSET %s""",
+                 (*pat, _limit(limit), off))
     for r in rows:
         r.update(_tisk_urls(r["ct"]))
-    return {"zakon": sb, "pocet": len(rows), "tisky": rows,
-            "poznamka": "zdroj nazev = zákon v názvu tisku, pn = zákon měněný pozměňovacím návrhem k tisku"}
+    return {"zakon": sb, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+            "pocet": len(rows), "tisky": rows,
+            "poznamka": "řazeno podle skóre sestupně; zdroj nazev = zákon v názvu tisku, "
+                        "pn = zákon měněný pozměňovacím návrhem k tisku"}
 
 
 def tisk_podle_sbirky(conn, sb: str) -> dict:
@@ -173,22 +208,27 @@ def tisk_podle_sbirky(conn, sb: str) -> dict:
 
 # ---------------------------------------------------------------- pozměňovací návrhy
 
-def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100) -> dict:
+def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
     where, params = ["p.ct = %s"], [ct]
     if id_osoba:
         where.append("p.id_osoba = %s")
         params.append(id_osoba)
+    w = " AND ".join(where)
+    # počty podle předkladatele přes všechny PN (ne jen přes stránku); jejich součet je celkový počet
+    autori = _rows(conn, f"SELECT p.osoba, count(*) AS n FROM pn p WHERE {w} GROUP BY p.osoba ORDER BY n DESC, p.osoba",
+                   params)
+    total = sum(a["n"] for a in autori)
+    off = _offset(offset)
     rows = _rows(conn, f"""SELECT p.cislo, p.id_osoba, p.osoba, p.cas, t.ai_score, t.ai_json, t.laws, t.chars
                            FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument
-                           WHERE {' AND '.join(where)} ORDER BY p.cas LIMIT %s""", (*params, _limit(limit, 100)))
+                           WHERE {w} ORDER BY p.cas, p.cislo LIMIT %s OFFSET %s""",
+                 (*params, _limit(limit, 100), off))
     for r in rows:
         ai = _json(r.pop("ai_json"))
         r["titulek"] = ai.get("titulek") if isinstance(ai, dict) else None
         r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={r['cislo']}&o={OBDOBI}"
-    autori: dict = {}
-    for r in rows:
-        autori[r["osoba"]] = autori.get(r["osoba"], 0) + 1
-    return {"ct": ct, "pocet": len(rows), "predkladatele": sorted(autori.items(), key=lambda x: -x[1]), "pn": rows}
+    return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+            "pocet": len(rows), "predkladatele": [(a["osoba"], a["n"]) for a in autori], "pn": rows}
 
 
 def get_pn(conn, cislo: int, s_textem: bool = False, max_znaku: int = 8000) -> dict:
@@ -272,7 +312,9 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum, p.schuze, p.poradi LIMIT %s OFFSET %s""",
                  (*params, _limit(limit), max(0, int(offset))))
-    return {"ct": ct, "celkem": total, "offset": offset, "projevy": _speech_rows(rows)}
+    off = _offset(offset)
+    return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+            "projevy": _speech_rows(rows)}
 
 
 def najdi_osobu(conn, jmeno: str) -> dict:
@@ -318,14 +360,16 @@ def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | Non
         where.append("p.ct = %s")
         params.append(ct)
     if q:
-        where.append("to_tsvector('simple', p.text) @@ plainto_tsquery('simple', %s)")
-        params.append(q)
+        where.append("to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)")
+        params.append(_tsquery(q))
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum DESC, p.schuze, p.poradi LIMIT %s OFFSET %s""",
                  (*params, _limit(limit), max(0, int(offset))))
-    return {"id_osoba": id_osoba, "celkem": total, "projevy": _speech_rows(rows)}
+    off = _offset(offset)
+    return {"id_osoba": id_osoba, "celkem": total, "offset": off,
+            "dalsi_offset": _next_offset(total, off, len(rows)), "projevy": _speech_rows(rows)}
 
 
 def _parse_key(klic: str) -> tuple[int, int, int, int]:
@@ -370,17 +414,9 @@ def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_z
 
 def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str | None = None,
                        klub: str | None = None, od: str | None = None, do: str | None = None,
-                       vcetne_predsedajicich: bool = False, limit: int = 20) -> dict:
-    """Fulltext (bez sémantiky, ta přijde s embeddingy): slova bez ohledu na diakritiku, předpony slov."""
-    words = [w for w in re.findall(r"\w+", unaccent_py(dotaz.lower())) if len(w) > 1][:12]
-    if not words:
-        raise ValueError("prázdný dotaz")
-    # zkrácení slov kvůli skloňování (heuristika z EpasDocsFetch)
-    def stem(w: str) -> str:
-        if any(ch.isdigit() for ch in w):
-            return w
-        return w[:-2] if len(w) >= 7 else w[:-1] if len(w) >= 5 else w
-    tsq = " & ".join(stem(w) + ":*" for w in words)
+                       vcetne_predsedajicich: bool = False, limit: int = 20, offset: int = 0) -> dict:
+    """Fulltext (bez sémantiky, ta přijde s embeddingy): slova bez ohledu na diakritiku, předpony delších slov."""
+    tsq = _tsquery(dotaz)
     where, params = ["to_tsvector('simple', unaccent_simple(p.text)) @@ to_tsquery('simple', %s)", "p.zruseno IS NULL"], [tsq]
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
@@ -400,17 +436,23 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     if do:
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
+    w = " AND ".join(where)
+    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    off = _offset(offset)
+    # ts_headline běží nad unaccent_simple(text), stejně jako dotaz a index, takže úryvek obsahuje shodu
+    # (nad textem s diakritikou se slova dotazu bez diakritiky nenašla a úryvek byl začátek projevu)
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS},
-                                  ts_headline('simple', p.text, to_tsquery('simple', %s),
-                                              'MaxFragments=2, MaxWords=40, MinWords=15') AS uryvek_shoda,
+                                  ts_headline('simple', unaccent_simple(p.text), to_tsquery('simple', %s),
+                                              'StartSel=«, StopSel=», MaxFragments=2, MaxWords=35, MinWords=15') AS uryvek_shoda,
                                   ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) AS rank
                            FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
-                           WHERE {' AND '.join(where)} ORDER BY rank DESC, p.datum DESC LIMIT %s""",
-                 (tsq, tsq, *params, _limit(limit, 20)))
+                           WHERE {w} ORDER BY rank DESC, p.datum DESC, p.id LIMIT %s OFFSET %s""",
+                 (tsq, tsq, *params, _limit(limit, 20), off))
     for r in rows:
         r.pop("rank", None)
-    return {"dotaz": tsq, "pocet": len(rows), "projevy": _speech_rows(rows),
-            "poznamka": "Fulltext bez ohledu na diakritiku; ts_headline zvýrazní jen slova s diakritikou shodnou s dotazem."}
+    return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
+            "pocet": len(rows), "projevy": _speech_rows(rows),
+            "poznamka": "Fulltext bez ohledu na diakritiku; uryvek_shoda je bez diakritiky, shoda je v « »."}
 
 
 def program_schuze(conn, schuze: int) -> dict:

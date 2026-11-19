@@ -226,3 +226,54 @@ def test_osoba_nenalezena_je_valueerror_bez_kandidatu():
     with pytest.raises(ValueError, match="nenalezeno") as e:
         tools._resolve_person(FakeConn([]), "Neexistující")
     assert "Kandidáti" not in str(e.value)
+
+
+# ---------------------------------------------------------------- hledání a seznamy
+
+def test_tsquery_kratka_slova():
+    with pytest.raises(ValueError, match="příliš krátký"):
+        tools._tsquery("na se daň")
+    assert tools._tsquery("rafinérské marže") == "rafinerske:* & marze:*"
+    assert tools._tsquery("zákon 586/1992 na") == "zakon:* & 586 & 1992"
+
+
+def test_hledej_uryvek_kolem_shody():
+    row = _speech(uryvek_shoda="… rafinerske «marze» rostou …", text="x")
+    conn = FakeConn([dict(n=1)], [row])
+    r = tools.hledej_v_projevech(conn, "rafinérské marže")
+    sql = conn.sql[1]
+    assert "ts_headline" in sql and "StartSel=«, StopSel=»" in sql and "MaxFragments" in sql
+    assert "unaccent_simple(p.text), to_tsquery" in sql  # úryvek nad textem bez diakritiky
+    assert r["projevy"][0]["uryvek_shoda"] == "… rafinerske «marze» rostou …"
+
+
+def test_hledej_ma_celkem_a_offset():
+    rows = [_speech(id=i, uryvek_shoda="«a»") for i in (1, 2)]
+    r = tools.hledej_v_projevech(FakeConn([dict(n=5)], rows), "dotace", limit=2, offset=2)
+    assert r["celkem"] == 5 and r["offset"] == 2 and r["dalsi_offset"] == 4
+    r = tools.hledej_v_projevech(FakeConn([dict(n=4)], rows), "dotace", limit=2, offset=2)
+    assert r["dalsi_offset"] is None
+
+
+def test_pn_k_tisku_ma_celkem_a_offset():
+    autori = [dict(osoba="A", n=3), dict(osoba="B", n=1)]
+    pn = [dict(cislo=1, id_osoba=1, osoba="A", cas=None, ai_score=None, ai_json=None, laws=None, chars=1)]
+    r = tools.pn_k_tisku(FakeConn(autori, pn), 76, limit=1, offset=0)
+    assert r["celkem"] == 4 and r["dalsi_offset"] == 1 and r["predkladatele"] == [("A", 3), ("B", 1)]
+    r = tools.pn_k_tisku(FakeConn(autori, pn), 76, limit=1, offset=3)
+    assert r["dalsi_offset"] is None
+
+
+def test_projevy_recnika_q_bez_diakritiky():
+    conn = FakeConn([dict(n=0)], [])
+    r = tools.projevy_recnika(conn, 6165, q="rafinérské marže")
+    assert "unaccent_simple(p.text)" in conn.sql[0]
+    assert r["celkem"] == 0 and r["offset"] == 0 and r["dalsi_offset"] is None
+
+
+def test_tisky_menici_zakon_razeni():
+    row = dict(ct=76, nazev="n", typ_navrhu="x", faze="f", sbirka=None, score=50, zdroj="pn")
+    conn = FakeConn([dict(n=1)], [row])
+    r = tools.tisky_menici_zakon(conn, "586/1992")
+    assert "ORDER BY score DESC NULLS LAST, ct" in conn.sql[1]
+    assert r["celkem"] == 1 and r["dalsi_offset"] is None and r["tisky"][0]["url_psp"]

@@ -96,10 +96,11 @@ def seznam_tisku(q: str = "", min_skore: int = 0, faze: str = "", typ_navrhu: st
 
 
 @server.tool(annotations=READ_ONLY)
-def tisky_menici_zakon(sb: str) -> dict:
+def tisky_menici_zakon(sb: str, limit: int = 50, offset: int = 0) -> dict:
     """Tisky, které mění existující zákon, podle čísla ve Sbírce (např. "586/1992" = zákon o daních z příjmů).
-    Hledá v názvech tisků a v zákonech měněných pozměňovacími návrhy."""
-    return _call("tisky_menici_zakon", tools.tisky_menici_zakon, sb)
+    Hledá v názvech tisků a v zákonech měněných pozměňovacími návrhy.
+    Řazeno podle skóre sestupně; celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
+    return _call("tisky_menici_zakon", tools.tisky_menici_zakon, sb, limit, offset)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -109,9 +110,10 @@ def tisk_podle_sbirky(sb: str) -> dict:
 
 
 @server.tool(annotations=READ_ONLY)
-def pn_k_tisku(ct: int, id_osoba: int | None = None, limit: int = 100) -> dict:
-    """Pozměňovací návrhy k tisku: číslo, autor, čas podání, AI skóre a titulek, předkladatelé s počty."""
-    return _call("pn_k_tisku", tools.pn_k_tisku, ct, id_osoba, limit)
+def pn_k_tisku(ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
+    """Pozměňovací návrhy k tisku: číslo, autor, čas podání, AI skóre a titulek, předkladatelé s počty
+    (přes všechny PN). celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
+    return _call("pn_k_tisku", tools.pn_k_tisku, ct, id_osoba, limit, offset)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -125,7 +127,7 @@ def projevy_k_tisku(ct: int, id_osoba: int | None = None, klub: str | None = Non
                     do: str | None = None, min_znaku: int = 200, vcetne_predsedajicich: bool = False,
                     limit: int = 50, offset: int = 0) -> dict:
     """Projevy ve stenoprotokolech k tisku, chronologicky: řečník, klub, datum, bod pořadu, úryvek, odkaz na psp.cz.
-    od/do ve tvaru RRRR-MM-DD. Celý text přes get_projev(klic)."""
+    od/do ve tvaru RRRR-MM-DD. Celý text přes get_projev(klic). Stránkování: celkem, dalsi_offset."""
     return _call("projevy_k_tisku", tools.projevy_k_tisku, ct, id_osoba, klub, od, do, min_znaku,
                  vcetne_predsedajicich, limit, offset)
 
@@ -133,7 +135,8 @@ def projevy_k_tisku(ct: int, id_osoba: int | None = None, klub: str | None = Non
 @server.tool(annotations=READ_ONLY)
 def projevy_recnika(osoba: str, od: str | None = None, do: str | None = None, ct: int | None = None,
                     q: str | None = None, min_znaku: int = 0, limit: int = 50, offset: int = 0) -> dict:
-    """Projevy jedné osoby (id_osoba nebo jméno, např. "Jurečka"). q = slova, která má projev obsahovat."""
+    """Projevy jedné osoby (id_osoba nebo jméno, např. "Jurečka"). q = slova, která má projev obsahovat
+    (bez ohledu na diakritiku, slova pod 4 znaky se ignorují). Stránkování: celkem, dalsi_offset."""
     return _call("projevy_recnika", tools.projevy_recnika, osoba, od, do, ct, q, min_znaku, limit, offset)
 
 
@@ -150,11 +153,13 @@ def get_projev(klic: str, okoli: int = 0, max_znaku: int = 12000, offset_znaku: 
 @server.tool(annotations=READ_ONLY)
 def hledej_v_projevech(dotaz: str, ct: int | None = None, osoba: str | None = None, klub: str | None = None,
                        od: str | None = None, do: str | None = None, vcetne_predsedajicich: bool = False,
-                       limit: int = 20) -> dict:
-    """Fulltextové hledání slov v projevech (všechna slova, bez ohledu na diakritiku a koncovky).
-    Sémantické hledání zatím není. Příklad: hledej_v_projevech("dotace SZIF promlčení")."""
+                       limit: int = 20, offset: int = 0) -> dict:
+    """Fulltextové hledání slov v projevech (všechna slova, bez ohledu na diakritiku, předpony delších slov;
+    slova pod 4 znaky se ignorují). uryvek_shoda je okolí shody (bez diakritiky), shoda je v « ».
+    Stránkování: celkem, dalsi_offset (None na konci). Sémantické hledání zatím není.
+    Příklad: hledej_v_projevech("dotace SZIF promlčení")."""
     return _call("hledej_v_projevech", tools.hledej_v_projevech, dotaz, ct, osoba, klub, od, do,
-                 vcetne_predsedajicich, limit)
+                 vcetne_predsedajicich, limit, offset)
 
 
 @server.tool(annotations=READ_ONLY)

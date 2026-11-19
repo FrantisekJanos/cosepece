@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Hlasování ve Sněmovně u každého tisku',
+        'Na detailu tisku jsou všechna hlasování k němu: výsledek, počty pro a proti a rozdělení podle poslaneckých klubů, u závěrečných hlasování i to, o jaký krok šlo (např. přehlasované veto). Jmenovité výsledky vedou na psp.cz. Do skóre hlasování nevstupují. Které pozměňovací návrhy prošly, otevřená data zatím neříkají.',
+        [32], false],
     ['2026-11-19', 'Stejný nález se nepočítá dvakrát',
         'Když text mění lhůtu pro vymáhání a použije ji zpětně, dával se za to bod pravidlem a k tomu ještě z rozboru AI, který tentýž nález potvrdil. Teď se počítají jen body z rozboru. Týká se to jediného tisku: novela zákona o střetu zájmů (tisk 221) má 47 bodů místo 62.',
         [30], true],

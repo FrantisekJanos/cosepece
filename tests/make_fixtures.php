@@ -232,7 +232,63 @@ UNL,
             'organy.unl' => <<<'UNL'
 173||11|PSP9|Poslanecká sněmovna|Chamber of Deputies|09.10.2021|08.10.2025||0|
 174||11|PSP10|Poslanecká sněmovna|Chamber of Deputies|04.10.2025||174||
+1750|174|1|ANO2011|Poslanecký klub ANO 2011|Political group ANO 2011|08.10.2025||1||
+1751|174|1|ODS|Poslanecký klub ODS|Political group Civic Democratic Party|08.10.2025||2||
+1745|174|1|Piráti|Poslanecký klub Piráti|Political group Pirates|05.10.2025||4|0|
 UNL,
+            'poslanec.unl' => <<<'UNL'
+2137|6150|594|1104|174||||||||||1|
+2051|6433|582|1290|174||||||||||1|
+1967|4|581|1533|174||||||||||1|
+UNL,
+            'zarazeni.unl' => <<<'UNL'
+6150|1750|0|2025-10-08 00||||
+6433|1745|0|2025-10-05 00||||
+4|1751|0|2025-10-08 00||||
+UNL,
+        ],
+        // hlasování 10. období a body schůzí (tisk 78; hlasování 87152 je k jinému tisku se stejným číslem bodu)
+        'schuze.zip' => [
+            'schuze.unl' => <<<'UNL'
+861|174|10|2026-03-03 14|2026-03-12 18|2026-03-12 18||
+868|174|14|2026-04-14 14|2026-04-24 14|2026-04-24 14||
+UNL,
+            'bod_schuze.unl' => <<<'UNL'
+58292|861|43185|1|5|Návrh poslance Andreje Babiše na vydání zákona, kterým se mění zákon č. 245/2000 Sb.|/sněmovní tisk 78/||0||1||0||p státní svátky|
+58617|868|43185|24|1|Návrh zákona, kterým se mění zákon č. 245/2000 Sb.|/sněmovní tisk 78/2/||1|1|0||0||p státní svátky|
+58618|868|43185|24|2|Návrh zákona, kterým se mění zákon č. 245/2000 Sb.|/sněmovní tisk 78/2/||0||0||0||p státní svátky|
+UNL,
+            'bod_stav.unl' => '0|projednán|',
+            'schuze_stav.unl' => '',
+        ],
+        'hl-2025ps.zip' => [
+            'hl2025s.unl' => <<<'UNL'
+86762|174|10|49|5|03.03.2026|21:01|100|9|9|23|141|71|N|A|Novela z. o státních svátcích**||
+86763|174|10|50|5|03.03.2026|21:02|105|7|6|32|150|76|N|A|Novela z. o státních svátcích**||
+87152|174|14|49|1|14.04.2026|20:28|100|0|1|0|101|51|N|A|Novela z. o cenách**||
+87173|174|14|70|2|15.04.2026|15:58|54|103|10|5|172|87|N|R|Novela z. o státních svátcích**||
+87174|174|14|71|2|15.04.2026|16:00|107|34|7|25|173|101|N|A|Novela z. o státních svátcích**||
+UNL,
+            'hl2025h1.unl' => <<<'UNL'
+2137|86762|A|
+2137|86763|A|
+2137|87152|@|
+2137|87173|@|
+2137|87174|@|
+2051|86762|K|
+2051|86763|K|
+2051|87152|@|
+2051|87173|@|
+2051|87174|@|
+1967|86762|@|
+1967|86763|@|
+1967|87152|@|
+1967|87173|A|
+1967|87174|K|
+UNL,
+            'hl2025h2.unl' => '',
+            'omluvy.unl' => '',
+            'zmatecne.unl' => '',
         ],
     ];
 

@@ -127,6 +127,24 @@ final class Repo
         return $out;
     }
 
+    public function votes(int $ct): array
+    {
+        // hlasování k tisku od nejnovějšího, s rozdělením podle klubů
+        $rows = $this->db->all('SELECT * FROM hlasovani WHERE ct = ? ORDER BY datum DESC, id_hlasovani DESC', [$ct]);
+        if ($rows === []) {
+            return [];
+        }
+        $clubs = [];
+        $ids = array_map(fn($r) => (int)$r['id_hlasovani'], $rows);
+        foreach ($this->db->all('SELECT * FROM hlasovani_kluby WHERE id_hlasovani IN (' . implode(',', $ids) . ') ORDER BY klub') as $c) {
+            $clubs[(int)$c['id_hlasovani']][] = $c;
+        }
+        foreach ($rows as &$r) {
+            $r['kluby'] = $clubs[(int)$r['id_hlasovani']] ?? [];
+        }
+        return $rows;
+    }
+
     public function billText(int $ct): ?array
     {
         // stažený text návrhu zákona s pravidlovými signály a rozborem AI

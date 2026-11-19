@@ -79,6 +79,9 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
                    rozbor nálezů ≥ ai.verify_min (6); ai_model říká, kdo rozbor udělal (homepage: „ověřeno“). Po změně promptu zvyš
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
+  1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
+                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
+                Do skóre nevstupuje; chyba nezastaví synchronizaci
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 

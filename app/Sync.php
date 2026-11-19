@@ -25,6 +25,12 @@ final class Sync
                 $config['source_dir'] ?? null
             );
             $import = (new Importer(db(), $source))->run();
+            try {
+                $votes = (new Votes(db(), $source))->run();
+            } catch (\Throwable $ex) {
+                // hlasování jsou doplňková: chyba se zapíše, synchronizace pokračuje
+                $votes = ['error' => Http::redact($ex->getMessage())];
+            }
             // nejdřív upozornění (kvůli „návalu“), pak předběžné skóre (pořadí fronty textů),
             // texty PN a tisků, rozbor AI, konečné skóre, nakonec rozeslání
             $alerts = (new AlertBuilder(db(), $config))->run();
@@ -38,6 +44,7 @@ final class Sync
             $posts = (new Publisher(db(), $config))->run();
             $result = [
                 'import' => $import,
+                'votes' => $votes,
                 'alerts_new' => $alerts,
                 'pn_text' => $pnText,
                 'tisk_text' => $tiskText,

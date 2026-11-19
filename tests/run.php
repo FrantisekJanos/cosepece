@@ -599,6 +599,31 @@ $rescore();
 $w = Hlidac\Scorer::weights(config());
 check('výchozí váhy: citlivá oblast 5, podíl pozdních PN 50 %', [$w['topic'], $w['late_pn_share'], $w['mp_bill_early']], [5, 0.5, 5]);
 
+echo "Hlasování k tiskům (#5, #24)\n";
+$votesSource = new Hlidac\Source('', $tmp . '/cache-votes', $tmp . '/src');
+(new Hlidac\Importer(db(), $votesSource))->run();
+$vr = (new Hlidac\Votes(db(), $votesSource))->run();
+check('hlasování k tisku 78 (bez hlasování k jinému tisku se stejným bodem)', [$vr['votes'],
+    array_map('intval', array_column(db()->all('SELECT id_hlasovani FROM hlasovani WHERE ct = 78 ORDER BY id_hlasovani'), 'id_hlasovani'))],
+    [4, [86762, 86763, 87173, 87174]]);
+check('závěrečná hlasování z historie tisku', array_map('intval', array_column(db()->all('SELECT id_hlasovani FROM hlasovani WHERE krok = 1 ORDER BY id_hlasovani'), 'id_hlasovani')), [86763, 87174]);
+check('výsledek a počty', db()->one('SELECT datum, vysledek, pro, proti FROM hlasovani WHERE id_hlasovani = 87173'),
+    ['datum' => '2026-04-15 15:58', 'vysledek' => 'R', 'pro' => 54, 'proti' => 103]);
+$byClub = [];
+foreach (db()->all('SELECT klub, pro, proti, zdrzel, nepritomen FROM hlasovani_kluby WHERE id_hlasovani = 86762 ORDER BY klub') as $c) {
+    $byClub[$c['klub']] = [(int)$c['pro'], (int)$c['proti'], (int)$c['zdrzel'], (int)$c['nepritomen']];
+}
+check('rozdělení podle klubů', $byClub, ['ANO2011' => [1, 0, 0, 0], 'ODS' => [0, 0, 0, 1], 'Piráti' => [0, 0, 1, 0]]);
+check('normalizace názvu hlasování', Hlidac\Votes::normName('Novela z. o státních svátcích**'), 'novela z. o státních svátcích');
+$_GET = ['ct' => '78'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$voteHtml = (string)ob_get_clean();
+check('detail tisku ukazuje hlasování s klubem a odkazem na psp.cz', str_contains($voteHtml, 'Hlasování ve Sněmovně')
+    && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, 'ANO2011'), true);
+
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => []] as $page => $get) {
     $_GET = $get;

@@ -8,6 +8,7 @@ namespace Hlidac;
 final class Analyzer
 {
     // typy stavů (typ_stavu.unl)
+    public const LHUTA_VYBORY = 60;                  // výchozí lhůta pro výbory ve dnech
     public const STAV_P90 = [17, 18, 67];            // 1. čtení podle § 90 odst. 2
     public const STAV_2_3_CTENI = [2, 3, 4, 5];      // 2. a 3. čtení
     public const STAV_PO_SNEMOVNE = [64, 12, 14, 63, 8, 13, 11];
@@ -81,18 +82,38 @@ final class Analyzer
         ];
     }
 
-    public static function typNavrhu(int $druh, string $uplnyNazev): string
+    public static function typNavrhu(int $druh, string $uplnyNazev, int $idNavrh = 0): string
     {
+        // předkladatel podle číselníku typ_zakon (tisky.id_navrh): 1 vláda, 2–3 poslanci, 4 Senát,
+        // 6–19 kraje a hlavní město Praha; bez kódu podle druhu tisku a začátku úplného názvu
+        if ($idNavrh === 1) {
+            return 'vládní';
+        }
+        if ($idNavrh === 2 || $idNavrh === 3) {
+            return 'poslanecký';
+        }
+        if ($idNavrh === 4) {
+            return 'senátní';
+        }
+        if ($idNavrh >= 6 && $idNavrh <= 19) {
+            return 'krajský';
+        }
         if ($druh === 1 || $druh === 3) {
             return 'vládní';
         }
-        if (str_starts_with($uplnyNazev, 'Senátní')) {
+        if (mb_stripos($uplnyNazev, 'Senátní') === 0) {
             return 'senátní';
         }
-        if (str_starts_with($uplnyNazev, 'Návrh zastupitelstva')) {
+        if (mb_stripos($uplnyNazev, 'Návrh zastupitelstva') === 0) {
             return 'krajský';
         }
         return 'poslanecký';
+    }
+
+    public static function committeeCut(?int $lhuta): bool
+    {
+        // lhůta pro výbory kratší než výchozích 60 dní (§ 91 odst. 3 jednacího řádu)
+        return $lhuta !== null && $lhuta > 0 && $lhuta < self::LHUTA_VYBORY;
     }
 
     public static function zakony(string $uplnyNazev): array

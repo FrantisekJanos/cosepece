@@ -26,6 +26,7 @@ final class Scorer
         return [
             'mp_bill' => 15,
             'senate_bill' => 5,
+            'region_bill' => 5,
             'p90_requested' => 10,
             'p90_passed' => 25,
             'deadline_cut' => 15,
@@ -154,6 +155,8 @@ final class Scorer
             $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením');
         } elseif ($t['typ_navrhu'] === 'senátní') {
             $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – neprošel meziresortním připomínkovým řízením');
+        } elseif ($t['typ_navrhu'] === 'krajský') {
+            $add('region_bill', (int)$w['region_bill'], 'Návrh krajského zastupitelstva – neprošel meziresortním připomínkovým řízením');
         }
 
         // 2. zrychlené projednání
@@ -163,7 +166,10 @@ final class Scorer
             $add('p90_requested', (int)$w['p90_requested'], 'Navrženo schválit už v 1. čtení (§ 90 odst. 2)');
         }
         if ((int)$t['zl']) {
-            $add('deadline_cut', (int)$w['deadline_cut'], 'Zkrácená lhůta při projednávání');
+            $lhuta = isset($t['lhuta']) ? (int)$t['lhuta'] : 0;
+            $add('deadline_cut', (int)$w['deadline_cut'], Analyzer::committeeCut($lhuta)
+                ? 'Zkrácená lhůta pro výbory: ' . $lhuta . ' dní místo ' . Analyzer::LHUTA_VYBORY
+                : 'Zkrácená lhůta při projednávání');
         }
 
         // 3. krátký čas mezi rozesláním PN a 3. čtením
@@ -294,7 +300,7 @@ final class Scorer
     {
         // body v každé skupině nejvýš do stropu; důvod zůstane vidět i s krácenými (nebo nulovými) body
         $groups = [
-            'procedure' => ['mp_bill', 'senate_bill', 'p90_passed', 'p90_requested', 'deadline_cut', 'short_gap', 'late_pn', 'surge'],
+            'procedure' => ['mp_bill', 'senate_bill', 'region_bill', 'p90_passed', 'p90_requested', 'deadline_cut', 'short_gap', 'late_pn', 'surge'],
             'content' => ['pn_other_law', 'pn_large', 'retro_deadline', 'pn_many', 'ai_bill', 'ai'],
             'context' => ['topic', 'omnibus', 'watched'],
         ];

@@ -43,13 +43,20 @@ final class Publisher
         $dryRun = !empty($this->config['notify']['dry_run']);
         // co se posílá: all = vše nad prahem, watch = jen sledované zákony, off = nic (platí i pro dry_run)
         $mode = strtolower(trim((string)($this->config['notify']['post'] ?? 'all')));
-        $stats = ['sent' => 0, 'filtered' => 0, 'errors' => 0];
+        // upozornění pod prahem počká, než doběhne stažení textů a rozbor AI (skóre může ještě vzrůst)
+        $holdUntil = date('Y-m-d H:i:s', time() - 3600 * max(0, (int)($this->config['notify']['hold_hours'] ?? 48)));
+        $stats = ['sent' => 0, 'filtered' => 0, 'held' => 0, 'errors' => 0];
 
         // nejzávažnější první; běžná agenda pod prahem zůstane jen na webu (potlačeno)
         $pending = $this->db->all('SELECT * FROM alerts WHERE posted = 0 ORDER BY score DESC, event_at');
         foreach ($pending as $alert) {
             $modeOff = $mode === 'off' || ($mode === 'watch' && !(int)$alert['watched']);
-            if ($modeOff || (int)$alert['score'] < $minScore || in_array($alert['kind'], $kindsOff, true)) {
+            $kindOff = in_array($alert['kind'], $kindsOff, true);
+            if (!$modeOff && !$kindOff && (int)$alert['score'] < $minScore && (string)$alert['created_at'] > $holdUntil) {
+                $stats['held']++;
+                continue;
+            }
+            if ($modeOff || $kindOff || (int)$alert['score'] < $minScore) {
                 $this->db->run('UPDATE alerts SET posted = 3 WHERE alert_key = ?', [$alert['alert_key']]);
                 $stats['filtered']++;
                 continue;

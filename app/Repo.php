@@ -46,9 +46,9 @@ final class Repo
     public function alerts(int $limit, int $offset = 0, ?int $ct = null, int $minScore = 0): array
     {
         if ($ct !== null) {
-            return $this->db->all('SELECT * FROM alerts WHERE ct = ? ORDER BY event_at DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$ct]);
+            return $this->db->all('SELECT * FROM alerts WHERE ct = ? ORDER BY event_at DESC, created_at DESC, alert_key DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$ct]);
         }
-        return $this->db->all('SELECT * FROM alerts WHERE score >= ? ORDER BY event_at DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$minScore]);
+        return $this->db->all('SELECT * FROM alerts WHERE score >= ? ORDER BY event_at DESC, created_at DESC, alert_key DESC LIMIT ' . $limit . ' OFFSET ' . $offset, [$minScore]);
     }
 
     public function alertsCount(int $minScore = 0): int
@@ -157,6 +157,17 @@ final class Repo
         return $this->db->all('SELECT osoba, COUNT(*) n FROM pn WHERE cas >= ? GROUP BY osoba ORDER BY n DESC, osoba LIMIT ' . $limit, [$since]);
     }
 
+    public static function fold(?string $text): string
+    {
+        // malá písmena bez diakritiky pro hledání
+        static $map = [
+            'á' => 'a', 'č' => 'c', 'ď' => 'd', 'é' => 'e', 'ě' => 'e', 'í' => 'i', 'ň' => 'n', 'ó' => 'o',
+            'ř' => 'r', 'š' => 's', 'ť' => 't', 'ú' => 'u', 'ů' => 'u', 'ý' => 'y', 'ž' => 'z',
+            'ä' => 'a', 'ö' => 'o', 'ü' => 'u', 'ľ' => 'l', 'ĺ' => 'l', 'ŕ' => 'r', 'ô' => 'o',
+        ];
+        return strtr(mb_strtolower(trim((string)$text)), $map);
+    }
+
     public function bills(string $filter = '', string $q = '', int $limit = 500, string $sort = 'score', int $minScore = 0): array
     {
         $where = ['1 = 1'];
@@ -182,16 +193,16 @@ final class Repo
             $where[] = 'score >= ?';
             $params[] = $minScore;
         }
-        if ($q !== '') {
-            $like = '%' . $q . '%';
-            $like_op = $this->db->ilike();
-            $where[] = "(nazev $like_op ? OR uplny_nazev $like_op ? OR navrhovatel $like_op ? OR zakony $like_op ? OR "
-                . $this->db->castText('ct') . ' = ?)';
-            array_push($params, $like, $like, $like, $like, $q);
-        }
-        $order = $sort === 'recent' ? 'posledni DESC, ct DESC' : 'score DESC, posledni DESC';
+        $order = $sort === 'recent' ? 'posledni DESC, ct DESC' : 'score DESC, posledni DESC, ct DESC';
+        // hledání bez ohledu na velikost písmen a diakritiku („skolsky“ najde „Školský“) se dělá v PHP,
+        // stejně v SQLite, MySQL i PostgreSQL; tisků jednoho období jsou stovky, ne tisíce
         $rows = $this->db->all('SELECT * FROM tisky WHERE ' . implode(' AND ', $where)
-            . ' ORDER BY ' . $order . ' LIMIT ' . $limit, $params);
+            . ' ORDER BY ' . $order . ($q === '' ? ' LIMIT ' . $limit : ''), $params);
+        if ($q !== '') {
+            $needle = self::fold($q);
+            $rows = array_slice(array_values(array_filter($rows, fn(array $t): bool => (string)$t['ct'] === trim($q)
+                || str_contains(self::fold($t['nazev'] . ' ' . $t['uplny_nazev'] . ' ' . $t['navrhovatel'] . ' ' . $t['zakony']), $needle))), 0, $limit);
+        }
         $surge = $this->surgeSet();
         $review = $this->reviewStatus();
         foreach ($rows as &$row) {
@@ -279,6 +290,8 @@ final class Repo
             $flags[] = ['mp', 'Poslanecký návrh'];
         } elseif ($t['typ_navrhu'] === 'senátní') {
             $flags[] = ['mp', 'Senátní návrh'];
+        } elseif ($t['typ_navrhu'] === 'krajský') {
+            $flags[] = ['mp', 'Krajský návrh'];
         }
         if ((int)$t['p90ok']) {
             $flags[] = ['fast', 'Schváleno v 1. čtení'];

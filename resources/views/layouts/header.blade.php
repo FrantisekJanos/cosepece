@@ -26,7 +26,7 @@
 <link rel="alternate" type="application/rss+xml" title="Co se peče – upozornění" href="{{ route('rss', [], false) }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ asset('assets/style.css') }}">
+<link rel="stylesheet" href="{{ asset('assets/style.css') . '?v=' . filemtime(public_path('assets/style.css')) }}">
 <script>document.documentElement.classList.add('js');</script>
 <script defer src="{{ asset('assets/nav.js') }}"></script>
 <?php $umami = (array)hlidacConfig('umami', []); if (($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>

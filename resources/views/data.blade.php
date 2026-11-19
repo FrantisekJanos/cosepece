@@ -1,0 +1,179 @@
+@extends('layouts.app')
+@section('content')
+<section class="hero">
+  <div>
+    <h1>Data a API</h1>
+    <p class="lead">Všechno, co je na webu, je i strojově: tisky se skóre a důvody, hlasování, upozornění a připravované zákony ve formátu JSON a upozornění v RSS. Bez registrace a bez klíče.</p>
+  </div>
+</section>
+
+<div class="docs">
+  <nav class="docs-toc card pad" aria-label="Obsah dokumentace">
+    <strong>Obsah</strong>
+    <ol>
+      <?php foreach ($toc as $id => $label): ?>
+        <li><a href="#<?= e($id) ?>"><?= e($label) ?></a><?php if ($id === 'adresy'): ?>
+          <ol><?php foreach ($endpoints as $key => $ep): ?><li><a href="#api-<?= e($key) ?>"><?= e($ep[0]) ?></a></li><?php endforeach; ?></ol>
+        <?php endif; ?></li>
+      <?php endforeach; ?>
+    </ol>
+  </nav>
+
+  <div class="docs-body">
+    <section class="card pad" id="zaklady">
+      <h2>Základy</h2>
+      <p>Rychlý start: <a href="/api?limit=5"><code>/api?limit=5</code></a> vrátí pět naposledy změněných tisků.</p>
+      <dl class="docs-dl">
+        <dt>Adresa</dt><dd><code><?= e($base) ?></code></dd>
+        <dt>Metoda</dt><dd>jen <code>GET</code>, jen čtení</dd>
+        <dt>Formát</dt><dd>JSON v UTF-8 (<code>Content-Type: application/json</code>), české znaky nejsou escapované</dd>
+        <dt>CORS</dt><dd><code>Access-Control-Allow-Origin: *</code> – jde volat přímo z prohlížeče na jiném webu</dd>
+        <dt>Cache</dt><dd><code>Cache-Control: public, max-age=300</code> – odpověď se může 5 minut opakovat</dd>
+        <dt>Aktualizace</dt><dd>data se obnovují z psp.cz a Úřadu vlády zhruba každou hodinu; čas posledního běhu je v poli <code>aktualizovano</code></dd>
+        <dt>Období</dt><dd>jen aktuální volební období Sněmovny</dd>
+      </dl>
+      <p>Každá odpověď má stejnou obálku:</p>
+      <pre class="code"><code>{
+  "verze": <?= \App\Services\PublicApiService::VERSION ?>,                            // verze formátu
+  "zdroj": "<?= e(siteUrl()) ?>",
+  "aktualizovano": "2026-11-19 15:01:06",  // poslední synchronizace dat
+  "tisky": [ … ]                           // nebo "tisk", "upozorneni", "pripravovane"
+}</code></pre>
+      <p class="muted small"><strong>Stabilita:</strong> v rámci verze <?= \App\Services\PublicApiService::VERSION ?> můžeme přidávat nová pole, ale existující neodebereme ani nepřejmenujeme. Nekompatibilní změnu označíme novou verzí a oznámíme ji v <a href="{{ route('changes') }}">přehledu změn</a>. Neznámá pole proto ignorujte.</p>
+    </section>
+
+    <section class="card pad" id="adresy">
+      <h2>Adresy</h2>
+      <?php foreach ($endpoints as $key => [$label, $path, $desc, $params, $query]): ?>
+        <?php $exampleUrl = '/api?' . http_build_query($query); ?>
+        <article class="endpoint" id="api-<?= e($key) ?>">
+          <h3><span class="method">GET</span> <code><?= e($path) ?></code></h3>
+          <p><strong><?= e($label) ?>.</strong> <?= e($desc) ?></p>
+          <?php if ($params !== []): ?><p class="small">Filtry: <?= implode(', ', array_map(fn(string $p) => '<a href="#filtry"><code>' . e($p) . '</code></a>', $params)) ?></p><?php endif; ?>
+          <p class="small">Vyzkoušet: <a href="<?= e($exampleUrl) ?>"><code><?= e($exampleUrl) ?></code></a></p>
+          <details>
+            <summary>Ukázka odpovědi (zkrácená, živá data)</summary>
+            <pre class="code"><code><?= e($example($query)) ?></code></pre>
+          </details>
+        </article>
+      <?php endforeach; ?>
+    </section>
+
+    <section class="card pad" id="filtry">
+      <h2>Filtry</h2>
+      <p>Parametry v adrese, lze je kombinovat (např. <a href="/api?zakon=159/2006&amp;min_score=25"><code>/api?zakon=159/2006&amp;min_score=25</code></a>). Stejné filtry platí pro RSS.</p>
+      <div class="table-wrap"><table class="docs-table">
+        <thead><tr><th>Parametr</th><th>Hodnota</th><th>Význam</th><th>Příklad</th></tr></thead>
+        <tbody>
+          <?php foreach ($filters as $name => [$type, $desc, $ex]): ?>
+            <tr><td><code><?= e($name) ?></code></td><td><?= e($type) ?></td><td><?= e($desc) ?></td><td><code><?= e($ex) ?></code></td></tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="card pad" id="pole">
+      <h2>Popis polí</h2>
+      <?php foreach ($fields as $group => $rows): ?>
+        <h3><?= e($group) ?></h3>
+        <div class="table-wrap"><table class="docs-table">
+          <thead><tr><th>Pole</th><th>Typ</th><th>Význam</th></tr></thead>
+          <tbody>
+            <?php foreach ($rows as [$name, $type, $desc]): ?>
+              <tr><td><code><?= e($name) ?></code></td><td class="nowrap"><?= e($type) ?></td><td><?= e($desc) ?></td></tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table></div>
+      <?php endforeach; ?>
+    </section>
+
+    <section class="card pad" id="ciselniky">
+      <h2>Číselníky</h2>
+      <h3>Klíče důvodů skóre (<code>duvody[].klic</code>)</h3>
+      <p class="small muted">Body a podmínky jednotlivých signálů popisuje stránka <a href="/metodika">Jak hodnotíme</a>.</p>
+      <div class="table-wrap"><table class="docs-table">
+        <tbody>
+          <?php foreach (\Hlidac\View::REASON_SHORT as $key => $label): ?>
+            <tr><td><code><?= e($key) ?></code></td><td><?= e($label) ?></td></tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table></div>
+      <h3>Druhy upozornění (<code>typ</code>)</h3>
+      <div class="table-wrap"><table class="docs-table">
+        <tbody>
+          <?php foreach ($alertKinds as $key => $label): ?>
+            <tr><td><code><?= e($key) ?></code></td><td><?= e($label) ?></td></tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table></div>
+      <h3>Fáze tisku (<code>faze</code>)</h3>
+      <p><?= implode(' · ', array_map(fn(string $p) => '<code>' . e($p) . '</code>', $phases)) ?></p>
+      <h3>Fáze připravovaného zákona</h3>
+      <p><code>pripominky</code> v připomínkovém řízení · <code>po_pripominkach</code> vypořádání připomínek · <code>vlada</code> předloženo vládě · <code>schvaleno</code> schváleno vládou, čeká na předložení Sněmovně</p>
+    </section>
+
+    <section class="card pad" id="chyby">
+      <h2>Chyby</h2>
+      <p>Chyba vrací HTTP kód a objekt s polem <code>error</code> (bez obálky):</p>
+      <div class="table-wrap"><table class="docs-table">
+        <thead><tr><th>Kód</th><th>Kdy</th><th>Příklad</th></tr></thead>
+        <tbody>
+          <tr><td>400</td><td>chybný filtr</td><td><code>{"error": "since musí být datum ve tvaru YYYY-MM-DD"}</code></td></tr>
+          <tr><td>404</td><td>tisk v aktuálním období neexistuje</td><td><code>{"error": "Tisk nenalezen"}</code></td></tr>
+          <tr><td>429</td><td>příliš mnoho dotazů (viz limity); hlavička <code>Retry-After</code> říká, za kolik sekund to zkusit znovu</td><td><code>{"error": "Příliš mnoho dotazů…"}</code></td></tr>
+          <tr><td>5xx</td><td>chyba serveru nebo údržba – zkuste to později</td><td></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="card pad" id="limity">
+      <h2>Limity a slušné chování</h2>
+      <ul>
+        <li>Nejvýš <strong><?= Hlidac\RateLimit::limit('api', 60) ?> dotazů za minutu</strong> z jedné IP adresy (RSS <?= Hlidac\RateLimit::limit('rss', 30) ?>, webové stránky <?= Hlidac\RateLimit::limit('web', 240) ?>). Při překročení vrátíme 429 s hlavičkou <code>Retry-After</code>.</li>
+        <li>Data se mění zhruba jednou za hodinu, častější stahování nic nového nepřinese. Pro průběžné sledování stačí dotaz s <code>since</code> jednou za hodinu, nebo RSS.</li>
+        <li>Celé období se vejde do jednoho dotazu (<code>limit=500</code>); není potřeba stahovat tisk po tisku.</li>
+        <li>Pokud potřebujete víc (výzkum, hromadná analýza), <a href="<?= e((string)hlidacConfig('issues_url', '')) ?>">napište nám</a>.</li>
+      </ul>
+    </section>
+
+    <section class="card pad" id="rss">
+      <h2>RSS</h2>
+      <p><a href="/rss"><code><?= e(siteUrl('/rss')) ?></code></a> – upozornění od úrovně „Pozor“, nejnovější nahoře, nejvýš 50 (parametrem <code>limit</code> až 100).</p>
+      <ul>
+        <li><a href="/rss?zakon=159/2006"><code>/rss?zakon=159/2006</code></a> – jen tisky měnící daný zákon</li>
+        <li><a href="/rss?ct=221"><code>/rss?ct=221</code></a> – jen jeden tisk (všechna jeho upozornění)</li>
+        <li><a href="/rss?min_score=60"><code>/rss?min_score=60</code></a> – jen to nejzávažnější</li>
+        <li><a href="/rss?vse=1"><code>/rss?vse=1</code></a> – včetně běžné agendy</li>
+      </ul>
+    </section>
+
+    <section class="card pad" id="priklady">
+      <h2>Příklady kódu</h2>
+      <h3>Příkazová řádka (curl + jq)</h3>
+      <pre class="code"><code>curl -s '<?= e($base) ?>?min_score=50&amp;limit=500' | jq -r '.tisky[] | "\(.skore)\t\(.ct)\t\(.nazev)"'</code></pre>
+      <h3>JavaScript (prohlížeč i Node.js)</h3>
+      <pre class="code"><code>const res = await fetch('<?= e($base) ?>?upozorneni=1&amp;since=2026-11-01');
+const { upozorneni } = await res.json();
+for (const a of upozorneni) console.log(a.datum, a.titulek, a.url);</code></pre>
+      <h3>Python</h3>
+      <pre class="code"><code>import requests
+
+data = requests.get('<?= e($base) ?>', params={'tisk': 221}, timeout=30).json()
+tisk = data['tisk']
+print(tisk['skore'], tisk['uroven'])
+for d in tisk['duvody']:
+    print(f"{d['body']:>3}  {d['popis']}")</code></pre>
+    </section>
+
+    <section class="card pad" id="podminky">
+      <h2>Zdroje a podmínky</h2>
+      <ul>
+        <li>Data o tiscích, krocích, pozměňovacích návrzích a hlasování pocházejí z <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřených dat Poslanecké sněmovny</a>, příprava u vlády z <a href="https://odok.gov.cz/portal/katalog/stranky/opendata/">otevřených dat Úřadu vlády</a>.</li>
+        <li>Skóre, důvody a upozornění počítá tento web automaticky podle <a href="/metodika">veřejné metodiky</a>; rozbory textů dělá jazykový model a mohou se mýlit. Hodnotíme postup a formu, ne politický obsah.</li>
+        <li>Při dalším použití uveďte zdroj (Hlídač zákonů, <?= e(parse_url(siteUrl(), PHP_URL_HOST) ?: siteUrl()) ?>) a u přebíraných údajů i původní zdroj.</li>
+        <li>Zdrojový kód je <a href="https://github.com/FrantisekJanos/cosepece">na GitHubu</a> pod licencí AGPL-3.0. Chyby a nápady na nová data: <a href="<?= e((string)hlidacConfig('issues_url', '')) ?>">GitHub issues</a>.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+@endsection

@@ -39,7 +39,7 @@ services:
     volumes:
       - ./config.php:/run/hlidac/config.php:ro
       - appdata:/var/www/html/data
-    command: ["php", "artisan", "schedule:work"]
+    command: ["php", "-d", "memory_limit=1024M", "artisan", "schedule:work"]
     depends_on:
       web:
         condition: service_healthy

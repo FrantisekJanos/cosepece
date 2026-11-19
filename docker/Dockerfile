@@ -14,8 +14,15 @@ RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-a
 RUN a2enmod rewrite headers remoteip \
  && sed -ri 's/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf \
  && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf \
- && { echo 'memory_limit=512M'; echo 'max_execution_time=600'; echo 'expose_php=Off'; } \
+ && { echo 'memory_limit=256M'; echo 'max_execution_time=60'; echo 'expose_php=Off'; \
+      echo 'display_errors=Off'; echo 'log_errors=On'; echo 'error_log=/dev/stderr'; \
+      echo 'post_max_size=2M'; echo 'upload_max_filesize=0'; echo 'file_uploads=Off'; \
+      echo 'session.use_strict_mode=1'; } \
       > /usr/local/etc/php/conf.d/app.ini \
+ && { echo '<IfModule mpm_prefork_module>'; echo '  StartServers 4'; echo '  MinSpareServers 4'; echo '  MaxSpareServers 10'; \
+      echo '  MaxRequestWorkers 40'; echo '  MaxConnectionsPerChild 2000'; echo '</IfModule>'; \
+      echo 'Timeout 30'; echo 'ServerSignature Off'; echo 'TraceEnable Off'; } \
+      > /etc/apache2/conf-enabled/limits.conf \
  && { echo 'RemoteIPHeader X-Forwarded-For'; echo 'RemoteIPInternalProxy 10.0.0.0/8 172.16.0.0/12'; } \
       > /etc/apache2/conf-enabled/remoteip.conf \
  && echo 'ServerTokens Prod' > /etc/apache2/conf-enabled/tokens.conf

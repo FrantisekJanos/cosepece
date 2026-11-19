@@ -198,3 +198,5 @@ Controller má pojmenované akce a routy používají `[Controller::class, 'meth
 Pravidlo PHPStan `code.comments` zakazuje běžné PHP komentáře `//`, `#` a `/* */`, PHPDoc `/** */` ponechává.
 Kontroluje aplikační PHP v `app`, `routes`, `config`, vstupy `bootstrap` a `public`, `database`, `bin` a zdroj vlastních pravidel v `tools/phpstan`.
 Používá PHP tokenizaci; URL, řetězce, heredoc, HTML a textové prompty nejsou komentáře.
+
+Dokumentace veřejného API je na `/data`, včetně živých ukázek, popisu polí a limitů. `rate_limit` v konfiguraci nastavuje dotazy za minutu pro web (240), API (60), RSS (30) a obrázky (120); hodnota 0 limit vypne. Překročení vrací 429 s `Retry-After`, u obrázků se použije statický náhled. Po 10 chybných tokenech z jedné adresy se přístup ke cronu i AI API zablokuje do konce 15minutového okna.

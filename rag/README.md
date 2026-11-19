@@ -135,3 +135,29 @@ Události nesou tag `component` (`ingest` / `mcp`) a release z `SENTRY_RELEASE`.
 citlivé klíče, e-maily, IP adresy, tokeny, hesla z řetězců připojení (`password=…`) a cesty serveru (stejná pravidla
 jako PHP `app/Sentry.php`); lokální proměnné framů se neposílají. `ToolError` (očekávané chyby nástrojů) se neodesílá.
 Limit: každý proces pošle nejvýš 5 událostí za hodinu a stejný otisk jen jednou za hodinu.
+
+## Embeddingy a hledání podle významu (schéma `rag`, fáze 4)
+
+`hledej_v_projevech` a `hledej_v_textech` mají parametr `rezim`: `auto` (výchozí) sloučí výsledky podle slov
+(fulltext, top 50) a podle významu (vektory, top 50) metodou RRF (k = 60), `fulltext` hledá jen slova, `vyznam`
+jen vektory. Odpověď nese `rezim_pouzity` (`hybrid` | `vyznam` | `fulltext`) a u každé položky `shoda`
+(`slova` | `vyznam` | `obe`). Když není klíč, index je prázdný, API neodpoví do 3 s nebo je vyčerpaný denní strop,
+hledá se jen podle slov a `poznamka` řekne proč. Prázdný dotaz s filtrem v `hledej_v_textech` je vždy lexikální.
+
+- Data: `rag.usek` (`schema_embeddingy.sql`, pgvector `halfvec(1024)`, HNSW). Úsek = kus projevu (od 200 znaků)
+  nebo celku textu do 2 400 znaků s překryvem ~300, embeduje se s hlavičkou (řečník, klub, datum, schůze, bod,
+  tisky; u celku tisk/PN, název, cesta, měněný zákon). Z jednoho projevu nebo celku jdou do výsledků nejvýš 2 úseky.
+- Indexování: krok 6 v `python -m hlidac_rag.run` po textech, jen nové a změněné zdroje (otisk textu a údajů
+  hlavičky v SQL; změna modelu = přeindexování), zrušené projevy a nedostupné dokumenty úseky ztratí. Zdroj se
+  zapisuje celý v jedné transakci. Úvodní indexace ručně s vyšším stropem:
+  `python -m hlidac_rag.run --jen-embeddingy --embed-max-tokenu 40000000`.
+- Proměnné: `OPENAI_API_KEY` (bez něj se indexování přeskočí a hledá se jen podle slov; klíč nikdy do repa ani
+  logu), `EMBED_MODEL` (výchozí `text-embedding-3-large`), `EMBED_DIM` (1024, musí sedět se sloupcem),
+  `EMBED_MAX_TOKENS_PER_RUN` (strop tokenů za hodinový běh, výchozí 3 000 000; odhad 2 znaky na token),
+  `EMBED_DOTAZY_DEN` (denní strop embeddingů dotazů v procesu MCP napříč tokeny, výchozí 20 000, den podle UTC).
+- Cena: `-large` 0,13 USD, `-small` 0,02 USD za milion tokenů. Čeština s hlavičkami vychází na 2,2 znaku na
+  token (změřeno na vzorku), celý korpus (~65 mil. znaků textu) tedy odhadem 35–40 mil. tokenů, asi 5 USD s `-large`. Výsledek běhu (úseky, tokeny, odhad USD) je v `steno.beh` a
+  v `stav_dat` (`embeddingy`, `steno_last_result.embeddingy`).
+- Porovnání modelů na vzorku (jen proti lokální kopii dat):
+  `DATABASE_URL=… python -m eval.porovnani_modelu --vzorek 1500` (odhad ceny předem, nad 0,50 USD jen s `--ano`;
+  recall@10/@20 na otázkách fáze 4 s polem `cile` v `eval/otazky.json`).

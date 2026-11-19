@@ -68,15 +68,22 @@ def _tsquery(dotaz: str) -> str:
     Slova bez diakritiky a malými písmeny; slova kratší než 3 znaky (předložky, spojky) se vyřadí, pokud
     neobsahují číslici. Slova od 5 znaků se zkrátí o koncovku (kvůli skloňování; heuristika z EpasDocsFetch)
     a dostanou prefix `:*`, slova o 3-4 znacích (daň, DPH) a čísla zůstanou přesná.
+    Parser 'simple' indexuje "586/1992" a "4.36" jako jeden token, proto zůstanou celé a přesné
+    (zápis "4:36" a "4,36" se sjednotí na "4.36").
     Všechna zbylá slova musí být ve shodě (AND). Bez použitelných slov = ValueError."""
-    words = [w for w in re.findall(r"\w+", unaccent_py(dotaz.lower()))
-             if len(w) >= 3 or any(ch.isdigit() for ch in w)][:12]
+    words = []
+    for w in re.findall(r"\d+/\d{4}|\d+[.,:]\d+|\w+", unaccent_py(dotaz.lower())):
+        if "/" in w or re.fullmatch(r"\d+[.,:]\d+", w):
+            words.append(re.sub(r"[,:]", ".", w))
+        elif len(w) >= 3 or any(ch.isdigit() for ch in w):
+            words.append(w)
+    words = words[:12]
     if not words:
         raise ValueError("Dotaz je příliš krátký: zadejte alespoň jedno slovo o 3 a více znacích "
                          "(kratší slova, např. předložky, se ignorují).")
 
     def term(w: str) -> str:
-        if len(w) < 5:
+        if len(w) < 5 or "/" in w or "." in w:
             return w
         if any(ch.isdigit() for ch in w):
             return w + ":*"
@@ -230,7 +237,7 @@ def tisky_menici_zakon(conn, sb: str, limit: int = 50, offset: int = 0) -> dict:
     """Tisky měnící zákon, řazené podle skóre sestupně (stránkovaně)."""
     sb = _norm_sb(sb)
     pat = (f"%,{sb},%", f"%,{sb},%")
-    total = _one(conn, f"{_ZAKON_CTE} SELECT count(DISTINCT ct) AS n FROM x", pat)["n"]
+    total = _one(conn, f"{_ZAKON_CTE} SELECT count(DISTINCT x.ct) AS n FROM x JOIN tisky t ON t.ct = x.ct", pat)["n"]
     off = _offset(offset)
     rows = _rows(conn, f"""{_ZAKON_CTE}
                            SELECT t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score,
@@ -360,10 +367,10 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
         params.append(_date(do, "do"))
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    off = _offset(offset)
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum, p.schuze, p.poradi LIMIT %s OFFSET %s""",
-                 (*params, _limit(limit), max(0, int(offset))))
-    off = _offset(offset)
+                 (*params, _limit(limit), off))
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "projevy": _speech_rows(rows)}
 
@@ -415,10 +422,10 @@ def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | Non
         params.append(_tsquery(q))
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    off = _offset(offset)
     rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum DESC, p.schuze, p.poradi LIMIT %s OFFSET %s""",
-                 (*params, _limit(limit), max(0, int(offset))))
-    off = _offset(offset)
+                 (*params, _limit(limit), off))
     return {"id_osoba": id_osoba, "celkem": total, "offset": off,
             "dalsi_offset": _next_offset(total, off, len(rows)), "projevy": _speech_rows(rows)}
 

@@ -235,7 +235,10 @@ def test_tsquery_kratka_slova():
         tools._tsquery("na se")
     assert tools._tsquery("DPH daň") == "dph & dan"
     assert tools._tsquery("rafinérské marže") == "rafiners:* & marz:*"
-    assert tools._tsquery("zákon 586/1992 na") == "zako:* & 586 & 1992"
+    assert tools._tsquery("zákon 586/1992 na") == "zako:* & 586/1992"
+    assert tools._tsquery("4.36") == "4.36"
+    assert tools._tsquery("4:36") == "4.36"
+    assert tools._tsquery("4,36") == "4.36"
 
 
 def test_hledej_uryvek_kolem_shody():
@@ -250,7 +253,7 @@ def test_hledej_uryvek_kolem_shody():
 
 
 def test_hledej_ma_celkem_a_offset():
-    rows = [_speech(id=i, uryvek_shoda="«a»") for i in (1, 2)]
+    rows = [_speech(id=i, text="dotace") for i in (1, 2)]
     r = tools.hledej_v_projevech(FakeConn([dict(n=5)], rows), "dotace", limit=2, offset=2)
     assert r["celkem"] == 5 and r["offset"] == 2 and r["dalsi_offset"] == 4
     r = tools.hledej_v_projevech(FakeConn([dict(n=4)], rows), "dotace", limit=2, offset=2)

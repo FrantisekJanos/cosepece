@@ -12,7 +12,7 @@ final class OgCard
     public const WIDTH = 1200;
     public const HEIGHT = 630;
     // zvýšit při změně vzhledu, aby se nepoužily staré obrázky z cache
-    public const VERSION = 1;
+    public const VERSION = 2;
 
     private const PAD = 72;
     private const COLORS = [
@@ -126,14 +126,16 @@ final class OgCard
 
         imagefilledrectangle($im, 0, 0, $w, $h, $c['ground']);
 
-        // tmavý pruh se značkou jako na webu
+        // tmavý pruh se značkou jako na webu, vpravo adresa webu
         $barH = 100;
         imagefilledrectangle($im, 0, 0, $w, $barH, $c['ink']);
         self::drawLogo($im, $pad, 30, 40, $c['white']);
         imagettftext($im, 30, 0, $pad + 58, 64, $c['white'], $bold, 'Hlídač zákonů');
-        $right = 'Hlídáme postup, ne politiku';
-        $rw = self::textWidth($right, 20, $regular);
-        imagettftext($im, 20, 0, $w - $pad - $rw, 60, $c['bar_sub'], $regular, $right);
+        $domain = (string)($card['domain'] ?? '');
+        if ($domain !== '') {
+            $dw = self::textWidth($domain, 24, $bold);
+            imagettftext($im, 24, 0, $w - $pad - $dw, 61, $c['bar_sub'], $bold, $domain);
+        }
 
         // barevný pruh vlevo podle úrovně skóre (u stránek modrý)
         $levelColor = match ($card['level']) {
@@ -147,31 +149,55 @@ final class OgCard
         $maxW = $w - 2 * $pad;
         $y = $barH + 64;
 
-        // nadtitulek: tisk, typ návrhu, fáze
+        // skóre vpravo nahoře: spodní pruh obrázku na X překrývá titulek odkazu, proto nic důležitého dole
+        $pillW = 0;
+        if ($card['score'] !== null) {
+            $labels = [Scorer::LEVEL_MAJOR => 'Závažné', Scorer::LEVEL_WATCH => 'Pozor', Scorer::LEVEL_NORMAL => 'Běžné'];
+            [$bg, $fg] = match ($card['level']) {
+                Scorer::LEVEL_MAJOR => [$c['major'], $c['white']],
+                Scorer::LEVEL_WATCH => [$c['watch_bg'], $c['watch_ink']],
+                default => [$c['normal_bg'], $c['muted']],
+            };
+            $num = (string)(int)$card['score'];
+            $of = '/100';
+            $label = $labels[$card['level']] ?? '';
+            $numW = self::textWidth($num, 34, $bold);
+            $ofW = self::textWidth($of, 20, $regular);
+            $labW = self::textWidth($label, 24, $bold);
+            $pillW = 24 + $numW + 4 + $ofW + 16 + $labW + 24;
+            $px = $w - $pad - $pillW;
+            $py = $barH + 24;
+            self::roundedRect($im, $px, $py, $px + $pillW, $py + 60, 14, $bg);
+            imagettftext($im, 34, 0, $px + 24, $py + 45, $fg, $bold, $num);
+            imagettftext($im, 20, 0, $px + 24 + $numW + 4, $py + 45, $fg, $regular, $of);
+            imagettftext($im, 24, 0, $px + 24 + $numW + 4 + $ofW + 16, $py + 42, $fg, $bold, $label);
+        }
+
+        // nadtitulek: tisk, typ návrhu, fáze (vedle skóre)
         $eyebrow = mb_strtoupper((string)$card['eyebrow']);
-        $eyebrow = self::fit($eyebrow, 20, $bold, $maxW, 1)[0];
+        $eyebrow = self::fit($eyebrow, 20, $bold, $maxW - ($pillW > 0 ? $pillW + 24 : 0), 1)[0];
         imagettftext($im, 20, 0, $pad, $y, $c['accent'], $bold, $eyebrow);
 
         // titulek: co nejvíc čitelný, zmenšuje se podle délky, max. 3–4 řádky
-        $footerTop = $h - 112;
+        $footerTop = $h - 96;
         $text = trim((string)$card['text']);
         $textSize = 26;
         $textLines = $text !== '' ? self::fit($text, $textSize, $regular, $maxW, (int)($card['text_lines'] ?? 2)) : [];
         $textH = count($textLines) * (int)round($textSize * 1.45);
-        $titleTop = $y + 26;
-        $titleRoom = $footerTop - 28 - ($textH > 0 ? $textH + 22 : 0) - $titleTop;
+        $titleTop = $y + 30;
+        $titleRoom = $footerTop - 24 - ($textH > 0 ? $textH + 22 : 0) - $titleTop;
         $title = (string)$card['title'];
         $lines = [];
         $size = 56;
         foreach ([56, 50, 44, 40, 36] as $size) {
-            $lineH = (int)round($size * 1.2);
+            $lineH = (int)round($size * 1.3);
             $maxLines = max(1, intdiv($titleRoom, $lineH));
             $lines = self::fit($title, $size, $bold, $maxW, $maxLines, $complete);
             if ($complete) {
                 break;
             }
         }
-        $lineH = (int)round($size * 1.2);
+        $lineH = (int)round($size * 1.3);
         $ty = $titleTop;
         foreach ($lines as $line) {
             $ty += $lineH;
@@ -185,33 +211,10 @@ final class OgCard
             imagettftext($im, $textSize, 0, $pad, $ty - 8, $c['ink2'], $regular, $line);
         }
 
-        // spodní řádek: skóre (u tisku) a adresa webu
+        // spodní řádek jen doplňkový (na X ho překryje titulek odkazu)
         imageline($im, $pad, $footerTop, $w - $pad, $footerTop, $c['line']);
-        $by = $footerTop + 30;
-        if ($card['score'] !== null) {
-            $labels = [Scorer::LEVEL_MAJOR => 'Závažné', Scorer::LEVEL_WATCH => 'Pozor', Scorer::LEVEL_NORMAL => 'Běžné'];
-            [$bg, $fg] = match ($card['level']) {
-                Scorer::LEVEL_MAJOR => [$c['major'], $c['white']],
-                Scorer::LEVEL_WATCH => [$c['watch_bg'], $c['watch_ink']],
-                default => [$c['normal_bg'], $c['muted']],
-            };
-            $num = (string)(int)$card['score'];
-            $label = $labels[$card['level']] ?? '';
-            $numW = self::textWidth($num, 34, $bold);
-            $labW = self::textWidth($label, 24, $bold);
-            $pillW = 28 + $numW + 14 + $labW + 28;
-            self::roundedRect($im, $pad, $by, $pad + $pillW, $by + 60, 14, $bg);
-            imagettftext($im, 34, 0, $pad + 28, $by + 45, $fg, $bold, $num);
-            imagettftext($im, 24, 0, $pad + 28 + $numW + 14, $by + 41, $fg, $bold, $label);
-            imagettftext($im, 22, 0, $pad + $pillW + 20, $by + 40, $c['muted'], $regular, 'skóre závažnosti postupu ze 100');
-        } else {
-            imagettftext($im, 22, 0, $pad, $by + 40, $c['muted'], $regular, 'Z otevřených dat Poslanecké sněmovny');
-        }
-        $domain = (string)($card['domain'] ?? '');
-        if ($domain !== '') {
-            $dw = self::textWidth($domain, 26, $bold);
-            imagettftext($im, 26, 0, $w - $pad - $dw, $by + 41, $c['ink'], $bold, $domain);
-        }
+        imagettftext($im, 20, 0, $pad, $footerTop + 54, $c['muted'], $regular,
+            'Hlídáme postup, ne politiku · z otevřených dat Poslanecké sněmovny');
 
         ob_start();
         imagepng($im, null, 6);

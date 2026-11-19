@@ -145,3 +145,21 @@ CREATE TABLE IF NOT EXISTS mcp.volani (
   chyba boolean NOT NULL DEFAULT false,
   cas timestamptz NOT NULL DEFAULT now()
 );
+
+-- Texty návrhů zákonů a PN rozdělené na celky (část, článek, §, bod novely) pro MCP.
+-- Plní je hlidac_rag.texty.ingest.sync_texty; zdroj: tabulky PHP webu nebo vlastní stažení z psp.cz.
+CREATE SCHEMA IF NOT EXISTS texty;
+CREATE TABLE IF NOT EXISTS texty.dokument (
+  id serial PRIMARY KEY, druh text NOT NULL CHECK (druh IN ('tisk','pn')),
+  ct int NOT NULL, cislo_pn int, verze text NOT NULL DEFAULT 'puvodni' CHECK (verze IN ('puvodni','schvalene')),
+  docx_url text, zdroj_textu text NOT NULL CHECK (zdroj_textu IN ('tisk_text','pn_text','vlastni_stazeni')),
+  text text, hash text, znaku int NOT NULL DEFAULT 0, rozdeleno_at timestamptz, zkontrolovano_at timestamptz, chyba text,
+  UNIQUE (druh, ct, cislo_pn, verze));   -- u tisku cislo_pn = 0 (ne NULL), aby UNIQUE platilo
+CREATE TABLE IF NOT EXISTS texty.cel (
+  id bigserial PRIMARY KEY, dokument_id int NOT NULL REFERENCES texty.dokument(id) ON DELETE CASCADE,
+  poradi int NOT NULL, typ text NOT NULL, oznaceni text NOT NULL, cesta text NOT NULL, meni_zakon text,
+  text text NOT NULL, znaku int NOT NULL, od_znaku int NOT NULL,
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', unaccent_simple(text))) STORED,
+  UNIQUE (dokument_id, poradi));
+CREATE INDEX IF NOT EXISTS cel_tsv ON texty.cel USING gin (tsv);
+CREATE INDEX IF NOT EXISTS cel_oznaceni ON texty.cel (dokument_id, oznaceni);

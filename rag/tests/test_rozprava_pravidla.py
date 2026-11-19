@@ -148,3 +148,29 @@ def test_pn_z_textu(text, ocekavano):
 def test_pn_z_textu_vlastni_cislo():
     # reálná věta: „Můj druhý pozměňovací návrh má číslo 2092 a navrhuje …“
     assert pn_z_textu("Můj druhý pozměňovací návrh má číslo 2092 a navrhuje zavedení povinného krácení") == [2092]
+
+
+# --- regrese: shoda příjmení a běžná malá slova ----------------------------
+
+@pytest.mark.parametrize("tvar, prijmeni", [
+    ("Haase", "Haas"), ("Haasovi", "Haas"), ("Vlčka", "Vlček"), ("Válka", "Válek"),
+    ("Němce", "Němec"), ("Mrázové", "Mrázová"), ("Krškové", "Kršková"),
+    ("Kovářová", "Kovářová"), ("Kupky", "Kupka"), ("Novotného", "Novotný"),
+    ("Pražáka", "Pražák"), ("Okamury", "Okamura"),
+])
+def test_shoda_prijmeni_tabulka_ano(tvar, prijmeni):
+    assert shoda_prijmeni(tvar, prijmeni)
+
+
+@pytest.mark.parametrize("tvar, prijmeni", [
+    ("Novotného", "Novák"), ("Bendla", "Berki"), ("Bereme", "Berki"),
+])
+def test_shoda_prijmeni_tabulka_ne(tvar, prijmeni):
+    assert not shoda_prijmeni(tvar, prijmeni)
+
+
+def test_druh_male_slovo_nepoplete_prijmeni():
+    t = "Pan poslanec Berki vystoupí s faktickou poznámkou. Bereme si pauzu."
+    assert druh_vystoupeni(t, "Poslanec Jan Berki", False, "Berki") == "fakticka"
+    t2 = "Pan poslanec Marek vystoupí s faktickou poznámkou. Marně čekám na odpověď."
+    assert druh_vystoupeni(t2, "Poslanec Marek", False, "Marek") == "fakticka"

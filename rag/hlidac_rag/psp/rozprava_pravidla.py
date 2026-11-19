@@ -43,13 +43,21 @@ def shoda_prijmeni(tvar: str, prijmeni: str) -> bool:
     """Odpovídá ohnutý tvar příjmení (Haase, Vlčka) základnímu tvaru (Haas, Vlček)?
 
     Bez diakritiky a velikosti písmen; `tvar` musí začínat kmenem příjmení
-    (příjmení bez posledních 2 znaků, nejméně 3 znaky).
+    (příjmení bez koncové samohlásky, u „-ek/-ec/-el“ bez posledních 2 znaků;
+    nejméně 3 znaky, kratší kmen = celé příjmení).
     """
     t, p = _bez_diakritiky(tvar), _bez_diakritiky(prijmeni)
     if not t or not p:
         return False
-    delka = min(len(p), max(3, len(p) - 2))
-    return t.startswith(p[:delka])
+    if p.endswith(("ek", "ec", "el")):  # pohyblivé e: Vlček -> Vlčka
+        kmen = p[:-2]
+    elif p[-1] in "aeiouy":  # koncová samohláska: Kupka -> Kupky
+        kmen = p[:-1]
+    else:
+        kmen = p
+    if len(kmen) < 3:
+        kmen = p
+    return t.startswith(kmen)
 
 
 # --- oslovený řečník -------------------------------------------------------
@@ -142,7 +150,7 @@ def _usek_o_osobe(veta: str, prijmeni: str) -> str | None:
     """Část věty o osobě s daným příjmením (mezi oddělovači „potom“, „a pak“ …)."""
     shoda = None
     for m in RE_SLOVA.finditer(veta):
-        if shoda_prijmeni(m.group(), prijmeni):
+        if m.group()[0].isupper() and shoda_prijmeni(m.group(), prijmeni):
             shoda = m
     if shoda is None:
         return None
@@ -161,10 +169,13 @@ def _usek_o_osobe(veta: str, prijmeni: str) -> str | None:
 def _rozhodujici_usek(text: str, prijmeni: str | None) -> str:
     vety = [v for v in RE_VETY.split(text) if v.strip()]
     if prijmeni:
-        for v in reversed(vety):
-            usek = _usek_o_osobe(v, prijmeni)
-            if usek is not None:
-                return usek
+        useky = [u for u in (_usek_o_osobe(v, prijmeni) for v in reversed(vety)) if u is not None]
+        # přednost má úsek s klíčovým slovem (krátké příjmení může omylem sedět na jiné slovo)
+        for u in useky:
+            if RE_KLICOVE.search(u):
+                return u
+        if useky:
+            return useky[0]
     for v in reversed(vety):
         if RE_KLICOVE.search(v) and not _jen_podekovani(v):
             return v

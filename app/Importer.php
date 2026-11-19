@@ -23,6 +23,7 @@ final class Importer
         $osoby = $this->loadOsoby();
         $tisky = $this->loadTisky($obdobiId);
         $kroky = $this->loadKroky($tisky);
+        $souhrny = $this->loadSouhrny($tisky);
         $pn = $this->loadPn($obdobiId, $osoby);
 
         $pnByCt = [];
@@ -51,6 +52,8 @@ final class Importer
                 'pn_last' => $pnByCt[$tisk['ct']]['last'] ?? null,
                 'sbirka' => $this->sbirka($list),
                 'vyhlaseno' => $this->vyhlaseno($list),
+                'souhrn_pn' => $souhrny[$tisk['id_tisk']]['cislo_za'] ?? null,
+                'souhrn_pn_at' => $souhrny[$tisk['id_tisk']]['datum'] ?? null,
             ];
         }
 
@@ -78,7 +81,7 @@ final class Importer
             $this->db->insertMany('tisky', [
                 'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
                 'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
-                'vyhlaseno', 'lhuta',
+                'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce', 'id_hlasovani',
@@ -95,6 +98,29 @@ final class Importer
         }
 
         return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn)];
+    }
+
+    private function loadSouhrny(array $tisky): array
+    {
+
+
+
+        $out = [];
+        try {
+            foreach ($this->source->rows('tisky', 'tisky_za.unl') as $c) {
+                $idTisk = (int)($c[0] ?? 0);
+                if (!isset($tisky[$idTisk]) || (int)($c[3] ?? 0) !== 10) {
+                    continue;
+                }
+                $at = substr(trim($c[6] ?? ''), 0, 16);
+                if ($at !== '' && (!isset($out[$idTisk]) || $at < $out[$idTisk]['datum'])) {
+                    $out[$idTisk] = ['cislo_za' => (int)$c[1], 'datum' => $at];
+                }
+            }
+        } catch (RuntimeException) {
+
+        }
+        return $out;
     }
 
     private function switchPeriod(int $oldCislo): void

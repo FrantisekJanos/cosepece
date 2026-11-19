@@ -20,7 +20,7 @@ final class Bill extends Model
         'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev',
         'uplny_nazev', 'predlozeno', 'faze', 'posledni', 'p90', 'p90ok',
         'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka', 'score',
-        'reasons', 'vyhlaseno', 'lhuta',
+        'reasons', 'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at',
     ];
 
     protected function casts(): array
@@ -29,6 +29,8 @@ final class Bill extends Model
             'id_tisk' => 'integer',
             'ct' => 'integer',
             'lhuta' => 'integer',
+            'souhrn_pn' => 'integer',
+            'souhrn_pn_at' => 'immutable_datetime',
             'druh' => 'integer',
             'p90' => 'boolean',
             'p90ok' => 'boolean',

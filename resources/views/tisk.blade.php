@@ -107,6 +107,9 @@ use Hlidac\View;
     </section>
     <section class="card pad">
       <h2>Pozměňovací návrhy</h2>
+      @if (!empty($t['souhrn_pn']))
+      <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o={{ (int)$obdobi }}&amp;ct={{ $ct }}&amp;ct1={{ (int)$t['souhrn_pn'] }}">Souhrn platně podaných pozměňovacích návrhů (tisk {{ $ct }}/{{ (int)$t['souhrn_pn'] }})</a> <span class="muted">rozeslán {{ formatDate((string)$t['souhrn_pn_at'] . ':00', true) }}</span></p>
+      @endif
       <ul class="plain-list">
         <?php foreach (array_slice($pn, 0, 30) as $p): ?>
           <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>

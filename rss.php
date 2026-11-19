@@ -1,18 +1,28 @@
 <?php
-// RSS kanál upozornění.
+// RSS kanál upozornění. Filtry (#28): ?min_score=60, ?zakon=159/2006, ?ct=221, ?since=YYYY-MM-DD; ?vse=1 = i běžná agenda.
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/app/bootstrap.php';
 
+use Hlidac\Api;
 use Hlidac\Repo;
-use Hlidac\Scorer;
 use Hlidac\View;
 
 $repo = new Repo(db());
-// do RSS jde jen to důležité (?vse=1 = vše)
-$min = !empty($_GET['vse']) ? 0 : (int)Scorer::weights(config())['level_watch'];
-$alerts = $repo->alerts(50, 0, null, $min);
+// do RSS jde jen to důležité (?vse=1 = vše); filtry stejné jako v api.php
+$query = $_GET;
+if (!empty($query['vse']) && !isset($query['min_score'])) {
+    $query['min_score'] = 0;
+}
+$query['limit'] = min(100, (int)($query['limit'] ?? 50));
+try {
+    $filters = Api::filters($query);
+} catch (InvalidArgumentException $ex) {
+    http_response_code(400);
+    exit($ex->getMessage());
+}
+$alerts = (new Api(db(), $repo, config()))->alertRows($filters);
 
 // v CLI testu už výstup běží, hlavičku pak nelze poslat
 if (!headers_sent()) {

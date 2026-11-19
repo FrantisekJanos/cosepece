@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Data pro další nástroje a filtrované RSS',
+        'Nový strojový výstup api.php vrací tisky, jejich skóre s důvody, hlasování a upozornění ve formátu JSON (např. api.php?tisk=221 nebo api.php?since=2026-11-01&min_score=50). RSS jde filtrovat podle zákona, tisku a skóre (např. rss.php?zakon=159/2006 nebo rss.php?min_score=60).',
+        [33], false],
     ['2026-11-19', 'Víc pozměňovacích návrhů neznamená automaticky víc bodů',
         'Čím víc pozměňovacích návrhů tisk má, tím spíš mezi nimi AI najde jeden závažný i náhodou. Plné body za rozbor nejhoršího návrhu proto dostane tisk jen tehdy, když jsou podobně závažné aspoň dva návrhy, nebo aspoň čtvrtina všech. Ojedinělý nález mezi více návrhy dá polovinu bodů. Body za „víc problematických návrhů“ vyžadují kromě aspoň tří takových návrhů i to, aby tvořily aspoň pětinu všech návrhů k tisku (od deseti stačí samotný počet). Na datech z 18. 11. to snížilo skóre dvou tisků, úroveň žádného se nezměnila.',
         [35], true],

@@ -5,6 +5,8 @@ a číslování bývá na stejném řádku jako text. Čisté funkce, bez DB a s
 
 Celky na sebe navazují a pokrývají celý text: spojení jejich textů je původní text
 (až na bílé znaky), `od_znaku` ukazuje na začátek celku v původním textu.
+Text celku za citovaným novým zněním (za zavírací uvozovkou) je pokračování okolního
+celku se stejným označením i cestou.
 """
 from __future__ import annotations
 
@@ -73,16 +75,29 @@ class _Usek:
     meni_zakon: str | None
     start: int
     end: int
+    pokracovani: bool = False   # navazuje na celek přerušený citovaným novým zněním
 
 
 @dataclass
 class _Uroven:
     typ: str
     oznaceni: str
-    v_uvozovkach: bool       # vnořeno do bodu PN (nové znění v uvozovkách)
-    citovany: bool           # nadpis začíná „ nebo leží v neuzavřených uvozovkách
-    meni_zakon: str | None = None
+    hloubka: int             # počet otevřených uvozovek „ … “, ve kterých nadpis leží
     cislo: int | None = None
+    meni_zakon: str | None = None
+
+
+RADOVE = ["PRVNÍ", "DRUHÁ", "TŘETÍ", "ČTVRTÁ", "PÁTÁ", "ŠESTÁ", "SEDMÁ", "OSMÁ", "DEVÁTÁ", "DESÁTÁ",
+          "JEDENÁCTÁ", "DVANÁCTÁ", "TŘINÁCTÁ", "ČTRNÁCTÁ", "PATNÁCTÁ", "ŠESTNÁCTÁ", "SEDMNÁCTÁ",
+          "OSMNÁCTÁ", "DEVATENÁCTÁ", "DVACÁTÁ"]
+RIMSKE = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+def _rimske(s: str) -> int | None:
+    if not s or any(ch not in RIMSKE for ch in s):
+        return int(s) if s.isdigit() else None
+    hodnoty = [RIMSKE[ch] for ch in s]
+    return sum(-h if i + 1 < len(hodnoty) and h < hodnoty[i + 1] else h for i, h in enumerate(hodnoty))
 
 
 def _radky(text: str) -> list[tuple[int, str]]:
@@ -90,12 +105,14 @@ def _radky(text: str) -> list[tuple[int, str]]:
 
 
 def _nadpis(radky: list[tuple[int, str]], i: int) -> tuple[str, str, int | None] | None:
-    """Pozná nadpis celku na řádku i: (typ, označení, číslo bodu)."""
+    """Pozná nadpis celku na řádku i: (typ, označení, pořadové číslo)."""
     s = radky[i][1].strip()
     if m := RE_CAST.match(s):
-        return "cast", "ČÁST " + m.group(1).upper(), None
+        nazev = m.group(1).upper()
+        cislo = RADOVE.index(nazev) + 1 if nazev in RADOVE else (int(nazev) if nazev.isdigit() else None)
+        return "cast", "ČÁST " + nazev, cislo
     if m := RE_CLANEK.match(s):
-        return "clanek", "Čl. " + m.group(1), None
+        return "clanek", "Čl. " + m.group(1), _rimske(m.group(1))
     if m := RE_PARAGRAF.match(s):
         return "paragraf", "§ " + m.group(1), None
     if m := RE_BOD.match(s):
@@ -122,6 +139,60 @@ def _meni_zakon(radky: list[str]) -> str | None:
     return None
 
 
+class _Struktura:
+    """Zásobník nadřazených celků a hloubka uvozovek.
+
+    Nadpis v uvozovkách („§ 20ba …“, „Čl. II …“, „3. V § 5 …“) je nové znění vkládané
+    okolním celkem: je jeho potomkem a nikdy nevytlačí celky mimo uvozovky. Když se
+    uvozovka zavře, citované celky skončí a text dál patří okolnímu celku.
+    Mezi nadpisy ve stejné hloubce rozhoduje úroveň (část > článek > bod > §).
+    """
+
+    def __init__(self) -> None:
+        self.zasobnik: list[_Uroven] = []
+        self.hloubka = 0
+
+    def cesta(self) -> str:
+        return " / ".join(z.oznaceni for z in self.zasobnik)
+
+    def meni_zakon(self) -> str | None:
+        return next((z.meni_zakon for z in reversed(self.zasobnik) if z.meni_zakon), None)
+
+    def _sourozenec_venku(self, typ: str, cislo: int | None, hloubka: int) -> _Uroven | None:
+        """Celek stejného druhu s předchozím číslem mimo aktuální uvozovky (neuzavřená „)."""
+        if cislo is None:
+            return None
+        return next((z for z in reversed(self.zasobnik)
+                     if z.hloubka < hloubka and z.typ == typ and z.cislo == cislo - 1), None)
+
+    def nadpis(self, typ: str, oznaceni: str, cislo: int | None, radek: str) -> None:
+        """Zařadí nadpis z řádku `radek` (před započtením uvozovek tohoto řádku)."""
+        s = radek.strip()
+        # pojistky proti neuzavřené uvozovce v dokumentu:
+        if s.startswith("„") and self.hloubka > 0 and any(
+                z.typ == typ and z.hloubka == self.hloubka for z in self.zasobnik):
+            # nová citace „75. …“ vedle citovaného bodu stejné hloubky = předchozí citace neskončila
+            self.hloubka -= 1
+        hloubka = self.hloubka + (1 if s.startswith("„") else 0)
+        if hloubka > 0 and not s.startswith("„"):
+            # „Čl. II“ za „Čl. I“ venku je jeho sourozenec, ne citace
+            if venku := self._sourozenec_venku(typ, cislo, hloubka):
+                hloubka = self.hloubka = venku.hloubka
+        while self.zasobnik and (self.zasobnik[-1].hloubka > hloubka or (
+                self.zasobnik[-1].hloubka == hloubka and UROVEN[self.zasobnik[-1].typ] >= UROVEN[typ])):
+            self.zasobnik.pop()
+        self.zasobnik.append(_Uroven(typ, oznaceni, hloubka, cislo))
+
+    def po_radku(self, radek: str) -> bool:
+        """Započte uvozovky řádku; vrátí True, když se zavřela uvozovka citovaného celku."""
+        self.hloubka = max(0, self.hloubka + radek.count("„") - radek.count("“"))
+        konec = False
+        while self.zasobnik and self.zasobnik[-1].hloubka > self.hloubka:
+            self.zasobnik.pop()
+            konec = True
+        return konec
+
+
 def _useky(text: str) -> list[_Usek]:
     radky = _radky(text)
     nadpisy_duv = [m.start() for m in RE_DUVODOVA.finditer(text)]
@@ -130,10 +201,9 @@ def _useky(text: str) -> list[_Usek]:
     zacatek_duv = nadpisy_duv[0] if nadpisy_duv else len(text)
 
     useky: list[_Usek] = []
-    zasobnik: list[_Uroven] = []
-    hloubka = 0                # počet otevřených uvozovek „ … “
-    posledni_bod: int | None = None
+    st = _Struktura()
     v_duvodove = False
+    pokracovat = False          # další řádek začne pokračování okolního celku
     radky_useku: list[str] = []
 
     def uzavri(end: int) -> None:
@@ -141,28 +211,25 @@ def _useky(text: str) -> list[_Usek]:
             return
         u = useky[-1]
         u.end = end
-        if u.typ in UROVEN and zasobnik:
-            mz = _meni_zakon(radky_useku)
-            if mz:
-                zasobnik[-1].meni_zakon = mz
+        if u.typ in UROVEN and not u.pokracovani and st.zasobnik:
+            if mz := _meni_zakon(radky_useku):
+                st.zasobnik[-1].meni_zakon = mz
                 u.meni_zakon = mz
 
-    def novy(typ: str, oznaceni: str, start: int) -> None:
+    def novy(typ: str, oznaceni: str, start: int, pokracovani: bool = False) -> None:
         nonlocal radky_useku
-        mz = next((z.meni_zakon for z in reversed(zasobnik) if z.meni_zakon), None)
-        cesta = " / ".join(z.oznaceni for z in zasobnik) if typ in UROVEN else oznaceni
-        if typ == "duvodova_zprava" and zasobnik and stridave:
-            cesta = " / ".join(z.oznaceni for z in zasobnik) + " / " + oznaceni
-        useky.append(_Usek(typ, oznaceni, cesta, mz if typ in UROVEN else None, start, start))
+        if typ in UROVEN:
+            cesta, mz = st.cesta(), st.meni_zakon()
+        else:
+            cesta, mz = oznaceni, None
+            if typ == "duvodova_zprava" and stridave and st.zasobnik:
+                cesta = st.cesta() + " / " + oznaceni
+        useky.append(_Usek(typ, oznaceni, cesta, mz, start, start, pokracovani))
         radky_useku = []
 
     for i, (start, radek) in enumerate(radky):
-        hloubka_pred = hloubka
-        hloubka = max(0, hloubka + radek.count("„") - radek.count("“"))
-
-        je_duv = RE_DUVODOVA.match(radek.rstrip("\n")) is not None and start >= zacatek_duv
-        if je_duv:
-            v_duvodove = True
+        if RE_DUVODOVA.match(radek.rstrip("\n")) and start >= zacatek_duv:
+            v_duvodove, pokracovat = True, False
             uzavri(start)
             novy("duvodova_zprava", "důvodová zpráva", start)
             radky_useku.append(radek)
@@ -175,43 +242,26 @@ def _useky(text: str) -> list[_Usek]:
                 novy("duvodova_zprava", "důvodová zpráva", start)
             radky_useku.append(radek)
             continue
-        v_duvodove = False
+        if v_duvodove:
+            # odůvodnění bodu PN skončilo, uvozovky v něm se nepočítají
+            v_duvodove, st.hloubka = False, 0
 
-        if nadpis is None:
-            if not useky or (useky[-1].typ == "duvodova_zprava"):
-                uzavri(start)
+        if nadpis is not None:
+            typ, oznaceni, cislo = nadpis
+            uzavri(start)
+            st.nadpis(typ, oznaceni, cislo, radek)
+            novy(typ, oznaceni, start)
+        elif pokracovat or not useky or useky[-1].typ == "duvodova_zprava":
+            uzavri(start)
+            if st.zasobnik:
+                horni = st.zasobnik[-1]
+                novy(horni.typ, horni.oznaceni, start, pokracovani=pokracovat)
+            else:
                 novy("odstavec_volny", "", start)
-            radky_useku.append(radek)
-            continue
-
-        typ, oznaceni, cislo = nadpis
-        s = radek.strip()
-        # uvozovky (nové znění vkládané bodem) rozhodují jen v PN, kde hlavní strukturu tvoří body:
-        # „ČÁST …“ nebo „Čl. …“ uvnitř bodu PN patří pod tento bod, další bod PN je zase nahoře.
-        # V návrhu zákona stačí úrovně (§ pod bodem, bod pod článkem). Bod v uvozovkách
-        # („14. V § 5 …“ jako nové znění bodu tisku) hlavní strukturu PN netvoří.
-        koren = zasobnik[0] if zasobnik else None
-        v_uvoz = (s.startswith("„") or hloubka_pred > 0) and koren is not None \
-            and koren.typ == "bod" and not koren.v_uvozovkach and not koren.citovany
-        if v_uvoz and typ == "bod" and not s.startswith("„") and posledni_bod is not None \
-                and cislo == posledni_bod + 1:
-            # neuzavřená uvozovka v dokumentu: navazující číslo bodu PN ji ukončuje
-            v_uvoz = False
-            hloubka = max(0, radek.count("„") - radek.count("“"))
-
-        uzavri(start)
-        uroven = UROVEN[typ]
-        if not v_uvoz:
-            while zasobnik and zasobnik[-1].v_uvozovkach:
-                zasobnik.pop()
-        while zasobnik and (zasobnik[-1].v_uvozovkach or not v_uvoz) \
-                and UROVEN[zasobnik[-1].typ] >= uroven:
-            zasobnik.pop()
-        zasobnik.append(_Uroven(typ, oznaceni, v_uvoz, s.startswith("„") or hloubka_pred > 0, cislo=cislo))
-        if typ == "bod" and not v_uvoz:
-            posledni_bod = cislo
-        novy(typ, oznaceni, start)
+        pokracovat = False
         radky_useku.append(radek)
+        if st.po_radku(radek):
+            pokracovat = True
 
     uzavri(len(text))
     return useky
@@ -232,7 +282,7 @@ def _kusy(text: str, start: int, end: int, limit: int) -> list[tuple[int, int]]:
             continue
         # dlouhý řádek: doplní rozpracovaný kus a zbytek dělí na mezerách
         while r_do - od > limit:
-            mezera = max(text.rfind(" ", max(od, r_od), od + limit), text.rfind("	", max(od, r_od), od + limit))
+            mezera = max(text.rfind(" ", max(od, r_od), od + limit), text.rfind("\t", max(od, r_od), od + limit))
             if mezera >= max(od, r_od) and mezera + 1 > od:
                 rez = mezera + 1
             elif r_od > od:

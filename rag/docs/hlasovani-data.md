@@ -52,8 +52,10 @@ Tabulky plní web (`app/Votes.php`) každou hodinu znovu celé (DELETE + INSERT 
 - **Procedurální hlasování v bodu** patří k tisku: u 231 (30 hlasování) jsou č. 273–280 o pevném čase hlasování a jeho
   revokaci (23. 10.), 285 znovuotevření rozpravy, 286 vrácení k dopracování, 287 zamítnutí, 288 přikázání garančnímu výboru
   (`10/34/477/11`); č. 281–282 a 289–302 neověřeno. Hlasování o pořadu schůze (bod 0) se nepárují vůbec.
-- `steno.projev.ct` párování nenahradí: u sloučené rozpravy 76/77 se v 11 hlasováních liší od webu (web má pravdu podle
-  názvu), hlasování o pořadu mají `ct` bodu, ve kterém zazněla.
+- `steno.projev.ct` párování nenahradí: u sloučené rozpravy 76/77 se v 11 hlasováních liší od webu, hlasování o pořadu
+  mají `ct` bodu, ve kterém zazněla. Web (podle názvu, „- související“ = 77) má `ct` 76 u 86572–86575, 88449, 88666 a
+  `ct` 77 u 86577–86581, 88450, 88667. Opačný tisk uvádí steno u těch 11: 86572–86575, 86577–86581, 88450, 88667.
+  Každé `id_hlasovani` (PK) patří právě jednomu `ct`, takže `hlasovani_k_tisku(76)` vrátí jen ta s `ct` 76.
 
 ## Porovnání s eval otázkou E21 (`rag/eval/otazky.json`)
 
@@ -62,8 +64,10 @@ Tabulky plní web (`app/Votes.php`) každou hodinu znovu celé (DELETE + INSERT 
 | 231 | 88874/88875/88876 = 34. schůze č. 285/286/287, 24. 10. 2026 04:38–04:39 | 81 : 96, přihlášeno 177, `R`; č. 287 proti ANO2011 69, SPD 14, MS 13; pro ODS 23, STAN 21, Piráti 16, KDU-ČSL 14, TOP09 7 | sedí |
 | 311 | 89028 = 36. schůze č. 3, 13. 11. 2026 13:17 (zkrácení lhůty pro 3. čtení na 7 dní, `10/36/26/13`) | přihlášeno 100, pro 77 (ANO2011 55, SPD 12, MS 10), proti 23, `A`, `krok` 0 | sedí |
 | 88 | 86697 = 9. schůze č. 6, 13. 2. 2026 10:56, `krok` 1 | přihlášeno 136, pro 130, proti 0, `A` | sedí |
-| 76 / 77 | 88449 / 88450, 30. schůze č. 32/33, 8. 9. 2026 (přehlasování Senátu, `krok` 1) | 104 : 68 / 104 : 69, kvórum 101, `A` | doplněno |
-| 76 / 77 | 88666 / 88667, 35. schůze č. 4/5, 14. 10. 2026 (veto, čl. 50 odst. 2 Ústavy, `krok` 0) | 104 : 66 / 104 : 70, kvórum 101, `A` | doplněno |
+| 76 | 88449, 30. schůze č. 32, 8. 9. 2026 (přehlasování Senátu, `krok` 1) | 104 : 68, kvórum 101, `A` | doplněno |
+| 77 | 88450, 30. schůze č. 33, 8. 9. 2026 (přehlasování Senátu, `krok` 1) | 104 : 69, kvórum 101, `A` | doplněno |
+| 76 | 88666, 35. schůze č. 4, 14. 10. 2026 (veto, čl. 50 odst. 2 Ústavy, `krok` 0) | 104 : 66, kvórum 101, `A` | doplněno |
+| 77 | 88667, 35. schůze č. 5, 14. 10. 2026 (veto, `krok` 0) | 104 : 70, kvórum 101, `A` | doplněno |
 
 Ke E20: usnesení o pevném čase hlasování je 88866 (34. schůze č. 277, 23. 10. 2026 19:46), 88 : 63, `A` (`10/34/446/2`).
 
@@ -94,7 +98,11 @@ Ke E20: usnesení o pevném čase hlasování je 88866 (34. schůze č. 277, 23.
 ## Velikost dat (limit odpovědi 60 000 znaků)
 
 - Nejvíc hlasování na tisk: 171 (tisk 67), 135 (94), 88 (189); nejvíc na tisk a schůzi 129 (tisk 94, 10. schůze).
-- JSON (`ensure_ascii=False`, kompaktní) jednoho hlasování se všemi sloupci, textem výsledku a URL: průměr 322, max. 354
-  znaků; rozpis klubů průměr 613, max. 690 znaků. Všech 171 hlasování tisku 67 bez klubů = 53 553 znaků.
-- Doporučení: `hlasovani_k_tisku` bez klubů a s `nazev` jednou za tisk, limit výchozí 50, max. 150; kluby
-  v `get_hlasovani` (jedno hlasování ≈ 1 100 znaků). S kluby v seznamu nejvýš 50.
+- JSON (`ensure_ascii=False`, kompaktní), naměřeno na produkci:
+  - řádek hlasování se všemi sloupci, textem výsledku a URL, bez klubů: průměr 322, max. 354 znaků (s `nazev` v řádku);
+  - kluby v plné podobě (`[{klub, pro, proti, zdrzel, nepritomen}, …]`): průměr 613, max. 690 znaků;
+  - kluby kompaktně (`{"ANO2011": [pro, proti, zdrzel, nepritomen], …}`): průměr 198, max. 224 znaků;
+  - obálka seznamu (`ct`, `nazev` jako pole, `celkem`, `vraceno`, `limit`, URL tisku, prázdné `hlasovani`): 210 znaků.
+- Všech 171 hlasování tisku 67 bez klubů = 53 553 znaků + obálka. Odvozeně: 150 řádků bez klubů ≈ 150 × 354 + 210
+  ≈ 53 300 znaků, rezerva jen asi 11 % pod 60 000; s kompaktními kluby (≈ 580 znaků na řádek) se vejde asi 100 řádků.
+  Závazný strop ať změří a nastaví Task 2 (navíc případná upozornění a `projevy` v obálce).

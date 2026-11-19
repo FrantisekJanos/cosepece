@@ -153,3 +153,41 @@ def test_call_chyba_db_neprozradi_detail(fake_pool):
     with pytest.raises(ToolError) as e:
         mcp_server._call("t", broken)
     assert "tajne" not in str(e.value)
+
+
+def test_get_tisk_neznamy_je_valueerror():
+    with pytest.raises(ValueError, match="99999"):
+        tools.get_tisk(FakeConn([], []), 99999)
+
+
+def test_get_pn_neznamy_je_valueerror():
+    with pytest.raises(ValueError, match="neznám"):
+        tools.get_pn(FakeConn([]), 1)
+
+
+def test_tisk_podle_sbirky_a_program_schuze_nenalezeno_je_valueerror():
+    with pytest.raises(ValueError, match="1/2026"):
+        tools.tisk_podle_sbirky(FakeConn([]), "1/2026")
+    with pytest.raises(ValueError, match="neznám"):
+        tools.program_schuze(FakeConn([]), 999)
+
+
+def test_nejednoznacna_osoba_je_valueerror_s_kandidaty():
+    osoby = [dict(id_osoba=i, jmeno="Jan", prijmeni="Novák", klub=f"K{i}", projevu=5, pn=0) for i in (1, 2)]
+    with pytest.raises(ValueError, match="id_osoba=2"):
+        tools.projevy_recnika(FakeConn(osoby), "Novák")
+
+
+def test_stav_dat_nevraci_text_chyby():
+    raw = '{"error": "connection to 10.0.0.5 failed", "seconds": 1}'
+    r = tools.stav_dat(FakeConn([{"projevu": 1}], [{"v": raw}], [{"v": "2026-11-19"}]))
+    assert "10.0.0.5" not in json.dumps(r, default=str)
+    assert r["steno_last_result"]["ok"] is False and r["steno_last_result"]["seconds"] == 1
+    assert "error" not in r["steno_last_result"]
+
+
+def test_vsechny_nastroje_maji_readonly_anotaci():
+    nastroje = mcp_server.server._tool_manager.list_tools()
+    assert nastroje
+    for t in nastroje:
+        assert t.annotations.read_only_hint is True and t.annotations.open_world_hint is False, t.name

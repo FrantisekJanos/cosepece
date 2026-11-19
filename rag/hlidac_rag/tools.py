@@ -91,7 +91,7 @@ def get_tisk(conn, ct: int, vcetne: list[str] | None = None) -> dict:
                       FROM tisky WHERE ct = %s""", (ct,))
     bod = _rows(conn, "SELECT DISTINCT ON (nazev) schuze, cislo, nazev, konec FROM steno.bod WHERE ct = %s ORDER BY nazev, schuze", (ct,))
     if not t and not bod:
-        return {"chyba": f"Tisk {ct} v {OBDOBI}. období nesleduji. Zkuste seznam_tisku(q=…)."}
+        raise ValueError(f"Tisk {ct} v {OBDOBI}. období nesleduji. Zkuste seznam_tisku(q=…).")
     out: dict = {"ct": ct, **_tisk_urls(ct)}
     if t:
         t["reasons"] = _json(t["reasons"])
@@ -165,7 +165,7 @@ def tisk_podle_sbirky(conn, sb: str) -> dict:
     sb = _norm_sb(sb)
     rows = _rows(conn, "SELECT ct, nazev, typ_navrhu, faze, sbirka, score FROM tisky WHERE sbirka = %s", (sb,))
     if not rows:
-        return {"chyba": f"Žádný tisk {OBDOBI}. období nebyl vyhlášen pod číslem {sb} Sb."}
+        raise ValueError(f"Žádný tisk {OBDOBI}. období nebyl vyhlášen pod číslem {sb} Sb.")
     for r in rows:
         r.update(_tisk_urls(r["ct"]))
     return {"sbirka": sb, "tisky": rows}
@@ -196,7 +196,7 @@ def get_pn(conn, cislo: int, s_textem: bool = False, max_znaku: int = 8000) -> d
                              t.laws, t.chars, t.docx_url, t.text
                       FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument WHERE p.cislo = %s""", (cislo,))
     if not r:
-        return {"chyba": f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám."}
+        raise ValueError(f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám.")
     text = r.pop("text")
     r["ai"] = _json(r.pop("ai_json"))
     r["priznaky"] = _json(r.pop("signals"))
@@ -274,21 +274,22 @@ def najdi_osobu(conn, jmeno: str) -> dict:
     return {"pocet": len(rows), "osoby": rows}
 
 
-def _resolve_person(conn, osoba: int | str) -> tuple[int | None, dict | None]:
+def _resolve_person(conn, osoba: int | str) -> int:
+    """id_osoba z čísla nebo jména; nejednoznačné jméno = ValueError s kandidáty (max. 10) v textu."""
     if isinstance(osoba, int) or str(osoba).isdigit():
-        return int(osoba), None
+        return int(osoba)
     found = najdi_osobu(conn, str(osoba))["osoby"]
     active = [o for o in found if o["projevu"]]
     if len(active) == 1:
-        return active[0]["id_osoba"], None
-    return None, {"chyba": "Jméno není jednoznačné, zopakujte dotaz s id_osoba.", "kandidati": found[:10]}
+        return active[0]["id_osoba"]
+    kand = "; ".join(f'{o["jmeno"]} {o["prijmeni"]} (id_osoba={o["id_osoba"]}, klub {o["klub"] or "?"})'
+                     for o in found[:10])
+    raise ValueError(f"Jméno není jednoznačné, zopakujte dotaz s id_osoba. Kandidáti: {kand}")
 
 
 def projevy_recnika(conn, osoba: int | str, od: str | None = None, do: str | None = None, ct: int | None = None,
                     q: str | None = None, min_znaku: int = 0, limit: int = 50, offset: int = 0) -> dict:
-    id_osoba, err = _resolve_person(conn, osoba)
-    if err:
-        return err
+    id_osoba = _resolve_person(conn, osoba)
     where, params = ["p.id_osoba = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [id_osoba, min_znaku]
     if od:
         where.append("p.datum >= %s")
@@ -326,7 +327,7 @@ def get_projev(conn, klic: str, okoli: int = 0, max_znaku: int = 12000, offset_z
                        FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                        WHERE p.obdobi=%s AND p.schuze=%s AND p.turn=%s AND p.aname=%s""", (o, s, t, a))
     if not r:
-        return {"chyba": f"Projev {klic} neznám."}
+        raise ValueError(f"Projev {klic} neznám.")
     text = r.pop("text") or ""
     m = max(500, min(int(max_znaku), 60000))
     start = max(0, min(int(offset_znaku), len(text)))
@@ -356,7 +357,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     """Fulltext (bez sémantiky, ta přijde s embeddingy): slova bez ohledu na diakritiku, předpony slov."""
     words = [w for w in re.findall(r"\w+", unaccent_py(dotaz.lower())) if len(w) > 1][:12]
     if not words:
-        return {"chyba": "prázdný dotaz"}
+        raise ValueError("prázdný dotaz")
     # zkrácení slov kvůli skloňování (heuristika z EpasDocsFetch)
     def stem(w: str) -> str:
         if any(ch.isdigit() for ch in w):
@@ -370,9 +371,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
         where.append("p.ct = %s")
         params.append(ct)
     if osoba:
-        id_osoba, err = _resolve_person(conn, osoba)
-        if err:
-            return err
+        id_osoba = _resolve_person(conn, osoba)
         where.append("p.id_osoba = %s")
         params.append(id_osoba)
     if klub:
@@ -400,7 +399,7 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
 def program_schuze(conn, schuze: int) -> dict:
     s = _one(conn, "SELECT schuze, od, \"do\" FROM steno.schuze WHERE obdobi=%s AND schuze=%s", (OBDOBI, schuze))
     if not s:
-        return {"chyba": f"Schůze {schuze} v {OBDOBI}. období neznám."}
+        raise ValueError(f"Schůze {schuze} v {OBDOBI}. období neznám.")
     s = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in s.items()}
     s["body"] = _rows(conn, """SELECT b.cislo, b.nazev, b.konec, b.ct,
                                       (SELECT count(*) FROM steno.projev p WHERE p.id_bod = b.id_bod AND p.zruseno IS NULL
@@ -441,9 +440,16 @@ def stav_dat(conn) -> dict:
           (SELECT max(datum) FROM steno.projev) AS posledni_den,
           (SELECT count(*) FROM tisky) AS tisku,
           (SELECT count(*) FROM pn) AS pn""") or {}
-    for k in ("steno_last_result", "last_sync"):
-        r = _one(conn, "SELECT v FROM meta WHERE k = %s", (k,))
-        out[k] = _json(r["v"]) if r and k.endswith("result") else (r["v"] if r else None)
+    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("steno_last_result",))
+    raw = _json(r["v"]) if r else None
+    if isinstance(raw, dict):
+        # text chyby může obsahovat adresy a cesty, ven jde jen ok/ne a čísla
+        out["steno_last_result"] = {"ok": not raw.get("error"),
+                                    **{k: raw.get(k) for k in ("seconds", "requests", "discover", "crawl", "assemble")}}
+    else:
+        out["steno_last_result"] = None
+    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
+    out["last_sync"] = r["v"] if r else None
     return out
 
 

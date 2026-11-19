@@ -65,15 +65,57 @@ def _next_offset(total: int, offset: int, returned: int) -> int | None:
 def _tsquery(dotaz: str) -> str:
     """Dotaz uživatele na tsquery pro fulltext nad `unaccent_simple(text)` (sdílí hledej_v_projevech a hledej_v_textech).
 
-    Slova bez diakritiky a malými písmeny; slova kratší než 4 znaky (předložky, spojky) se vyřadí, pokud
-    neobsahují číslici (např. 586, 2026). Slova od 5 znaků dostanou prefix `:*` kvůli skloňování.
+    Slova bez diakritiky a malými písmeny; slova kratší než 3 znaky (předložky, spojky) se vyřadí, pokud
+    neobsahují číslici. Slova od 5 znaků se zkrátí o koncovku (kvůli skloňování; heuristika z EpasDocsFetch)
+    a dostanou prefix `:*`, slova o 3-4 znacích (daň, DPH) a čísla zůstanou přesná.
     Všechna zbylá slova musí být ve shodě (AND). Bez použitelných slov = ValueError."""
     words = [w for w in re.findall(r"\w+", unaccent_py(dotaz.lower()))
-             if len(w) >= 4 or any(ch.isdigit() for ch in w)][:12]
+             if len(w) >= 3 or any(ch.isdigit() for ch in w)][:12]
     if not words:
-        raise ValueError("Dotaz je příliš krátký: zadejte alespoň jedno slovo o 4 a více znacích "
+        raise ValueError("Dotaz je příliš krátký: zadejte alespoň jedno slovo o 3 a více znacích "
                          "(kratší slova, např. předložky, se ignorují).")
-    return " & ".join(w + ":*" if len(w) >= 5 else w for w in words)
+
+    def term(w: str) -> str:
+        if len(w) < 5:
+            return w
+        if any(ch.isdigit() for ch in w):
+            return w + ":*"
+        return (w[:-2] if len(w) >= 7 else w[:-1]) + ":*"
+    return " & ".join(term(w) for w in words)
+
+
+def _snippet(text: str | None, tsq: str, okoli: int = 150) -> str:
+    """Úryvek původního textu (s diakritikou a velikostí písmen) kolem první shody s dotazem, shody v « ».
+
+    unaccent_simple je překlad znak za znak, takže pozice v textu bez diakritiky platí i v originálu."""
+    if not text:
+        return ""
+    plain = unaccent_py(text).lower()
+    pats = []
+    for t in tsq.split(" & "):
+        pref = t.endswith(":*")
+        pats.append(r"(?<!\w)" + re.escape(t.removesuffix(":*")) + (r"\w*" if pref else r"(?!\w)"))
+    spans = []
+    if len(plain) == len(text):
+        spans = sorted((m.start(), m.end()) for pat in pats for m in re.finditer(pat, plain))
+    if not spans:
+        return _excerpt(text, 2 * okoli)
+    start = max(0, spans[0][0] - okoli)
+    end = min(len(text), spans[0][1] + okoli)
+    if start:  # řez na hranici slova
+        sp = text.find(" ", start, spans[0][0])
+        start = sp + 1 if sp != -1 else start
+    if end < len(text):
+        sp = text.rfind(" ", spans[0][1], end)
+        end = sp if sp != -1 else end
+    out, pos = [], start
+    for a, b in spans:
+        if a < start or b > end or a < pos:
+            continue
+        out += [text[pos:a], "«", text[a:b], "»"]
+        pos = b
+    out.append(text[pos:end])
+    return ("… " if start else "") + "".join(out) + (" …" if end < len(text) else "")
 
 
 def _tisk_urls(ct: int) -> dict:
@@ -439,20 +481,18 @@ def hledej_v_projevech(conn, dotaz: str, ct: int | None = None, osoba: int | str
     w = " AND ".join(where)
     total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
     off = _offset(offset)
-    # ts_headline běží nad unaccent_simple(text), stejně jako dotaz a index, takže úryvek obsahuje shodu
-    # (nad textem s diakritikou se slova dotazu bez diakritiky nenašla a úryvek byl začátek projevu)
-    rows = _rows(conn, f"""SELECT {_SPEECH_COLS},
-                                  ts_headline('simple', unaccent_simple(p.text), to_tsquery('simple', %s),
-                                              'StartSel=«, StopSel=», MaxFragments=2, MaxWords=35, MinWords=15') AS uryvek_shoda,
+    # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
+    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text,
                                   ts_rank(to_tsvector('simple', unaccent_simple(p.text)), to_tsquery('simple', %s)) AS rank
                            FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY rank DESC, p.datum DESC, p.id LIMIT %s OFFSET %s""",
-                 (tsq, tsq, *params, _limit(limit, 20), off))
+                 (tsq, *params, _limit(limit, 20), off))
     for r in rows:
         r.pop("rank", None)
+        r["uryvek_shoda"] = _snippet(r.pop("text", None), tsq)
     return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(rows), "projevy": _speech_rows(rows),
-            "poznamka": "Fulltext bez ohledu na diakritiku; uryvek_shoda je bez diakritiky, shoda je v « »."}
+            "poznamka": "Fulltext bez ohledu na diakritiku; uryvek_shoda je okolí první shody, shoda je v « »."}
 
 
 def program_schuze(conn, schuze: int) -> dict:

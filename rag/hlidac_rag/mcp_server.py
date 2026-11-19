@@ -136,7 +136,7 @@ def projevy_k_tisku(ct: int, id_osoba: int | None = None, klub: str | None = Non
 def projevy_recnika(osoba: str, od: str | None = None, do: str | None = None, ct: int | None = None,
                     q: str | None = None, min_znaku: int = 0, limit: int = 50, offset: int = 0) -> dict:
     """Projevy jedné osoby (id_osoba nebo jméno, např. "Jurečka"). q = slova, která má projev obsahovat
-    (bez ohledu na diakritiku, slova pod 4 znaky se ignorují). Stránkování: celkem, dalsi_offset."""
+    (bez ohledu na diakritiku, slova pod 3 znaky se ignorují). Stránkování: celkem, dalsi_offset."""
     return _call("projevy_recnika", tools.projevy_recnika, osoba, od, do, ct, q, min_znaku, limit, offset)
 
 
@@ -155,7 +155,7 @@ def hledej_v_projevech(dotaz: str, ct: int | None = None, osoba: str | None = No
                        od: str | None = None, do: str | None = None, vcetne_predsedajicich: bool = False,
                        limit: int = 20, offset: int = 0) -> dict:
     """Fulltextové hledání slov v projevech (všechna slova, bez ohledu na diakritiku, předpony delších slov;
-    slova pod 4 znaky se ignorují). uryvek_shoda je okolí shody (bez diakritiky), shoda je v « ».
+    slova pod 3 znaky se ignorují). uryvek_shoda je okolí první shody, shoda je v « ».
     Stránkování: celkem, dalsi_offset (None na konci). Sémantické hledání zatím není.
     Příklad: hledej_v_projevech("dotace SZIF promlčení")."""
     return _call("hledej_v_projevech", tools.hledej_v_projevech, dotaz, ct, osoba, klub, od, do,

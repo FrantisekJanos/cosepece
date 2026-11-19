@@ -232,19 +232,21 @@ def test_osoba_nenalezena_je_valueerror_bez_kandidatu():
 
 def test_tsquery_kratka_slova():
     with pytest.raises(ValueError, match="příliš krátký"):
-        tools._tsquery("na se daň")
-    assert tools._tsquery("rafinérské marže") == "rafinerske:* & marze:*"
-    assert tools._tsquery("zákon 586/1992 na") == "zakon:* & 586 & 1992"
+        tools._tsquery("na se")
+    assert tools._tsquery("DPH daň") == "dph & dan"
+    assert tools._tsquery("rafinérské marže") == "rafiners:* & marz:*"
+    assert tools._tsquery("zákon 586/1992 na") == "zako:* & 586 & 1992"
 
 
 def test_hledej_uryvek_kolem_shody():
-    row = _speech(uryvek_shoda="… rafinerske «marze» rostou …", text="x")
-    conn = FakeConn([dict(n=1)], [row])
+    text = "Úvod bez shody. " * 40 + "Rafinérských marží se to týká. " + "Konec textu. " * 40
+    conn = FakeConn([dict(n=1)], [_speech(text=text)])
     r = tools.hledej_v_projevech(conn, "rafinérské marže")
-    sql = conn.sql[1]
-    assert "ts_headline" in sql and "StartSel=«, StopSel=»" in sql and "MaxFragments" in sql
-    assert "unaccent_simple(p.text), to_tsquery" in sql  # úryvek nad textem bez diakritiky
-    assert r["projevy"][0]["uryvek_shoda"] == "… rafinerske «marze» rostou …"
+    assert "MaxFragments" not in conn.sql[1] and "p.text" in conn.sql[1]
+    u = r["projevy"][0]["uryvek_shoda"]
+    assert "«Rafinérských»" in u and "«marží»" in u       # diakritika a velikost písmen zachovány
+    assert not u.startswith("Úvod") and len(u) < 400
+    assert "text" not in r["projevy"][0]
 
 
 def test_hledej_ma_celkem_a_offset():

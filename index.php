@@ -13,8 +13,9 @@ $w = Scorer::weights(config());
 $repo = new Repo(db());
 $s = $repo->stats();
 // hlavní nálezy: prvních 6 hned, další se odkrývají po 3 tlačítkem (bez JS odkazem ?n=)
-$findingsShown = max(6, min(60, (int)($_GET['n'] ?? 6)));
-$findings = $repo->topFindings((int)$w['level_major'], 60);
+// hlavní nálezy: od skóre finding_min, hned vidět 9 karet (3 řady), další po trojicích
+$findingsShown = max(9, min(60, (int)($_GET['n'] ?? 9)));
+$findings = $repo->topFindings((int)$w['finding_min'], 60);
 $alerts = $repo->alerts(8, 0, null, (int)$w['level_watch']);
 $suppressed = $repo->suppressedCount((int)$w['level_watch']);
 $watch = $repo->watchlist(config('watch_laws', []), config('watch_tisky', []));
@@ -63,17 +64,17 @@ View::header('Přehled', 'prehled');
   <div class="card-head">
     <div>
       <h2>Hlavní nálezy</h2>
-      <p class="muted small head-note">Rozpracované tisky s nejvyšším skóre závažnosti (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
+      <p class="muted small head-note">Rozpracované tisky se skóre od <?= (int)$w['finding_min'] ?> bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
     </div>
-    <a href="tisky.php?min=<?= (int)$w['level_major'] ?>">Všechny závažné</a>
+    <a href="tisky.php?min=<?= (int)$w['finding_min'] ?>">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
   </div>
   <?php if ($findings === []): ?>
-    <p class="empty">Žádný tisk nyní nepřekračuje práh závažnosti <?= (int)$w['level_major'] ?> bodů.</p>
+    <p class="empty">Žádný tisk nyní nemá skóre aspoň <?= (int)$w['finding_min'] ?> bodů.</p>
   <?php endif; ?>
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
       <a class="finding" href="tisk.php?ct=<?= (int)$t['ct'] ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
-        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null): ?><span class="chip chip-cut" title="Pod prahem skóre, ale s nálezem AI ověřeným silnějším modelem a doloženým citací">Ověřený nález AI <?= (int)$t['strong_ai'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
+        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null): ?><span class="chip chip-cut" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['strong_ai'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
           <strong class="finding-title"><?= e($h['title']) ?></strong>

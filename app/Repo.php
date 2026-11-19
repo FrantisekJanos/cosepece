@@ -83,8 +83,8 @@ final class Repo
             $row['flags'] = $this->flags($row, $surge, $review);
             $row['reasons_list'] = json_decode((string)$row['reasons'], true) ?: [];
             $row['headline'] = $this->headline((int)$row['ct']);
-            // pod prahem skóre: zařazeno kvůli ověřenému nálezu AI
-            $row['strong_ai'] = (int)$row['score'] < $minScore ? ($strong[(int)$row['ct']] ?? null) : null;
+            // ověřený silný nález AI (štítek na kartě; pod prahem skóre je to důvod zařazení)
+            $row['strong_ai'] = $strong[(int)$row['ct']] ?? null;
         }
         return $rows;
     }

@@ -48,6 +48,12 @@ def prepocitej_rozpravu(cur, obdobi: int, schuze: int) -> dict:
     cur.execute("SELECT id_osoba, jmeno, prijmeni FROM steno.osoba WHERE id_osoba = ANY(%s)",
                 (list({p.id_osoba for p in projevy if p.id_osoba is not None}),))
     osoby = {i: (j, pr) for i, j, pr in cur.fetchall()}
+    # příjmení osob období (člen klubu nebo řečník kteréhokoli projevu): jen ta smí být adresátem z textu
+    cur.execute("""SELECT DISTINCT o.prijmeni FROM steno.osoba o
+                   WHERE o.prijmeni IS NOT NULL
+                     AND (o.id_osoba IN (SELECT id_osoba FROM steno.klub_clenstvi)
+                          OR o.id_osoba IN (SELECT id_osoba FROM steno.projev WHERE obdobi = %s))""", (obdobi,))
+    prijmeni_obdobi = [r[0] for r in cur.fetchall()]
 
     tisk_rows, pn_rows, sloupce = [], [], []
     # nepředsedající projevy se řečníkem podle dne a bodu / ct (kandidáti na předchozího řečníka)
@@ -68,7 +74,7 @@ def prepocitej_rozpravu(cur, obdobi: int, schuze: int) -> dict:
             kandidati = podle_ct.get((p.datum, p.ct), [])
         else:
             kandidati = []
-        reaguje = _odhad_adresata(p.text, kandidati, osoby) if druh == "fakticka" else None
+        reaguje = _odhad_adresata(p.text, kandidati, osoby, prijmeni_obdobi) if druh == "fakticka" else None
         sloupce.append((p.id, druh, kandidati[-1].id if kandidati else None, reaguje))
         # úsek bez řečníka (aname 0: začátek části bez kotvy) nikomu předchozím řečníkem ani adresátem není
         if not p.predsedajici and (p.recnik or p.id_osoba is not None):
@@ -116,9 +122,11 @@ def _prijmeni(p: _ProjevRozpravy, osoby: dict[int, tuple]) -> str | None:
     return slova[-1] if slova else None
 
 
-def _odhad_adresata(text: str, kandidati: list[_ProjevRozpravy], osoby: dict[int, tuple]) -> str | None:
+def _odhad_adresata(text: str, kandidati: list[_ProjevRozpravy], osoby: dict[int, tuple],
+                    prijmeni_obdobi: list[str]) -> str | None:
     """Na koho faktická poznámka reaguje: jméno nejbližšího z posledních řečníků bodu, jehož příjmení
-    odpovídá oslovenému tvaru; bez shody tvar z textu, bez osloveného jména None."""
+    odpovídá oslovenému tvaru; bez shody tvar z textu, ale jen když je to příjmení osoby období
+    (jinak „Pirátů“, „Takže“ …), bez osloveného jména None."""
     tvar = osloveny_recnik(text)
     if tvar is None:
         return None
@@ -126,4 +134,4 @@ def _odhad_adresata(text: str, kandidati: list[_ProjevRozpravy], osoby: dict[int
         prijmeni = _prijmeni(k, osoby)
         if prijmeni and shoda_prijmeni(tvar, prijmeni):
             return " ".join(x for x in osoby[k.id_osoba] if x) if k.id_osoba in osoby else k.recnik
-    return tvar
+    return tvar if any(shoda_prijmeni(tvar, p) for p in prijmeni_obdobi) else None

@@ -77,7 +77,7 @@ def shoda_prijmeni(tvar: str, prijmeni: str) -> bool:
 # --- oslovený řečník -------------------------------------------------------
 
 RE_REAKCE = re.compile(
-    r"(?:reagov\w+|zareaguj\w+|reakc\w+|navázat|vyjádřit se?|odpov\w+)\s+(?:na|k|ke)\s+"
+    r"(?:reagov\w+|zareaguj\w+|reakc\w+|navázat|vyjádř\w*(?:\s+se)?|odpov\w+)\s+(?:na|k|ke)\s+"
     r"|\bk\s+(?:odpovědi|vystoupení|projevu)\s+",
     re.I,
 )

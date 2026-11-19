@@ -23,7 +23,9 @@ DEN1, DEN2 = date(2026, 10, 14), date(2026, 10, 15)
 SCHEMA_META = "test_rozprava_meta"
 
 OSOBY = [(1001, "Jan", "Skopeček"), (1002, "Karel", "Haas"), (1003, "Jan", "Berki"),
-         (1004, "Václav", "Pláteník"), (1005, "Zuzana", "Mrázová")]
+         (1004, "Václav", "Pláteník"), (1005, "Zuzana", "Mrázová"),
+         (1006, "Lukáš", "Vlček"),     # poslanec období (klub), v rozpravě nemluví
+         (1007, "Alois", "Rašín")]     # osoba bez klubu a bez projevu v období
 # řečník: id_osoba, text odkazu, role, předsedající
 CHAIR = (1001, "Místopředseda PSP Jan Skopeček", "Místopředseda PSP", True)
 HAAS = (1002, "Poslanec Karel Haas", "Poslanec", False)
@@ -94,6 +96,7 @@ def conn():
         cur.execute("""CREATE TABLE steno.rec (obdobi int, schuze int, turn int, aname int,
                        id_osoba int, id_bod int, druh int)""")
         cur.executemany("INSERT INTO steno.osoba (id_osoba, jmeno, prijmeni) VALUES (%s,%s,%s)", OSOBY)
+        cur.execute("INSERT INTO steno.klub_clenstvi (id_osoba, klub) VALUES (1006, 'ODS')")
         cur.executemany("INSERT INTO steno.bod (id_bod, obdobi, schuze, cislo, nazev, konec, ct) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                         BODY)
     c.commit()
@@ -191,7 +194,7 @@ def test_fakticka_predchozi_recnik_a_adresat(conn):
     assert s[7] == ("fakticka", 5, "Karel Haas")
     # Haas: faktická bez osloveného jména
     assert s[9] == ("fakticka", 7, None)
-    # oslovený Vlček mezi předchozími řečníky není: uloží se tvar z textu
+    # oslovený Vlček mezi předchozími řečníky není, je ale poslancem období (klub): uloží se tvar z textu
     assert s[11] == ("fakticka", 9, "Vlčka")
     # Blažej nemá osobu: příjmení z posledního slova a jméno z textu odkazu
     assert s[13] == ("fakticka", 11, "Poslanec Blažej")
@@ -262,6 +265,31 @@ def test_prepocet_je_idempotentni(conn):
     s = sloupce(conn)
     assert s[7] == (None, None, None)
     assert s[9] == ("fakticka", 5, None)
+
+
+def test_adresat_z_textu_jen_prijmeni_osoby_obdobi(conn):
+    """Tvar z textu bez shody s posledními řečníky bodu se uloží, jen když je to příjmení osoby období
+    (člen klubu nebo řečník kteréhokoli projevu období), jinak NULL („Pirátů“, historický Rašín)."""
+    vloz(conn, [
+        p(1, HAAS, "Děkuji za slovo."),
+        p(2, CHAIR, "Další faktická poznámka pana poslance Pláteníka."),
+        p(3, PLATENIK, "Vaším prostřednictvím bych chtěl zareagovat na kolegyni Pirátů, která tu mluvila."),
+        p(4, CHAIR, "S faktickou poznámkou pan poslanec Berki."),
+        p(5, BERKI, "Zareaguju na pana poslance Rašína, protože to nebylo přesné."),
+        p(6, CHAIR, "S faktickou poznámkou pan poslanec Berki."),
+        p(7, BERKI, "Zareaguju na pana poslance Vlčka, protože to nebylo přesné."),
+        p(8, CHAIR, "S faktickou poznámkou paní ministryně Mrázová."),
+        p(9, MRAZOVA, "Ráda bych reagovala na pana místopředsedu Skopečka, který řídí schůzi."),
+        p(10, CHAIR, "S faktickou poznámkou pan poslanec Berki."),
+        p(11, BERKI, "Chtěl bych se vyjádřit k panu poslanci Haasovi, který tvrdil opak."),
+    ])
+    prepocitej(conn)
+    s = sloupce(conn)
+    assert s[3] == ("fakticka", 1, None)               # „Pirátů“ není příjmení žádné osoby
+    assert s[5] == ("fakticka", 3, None)               # Rašín je v osobách, ale v období nemluví ani nemá klub
+    assert s[7] == ("fakticka", 5, "Vlčka")            # poslanec s klubem
+    assert s[9] == ("fakticka", 7, "Skopečka")         # řečník období (předsedající kandidátem adresáta není)
+    assert s[11] == ("fakticka", 9, "Karel Haas")      # „se vyjádřit k“: kandidát se shodným příjmením
 
 
 @pytest.mark.parametrize("dalsich, ocekavano", [(14, "Karel Haas"), (15, "Haase")])

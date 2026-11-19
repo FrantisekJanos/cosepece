@@ -59,6 +59,8 @@ def test_shoda_prijmeni_ne():
     ("Paní poslankyně Kovářová, prostřednictvím pana předsedajícího, to není pravda.", "Kovářová"),
     ("Děkuji. Já bych se chtěla vyjádřit k odpovědi paní ministryně Mrázové, že to je otázka stavebního práva.", "Mrázové"),
     ("já si dovolím reagovat na svého předřečníka, pana poslance Davida Pražáka, prostřednictvím pana předsedajícího, a jeho návrh", "Pražáka"),
+    ("Chtěl bych se vyjádřit k panu ministrovi Haasovi, který tvrdil opak.", "Haasovi"),
+    ("Děkuji. Vyjádřím se k paní poslankyni Kovářové.", "Kovářové"),
     ("Děkuji za slovo, pane předsedající. Chtěl bych říct něco k věci.", None),
     ("Děkuju, prostřednictvím pana předsedajícího bych řekl, že ano.", None),
     ("", None),

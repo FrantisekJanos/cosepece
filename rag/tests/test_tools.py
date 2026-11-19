@@ -303,14 +303,31 @@ _TISK_ROW = dict(ct=231, druh=1, typ_navrhu="vládní", navrhovatel="vláda", na
                  zakony="", sbirka=None, score=10, reasons="[]")
 
 
+_STATS = {"projevu": 260, "projevu_vse": 526, "recniku": 40, "prvni": None, "posledni": None}
+
+
 def test_get_tisk_body_vcetne_opakovanych():
-    bod = {"schuze": 30, "cislo": 5, "nazev": "Bod", "konec": "k", "datum": date(2026, 10, 1), "projevu": 3}
-    conn = FakeConn([_TISK_ROW], [bod, dict(bod, schuze=34, projevu=7)],
-                    [{"projevu": 10, "projevu_vse": 12, "recniku": 4, "prvni": None, "posledni": None}], [{"ok": False}])
+    """Tisk 231: na pořadu schůze 30 (neprojednán, bez projevů) i 34; jedna položka na schůzi."""
+    s30 = {"schuze": 30, "body": [34], "nazev": "Bod", "konec": "/sněmovní tisk 231/", "datum": None,
+           "projevu": 0, "projevu_vse": 0}
+    s34 = dict(s30, schuze=34, datum=date(2026, 10, 23), projevu=260, projevu_vse=526)
+    conn = FakeConn([_TISK_ROW], [s30, s34], [_STATS], [{"ok": False}])
     r = tools.get_tisk(conn, 231, ["body"])
-    assert "DISTINCT ON" not in conn.sql[1].upper()
-    assert [b["schuze"] for b in r["body_poradu"]] == [30, 34]
-    assert all({"schuze", "datum", "projevu"} <= set(b) for b in r["body_poradu"])
+    assert r["body_poradu"] == [s30, dict(s34, datum="2026-10-23")]
+    # body i počty z projev_tisk (projevy bez bodu z rec se počítají), ne podle id_bod bodu
+    sql = conn.sql[1]
+    assert "steno.projev_tisk" in sql and "steno.bod" in sql and "zruseno IS NULL" in sql
+    assert "p.id_bod = b.id_bod" not in sql
+    assert "DISTINCT ON" not in sql.upper()
+
+
+def test_get_tisk_mimo_tisky_nazev_z_bodu():
+    """Tisk mimo tabulku tisky: název z prvního bodu, který ho má; schůze jen s projevy bod nemá."""
+    bez_bodu = {"schuze": 29, "body": [], "nazev": None, "konec": None, "datum": date(2026, 9, 1), "projevu": 1,
+                "projevu_vse": 1}
+    s34 = {"schuze": 34, "body": [34], "nazev": "Bod", "konec": "k", "datum": None, "projevu": 0, "projevu_vse": 0}
+    r = tools.get_tisk(FakeConn([], [bez_bodu, s34], [_STATS], [{"ok": False}]), 231, ["body"])
+    assert r["nazev"] == "Bod" and r["poznamka"]
 
 
 def test_get_tisk_projevy_stejne_jako_projevy_k_tisku():
@@ -320,6 +337,7 @@ def test_get_tisk_projevy_stejne_jako_projevy_k_tisku():
     assert r["projevy"]["projevu"] == 10 and r["projevy"]["projevu_vse"] == 12
     sql = conn.sql[2]
     assert "NOT predsedajici" in sql and "znaku >= 200" in sql and "zruseno IS NULL" in sql
+    assert "steno.projev_tisk" in sql
 
 
 def test_call_prilis_velka_odpoved(fake_pool):

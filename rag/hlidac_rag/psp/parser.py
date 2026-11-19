@@ -29,6 +29,7 @@ RE_OSOBA = re.compile(r"detail\.sqw\?id=(\d+)")
 RE_VOTE = re.compile(r"hlasy\.sqw\?G=(\d+)", re.I)
 RE_HEADING = re.compile(r"<p align=\"?center\"?>\s*<b>(.*?)</b>\s*</p>", re.S | re.I)
 RE_HEADING_CT = re.compile(r"historie\.sqw\?T=(\d+)&(?:amp;)?O=(\d+)", re.I)
+RE_HEADING_BOD = re.compile(r"^\s*\d+\.\s")  # nadpis bodu pořadu začíná číslem bodu („203. Ústní interpelace“)
 RE_CONTINUES = re.compile(r"^\s*\(pokračuje [^)]*\)\s*", re.S)
 RE_TAG = re.compile(r"<[^>]+>")
 RE_BLOCK_END = re.compile(r"</p\s*>|<br\s*/?>|</div\s*>", re.I)
@@ -62,7 +63,7 @@ class Segment:
     id_osoba: int | None = None
     text: str = ""
     votes: list[int] = field(default_factory=list)
-    # čísla tisků z nadpisů bodů v tomto úseku (v pořadí výskytu)
+    # čísla tisků z nadpisů bodů v tomto úseku (v pořadí výskytu); 0 = nadpis bodu bez tisku (interpelace, volba)
     headings: list[int] = field(default_factory=list)
 
 
@@ -91,13 +92,17 @@ def parse_cz_date(s: str) -> date | None:
 def _segment_from(fragment: str, aname: int | None, href: str = "", label: str = "") -> Segment:
     headings: list[int] = []
 
-    # nadpis bodu nahradit čitelným řádkem [194. Název /sněmovní tisk 280/] a zapamatovat si tisk
+    # nadpis bodu nahradit čitelným řádkem [194. Název /sněmovní tisk 280/] a zapamatovat si tisk;
+    # číslovaný nadpis bez odkazu na tisk (bod bez tisku) se zapamatuje jako 0, nadpis bez čísla bodu vůbec
     def heading_repl(m: re.Match) -> str:
         inner = m.group(1)
+        plain = to_plain(inner).replace("\n\n", " ")
         ct = RE_HEADING_CT.search(inner)
         if ct:
             headings.append(int(ct.group(1)))
-        return "<p>[" + to_plain(inner).replace("\n\n", " ") + "]</p>"
+        elif RE_HEADING_BOD.match(plain):
+            headings.append(0)
+        return "<p>[" + plain + "]</p>"
 
     text = to_plain(RE_HEADING.sub(heading_repl, fragment))
     if aname is None:

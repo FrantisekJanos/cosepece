@@ -1,4 +1,5 @@
-"""Testy přepočtu rozpravy (projev_tisk, druh, předchozí řečník, adresát faktické, projev_pn) nad PostgreSQL.
+"""Testy přepočtu rozpravy (projev_tisk, druh, předchozí řečník, adresát faktické, projev_pn), ct projevu
+v assemble a get_tisk nad projev_tisk, vše nad PostgreSQL.
 
 Bez DATABASE_URL se přeskočí. Schůzi si test vloží sám jako řádky steno.osoba, steno.bod a steno.projev
 (věty jsou ze skutečných stenoprotokolů psp.cz); test assemble a run.py složí projevy z části v steno.cast.
@@ -329,6 +330,122 @@ def test_assemble_prepocita_rozpravu(conn):
     # druhé složení nic nového nevloží a tabulky rozpravy zůstanou stejné
     assert ingest.assemble(conn, OBD, SCHUZE_ASM)["rozprava"] == st["rozprava"]
     over_slozenou_schuzi(conn)
+
+
+# --- ct projevu v assemble: bod z rec rozhoduje, nadpis bodu bez tisku končí tisk dne -------------------
+
+SCHUZE_CT = 992
+INTERPELACE = 58500  # bod „Ústní interpelace“: ct NULL, konec prázdný (schůze 34, bod 203)
+NADPIS_285 = ('<p align=center><b>5.<br>Vládní návrh zákona o zdravotním pojištění<br>/sněmovní tisk '
+              '<a href="/sqw/historie.sqw?T=285&O=10">285</a>/ &ndash; druhé čtení</b></p>')
+NADPIS_INTERPELACE = "<p align=center><b>203.<br>Ústní interpelace</b></p>"
+
+
+def _r(id_osoba: int, aname: int, label: str, text: str) -> str:
+    return f'<p><b><a href="/sqw/detail.sqw?id={id_osoba}" id="r{aname}">{label}</a></b>: {text}</p>'
+
+
+CAST_CT = (
+    _r(1001, 1, "Místopředseda PSP Jan Skopeček", "Zahajuji projednávání bodu.") + NADPIS_285
+    + _r(1002, 2, "Poslanec Karel Haas", "Děkuji, k tomuto návrhu mám dvě poznámky.")
+    + _r(1005, 3, "Ministryně pro místní rozvoj ČR Zuzana Mrázová", "Děkuji za interpelaci, odpovím písemně.")
+    + _r(1001, 4, "Místopředseda PSP Jan Skopeček", "Přecházíme k dalšímu bodu.") + NADPIS_INTERPELACE
+    + _r(1003, 5, "Poslanec Jan Berki", "Vážená paní ministryně, ptám se na dotace.")
+    + _r(1004, 6, "Poslanec Václav Pláteník", "Děkuji, ke sloučené rozpravě.")
+)
+
+
+def test_assemble_ct_jen_z_bodu_rec(conn):
+    """Projev 10/34/622/10: rec dává bod interpelací (bez tisku), tisk dne z dřívějšího nadpisu se nepoužije."""
+    from hlidac_rag.psp import ingest
+
+    sql(conn, "INSERT INTO steno.bod (id_bod, obdobi, schuze, cislo, nazev, konec, ct) VALUES (%s,%s,%s,203,%s,'',NULL)",
+        (INTERPELACE, OBD, SCHUZE_CT, "Ústní interpelace"))
+    sql(conn, """INSERT INTO steno.cast (obdobi, schuze, turn, url, datum, jd, stav, html)
+                 VALUES (%s, %s, 622, 'https://x', %s, 10, 'neautorizovano', %s)""", (OBD, SCHUZE_CT, DEN1, CAST_CT))
+    # aname 1, 4 a 5 bez řádku v rec (rec nemá bod u 27 % řádků)
+    sql(conn, """INSERT INTO steno.rec (obdobi, schuze, turn, aname, id_osoba, id_bod, druh) VALUES
+                 (%s, %s, 622, 2, 1002, %s, 1), (%s, %s, 622, 3, 1005, %s, 5), (%s, %s, 622, 6, 1004, %s, 1)""",
+        (OBD, SCHUZE_CT, BOD285, OBD, SCHUZE_CT, INTERPELACE, OBD, SCHUZE_CT, SLOUCENA))
+    ingest.assemble(conn, OBD, SCHUZE_CT)
+
+    assert sql(conn, "SELECT aname, ct, ct_zdroj FROM steno.projev WHERE schuze = %s ORDER BY aname", (SCHUZE_CT,)) == [
+        (1, 285, "nadpis"),  # nadpis v jeho projevu
+        (2, 285, "rec"),     # bod z rec s ct
+        (3, None, None),     # bod z rec bez tisku (interpelace): tisk dne se nepoužije
+        (4, 285, "nadpis"),  # tisk dne měl dřív, než otevřel interpelace
+        (5, None, None),     # bez rec, po nadpisu interpelací: tisk dne skončil
+        (6, 76, "bod"),      # sloučená rozprava „/sněmovní tisky 76 a 77/“: první tisk z konce bodu
+    ]
+    tisky_projevu: dict[int, list] = {}
+    for aname, ct, zdroj in sql(conn, """SELECT p.aname, t.ct, t.zdroj FROM steno.projev_tisk t
+                                         JOIN steno.projev p ON p.id = t.projev_id
+                                         WHERE p.schuze = %s ORDER BY 1, 2""", (SCHUZE_CT,)):
+        tisky_projevu.setdefault(aname, []).append((ct, zdroj))
+    assert tisky_projevu == {1: [(285, "nadpis")], 2: [(285, "rec")], 4: [(285, "nadpis")],
+                             6: [(76, "bod"), (77, "bod")]}
+
+
+# --- get_tisk: body pořadu a počty projevů z projev_tisk ---------------------------------------------------
+
+NAZEV_231 = "Vládní návrh zákona, kterým se mění zákon č. 483/1991 Sb., o České televizi"
+BOD231_S30, BOD231 = 59435, 60023
+DLOUHY = "Děkuji za slovo, vážený pane předsedající, k návrhu mám několik poznámek. " * 3  # přes 200 znaků
+
+
+def tabulka_tisky(conn):
+    """get_tisk čte tabulku tisky webu: test ji vytvoří prázdnou ve vlastním schématu."""
+    sql(conn, f"CREATE SCHEMA {SCHEMA_META}")
+    sql(conn, f"""CREATE TABLE {SCHEMA_META}.tisky (ct int, druh int, typ_navrhu text, navrhovatel text, nazev text,
+                  uplny_nazev text, predlozeno text, faze text, posledni text, p90 boolean, p90ok boolean, zl boolean,
+                  pn_count int, pn_last text, zakony text, sbirka text, score int, reasons text)""")
+    sql(conn, f"SET search_path TO {SCHEMA_META}, public")
+
+
+def test_get_tisk_body_a_pocty_z_projev_tisk(conn):
+    """Tisk 231: na pořadu schůze 30 (neprojednán) i 34; většina projevů schůze 34 má tisk jen z nadpisu, bez bodu."""
+    from hlidac_rag import tools
+
+    tabulka_tisky(conn)
+    sql(conn, """INSERT INTO steno.bod (id_bod, obdobi, schuze, cislo, nazev, konec, ct) VALUES
+                 (%s, %s, 30, 34, %s, '/sněmovní tisk 231/', 231), (%s, %s, %s, 34, %s, '/sněmovní tisk 231/', 231),
+                 (%s, %s, %s, 203, 'Ústní interpelace', '', NULL)""",
+        (BOD231_S30, OBD, NAZEV_231, BOD231, OBD, SCHUZE, NAZEV_231, INTERPELACE, OBD, SCHUZE))
+    b231, n231, interp = (BOD231, 231, "rec"), (None, 231, "nadpis"), (INTERPELACE, None, None)
+    vloz(conn, [
+        p(1, CHAIR, "Otevírám rozpravu k bodu 34.", bod=b231),
+        p(2, HAAS, DLOUHY, bod=b231),
+        p(3, BERKI, DLOUHY, bod=n231),
+        p(4, PLATENIK, "Děkuji.", bod=n231, datum=DEN2),
+        p(5, MRAZOVA, DLOUHY, bod=n231, zruseno=True),
+        p(6, MRAZOVA, DLOUHY, bod=interp),
+    ])
+    prepocitej(conn)
+
+    r = tools.get_tisk(conn, 231, ["body"])
+    s30 = {"schuze": 30, "body": [34], "nazev": NAZEV_231, "konec": "/sněmovní tisk 231/", "datum": None,
+           "projevu": 0, "projevu_vse": 0}
+    # projevu: bez předsedajících, od 200 znaků (Haas s bodem a Berki bez bodu); zrušený a interpelace ne
+    assert r["body_poradu"] == [s30, dict(s30, schuze=SCHUZE, datum=DEN1.isoformat(), projevu=2, projevu_vse=4)]
+    assert r["projevy"] == {"projevu": 2, "projevu_vse": 4, "recniku": 2, "prvni": DEN1.isoformat(),
+                            "posledni": DEN1.isoformat()}
+    assert r["nazev"] == NAZEV_231  # tisk mimo tabulku tisky: název z bodu pořadu
+
+
+def test_get_tisk_body_vcetne_slucene_rozpravy(conn):
+    """Tisk 77 nemá vlastní bod s ct: schůzi a bod 901 dá sloučená rozprava přes projev_tisk."""
+    from hlidac_rag import tools
+
+    tabulka_tisky(conn)
+    vloz(conn, ROZPRAVA)
+    prepocitej(conn)
+    r = tools.get_tisk(conn, 77, ["body"])
+    # 15 nezrušených projevů bodu 901, od 200 znaků bez předsedajících jen Berki (reaguje na Haase)
+    assert r["body_poradu"] == [{"schuze": SCHUZE, "body": [901], "nazev": "Sloučená rozprava k bodům 1 a 2",
+                                 "konec": "/sněmovní tisky 76 a 77/", "datum": DEN1.isoformat(), "projevu": 1,
+                                 "projevu_vse": 15}]
+    with pytest.raises(ValueError, match="nesleduji"):
+        tools.get_tisk(conn, 78, ["body"])
 
 
 def test_run_prepocitej_rozpravu_bez_site(conn, monkeypatch, capsys):

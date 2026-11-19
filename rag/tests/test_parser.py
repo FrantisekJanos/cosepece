@@ -67,6 +67,38 @@ def test_build_speeches_continuation():
     assert sp[1].turns == [1, 2] and len(sp[1].texts) == 2
 
 
+# nadpisy bodů jako na psp.cz (schůze 34, 5. 11. 2026): bod s tiskem, interpelace bez tisku, nadpis bez čísla bodu
+NADPIS_285 = ('<p align=center><b>17.<br>Vládní návrh zákona, kterým se mění zákon č. 427/2011 Sb., o doplňkovém '
+              'penzijním spoření<br>/sněmovní tisk <a href="/sqw/historie.sqw?T=285&O=10">285</a>/ &ndash; druhé čtení'
+              '</b></p>')
+NADPIS_INTERPELACE = "<p align=center><b>203.<br>Ústní interpelace</b></p>"
+NADPIS_BEZ_CISLA = "<p align=center><b>Slib poslance</b></p>"
+
+
+def _recnik(aname: int, label: str, text: str) -> str:
+    return f'<p><b><a href="/sqw/detail.sqw?id={aname}" id="r{aname}">{label}</a></b>: {text}</p>'
+
+
+def _den(html: str) -> list[ingest.Speech]:
+    return ingest.build_speeches([(622, date(2026, 11, 5), 10, "neautorizovano", html)])
+
+
+def test_cislovany_nadpis_bez_tisku_ukonci_tisk_dne():
+    sp = _den(_recnik(1, "Místopředseda PSP Patrik Nacher", "Zahajuji projednávání.") + NADPIS_285
+              + _recnik(2, "Poslanec Karel Haas", "K návrhu mám dvě poznámky.")
+              + _recnik(3, "Místopředseda PSP Patrik Nacher", "Přecházíme k dalšímu bodu.") + NADPIS_INTERPELACE
+              + _recnik(4, "Ministr zdravotnictví ČR Adam Vojtěch", "Děkuji za slovo, vážený pane místopředsedo."))
+    # předsedající, který interpelace otevřel, tisk bodu neztratí; ministr po nadpisu interpelací tisk nemá
+    assert [(s.aname, s.heading_ct) for s in sp] == [(1, 285), (2, 285), (3, 285), (4, None)]
+    assert "[203. Ústní interpelace]" in sp[2].texts[0]
+
+
+def test_nadpis_bez_cisla_bodu_tisk_dne_nemeni():
+    sp = _den(NADPIS_285 + _recnik(1, "Předseda PSP Tomio Okamura", "Prosím o složení slibu.") + NADPIS_BEZ_CISLA
+              + _recnik(2, "Poslanec Karel Haas", "Slibuji."))
+    assert [(s.aname, s.heading_ct) for s in sp] == [(0, 285), (1, 285), (2, 285)]
+
+
 def test_next_check_schedule():
     now = datetime(2026, 11, 18, 12, tzinfo=timezone.utc)
     assert ingest.next_check("neautorizovano", date(2026, 11, 17), None, now) - now == timedelta(hours=2)

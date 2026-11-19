@@ -11,10 +11,10 @@ final class Revisions
 {
 
     public const TISK_COLUMNS = ['ct', 'docx_url', 'text', 'chars', 'signals', 'ai_json', 'ai_score', 'fetched_at', 'ai_at',
-        'error', 'checked_at', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model'];
+        'error', 'checked_at', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model', 'ai_runs', 'ai_run_count'];
     public const PN_COLUMNS = ['id_dokument', 'ct', 'cislo', 'docx_url', 'text', 'chars', 'laws', 'signals', 'rule_score',
         'ai_json', 'ai_score', 'fetched_at', 'ai_at', 'error', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score',
-        'ai_prev_model'];
+        'ai_prev_model', 'ai_runs', 'ai_run_count'];
 
 
     public const SOURCES = [

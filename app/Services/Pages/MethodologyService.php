@@ -8,8 +8,15 @@ use Hlidac\Scorer;
 
 final class MethodologyService
 {
+    public function __construct(private \App\Services\AiReliabilityService $reliability)
+    {
+    }
+
     public function data(): array
     {
+        $rel = $this->reliability->statistics();
+        $rc = \Hlidac\AiReviewer::repeatConfig(hlidacConfig());
+        $pct = fn(int $a, int $n): string => $n > 0 ? (string)round(100 * $a / $n) . ' %' : '–';
         $w = Scorer::weights(hlidacConfig());
         $ai = (array)hlidacConfig('ai', []);
         $aiOn = !empty($ai['enabled']);
@@ -47,6 +54,6 @@ final class MethodologyService
         $active = 'metodika';
         $description = 'Jak se počítá skóre závažnosti legislativního postupu: signály, body, stropy a úrovně.';
 
-        return compact('title', 'active', 'description', 'w', 'ai', 'aiOn', 'verifyMin', 'groups');
+        return compact('rel', 'rc', 'pct', 'title', 'active', 'description', 'w', 'ai', 'aiOn', 'verifyMin', 'groups');
     }
 }

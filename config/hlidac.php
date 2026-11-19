@@ -57,6 +57,7 @@ $defaults = [
 
         'verify_model' => 'claude-sonnet-5-5',
         'verify_min' => 6,
+        'repeat_runs' => 3, 'repeat_min' => 3, 'repeat_max' => 7, 'sample_every' => 10, 'sample_below' => 4,
         'per_run' => 20,
         'max_chars' => 150000,
         'timeout' => 300,

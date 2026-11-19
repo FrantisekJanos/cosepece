@@ -17,7 +17,7 @@ final class AmendmentText extends Model
     protected $fillable = [
         'id_dokument', 'ct', 'cislo', 'docx_url', 'text', 'chars',
         'laws', 'signals', 'rule_score', 'ai_json', 'ai_score', 'fetched_at',
-        'ai_at', 'error', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model',
+        'ai_at', 'error', 'ai_model', 'ai_prompt', 'ai_prev_json', 'ai_prev_score', 'ai_prev_model', 'ai_runs', 'ai_run_count',
     ];
 
     protected function casts(): array
@@ -31,6 +31,7 @@ final class AmendmentText extends Model
             'rule_score' => 'integer',
             'ai_json' => 'array',
             'ai_score' => 'integer',
+            'ai_runs' => 'array', 'ai_run_count' => 'integer',
             'fetched_at' => 'immutable_datetime',
             'ai_at' => 'immutable_datetime',
             'ai_prompt' => 'integer',

@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Řazení a filtr hlavních nálezů',
         'Hlavní nálezy na úvodní stránce jdou seřadit nejen podle celkového skóre, ale i podle závažnosti nálezu v rozboru textu (jen ověřené nálezy doložené citací), podle nejnovějšího dění a podle toho, kde se blíží hlasování ve Sněmovně. Filtr „Co hledám“ vybere jeden druh problému: přílepky, rozsáhlé změny v pozměňovacích návrzích, zkrácené lhůty, § 90/2 bez 2. čtení, obcházení připomínek nebo zpětné použití. Volba je v adrese, takže odkaz jde poslat dál. Přílepky, rozsáhlé změny v PN a zpětné použití jsou nově i mezi filtry na stránce Tisky. Skóre se nemění.',
-        [0], false],
+        [46], false],
     ['2026-11-19', 'Dokumentace dat a API, limity dotazů',
         'Nová stránka Data a API (odkaz v patičce) popisuje všechny strojové výstupy: adresy JSON API a RSS, filtry, význam každého pole, číselníky (důvody skóre, druhy upozornění, fáze), chybové kódy a příklady pro curl, JavaScript a Python. Ukázky odpovědí jsou živá data. Zároveň platí limity počtu dotazů z jedné IP adresy (API 60 za minutu, RSS 30, stránky 240), aby web nešlo snadno přetížit; při překročení vrátí server kód 429. Při bezpečnostní prověrce jsme také vypnuli vypisování chybových hlášení do stránky, přidali ochranu proti hádání přístupových tokenů a bezpečnostní hlavičky prohlížeče.',
         [45], false],

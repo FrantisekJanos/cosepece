@@ -977,6 +977,37 @@ $idx = (string)ob_get_clean();
 check('neznámé řazení a druh se ignorují', (bool)preg_match('~class="pill active"[^>]*>Celkové skóre~', $idx) && !str_contains($idx, '<script>&'), true);
 $_GET = [];
 
+echo "Vyhledávání\n";
+$si = (new Hlidac\SearchIndex(db()))->build();
+$kinds = array_unique(array_column($si['items'], 'k'));
+sort($kinds);
+check('index obsahuje tisky, zákony, PN, autory a témata', array_values(array_intersect(['osoba', 'pn', 'tema', 'tisk', 'zakon'], $kinds)), ['osoba', 'pn', 'tema', 'tisk', 'zakon']);
+$first = fn(string $q) => (function ($r) { $k = array_key_first($r); return $k === null ? null : [$k, $r[$k][0]['id']]; })(Hlidac\SearchIndex::search($si, $q));
+check('číslo tisku najde tisk jako první', [$first('221'), $first('tisk 221'), $first('sněmovní tisk 221')], [['tisk', '221'], ['tisk', '221'], ['tisk', '221']]);
+check('číslo zákona najde zákon', $first('159/2006'), ['zakon', '159/2006']);
+check('bez diakritiky a začátkem slova', $first('stret zaj')[1] ?? null, $first('Střet zájmů')[1] ?? null);
+check('česká koncovka a překlep', [Hlidac\SearchIndex::stem('zbrane'), Hlidac\SearchIndex::stem('dotace'), Hlidac\SearchIndex::stem('zakon'),
+    Hlidac\SearchIndex::nearlyEqual('dotcae', 'dotace'), Hlidac\SearchIndex::nearlyEqual('dotaxe', 'dotace'), Hlidac\SearchIndex::nearlyEqual('dotce', 'dotace'), Hlidac\SearchIndex::nearlyEqual('ditcae', 'dotace')],
+    ['zbran', 'dotac', '', true, true, true, false]);
+check('číslo se nehledá začátkem („22“ nenajde 221)', array_filter(Hlidac\SearchIndex::search($si, '22')['tisk'] ?? [], fn($t) => $t['id'] === '221'), []);
+check('druh problému jako téma', $first('přílepky'), ['tema', 'prilepky']);
+check('prázdný dotaz nic nevrací', Hlidac\SearchIndex::search($si, '  '), []);
+$_GET = ['q' => 'střet zájmů'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/hledat.php');
+$sh = (string)ob_get_clean();
+check('stránka výsledků: skupiny a odkaz na tisk', str_contains($sh, 'výsledků pro „střet zájmů“') && str_contains($sh, 'href="tisk.php?ct=221"') && str_contains($sh, 'data-search'), true);
+$_GET = ['q' => '<script>alert(1)</script>'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/hledat.php');
+$sh = (string)ob_get_clean();
+check('dotaz je v HTML escapovaný', !str_contains($sh, '<script>alert(1)') && str_contains($sh, '&lt;script&gt;'), true);
+$_GET = [];
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);

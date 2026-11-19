@@ -99,6 +99,11 @@ Hlavní nálezy (index.php, `Repo::findings`): řazení `?razeni=` (skore, ai = 
 hlasovani = podle fáze) a druh problému `?druh=` (`Repo::PROBLEM_GROUPS` z klíčů důvodů skóre + ověřené AI příznaky
 přílepku/zpětnosti + krátké připomínky u vlády). Skupiny drž úzké, jinak mezi nálezy nic neodfiltrují.
 
+Vyhledávání: `app/SearchIndex.php` staví při synchronizaci index (tisky + titulky AI, PN a autoři, zákony z názvů
+tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-<db>.json`; `hledat.php?index=<otisk>`
+ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
+(PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
+
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 

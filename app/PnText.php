@@ -154,6 +154,14 @@ final class PnText
         return $out;
     }
 
+    public static function lawsIn(string $normative): array
+    {
+
+        preg_match_all('~V\s+zákoně\s+č\.\s*(\d+/\d{4})\s*Sb\.~u', $normative, $m1);
+        preg_match_all('~Zákon\s+č\.\s*(\d+/\d{4})\s*Sb\.,[^\n]{0,400}?se\s+(?:mění|doplňuje)~u', $normative, $m2);
+        return array_values(array_unique(array_merge($m1[1], $m2[1])));
+    }
+
     public static function negatesRetro(string $sentence): bool
     {
 
@@ -166,9 +174,8 @@ final class PnText
         $weights = $config['scoring'] ?? [];
         $normative = self::normativePart($text);
 
-        preg_match_all('~V\s+zákoně\s+č\.\s*(\d+/\d{4})\s*Sb\.~u', $normative, $m1);
-        preg_match_all('~Zákon\s+č\.\s*(\d+/\d{4})\s*Sb\.,[^\n]{0,400}?se\s+(?:mění|doplňuje)~u', $normative, $m2);
-        $laws = array_values(array_unique(array_merge($m1[1], $m2[1])));
+
+        $laws = self::lawsIn($normative);
 
         $signals = [];
         $score = 0;

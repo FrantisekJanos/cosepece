@@ -49,7 +49,7 @@ use Hlidac\View;
   <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="{{ route('methodology', [], false) }}">Jak skóre počítáme.</a> <a href="{{ (string)hlidacConfig('issues_url', '') }}">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
-<?php if ($billText !== null && ($billText['ai'] !== null || $billText['signals'] !== [])): ?>
+<?php if ($billText !== null && ($billText['ai'] !== null || array_diff_key($billText['signals'], ['laws' => true]) !== [])): ?>
 <section class="card pad" aria-label="Rozbor textu návrhu">
   <h2>Rozbor textu návrhu</h2>
   <?php $bai = $billText['ai']; ?>

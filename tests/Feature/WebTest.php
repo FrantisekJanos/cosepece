@@ -23,6 +23,17 @@ final class WebTest extends TestCase
         $this->assertGreaterThan(0, count($xml->channel->item));
     }
 
+    public function test_updated_methodology_and_bill_laws_without_findings(): void
+    {
+        $this->importFixtures();
+        config(['hlidac.ai.enabled' => true]);
+        $this->get('/metodika')->assertOk()->assertSee('50 % všech pozměňovacích návrhů')
+            ->assertSee('zatím nepostoupil do 2. čtení')->assertSee('do té doby nejvýš jako 5/10');
+        db()->run("INSERT INTO tisk_text (ct, text, chars, signals) VALUES (90, 'Text', 4, ?)",
+            ['{"laws":["89/2012"]}']);
+        $this->get('/tisky/90')->assertOk()->assertDontSee('aria-label="Rozbor textu návrhu"', false);
+    }
+
     public function test_legacy_urls_redirect_permanently_and_keep_filters(): void
     {
         foreach ([

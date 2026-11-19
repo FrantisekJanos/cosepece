@@ -105,7 +105,13 @@ final class TiskText
     {
 
         $normative = PnText::normativePart($text);
-        return ['chars' => mb_strlen($normative), 'signals' => PnText::procedureSignals($normative)];
+        $signals = PnText::procedureSignals($normative);
+
+        $laws = PnText::lawsIn($normative);
+        if ($laws !== []) {
+            $signals['laws'] = $laws;
+        }
+        return ['chars' => mb_strlen($normative), 'signals' => $signals];
     }
 
     private function save(int $ct, ?string $docxUrl, string $text, ?string $error): void

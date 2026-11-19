@@ -64,7 +64,7 @@ use Hlidac\View;
   <h2>Rozbor textu</h2>
   <p>Web stahuje texty návrhů zákonů a pozměňovacích návrhů ve Wordu. Pravidla v nich hledají odkazy na jiné zákony (přílepky), zpětné použití a změny lhůt pro vymáhání.</p>
   <?php if ($aiOn): ?>
-  <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností {{ $verifyMin }} a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“.</p>
+  <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností {{ $verifyMin }} a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“. U pozměňovacích návrhů se takový nález do skóre počítá naplno až po tomto ověření, do té doby nejvýš jako {{ $verifyMin - 1 }}/10. Přílepek se posuzuje proti zákonům, které mění název i text samotného návrhu.</p>
   <?php endif; ?>
 </section>
 

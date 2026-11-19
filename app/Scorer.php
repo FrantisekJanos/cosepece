@@ -22,6 +22,8 @@ final class Scorer
 
         return [
             'mp_bill' => 15,
+
+            'mp_bill_early' => 5,
             'senate_bill' => 5,
             'region_bill' => 5,
             'p90_requested' => 10,
@@ -31,9 +33,12 @@ final class Scorer
             'short_gap_days' => 7,
             'late_pn' => 10,
             'late_pn_min' => 3,
+
+            'late_pn_share' => 0.5,
             'surge' => 5,
             'omnibus' => 3,
-            'topic' => 15,
+
+            'topic' => 5,
             'watched' => 10,
             'pn_other_law' => 20,
             'pn_large' => 10,
@@ -93,7 +98,7 @@ final class Scorer
             $pnDates[(int)$p['ct']][] = substr((string)$p['cas'], 0, 10);
         }
         $pnText = [];
-        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.signals, x.ai_json, p.osoba FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
+        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.ai_model, x.signals, x.ai_json, p.osoba FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
             $pnText[(int)$x['ct']][] = $x;
         }
         $billText = [];
@@ -150,8 +155,23 @@ final class Scorer
             }
         };
 
+
+
+        $progressed = (int)$t['p90ok'] === 1;
+        foreach ($kroky as $k) {
+            $typ = (int)$k['typ_stavu'];
+            if (in_array($typ, Analyzer::STAV_2_3_CTENI, true) || in_array($typ, Analyzer::STAV_PO_SNEMOVNE, true) || $typ === 21) {
+                $progressed = true;
+                break;
+            }
+        }
+        $closed = in_array((string)$t['faze'], ['Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'], true);
         if ($t['typ_navrhu'] === 'poslanecký') {
-            $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením');
+            if ($progressed) {
+                $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh postupuje projednáváním – neprošel meziresortním připomínkovým řízením');
+            } else {
+                $add('mp_bill', (int)$w['mp_bill_early'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením (zatím nepostoupil do 2. čtení)');
+            }
         } elseif ($t['typ_navrhu'] === 'senátní') {
             $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – neprošel meziresortním připomínkovým řízením');
         } elseif ($t['typ_navrhu'] === 'krajský') {
@@ -160,7 +180,8 @@ final class Scorer
 
         if ((int)$t['p90ok']) {
             $add('p90_passed', (int)$w['p90_passed'], 'Schváleno už v 1. čtení (§ 90 odst. 2) bez 2. a 3. čtení');
-        } elseif ((int)$t['p90']) {
+        } elseif ((int)$t['p90'] && !$closed) {
+
             $add('p90_requested', (int)$w['p90_requested'], 'Navrženo schválit už v 1. čtení (§ 90 odst. 2)');
         }
         if ((int)$t['zl']) {
@@ -199,8 +220,9 @@ final class Scorer
 
         if ($detailEnd !== null) {
             $late = count(array_filter($pnDates, fn(string $d): bool => $d === $detailEnd));
-            if ($late >= (int)$w['late_pn_min']) {
-                $add('late_pn', (int)$w['late_pn'], "$late pozměňovacích návrhů podaných v den konce podrobné rozpravy");
+
+            if ($late >= (int)$w['late_pn_min'] && $late >= (float)$w['late_pn_share'] * count($pnDates)) {
+                $add('late_pn', (int)$w['late_pn'], "$late z " . count($pnDates) . ' pozměňovacích návrhů podáno v den konce podrobné rozpravy');
             }
         }
         if ($surge) {
@@ -214,6 +236,10 @@ final class Scorer
         $otherLawsConfirmed = false;
         $aiWorst = null;
         $retroWhere = null;
+        $verifier = AiReviewer::verifyModel($this->config);
+        $verifyMin = (int)($this->config['ai']['verify_min'] ?? 6);
+
+        $billLawsInText = $billText !== null ? (array)((json_decode((string)$billText['signals'], true) ?: [])['laws'] ?? []) : [];
         $billSignals = $billText !== null ? (json_decode((string)$billText['signals'], true) ?: []) : [];
 
         if (!empty($billSignals['retro_deadline']) && !empty($billSignals['deadline'])) {
@@ -228,6 +254,11 @@ final class Scorer
             $large = !empty($signals['large']);
             $anyLarge = $anyLarge || $large;
             $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
+            $signals['other_laws'] = array_values(array_diff((array)($signals['other_laws'] ?? []), $billLawsInText));
+            if ($signals['other_laws'] === []) {
+                unset($signals['other_laws']);
+            }
+            $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
             if (!$related) {
                 foreach ($signals['other_laws'] ?? [] as $law) {
                     $otherLaws[$law] = true;
@@ -240,6 +271,12 @@ final class Scorer
                 $retroWhere = 'Pozměňovací návrh č. ' . $x['cislo'];
             }
             $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : 0;
+
+
+            if ($ai >= $verifyMin && (string)($x['ai_model'] ?? '') !== $verifier) {
+                $ai = $verifyMin - 1;
+                $x['ai_score'] = $ai;
+            }
             if ($ruleFlag || $ai >= 6) {
                 $flagged++;
             }

@@ -113,7 +113,7 @@ $sc = fn(int $ct) => (int)db()->value('SELECT score FROM tisky WHERE ct = ?', [$
 $keys = fn(int $ct) => array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$ct]), true), 'key');
 check('tisk 78: § 90/2 prošlo + poslanecký = 40', $sc(78), 40);
 check('tisk 90: § 90/2 navrženo + zkrácení + souhrnná novela = 28', $sc(90), 28);
-check('tisk 221: poslanecký + střet zájmů + sledovaný = 40', $sc(221), 40);
+check('tisk 221: poslanecký v 1. čtení 5 + citlivá oblast 5 + sledovaný 10 = 20', $sc(221), 20);
 check('tisk 311: PN na poslední chvíli', in_array('late_pn', $keys(311), true), true);
 check('tisk 311: zkrácená lhůta + PN na poslední chvíli + sledovaný = 35', $sc(311), 35);
 
@@ -189,11 +189,11 @@ $zip->close();
 
 $r3 = Hlidac\Sync::run();
 check('2 nová upozornění', $r3['alerts_new'], 2);
-check('tisk 221 nyní závažný (55)', $sc(221), 55);
-check('odesláno jen nad prahem (dry run)', $r3['posts']['sent'], 2);
+check('tisk 221 se zkrácenou lhůtou (45)', $sc(221), 45);
+check('odesláno jen nad prahem (dry run): zkrácení 55, PN 45 čeká', [$r3['posts']['sent'], $r3['posts']['held']], [1, 1]);
 $log = (string)@file_get_contents(hlidacDataPath('posts.log'));
 check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisky/221'), true);
-check('příspěvek o PN', str_contains($log, 'Nový pozměňovací návrh k tisku: Novela z. o střetu zájmů'), true);
+check('příspěvek o zkrácené lhůtě', str_contains($log, 'Zkrácená lhůta: Novela z. o střetu zájmů'), true);
 @unlink(hlidacDataPath('posts.log'));
 
 echo "4. běh (běžný PN pod prahem se nepošle)\n";
@@ -251,7 +251,7 @@ db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, f
 $scorer->scoreBills();
 check('tisk 221: zpětně použitá změna lhůty', in_array('retro_deadline', $keys(221), true), true);
 check('tisk 221: rozbor textu návrhu', in_array('ai_bill', $keys(221), true), true);
-check('tisk 221: 55 + 15 + 8×3 = 94', $sc(221), 94);
+check('tisk 221: 45 + 15 + 8×3 = 84', $sc(221), 84);
 $html221 = testPage('/tisky/221');
 check('detail tisku ukazuje rozbor a citaci', str_contains($html221, 'Rozbor textu návrhu') && str_contains($html221, 'nejpozději do 4 let'), true);
 // celá cesta saveResult: nález bez ověřené citace se uloží se závažností 2 a do skóre tisku se nepromítne (issue #7, bod 2)
@@ -267,7 +267,7 @@ check('uložený rozbor bez klíče citace se nesníží', Hlidac\AiReviewer::sa
 db()->run('UPDATE tisk_text SET ai_json = ?, ai_score = ?, ai_at = ?, ai_model = ? WHERE ct = 221',
     [$saved221['ai_json'], $saved221['ai_score'], $saved221['ai_at'], $saved221['ai_model']]);
 $scorer->scoreBills();
-check('tisk 221 po vrácení rozboru zase 94', $sc(221), 94);
+check('tisk 221 po vrácení rozboru zase 84', $sc(221), 84);
 
 echo "AI rozbor přes claude CLI (falešné CLI, bez sítě)\n";
 $fakeCli = $tmp . '/claude.php';
@@ -560,6 +560,65 @@ db()->run("UPDATE tisk_text SET signals = ? WHERE ct = ?", [json_encode(['retro'
 $keys = array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$hlCt]), true) ?: [], 'key');
 check('změna lhůty i zpětné použití body dají', in_array('retro_deadline', $keys, true), true);
 db()->run('DELETE FROM tisk_text WHERE ct = ?', [$hlCt]);
+
+echo "Metodika skóre (#7): postup tisku, pozdní PN, ověřené AI u PN, přílepek proti textu návrhu\n";
+$reasonsOf = function (int $ct): array {
+    $out = [];
+    foreach (json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$ct]), true) ?: [] as $r) {
+        $out[$r['key']] = $r;
+    }
+    return $out;
+};
+$rescore = fn() => (new Hlidac\Scorer(db(), hlidacConfig()))->scoreBills();
+$progressSteps = db()->all('SELECT * FROM kroky WHERE ct = 221 AND typ_stavu IN (2, 3, 4, 5, 21, 64, 12, 14, 63, 8, 13, 11)');
+db()->run('DELETE FROM kroky WHERE ct = 221 AND typ_stavu IN (2, 3, 4, 5, 21, 64, 12, 14, 63, 8, 13, 11)');
+db()->run('UPDATE tisky SET p90ok = 0 WHERE ct = 221');
+$rescore();
+check('poslanecký návrh v 1. čtení: 5 b.', $reasonsOf(221)['mp_bill']['points'] ?? null, 5);
+db()->run("INSERT INTO kroky (id_hist, id_tisk, ct, datum, typ_stavu, stav, akce_id, akce) VALUES (990101, 43343, 221, '2026-10-01 00:00:00', 2, '', 0, '')");
+$rescore();
+check('poslanecký návrh ve 2. čtení: 15 b.', $reasonsOf(221)['mp_bill']['points'] ?? null, 15);
+db()->run('DELETE FROM kroky WHERE id_hist = 990101');
+foreach ($progressSteps as $k) {
+    db()->insertMany('kroky', array_keys(array_filter($k, 'is_string', ARRAY_FILTER_USE_KEY)), [$k]);
+}
+db()->run("UPDATE tisky SET p90 = 1, p90ok = 0, faze = 'Vzat zpět' WHERE ct = 221");
+$rescore();
+check('§ 90/2 u vzatého zpět bez bodů', isset($reasonsOf(221)['p90_requested']), false);
+db()->run("UPDATE tisky SET p90 = 0, faze = '1. čtení' WHERE ct = 221");
+
+// AI u PN: neověřený vysoký nález nejvýš 5/10, po ověření naplno
+$pnRow = db()->one('SELECT id_dokument FROM pn WHERE ct = 221 LIMIT 1');
+db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [(int)$pnRow['id_dokument']]);
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, ai_json, ai_score, ai_model, ai_at)
+    VALUES (?, 221, 1, 'x', 1, '', '{}', 0, ?, 9, 'claude-haiku-5-5', ?)", [(int)$pnRow['id_dokument'], json_encode(['citace' => ['x']]), date('Y-m-d H:i:s')]);
+$rescore();
+check('neověřený nález PN 9/10 se počítá jako 5/10', $reasonsOf(221)['ai']['points'] ?? null, 15);
+db()->run('UPDATE pn_text SET ai_model = ? WHERE id_dokument = ?', [Hlidac\AiReviewer::verifyModel(hlidacConfig()), (int)$pnRow['id_dokument']]);
+$rescore();
+check('ověřený nález PN 9/10 naplno', $reasonsOf(221)['ai']['points'] ?? null, 27);
+
+// přílepek: PN mění zákon, který mění i samotný text návrhu → není přílepek
+db()->run("UPDATE pn_text SET ai_score = NULL, ai_json = NULL, ai_model = NULL, signals = ?, rule_score = 20 WHERE id_dokument = ?",
+    [json_encode(['other_laws' => ['89/2012']]), (int)$pnRow['id_dokument']]);
+$rescore();
+check('PN měnící jiný zákon = přílepek', isset($reasonsOf(221)['pn_other_law']), true);
+$billBackup = db()->one('SELECT * FROM tisk_text WHERE ct = 221');
+db()->run('DELETE FROM tisk_text WHERE ct = 221');
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals) VALUES (221, 'x', 1, ?)", [json_encode(['laws' => ['89/2012']])]);
+$rescore();
+check('zákon mění i text návrhu → není přílepek', isset($reasonsOf(221)['pn_other_law']), false);
+check('zákony z textu návrhu', Hlidac\TiskText::analyze("Část druhá\nV zákoně č. 89/2012 Sb., občanský zákoník, se § 1 mění takto:")['signals']['laws'] ?? [], ['89/2012']);
+db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [(int)$pnRow['id_dokument']]);
+db()->run('DELETE FROM tisk_text WHERE ct = 221');
+if ($billBackup !== null) {
+    db()->insertMany('tisk_text', array_keys(array_filter($billBackup, 'is_string', ARRAY_FILTER_USE_KEY)), [$billBackup]);
+}
+$rescore();
+
+// pozdní PN relativně k tisku
+$w = Hlidac\Scorer::weights(hlidacConfig());
+check('výchozí váhy: citlivá oblast 5, podíl pozdních PN 50 %', [$w['topic'], $w['late_pn_share'], $w['mp_bill_early']], [5, 0.5, 5]);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {

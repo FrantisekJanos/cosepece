@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Token pro AI asistenty přímo na webu',
         'Přístupový token k MCP serveru si teď každý vytvoří sám na stránce Pro AI asistenty (MCP), bez registrace a bez e-mailu. Token se zobrazí jen jednou, rovnou i v návodu k připojení; ukládáme jen jeho otisk. Proti zneužití platí nejvýš 3 tokeny denně z jedné adresy a denní strop pro všechny.',
-        [0], false],
+        [55], false],
     ['2026-11-19', 'Napojení pro AI asistenty (MCP)',
         'Nová stránka Pro AI asistenty (MCP) popisuje, jak připojit Claude a další AI asistenty přímo k našim datům: návrhy zákonů se skóre, texty návrhů a pozměňovacích návrhů po paragrafech, celé rozpravy ve Sněmovně, projevy, hlasování a ověření citací. Je tam návod k připojení, přehled 21 nástrojů, ukázkové dotazy a jak získat přístupový token. Odkaz je v patičce a na stránce Data a API.',
         [54], false],

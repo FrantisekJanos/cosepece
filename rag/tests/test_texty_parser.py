@@ -169,3 +169,39 @@ def test_neuzavrena_citace_bodu_nezanori_dalsi_citaci():
     assert [c.cesta for c in rozdel(t) if c.typ == "bod"] == ["bod 14", "bod 20"]
     # PN 1989 má nevyvážené uvozovky; citované body tisku nesmí tvořit hlubokou cestu
     assert max(c.cesta.count(" / ") for c in rozdel(read("pn-1989.txt"))) <= 2
+
+
+def test_citovany_sourozenec_zustava_v_citaci_pn():
+    t = "\n".join([
+        "1. V čl. I body 1 a 2 znějí:",
+        "„1. V § 2 se slovo „a“ zrušuje.",
+        "2. V § 3 se slovo „b“ zrušuje.“.",
+        "2. V čl. II se slovo „c“ zrušuje.",
+    ])
+    assert [c.cesta for c in rozdel(t) if c.typ == "bod"] == ["bod 1", "bod 1 / bod 1", "bod 1 / bod 2", "bod 2"]
+
+
+def test_citovany_sourozenec_zustava_v_citaci_tisku():
+    t = "\n".join([
+        "ČÁST PRVNÍ",
+        "Čl. I",
+        "Zákon č. 1/2000 Sb., o něčem, se mění takto:",
+        "1. V části první se čl. I a II nahrazují články, které znějí:",
+        "„Čl. I",
+        "Text prvního článku.",
+        "Čl. II",
+        "Text druhého článku.“.",
+        "2. V § 6 se slovo „c“ zrušuje.",
+    ])
+    cely = rozdel(t)
+    cesty = [c.cesta for c in cely if c.typ in ("clanek", "bod")]
+    assert "ČÁST PRVNÍ / Čl. I / bod 1 / Čl. II" in cesty and "ČÁST PRVNÍ / Čl. II" not in cesty
+    bod2 = next(c for c in cely if c.oznaceni == "bod 2")
+    assert (bod2.cesta, bod2.meni_zakon) == ("ČÁST PRVNÍ / Čl. I / bod 2", "1/2000")
+
+
+def test_pn_1989_citovane_body_vedle_sebe():
+    cely = rozdel(read("pn-1989.txt"))
+    for n in (68, 91):
+        c = next(c for c in cely if c.oznaceni == f"bod {n}")
+        assert c.cesta == f"bod {n}"

@@ -162,8 +162,10 @@ class _Struktura:
         """Celek stejného druhu s předchozím číslem mimo aktuální uvozovky (neuzavřená „)."""
         if cislo is None:
             return None
-        return next((z for z in reversed(self.zasobnik)
-                     if z.hloubka < hloubka and z.typ == typ and z.cislo == cislo - 1), None)
+        # nejbližší předchůdce odshora; leží-li ve stejné citaci, jde o pokračování citace
+        predchozi = next((z for z in reversed(self.zasobnik)
+                          if z.hloubka <= hloubka and z.typ == typ and z.cislo == cislo - 1), None)
+        return predchozi if predchozi is not None and predchozi.hloubka < hloubka else None
 
     def nadpis(self, typ: str, oznaceni: str, cislo: int | None, radek: str) -> None:
         """Zařadí nadpis z řádku `radek` (před započtením uvozovek tohoto řádku)."""

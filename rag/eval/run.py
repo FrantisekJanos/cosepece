@@ -123,10 +123,13 @@ def nacti_predchozi(slozka: Path, dnes: str) -> dict | None:
     return json.loads(m.group(1)) if m else None
 
 
-def _odpoved_z_vysledku(vysledek) -> dict | str:
+def odpoved_z_vysledku(vysledek) -> dict | str:
+    """Převede mcp CallToolResult na dict (úspěch), text, nebo {"__error__": text} při is_error."""
     text = "".join(getattr(c, "text", "") for c in vysledek.content)
-    if vysledek.isError:
+    if vysledek.is_error:
         return {"__error__": text}
+    if isinstance(vysledek.structured_content, dict):
+        return vysledek.structured_content
     try:
         return json.loads(text)
     except ValueError:
@@ -148,7 +151,7 @@ async def _spust(url: str, token: str, otazky: list[dict]) -> list[dict]:
                     t0 = time.perf_counter()
                     try:
                         vysl = await sess.call_tool(v["nastroj"], v.get("argumenty", {}))
-                        odpoved = _odpoved_z_vysledku(vysl)
+                        odpoved = odpoved_z_vysledku(vysl)
                     except Exception as e:  # síťová chyba apod. = FAIL, běh pokračuje
                         odpoved = {"__error__": f"{type(e).__name__}: {e}"}
                     ms = int((time.perf_counter() - t0) * 1000)

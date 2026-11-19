@@ -1,6 +1,7 @@
 import json
 
-from eval.run import check, porovnej, render_tabulka, vyber_otazky
+from eval.run import check, odpoved_z_vysledku, porovnej, render_tabulka, vyber_otazky
+from mcp_types import CallToolResult, TextContent
 
 
 def test_check_cesta_obsahuje():
@@ -49,3 +50,13 @@ def test_render_a_porovnani():
     assert "ok: 1/2" in md and "medián znaků: 1750" in md and "max znaků: 3000" in md
     prev = {"ok": 2, "celkem": 2, "median_znaku": 1000, "max_znaku": 2000}
     assert "ok 2/2" in porovnej(prev, {"ok": 1, "celkem": 2, "median_znaku": 1750, "max_znaku": 3000})
+
+
+def test_odpoved_z_vysledku_structured_text_a_chyba():
+    text = TextContent(type="text", text='{"pocet": 2}')
+    assert odpoved_z_vysledku(CallToolResult(content=[text], structured_content={"pocet": 2})) == {"pocet": 2}
+    assert odpoved_z_vysledku(CallToolResult(content=[text])) == {"pocet": 2}
+    assert odpoved_z_vysledku(CallToolResult(content=[TextContent(type="text", text="volný text")])) == "volný text"
+    chyba = odpoved_z_vysledku(CallToolResult(content=[TextContent(type="text", text="Tisk nenalezen")], is_error=True))
+    assert chyba == {"__error__": "Tisk nenalezen"}
+    assert check(chyba, {"je_chyba": True})[0]

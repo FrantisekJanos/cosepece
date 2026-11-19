@@ -25,6 +25,8 @@ final class Scorer
         // výchozí váhy; v config.php je lze přepsat klíčem 'scoring'
         return [
             'mp_bill' => 15,
+            // hlavní nálezy na homepage i pod prahem skóre: ověřený nález AI od této závažnosti (0–10)
+            'finding_ai_min' => 8,
             // poslanecký návrh, který zatím nepostoupil do 2. čtení (většina takových nikdy neprojde)
             'mp_bill_early' => 5,
             'senate_bill' => 5,

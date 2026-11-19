@@ -63,7 +63,7 @@ View::header('Přehled', 'prehled');
   <div class="card-head">
     <div>
       <h2>Hlavní nálezy</h2>
-      <p class="muted small head-note">Rozpracované tisky s nejvyšším skóre závažnosti (a uzavřené za poslední 4 měsíce). Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
+      <p class="muted small head-note">Rozpracované tisky s nejvyšším skóre závažnosti (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
     </div>
     <a href="tisky.php?min=<?= (int)$w['level_major'] ?>">Všechny závažné</a>
   </div>
@@ -73,7 +73,7 @@ View::header('Přehled', 'prehled');
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
       <a class="finding" href="tisk.php?ct=<?= (int)$t['ct'] ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
-        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
+        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null): ?><span class="chip chip-cut" title="Pod prahem skóre, ale s nálezem AI ověřeným silnějším modelem a doloženým citací">Ověřený nález AI <?= (int)$t['strong_ai'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
           <strong class="finding-title"><?= e($h['title']) ?></strong>

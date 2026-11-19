@@ -847,6 +847,23 @@ if ($revBackup !== null) {
 db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [$revPn]);
 $rescore();
 
+echo "Hlavní nálezy: ověřený nález AI pod prahem skóre\n";
+$ctStrong = (int)db()->value("SELECT ct FROM tisky WHERE faze <> 'Vyhlášeno' AND score < 50 ORDER BY ct LIMIT 1");
+$bak = db()->one('SELECT * FROM tisk_text WHERE ct = ?', [$ctStrong]);
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$ctStrong]);
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_json, ai_score, ai_model, ai_at) VALUES (?, 'x', 1, '{}', ?, 9, 'claude-haiku-5-5', ?)",
+    [$ctStrong, json_encode(['titulek' => 'Silný nález', 'citace' => ['doslovná věta']]), date('Y-m-d H:i:s')]);
+$inTop = fn(): ?array => array_values(array_filter((new Hlidac\Repo(db()))->topFindings(50, 60), fn($t) => (int)$t['ct'] === $ctStrong))[0] ?? null;
+check('neověřený nález 9/10 pod prahem do hlavních nálezů nejde', $inTop(), null);
+db()->run('UPDATE tisk_text SET ai_model = ? WHERE ct = ?', [Hlidac\AiReviewer::verifyModel(config()), $ctStrong]);
+check('ověřený nález 9/10 s citací jde do hlavních nálezů i pod prahem', $inTop()['strong_ai'] ?? null, 9);
+db()->run('UPDATE tisk_text SET ai_json = ? WHERE ct = ?', [json_encode(['titulek' => 'Silný nález', 'citace' => []]), $ctStrong]);
+check('bez citace ne', $inTop(), null);
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$ctStrong]);
+if ($bak !== null) {
+    db()->insertMany('tisk_text', array_keys(array_filter($bak, 'is_string', ARRAY_FILTER_USE_KEY)), [$bak]);
+}
+
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;

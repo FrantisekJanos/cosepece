@@ -76,6 +76,9 @@ return [
         // druhé kolo: nálezy se závažností ≥ verify_min znovu posoudí silnější model (php bin/ai.php --verify)
         'verify_model' => 'claude-sonnet-5-5',
         'verify_min' => 6,
+        // spolehlivost (#7 bod 7): hraniční hodnocení repeat_min–repeat_max posoudí rychlý model repeat_runs× a platí medián;
+        // každý sample_every-tý text s hodnocením pod sample_below namátkou ověří i silnější model
+        'repeat_runs' => 3, 'repeat_min' => 3, 'repeat_max' => 7, 'sample_every' => 10, 'sample_below' => 4,
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI

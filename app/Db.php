@@ -202,6 +202,11 @@ final class Db
         $this->addColumn('tisky', 'souhrn_pn', 'INTEGER');
         $this->addColumn('tisky', 'souhrn_pn_at', 'VARCHAR(16)');
         $this->addColumn('priprava', 'znovu', 'INTEGER NOT NULL DEFAULT 0');
+        // opakované běhy rychlého modelu u hraničních hodnocení (#7 bod 7): závažnosti jednotlivých běhů (JSON) a jejich počet
+        foreach (['tisk_text', 'pn_text'] as $aiTable) {
+            $this->addColumn($aiTable, 'ai_runs', 'VARCHAR(60)');
+            $this->addColumn($aiTable, 'ai_run_count', 'INTEGER');
+        }
         // kdy se naposledy ověřilo, že psp.cz má pořád stejný dokument tisku
         $this->addColumn('tisk_text', 'checked_at', 'VARCHAR(19)');
         $this->addColumn('tisky', 'reasons', $text);

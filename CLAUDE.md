@@ -140,10 +140,10 @@ Výchozí váhy v `Scorer::defaults()`, přepis přes `config.php → scoring`. 
 | ≥ 3 PN a ≥ 50 % všech PN tisku v den konce podrobné rozpravy | 10 |
 | Nával PN (≥ surge_threshold PN k tisku za kalendářní den) | 5 |
 | PN mění jiný zákon než návrh – podle názvu i textu návrhu (přílepek; nepočítá se, když AI potvrdí souvislost) / rozsáhlá nová úprava v PN | 20 / 10 |
-| ≥ 3 problematické PN | 5 |
+| ≥ `pn_many_min` (3) problematické PN (pravidlo, nebo AI ≥ `pn_flag_ai_min` 6) a zároveň ≥ `pn_many_share` (20 %) všech PN tisku; od `pn_many_abs` (10) stačí počet | 5 |
 | Text návrhu nebo PN mění lhůtu vymáhání a použije ji i zpětně (retro + deadline) | 15 |
 | AI závažnost textu návrhu (0–10) × 3 | 0–30 |
-| AI závažnost PN (0–10) × 3; nález ≥ `ai.verify_min` neověřený Sonnetem nejvýš 5/10 | 0–30 |
+| AI závažnost nejhoršího PN (0–10) × 3; nález ≥ `ai.verify_min` neověřený Sonnetem nejvýš 5/10; plné body jen když ≥ `ai_pn_full_count` (2) PN nebo ≥ `ai_pn_full_share` (25 %) PN má závažnost ≥ min(`ai_pn_full_min` 6, nejhorší), jinak × `ai_pn_single_factor` (0,5) | 0–30 |
 | Citlivá oblast (redakční výběr: střet zájmů, dotace/SZIF, veřejné zakázky, kontrolní instituce, policie a služby, volby, média…; samotný trestní zákoník ne) | 5 |
 | Souhrnná novela / sledovaný zákon | 3 / 10 |
 

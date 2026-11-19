@@ -611,6 +611,76 @@ $rescore();
 $w = Hlidac\Scorer::weights(config());
 check('výchozí váhy: citlivá oblast 5, podíl pozdních PN 50 %', [$w['topic'], $w['late_pn_share'], $w['mp_bill_early']], [5, 0.5, 5]);
 
+echo "Metodika skóre (#7 bod 6): víc PN = víc šancí na závažný nález\n";
+// testovací tisk bez procedurálních signálů: vládní, bez § 90/2, bez zkrácené lhůty, bez citlivé oblasti;
+// $ai = [pořadí PN => závažnost AI (ověřeno silnějším modelem)], $extra = [pořadí PN => sloupce pn_text]
+$verifiedModel = Hlidac\AiReviewer::verifyModel(config());
+$fixtureBill = function (int $ct, int $pnCount, array $ai, array $extra = []) use ($verifiedModel): void {
+    $t = array_filter(db()->one('SELECT * FROM tisky WHERE ct = 90'), 'is_string', ARRAY_FILTER_USE_KEY);
+    $t = array_replace($t, array_intersect_key(['id_tisk' => 980000 + $ct, 'ct' => $ct, 'typ_navrhu' => 'vládní', 'p90' => 0, 'p90ok' => 0, 'zl' => 0,
+        'rj' => 0, 'lhuta' => null, 'faze' => '2. čtení', 'nazev' => 'Testovací návrh', 'uplny_nazev' => 'Testovací návrh', 'zakony' => ''], $t));
+    db()->insertMany('tisky', array_keys($t), [$t]);
+    for ($i = 1; $i <= $pnCount; $i++) {
+        $id = $ct * 1000 + $i;
+        db()->run('INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas) VALUES (?, ?, ?, 1, ?, ?)',
+            [$id, $id, $ct, 'Test Poslanec', '2026-10-0' . (1 + $i % 9) . ' 10:00:00']);
+        if (isset($ai[$i]) || isset($extra[$i])) {
+            $row = array_replace(['id_dokument' => $id, 'ct' => $ct, 'cislo' => $id, 'text' => 'x', 'chars' => 1, 'laws' => '', 'signals' => '{}',
+                'rule_score' => 0, 'ai_json' => isset($ai[$i]) ? json_encode(['citace' => ['x']]) : null, 'ai_score' => $ai[$i] ?? null,
+                'ai_model' => isset($ai[$i]) ? $verifiedModel : null, 'ai_at' => isset($ai[$i]) ? date('Y-m-d H:i:s') : null,
+                'fetched_at' => date('Y-m-d H:i:s')], $extra[$i] ?? []);
+            db()->insertMany('pn_text', array_keys($row), [$row]);
+        }
+    }
+};
+$dropBill = function (int $ct): void {
+    db()->run('DELETE FROM pn_text WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM pn WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM tisk_text WHERE ct = ?', [$ct]);
+    db()->run('DELETE FROM tisky WHERE ct = ?', [$ct]);
+};
+check('výchozí prahy bodu 6 v config scoring',
+    [$w['pn_many_min'], $w['pn_many_share'], $w['pn_many_abs'], $w['pn_flag_ai_min'], $w['ai_pn_full_min'], $w['ai_pn_full_count'], $w['ai_pn_full_share'], $w['ai_pn_single_factor']],
+    [3, 0.2, 10, 6, 6, 2, 0.25, 0.5]);
+
+// tisk D: 4 PN, 3 s ověřenou AI 6 → pn_many i plné body AI
+$fixtureBill(9801, 4, [1 => 6, 2 => 6, 3 => 6]);
+// tisk E: 100 PN, 3 s AI 6 → 3 % PN nestačí na pn_many; 3 podobně závažné PN ale plné body AI dají
+$fixtureBill(9802, 100, [1 => 6, 2 => 6, 3 => 6]);
+// tisk E2: 100 PN, 10 s AI 6 → absolutní počet pn_many_abs stačí i bez podílu
+$fixtureBill(9803, 100, array_fill(1, 10, 6));
+// jediný PN s AI 6 mezi 20 → polovina bodů
+$fixtureBill(9804, 20, [1 => 6]);
+// jediný PN s AI 6 mezi 3 → tvoří třetinu PN, plné body
+$fixtureBill(9805, 3, [1 => 6]);
+// jediný PN s neověřenou AI 9 (počítá se jako 5/10) mezi 20 → 15 b., polovina = 8
+$fixtureBill(9806, 20, [1 => 9], [1 => ['ai_model' => 'claude-haiku-5-5']]);
+// nejhorší 9/10 a druhý 6/10 mezi 20 → oba dosáhnou prahu 6, plné body za 9
+$fixtureBill(9807, 20, [1 => 9, 2 => 6]);
+// dva PN 5/10 mezi 20 → práh min(6, 5) = 5, dva PN, plné body
+$fixtureBill(9808, 20, [1 => 5, 2 => 5]);
+$rescore();
+$d = $reasonsOf(9801);
+check('tisk D (3 z 4 PN s AI 6): pn_many', [isset($d['pn_many']), str_contains($d['pn_many']['label'] ?? '', '3 z 4')], [true, true]);
+check('tisk D: plné body AI 18 a důvod „3 z 4 PN“', [$d['ai']['points'] ?? null, str_contains($d['ai']['label'] ?? '', '3 z 4 PN se závažností ≥ 6')], [18, true]);
+$e = $reasonsOf(9802);
+check('tisk E (3 ze 100 PN): bez pn_many', isset($e['pn_many']), false);
+check('tisk E: tři PN s AI 6 = plné body AI', $e['ai']['points'] ?? null, 18);
+check('tisk E2 (10 ze 100 PN): pn_many podle absolutního počtu', isset($reasonsOf(9803)['pn_many']), true);
+$single = $reasonsOf(9804)['ai'] ?? [];
+check('jediný PN s AI 6 mezi 20: polovina bodů', [$single['points'] ?? null, str_contains($single['label'] ?? '', '1 z 20 PN') && str_contains($single['label'] ?? '', '50 % bodů')], [9, true]);
+check('jediný PN s AI 6 mezi 3: plné body', $reasonsOf(9805)['ai']['points'] ?? null, 18);
+check('neověřený nález 9/10 mezi 20 PN: 5/10 a polovina', $reasonsOf(9806)['ai']['points'] ?? null, 8);
+check('nejhorší 9/10 a další 6/10 mezi 20 PN: plné body', $reasonsOf(9807)['ai']['points'] ?? null, 27);
+check('dva PN 5/10 mezi 20: plné body', $reasonsOf(9808)['ai']['points'] ?? null, 15);
+check('zkratka důvodů vynechá důvod s 0 body',
+    Hlidac\View::reasonShortLabels([['key' => 'retro_deadline', 'points' => 0, 'label' => 'x'], ['key' => 'ai', 'points' => 18, 'label' => 'y'], ['key' => 'topic', 'points' => 5, 'label' => 'z']], 2),
+    ['sporné pozměňovací návrhy', 'citlivá oblast']);
+foreach (range(9801, 9808) as $fixtureCt) {
+    $dropBill($fixtureCt);
+}
+$rescore();
+
 echo "Hlasování k tiskům (#5, #24)\n";
 $votesSource = new Hlidac\Source('', $tmp . '/cache-votes', $tmp . '/src');
 (new Hlidac\Importer(db(), $votesSource))->run();

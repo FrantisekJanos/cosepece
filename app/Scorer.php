@@ -251,7 +251,13 @@ final class Scorer
         $billLawsInText = $billText !== null ? (array)((json_decode((string)$billText['signals'], true) ?: [])['laws'] ?? []) : [];
         $billSignals = $billText !== null ? (json_decode((string)$billText['signals'], true) ?: []) : [];
         // body jen když text obsahuje změnu lhůty i ustanovení se zpětným použitím u vymáhání nebo kontroly (#2 bod 9)
-        if (!empty($billSignals['retro_deadline']) && !empty($billSignals['deadline'])) {
+        // když tentýž nález potvrdil rozbor AI (body „ai_bill“/„ai“), pravidlové body se nepřičítají podruhé (#7 bod 4)
+        $aiConfirms = function (?string $json, $score): bool {
+            $ai = json_decode((string)$json, true) ?: [];
+            return $score !== null && (int)$score >= 4 && (!empty($ai['zpetna_ucinnost']) || !empty($ai['zkraceni_lhut']));
+        };
+        if (!empty($billSignals['retro_deadline']) && !empty($billSignals['deadline'])
+            && !$aiConfirms($billText['ai_json'] ?? null, $billText['ai_score'] ?? null)) {
             $retroWhere = 'Text návrhu';
         }
         foreach ($pnText as $x) {
@@ -278,7 +284,8 @@ final class Scorer
                     $otherLawsConfirmed = true;
                 }
             }
-            if ($retroWhere === null && !empty($signals['retro_deadline']) && !empty($signals['deadline'])) {
+            if ($retroWhere === null && !empty($signals['retro_deadline']) && !empty($signals['deadline'])
+                && !$aiConfirms($x['ai_json'] ?? null, $x['ai_score'])) {
                 $retroWhere = 'Pozměňovací návrh č. ' . $x['cislo'];
             }
             $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : 0;

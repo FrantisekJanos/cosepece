@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-19', 'Upozornění: AI se může mýlit',
         'Na každé stránce je upozornění, že obsah vzniká automaticky a že rozbory, titulky a hodnocení závažnosti připravuje umělá inteligence, která se může mýlit. Stránka Jak hodnotíme má nový oddíl Upozornění a omezení odpovědnosti: co AI dělá a co může pokazit, že skóre není obvinění, že nejde o právní radu a že rozhodující je znění na psp.cz a v e-Sbírce.',
-        [0], false],
+        [48], false],
     ['2026-11-19', 'Dokumentace dat a API, limity dotazů',
         'Nová stránka Data a API (odkaz v patičce) popisuje všechny strojové výstupy: adresy JSON API a RSS, filtry, význam každého pole, číselníky (důvody skóre, druhy upozornění, fáze), chybové kódy a příklady pro curl, JavaScript a Python. Ukázky odpovědí jsou živá data. Zároveň platí limity počtu dotazů z jedné IP adresy (API 60 za minutu, RSS 30, stránky 240), aby web nešlo snadno přetížit; při překročení vrátí server kód 429. Při bezpečnostní prověrce jsme také vypnuli vypisování chybových hlášení do stránky, přidali ochranu proti hádání přístupových tokenů a bezpečnostní hlavičky prohlížeče.',
         [45], false],

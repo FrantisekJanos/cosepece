@@ -151,7 +151,8 @@ def odpoved_z_vysledku(vysledek) -> dict | str:
         return text
 
 
-async def _spust(url: str, token: str, otazky: list[dict]) -> list[dict]:
+async def _spust(url: str, token: str, otazky: list[dict], pauza: float = 0.0) -> list[dict]:
+    """Projde volání otázek. `pauza` = sekundy mezi voláními (server má limit volání za minutu na token)."""
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from mcp.shared._httpx_utils import create_mcp_http_client
@@ -163,6 +164,8 @@ async def _spust(url: str, token: str, otazky: list[dict]) -> list[dict]:
             await sess.initialize()
             for o in otazky:
                 for v in o.get("volani", []):
+                    if radky and pauza:
+                        await asyncio.sleep(pauza)
                     t0 = time.perf_counter()
                     try:
                         vysl = await sess.call_tool(v["nastroj"], v.get("argumenty", {}))
@@ -183,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="eval.run", description="Eval sada pro MCP server cosepece.cz (token v MCP_TOKEN).")
     ap.add_argument("--url", required=True, help="adresa MCP endpointu, např. https://mcp.cosepece.cz/mcp")
     ap.add_argument("--jen-faze", help="čárkou oddělené fáze, např. dnes,pr2")
+    ap.add_argument("--pauza", type=float, default=1.2,
+                    help="sekundy mezi voláními (výchozí 1,2 s = pod limitem serveru 60 volání/min)")
     args = ap.parse_args(argv)
     token = os.environ.get("MCP_TOKEN")
     if not token:
@@ -192,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     if not otazky:
         print(f"Žádná otázka nemá fázi z --jen-faze {args.jen_faze!r}.", file=sys.stderr)
         return 2
-    radky = asyncio.run(_spust(args.url, token, otazky))
+    radky = asyncio.run(_spust(args.url, token, otazky, args.pauza))
     dnes = date.today().isoformat()
     md = render_tabulka(radky, dnes, nacti_predchozi(VYSLEDKY, dnes, args.jen_faze))
     VYSLEDKY.mkdir(exist_ok=True)

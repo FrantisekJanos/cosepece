@@ -149,9 +149,10 @@ use Hlidac\View;
       </details>
     <?php endif; ?>
     <ul class="plain-list">
-      <?php foreach (array_slice($pn, 0, 30) as $p): ?>
+      <?php foreach ($pn as $i => $p): ?>
         <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>
-        <li class="pn-item">
+        <?php if ($i === 30): ?></ul><details class="pn-more"><summary>Další pozměňovací návrhy ({{ count($pn) - 30 }})</summary><ul class="plain-list"><?php endif; ?>
+        <li class="pn-item" id="pn-{{ (int)$p['cislo'] }}">
           <span><a href="{{ View::pspSdUrl((int)$p['cislo'], $obdobi) }}">Návrh č. {{ (int)$p['cislo'] }}</a> <span class="muted small">{{ $p['osoba'] }} · {{ formatDate($p['cas'], true) }}</span></span>
           <?php if ($x !== null): ?>
             <span class="chips">
@@ -176,7 +177,16 @@ use Hlidac\View;
         </li>
       <?php endforeach; ?>
     </ul>
-    <?php if (count($pn) > 30): ?><p class="muted small">a dalších {{ count($pn) - 30 }} na psp.cz</p><?php endif; ?>
+    <?php if (count($pn) > 30): ?></details>
+      <script>
+      // odkaz na konkrétní PN (#pn-123, např. z hledání): rozbalit skryté a posunout se na něj
+      (function () {
+        var el = location.hash.indexOf('#pn-') === 0 ? document.getElementById(location.hash.slice(1)) : null;
+        var box = el && el.closest('details');
+        if (box && !box.open) { box.open = true; el.scrollIntoView(); }
+      })();
+      </script>
+      <?php endif; ?>
   </section>
 </div>
 

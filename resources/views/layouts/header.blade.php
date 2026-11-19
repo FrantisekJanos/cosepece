@@ -37,6 +37,7 @@
 <?php $umami = (array)hlidacConfig('umami', []); if (($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
 <script defer src="{{ $umami['src'] }}" data-website-id="{{ $umami['website_id'] }}"<?php if (($umami['domains'] ?? '') !== ''): ?> data-domains="{{ $umami['domains'] }}"<?php endif; ?> data-do-not-track="true"></script>
 <?php endif; ?>
+<script defer src="{{ asset('assets/search.js') }}?v={{ filemtime(public_path('assets/search.js')) }}"></script>
 </head>
 <body>
 <a class="skip-link" href="#obsah">Přeskočit na obsah</a>
@@ -64,6 +65,9 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
           <span>RSS</span>
         </a>
+        @if (!in_array($active, ['prehled', 'hledat', 'tisky'], true))
+          @include('partials.search', ['searchVariant' => 'top', 'searchId' => 'search-top'])
+        @endif
         <div class="sync">{!! $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' !!}</div>
       </div>
     </div>

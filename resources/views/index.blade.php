@@ -8,11 +8,7 @@ use Hlidac\View;
     <h1>Co se změnilo ve Sněmovně</h1>
     <p class="lead">Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty — části legislativního procesu, které obcházejí veřejné připomínkové řízení.</p>
   </div>
-  <form class="search" action="{{ route('bills', [], false) }}" method="get" role="search">
-    <label for="q" class="sr-only">Hledat tisky</label>
-    <input id="q" name="q" type="search" placeholder="Tisk, číslo zákona nebo poslanec">
-    <button type="submit">Hledat</button>
-  </form>
+  @include('partials.search', ['searchId' => 'search-home'])
 </section>
 
 <section class="kpis" aria-label="Klíčová čísla">

@@ -49,6 +49,11 @@ final class Sync
             $ai = (new AiReviewer(db(), $config))->run();
             $scorer->scoreBills();
             $scorer->scoreAlerts();
+            try {
+                $searchItems = app(SearchIndex::class)->rebuild();
+            } catch (\Throwable $ex) {
+                $searchItems = ['error' => Http::redact($ex->getMessage())];
+            }
             $posts = (new Publisher(db(), $config))->run();
             $result = [
                 'import' => $import,
@@ -59,6 +64,7 @@ final class Sync
                 'tisk_text' => $tiskText,
                 'ai' => $ai,
                 'revize_backfill' => $backfill,
+                'search_index' => $searchItems,
                 'posts' => $posts,
                 'seconds' => round(microtime(true) - $started, 1),
             ];

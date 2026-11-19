@@ -239,18 +239,30 @@ def seznam_tisku(conn, q: str = "", min_skore: int = 0, faze: str = "", typ_navr
 _ZAKON_CTE = """WITH x AS (
     SELECT ct, 'nazev' AS zdroj FROM tisky WHERE ',' || zakony || ',' LIKE %s
     UNION ALL
-    SELECT ct, 'pn' AS zdroj FROM pn_text WHERE ',' || laws || ',' LIKE %s)"""
+    SELECT ct, 'pn' AS zdroj FROM pn_text WHERE ',' || laws || ',' LIKE %s{texty})"""
+# celky textu návrhu nebo PN, které podle úvodní věty mění daný zákon (texty.cel.meni_zakon)
+_ZAKON_TEXTY = """
+    UNION ALL
+    SELECT d.ct, CASE WHEN d.druh = 'tisk' THEN 'text' ELSE 'pn' END AS zdroj
+    FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id WHERE c.meni_zakon = %s"""
 
 
 def tisky_menici_zakon(conn, sb: str, limit: int = 50, offset: int = 0) -> dict:
-    """Tisky měnící zákon, řazené podle skóre sestupně (stránkovaně)."""
+    """Tisky měnící zákon, řazené podle skóre sestupně (stránkovaně).
+
+    Zdroje: číslo zákona v názvu tisku, zákony měněné PN (pn_text.laws) a celky textů návrhů a PN (texty.cel)."""
     sb = _norm_sb(sb)
-    pat = (f"%,{sb},%", f"%,{sb},%")
-    total = _one(conn, f"{_ZAKON_CTE} SELECT count(DISTINCT x.ct) AS n FROM x JOIN tisky t ON t.ct = x.ct", pat)["n"]
+    pat: tuple = (f"%,{sb},%", f"%,{sb},%")
+    cte = _ZAKON_CTE.format(texty="")
+    if _texty_ok(conn):
+        cte = _ZAKON_CTE.format(texty=_ZAKON_TEXTY)
+        pat = (*pat, sb)
+    total = _one(conn, f"{cte} SELECT count(DISTINCT x.ct) AS n FROM x JOIN tisky t ON t.ct = x.ct", pat)["n"]
     off = _offset(offset)
-    rows = _rows(conn, f"""{_ZAKON_CTE}
+    rows = _rows(conn, f"""{cte}
                            SELECT t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score,
-                                  CASE WHEN bool_or(x.zdroj = 'nazev') THEN 'nazev' ELSE 'pn' END AS zdroj
+                                  CASE WHEN bool_or(x.zdroj = 'nazev') THEN 'nazev'
+                                       WHEN bool_or(x.zdroj = 'text') THEN 'text' ELSE 'pn' END AS zdroj
                            FROM x JOIN tisky t ON t.ct = x.ct
                            GROUP BY t.ct, t.nazev, t.typ_navrhu, t.faze, t.sbirka, t.score
                            ORDER BY score DESC NULLS LAST, ct LIMIT %s OFFSET %s""",
@@ -259,8 +271,8 @@ def tisky_menici_zakon(conn, sb: str, limit: int = 50, offset: int = 0) -> dict:
         r.update(_tisk_urls(r["ct"]))
     return {"zakon": sb, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(rows), "tisky": rows,
-            "poznamka": "řazeno podle skóre sestupně; zdroj nazev = zákon v názvu tisku, "
-                        "pn = zákon měněný pozměňovacím návrhem k tisku"}
+            "poznamka": "řazeno podle skóre sestupně; zdroj nazev = zákon v názvu tisku, text = mění ho některý "
+                        "celek textu návrhu, pn = zákon měněný pozměňovacím návrhem k tisku"}
 
 
 def tisk_podle_sbirky(conn, sb: str) -> dict:

@@ -17,12 +17,14 @@ KLUBY_SLOUPCE = ["pro", "proti", "zdrzel", "nepritomen"]
 VYSLEDEK = {"A": "přijato", "R": "zamítnuto"}
 TABULKY = ("tisky", "kroky", "hlasovani", "hlasovani_kluby")
 
-# sloupce jednoho hlasování; krok = stav kroku historie tisku (jen u hlasování s příznakem krok = 1)
+# sloupce jednoho hlasování; krok = „stav / akce“ kroku historie tisku (bez akce jen stav), jen u hlasování
+# s příznakem krok = 1; samotný stav by přehlasování Senátu („Prezident / setrváno“) pletl s hlasováním o vetu
 SELECT_HLASOVANI = """
     SELECT h.id_hlasovani, h.ct, h.schuze, h.cislo, h.datum, h.vysledek, h.pro, h.proti, h.zdrzel, h.nehlasoval,
            h.prihlaseno, h.kvorum,
-           CASE WHEN h.krok = 1 THEN (SELECT k.stav FROM kroky k WHERE k.id_hlasovani = h.id_hlasovani
-                                      ORDER BY k.id_hist LIMIT 1) END AS krok
+           CASE WHEN h.krok = 1 THEN (
+               SELECT nullif(concat_ws(' / ', nullif(k.stav, ''), nullif(k.akce, '')), '')
+               FROM kroky k WHERE k.id_hlasovani = h.id_hlasovani ORDER BY k.id_hist LIMIT 1) END AS krok
     FROM hlasovani h"""
 
 
@@ -139,8 +141,8 @@ def register(server, call, annotations) -> None:
         """Hlasování Sněmovny k tisku chronologicky: schůze, číslo, datum, výsledek (přijato/zamítnuto), pro, proti,
         zdrzel, nehlasoval, prihlaseno, kvorum, url_psp a kluby {klub: [pro, proti, zdrzel, nepritomen]} (zdrzel klubu
         zahrnuje i nehlasoval). Jsou tu i procedurální hlasování (zamítnutí, vrácení, lhůty, čas hlasování); krok
-        (stav tisku) jen u hlasování z historie tisku. Data mohou být neúplná, zmatečná hlasování nejsou označena.
-        Stránkování přes offset: celkem, dalsi_offset (limit nejvýš 80). Příklad: hlasovani_k_tisku(231)."""
+        („Prezident / setrváno“) jen u hlasování z historie tisku. Data mohou být neúplná, zmatečná hlasování nejsou
+        označena. Stránkování přes offset: celkem, dalsi_offset (limit nejvýš 80). Příklad: hlasovani_k_tisku(231)."""
         return call("hlasovani_k_tisku", _hlasovani_k_tisku, ct, limit, offset)
 
     @server.tool(annotations=annotations)

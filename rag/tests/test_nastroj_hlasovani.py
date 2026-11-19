@@ -102,7 +102,7 @@ def klub(conn, id_hlasovani: int, zkratka: str, pro: int, proti: int, zdrzel: in
                  "VALUES (%s, %s, %s, %s, %s, %s)", (id_hlasovani, zkratka, pro, proti, zdrzel, nepritomen))
 
 
-def krok_historie(conn, id_hist: int, ct: int, stav: str, akce: str, id_hlasovani: int | None) -> None:
+def krok_historie(conn, id_hist: int, ct: int, stav: str, akce: str | None, id_hlasovani: int | None) -> None:
     conn.execute("""INSERT INTO kroky (id_hist, id_tisk, ct, datum, typ_stavu, stav, akce_id, akce, id_hlasovani)
                     VALUES (%s, %s, %s, '2026-10-24', 64, %s, 1, %s, %s)""",
                  (id_hist, 1000 + ct, ct, stav, akce, id_hlasovani))
@@ -157,13 +157,34 @@ def test_krok_jen_u_hlasovani_z_historie(conn):
     tisk(conn, 231, NAZEV_231)
     hlas(conn, 10, 231, 34, 300, "2026-10-24 05:00", krok=1)
     hlas(conn, 11, 231, 34, 301, "2026-10-24 05:01", krok=0)
-    krok_historie(conn, 500, 231, "Odesíláno do Senátu", "souhlas", 10)
+    hlas(conn, 12, 231, 34, 302, "2026-10-24 05:02", krok=1)
+    hlas(conn, 13, 231, 34, 303, "2026-10-24 05:03", krok=1)
+    # stav i akce: přehlasování Senátu se nesmí plést s hlasováním o vetu („Prezident“)
+    krok_historie(conn, 500, 231, "Prezident", "setrváno", 10)
     # krok 0: i kdyby na hlasování odkazoval řádek kroků, krok zůstane None
     krok_historie(conn, 501, 231, "2. čtení", "vrácen", 11)
+    # bez akce (NULL i prázdná) jen stav
+    krok_historie(conn, 502, 231, "Odesíláno do Senátu", None, 12)
+    krok_historie(conn, 503, 231, "Odesíláno do Senátu", "", 13)
 
     radky = h._hlasovani_k_tisku(conn, 231)["hlasovani"]
 
-    assert [(r["id_hlasovani"], r["krok"]) for r in radky] == [(10, "Odesíláno do Senátu"), (11, None)]
+    assert [(r["id_hlasovani"], r["krok"]) for r in radky] == [
+        (10, "Prezident / setrváno"), (11, None), (12, "Odesíláno do Senátu"), (13, "Odesíláno do Senátu")]
+
+
+@pg
+def test_vic_kroku_k_jednomu_hlasovani(conn):
+    tisk(conn, 231, NAZEV_231)
+    hlas(conn, 10, 231, 34, 300, "2026-10-24 05:00", krok=1)
+    krok_historie(conn, 602, 231, "Prezident", "souhlas", 10)
+    krok_historie(conn, 601, 231, "Odesíláno do Senátu", "souhlas", 10)
+
+    out = h._hlasovani_k_tisku(conn, 231)
+
+    # jeden řádek hlasování (žádné násobení přes kroky), krok z řádku s nižším id_hist
+    assert out["celkem"] == 1
+    assert [(r["id_hlasovani"], r["krok"]) for r in out["hlasovani"]] == [(10, "Odesíláno do Senátu / souhlas")]
 
 
 @pg
@@ -284,7 +305,7 @@ def test_get_hlasovani_plny_detail(steno):
         "id_hlasovani": 88876, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk.php?ct=231",
         "schuze": 34, "cislo": 287, "datum": "2026-10-24 04:39", "vysledek": "zamítnuto",
         "pro": 81, "proti": 96, "zdrzel": 0, "nehlasoval": 0, "prihlaseno": 177, "kvorum": 89,
-        "krok": "Odesíláno do Senátu", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=88876",
+        "krok": "Odesíláno do Senátu / souhlas", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=88876",
         "kluby": [{"klub": "ANO2011", "pro": 0, "proti": 69, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "ODS", "pro": 23, "proti": 0, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "TOP09", "pro": 7, "proti": 0, "zdrzel": 0, "nepritomen": 2}],
@@ -382,7 +403,7 @@ def _velikost(obj) -> int:
 
 def test_nejhorsi_pripad_se_vejde_pod_54000_znaku():
     # řádek z DB s nejdelšími hodnotami: šestimístné id, trojciferné počty, nejdelší text výsledku,
-    # stav kroku v plné délce sloupce (varchar 120)
+    # krok 120 znaků (nejdelší „stav / akce“ v datech má 35: „2. čtení - obecná rozprava / vrácen“)
     radek_db = dict(id_hlasovani=999999, schuze=999, cislo=9999, datum="2026-12-31 23:59", vysledek="R",
                     pro=200, proti=200, zdrzel=200, nehlasoval=200, prihlaseno=200, kvorum=200, krok="Ž" * 120)
     kluby = {k: [200, 200, 200, 200]

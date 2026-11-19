@@ -48,6 +48,8 @@ return [
         'enabled' => true,
         'per_run' => 15, // přednost mají poslanecké a senátní návrhy, § 90/2 a zkrácené lhůty
         'retry_hours' => 24,
+        'refresh_days' => 7, // jednou za týden ověřit, jestli psp.cz nevyměnilo dokument (pak nové znění a nový rozbor)
+        'refresh_per_run' => 5,
     ],
 
     // rozbor textů návrhů zákonů a PN přes Claude (zpětná účinnost, zkrácení lhůt vymáhání, přílepky,

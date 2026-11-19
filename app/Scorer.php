@@ -199,7 +199,9 @@ final class Scorer
         if ($pnDay && $thirdDay) {
             $gap = (int)round((strtotime($thirdDay) - strtotime($pnDay)) / 86400);
             if ($gap < (int)$w['short_gap_days']) {
-                $add('short_gap', (int)$w['short_gap'], "Mezi pozměňovacími návrhy a 3. čtením jen $gap " . ($gap === 1 ? 'den' : ($gap < 5 ? 'dny' : 'dní')));
+                $add('short_gap', (int)$w['short_gap'], $gap <= 0
+                    ? 'Pozměňovací návrhy a 3. čtení ve stejný den'
+                    : "Mezi pozměňovacími návrhy a 3. čtením jen $gap " . ($gap === 1 ? 'den' : ($gap < 5 ? 'dny' : 'dní')));
             }
         }
 
@@ -223,7 +225,8 @@ final class Scorer
         $aiWorst = null;
         $retroWhere = null;
         $billSignals = $billText !== null ? (json_decode((string)$billText['signals'], true) ?: []) : [];
-        if (!empty($billSignals['retro_deadline'])) {
+        // body jen když text obsahuje změnu lhůty i ustanovení se zpětným použitím u vymáhání nebo kontroly (#2 bod 9)
+        if (!empty($billSignals['retro_deadline']) && !empty($billSignals['deadline'])) {
             $retroWhere = 'Text návrhu';
         }
         foreach ($pnText as $x) {
@@ -245,7 +248,7 @@ final class Scorer
                     $otherLawsConfirmed = true;
                 }
             }
-            if ($retroWhere === null && !empty($signals['retro_deadline'])) {
+            if ($retroWhere === null && !empty($signals['retro_deadline']) && !empty($signals['deadline'])) {
                 $retroWhere = 'Pozměňovací návrh č. ' . $x['cislo'];
             }
             $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : 0;
@@ -264,7 +267,7 @@ final class Scorer
             $add('pn_large', (int)$w['pn_large'], 'Rozsáhlá nová úprava zavedená pozměňovacím návrhem');
         }
         if ($retroWhere !== null) {
-            $add('retro_deadline', (int)$w['retro_deadline'], $retroWhere . ' mění lhůtu pro vymáhání nebo kontrolu a výslovně ji použije i na případy z doby před účinností');
+            $add('retro_deadline', (int)$w['retro_deadline'], $retroWhere . ' mění lhůtu pro vymáhání nebo kontrolu a obsahuje ustanovení, které se výslovně vztahuje i na případy z doby před účinností');
         }
         if ($flagged >= 3) {
             $add('pn_many', (int)$w['pn_many_flagged'], "$flagged problematických pozměňovacích návrhů");

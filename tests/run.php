@@ -516,6 +516,28 @@ check('staré upozornění vede na psp.cz', str_contains(Hlidac\View::alertUrl($
 check('detail tisku ukazuje jen upozornění aktuálního období', array_unique(array_map(fn($a) => (int)$a['obdobi'],
     (new Hlidac\Repo(db()))->alerts(100, 0, 221))), [10]);
 
+echo "Šestá várka: titulek jen s citací, lhůta a zpětnost, obnova textu tisku\n";
+$hlCt = (int)db()->value("SELECT ct FROM tisky WHERE faze <> 'Vyhlášeno' ORDER BY ct LIMIT 1");
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$hlCt]);
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, ai_json, ai_score, ai_at) VALUES (?, 'https://www.psp.cz/x', 'text', 4, '{}', ?, ?, 7, ?)",
+    [$hlCt, date('Y-m-d H:i:s', time() - 8 * 86400), json_encode(['titulek' => 'Nález bez citace', 'citace' => []]), date('Y-m-d H:i:s')]);
+check('nález bez ověřené citace nedá titulek na homepage', (new Hlidac\Repo(db()))->headline($hlCt), null);
+db()->run('UPDATE tisk_text SET ai_json = ? WHERE ct = ?', [json_encode(['titulek' => 'Nález', 'perex' => '', 'citace' => ['doslovná věta']]), $hlCt]);
+check('nález s citací titulek dá', (new Hlidac\Repo(db()))->headline($hlCt)['title'] ?? null, 'Nález');
+check('text starší než týden se ověří proti psp.cz', in_array($hlCt, array_map('intval', array_column(Hlidac\TiskText::staleQueue(db(), 1000, 7), 'ct')), true), true);
+db()->run('UPDATE tisk_text SET checked_at = ? WHERE ct = ?', [date('Y-m-d H:i:s'), $hlCt]);
+check('právě ověřený text se znovu neověřuje', in_array($hlCt, array_map('intval', array_column(Hlidac\TiskText::staleQueue(db(), 1000, 7), 'ct')), true), false);
+
+db()->run("UPDATE tisk_text SET signals = ?, ai_score = NULL, ai_at = NULL WHERE ct = ?", [json_encode(['retro' => ['x'], 'retro_deadline' => ['x']]), $hlCt]);
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$keys = array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$hlCt]), true) ?: [], 'key');
+check('zpětnost bez změny lhůty v textu nedá body za lhůtu', in_array('retro_deadline', $keys, true), false);
+db()->run("UPDATE tisk_text SET signals = ? WHERE ct = ?", [json_encode(['retro' => ['x'], 'retro_deadline' => ['x'], 'deadline' => ['y']]), $hlCt]);
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$keys = array_column(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = ?', [$hlCt]), true) ?: [], 'key');
+check('změna lhůty i zpětné použití body dají', in_array('retro_deadline', $keys, true), true);
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$hlCt]);
+
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {
     $_GET = $get;

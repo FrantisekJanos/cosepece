@@ -1,0 +1,30 @@
+[
+  {
+    "id": "Q1",
+    "otazka": "Kolik osob odpovídá jménu Vondráček a jaké číslo ve Sbírce má tisk 76?",
+    "faze": "dnes",
+    "volani": [
+      {"nastroj": "najdi_osobu", "argumenty": {"jmeno": "Vondráček"}, "kontroly": [{"cesta": "pocet", "rovna_se": 2}]},
+      {"nastroj": "get_tisk", "argumenty": {"ct": 76}, "kontroly": [{"cesta": "sbirka", "rovna_se": "195/2026"}]}
+    ],
+    "rucne": "Ověřit na psp.cz počet osob a číslo ve Sbírce."
+  },
+  {
+    "id": "Q2",
+    "otazka": "Kdo je autorem pozměňovacího návrhu 894?",
+    "faze": "dnes",
+    "volani": [
+      {"nastroj": "get_pn", "argumenty": {"cislo": 894}, "kontroly": [{"cesta": "osoba", "rovna_se": "Radek Vondráček"}]}
+    ],
+    "rucne": "Ověřit autora na psp.cz."
+  },
+  {
+    "id": "Q3",
+    "otazka": "Jakou citaci obsahuje rozbor tisku 311?",
+    "faze": "dnes",
+    "volani": [
+      {"nastroj": "get_tisk", "argumenty": {"ct": 311, "vcetne": ["rozbor"]}, "kontroly": [{"obsahuje": "Ustanovení § 17c, § 20ba"}]}
+    ],
+    "rucne": "Ověřit citaci proti textu tisku 311."
+  }
+]

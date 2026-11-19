@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from typing import Any
 
@@ -23,6 +24,8 @@ _REDACT = [
     (re.compile(r"([?&](?:token|access_token|key|api_key|password|secret)=)[^&\s\"']+", re.I), r"\1***"),
     (re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1***"),
     (re.compile(r"(\"(?:accessJwt|refreshJwt|access_token|token|password)\"\s*:\s*\")[^\"]*"), r"\1***"),
+    # hesla v řetězcích připojení (libpq/psycopg "host=db password=…", PDO)
+    (re.compile(r"\b(password|pass|pwd)=\S+", re.I), r"\1=***"),
 ]
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -71,19 +74,22 @@ def scrub(value: Any, key: str | None = None) -> Any:
 # neúspěšný dokument). Stejný otisk se v okně pošle jen jednou a událostí je nejvýš MAX_EVENTS.
 # MCP server běží trvale, proto se počítadla nuluje po hodině (okno podle time.monotonic());
 # ingest je každou hodinu nový proces, takže okno platí stejně. Paralela k PHP app/Sentry.php.
-MAX_EVENTS = 20
+# MCP volá nástroje z vláken (threadpool uvicornu), proto počítadla hlídá zámek.
+MAX_EVENTS = 5
 WINDOW_SECONDS = 3600.0
 
 _seen: set[str] = set()
 _sent = 0
 _window_start: float | None = None
+_lock = threading.Lock()
 
 
 def reset() -> None:
     global _sent, _window_start
-    _seen.clear()
-    _sent = 0
-    _window_start = None
+    with _lock:
+        _seen.clear()
+        _sent = 0
+        _window_start = None
 
 
 def _fingerprint(event: dict) -> str:
@@ -104,17 +110,18 @@ def _fingerprint(event: dict) -> str:
 
 def _allow(event: dict) -> bool:
     global _sent, _window_start
-    now = time.monotonic()
-    if _window_start is None or now - _window_start >= WINDOW_SECONDS:
-        _seen.clear()
-        _sent = 0
-        _window_start = now
     fp = _fingerprint(event)
-    if fp in _seen or _sent >= MAX_EVENTS:
-        return False
-    _seen.add(fp)
-    _sent += 1
-    return True
+    with _lock:
+        now = time.monotonic()
+        if _window_start is None or now - _window_start >= WINDOW_SECONDS:
+            _seen.clear()
+            _sent = 0
+            _window_start = now
+        if fp in _seen or _sent >= MAX_EVENTS:
+            return False
+        _seen.add(fp)
+        _sent += 1
+        return True
 
 
 def before_send(event: dict, hint: dict) -> dict | None:
@@ -141,6 +148,8 @@ def init(component: str) -> bool:
         send_default_pii=False,
         traces_sample_rate=0,
         max_breadcrumbs=20,
+        # lokální proměnné framů by poslaly i řetězec připojení s heslem (psycopg conninfo)
+        include_local_variables=False,
         before_send=before_send,
     )
     sentry_sdk.set_tag("component", component)

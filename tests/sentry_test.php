@@ -55,7 +55,7 @@ check('dlouhý řetězec se zkrátí', mb_strlen((string)Sentry::scrub(str_repea
 echo "3. buildEvent\n";
 Sentry::reset();
 Sentry::setTransport(function (): void {});
-Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
 $ev = Sentry::buildEvent(new RuntimeException('chyba pro a@b.cz'), 'error', []);
 check('level', $ev['level'], 'error');
 check('platform', $ev['platform'], 'php');
@@ -89,7 +89,7 @@ cleanup();
 echo "5. deduplikace a limit\n";
 $calls = 0;
 Sentry::setTransport(function () use (&$calls): void { $calls++; });
-Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
 check('enabled', Sentry::enabled(), true);
 for ($i = 0; $i < 2; $i++) {
     Sentry::capture(new RuntimeException('stejná')); // stejný řádek
@@ -105,7 +105,7 @@ cleanup();
 
 echo "6. selhání transportu\n";
 Sentry::setTransport(function (): void { throw new RuntimeException('síť spadla'); });
-Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
 $thrown = false;
 try {
     Sentry::capture(new LogicException('x'));
@@ -121,7 +121,7 @@ $captured = [];
 Sentry::setTransport(function (string $url, array $headers, string $body) use (&$captured): void {
     $captured = ['url' => $url, 'headers' => $headers, 'body' => $body];
 });
-Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
 Sentry::message('obálka');
 $auth = implode("\n", $captured['headers'] ?? []);
 check('url', $captured['url'] ?? null, 'https://o1.ingest.de.sentry.io/api/456/envelope/');
@@ -141,7 +141,7 @@ echo "8. selhání vypne odesílání, cesty v textech
 foreach (['false' => fn() => false, 'výjimka' => function (): void { throw new RuntimeException('x'); }] as $name => $tr) {
     $calls = 0;
     Sentry::setTransport(function () use (&$calls, $tr) { $calls++; return $tr(); });
-    Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+    Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
     Sentry::message('první');
     Sentry::message('druhá');
     Sentry::capture(new RuntimeException('třetí'));
@@ -149,11 +149,71 @@ foreach (['false' => fn() => false, 'výjimka' => function (): void { throw new 
     cleanup();
 }
 Sentry::setTransport(function (): void {});
-Sentry::init(['dsn' => DSN, 'environment' => 'test'], 'cli');
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => ''], 'cli');
 $ev = Sentry::buildEvent(new RuntimeException('open ' . APP_ROOT . '/data/x.sqlite a /var/www/html/app/Db.php'), 'error', []);
 check('cesty ve zprávě výjimky', $ev['exception']['values'][0]['value'], 'open data/x.sqlite a app/Db.php');
 $ev = Sentry::buildEvent('PDO /var/www/html/data/y.sqlite', 'error', []);
 check('cesty ve zprávě', $ev['message']['formatted'], 'PDO data/y.sqlite');
+cleanup();
+
+echo "9. hesla v řetězcích připojení a dlouhé texty\n";
+$s = (string)Sentry::scrub('SQLSTATE[08006] [7] connection to server failed: host=db password=tajne123 dbname=x');
+check('heslo z PDO zprávy zmizelo', str_contains($s, 'tajne123'), false);
+check('zůstane password=***', str_contains($s, 'password=***'), true);
+check('pwd a pass', str_contains((string)Sentry::scrub('pwd=abc1 pass=abc2'), 'abc'), false);
+$long = str_repeat('x', 20000) . ' password=konec999';
+check('dlouhý text: konec za limitem se nepošle', str_contains((string)Sentry::scrub($long), 'konec999'), false);
+$out = (string)Sentry::scrub('a@b.cz ' . str_repeat('y', 20000));
+check('dlouhý text: zkrácený a filtrovaný', mb_strlen($out) <= 8001 && str_starts_with($out, '[email]'), true);
+
+echo "10. sdílené omezení mezi procesy (soubory)\n";
+$dir = $tmp . '/throttle-' . bin2hex(random_bytes(4));
+$calls = 0;
+Sentry::setTransport(function () use (&$calls): void { $calls++; });
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => $dir], 'web');
+Sentry::message('stejná v obou procesech');
+Sentry::reset(); // nový „proces“
+Sentry::message('stejná v obou procesech');
+check('stejný otisk ve dvou procesech = 1 odeslání', $calls, 1);
+check('vznikl soubor otisku', count(glob($dir . '/fp-*')), 1);
+cleanup();
+
+$dir = $tmp . '/throttle-' . bin2hex(random_bytes(4));
+$calls = 0;
+Sentry::setTransport(function () use (&$calls): void { $calls++; });
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => $dir], 'web');
+for ($i = 0; $i < 12; $i++) {
+    Sentry::reset(); // každá událost v novém „procesu“
+    Sentry::message('nová ' . $i);
+}
+check('12 různých událostí v nových procesech = 10 odeslaných', $calls, 10);
+check('počítadlo hodiny', trim((string)file_get_contents($dir . '/hour-' . gmdate('YmdH'))), '10');
+// staré počítadlo hodiny se při založení nového smaže
+$old = $dir . '/hour-' . gmdate('YmdH', time() - 3 * 3600);
+file_put_contents($old, '3');
+touch($old, time() - 3 * 3600);
+unlink($dir . '/hour-' . gmdate('YmdH'));
+Sentry::reset();
+Sentry::message('po úklidu');
+check('po smazání počítadla zase odesílá', $calls, 11);
+check('staré hour-* smazáno', file_exists($old), false);
+cleanup();
+
+$blocker = $tmp . '/neni-adresar';
+file_put_contents($blocker, 'x'); // místo adresáře soubor: mkdir selže i pod rootem
+$calls = 0;
+Sentry::setTransport(function () use (&$calls): void { $calls++; });
+Sentry::init(['dsn' => DSN, 'environment' => 'test', 'throttle_dir' => $blocker . '/sentry'], 'web');
+$thrown = false;
+try {
+    for ($i = 0; $i < 25; $i++) {
+        Sentry::message('bez adresáře ' . $i);
+    }
+} catch (Throwable) {
+    $thrown = true;
+}
+check('nepoužitelný adresář: bez výjimky', $thrown, false);
+check('nepoužitelný adresář: platí limit v procesu (20)', $calls, 20);
 cleanup();
 
 echo $failures === 0 ? "\nVŠE OK\n" : "\nSELHÁNÍ: $failures\n";

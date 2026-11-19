@@ -10,6 +10,9 @@ use Throwable;
 final class Sentry
 {
     private const MAX_EVENTS = 20;       // nejvýš událostí na jeden běh procesu
+    // sdílený strop přes všechny procesy (web je proces na každý požadavek, free plán má 5 000 událostí měsíčně)
+    private const SHARED_MAX_PER_HOUR = 10;  // nejvýš událostí za hodinu (podle hodin) ze všech procesů
+    private const SHARED_FP_SECONDS = 3600;  // stejný otisk nejvýš jednou za hodinu napříč procesy
     private const MAX_STRING = 8000;     // delší řetězce se zkrátí
     private const WARNING_MASK = E_WARNING | E_USER_WARNING | E_USER_ERROR | E_RECOVERABLE_ERROR;
     private const FATAL_MASK = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR;
@@ -24,6 +27,7 @@ final class Sentry
     private static int $sent = 0;
     private static bool $failed = false; // po selhání odeslání se pro zbytek procesu už nic neposílá
     private static array $seen = [];
+    private static ?string $throttleDir = null; // adresář sdíleného omezení; null nebo '' = jen omezení v procesu
     /** @var callable|null function (string $url, array $headers, string $body): ?bool; false = selhání */
     private static $transport = null;
 
@@ -38,6 +42,9 @@ final class Sentry
         self::$component = $component;
         self::$environment = (string)($cfg['environment'] ?? 'production');
         self::$release = (string)(getenv('SENTRY_RELEASE') ?: '');
+        self::$throttleDir = array_key_exists('throttle_dir', $cfg)
+            ? (string)$cfg['throttle_dir']
+            : (defined('APP_ROOT') ? APP_ROOT . '/data/cache/sentry' : null);
         self::$enabled = true;
 
         set_exception_handler(function (Throwable $ex): void {
@@ -159,14 +166,31 @@ final class Sentry
         if (!is_string($data)) {
             return $data;
         }
-        $s = Http::redact(self::stripPaths($data));
-        $s = (string)preg_replace('/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/', '[email]', $s);
-        $s = (string)preg_replace('/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/', '[ip]', $s);
-        // IPv6: se zkratkou "::" nebo aspoň 3 dvojtečky mezi hex skupinami (čas 12:30:45 tak zůstane)
-        $s = (string)preg_replace('/(?<![\w:])(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?![\w:])/i', '[ip]', $s);
-        $s = (string)preg_replace('/(?<![\w:])::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}(?![\w:])/i', '[ip]', $s);
-        $s = (string)preg_replace('/(?<![\w:])(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?![\w:])/i', '[ip]', $s);
-        if (mb_strlen($s) > self::MAX_STRING) {
+        // regexy běží jen nad začátkem textu (obří řetězce by je zbytečně zdržely), konečné zkrácení až po nich
+        $long = mb_strlen($data) > self::MAX_STRING;
+        $s = $long ? mb_substr($data, 0, 2 * self::MAX_STRING) : $data;
+        $s = Http::redact(self::stripPaths($s));
+        if ($s === '' && $data !== '') {
+            return '[unscrubbed]'; // Http::redact/stripPaths vrací '' při selhání regexu
+        }
+        $patterns = [
+            // hesla v řetězcích připojení (PDO, libpq "host=db password=…")
+            '/\b(password|pass|pwd)=\S+/i' => '$1=***',
+            '/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/' => '[email]',
+            '/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/' => '[ip]',
+            // IPv6: se zkratkou "::" nebo aspoň 3 dvojtečky mezi hex skupinami (čas 12:30:45 tak zůstane)
+            '/(?<![\w:])(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?![\w:])/i' => '[ip]',
+            '/(?<![\w:])::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}(?![\w:])/i' => '[ip]',
+            '/(?<![\w:])(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?![\w:])/i' => '[ip]',
+        ];
+        foreach ($patterns as $rx => $repl) {
+            $r = preg_replace($rx, $repl, $s);
+            if ($r === null) {
+                return '[unscrubbed]'; // selhání regexu (např. neplatné UTF-8): surový text nikdy neodejde
+            }
+            $s = $r;
+        }
+        if ($long || mb_strlen($s) > self::MAX_STRING) {
             $s = mb_substr($s, 0, self::MAX_STRING) . '…';
         }
         return $s;
@@ -195,6 +219,9 @@ final class Sentry
                 return;
             }
             self::$seen[$fingerprint] = true;
+            if (!self::sharedAllow($fingerprint)) {
+                return;
+            }
             self::$sent++;
             $event = self::buildEvent($what, $level, $extra);
             $body = json_encode(['event_id' => $event['event_id'], 'sent_at' => gmdate('c')], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
@@ -212,6 +239,81 @@ final class Sentry
         } catch (Throwable) {
             self::$failed = true;
             // hlášení chyb nesmí samo shodit aplikaci
+        }
+    }
+
+    private static function sharedAllow(string $fingerprint): bool
+    {
+        // sdílené omezení přes soubory: otisk nejvýš jednou za hodinu a strop událostí za hodinu
+        // ze všech procesů; když adresář nejde použít, platí jen omezení v procesu (true)
+        $dir = self::$throttleDir;
+        if ($dir === null || $dir === '') {
+            return true;
+        }
+        $h = false;
+        try {
+            if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                return true;
+            }
+            $now = time();
+            $fpFile = $dir . '/fp-' . sha1($fingerprint);
+            clearstatcache(true, $fpFile);
+            $mtime = @filemtime($fpFile);
+            if ($mtime !== false && $now - $mtime < self::SHARED_FP_SECONDS) {
+                return false;
+            }
+            $hourFile = $dir . '/hour-' . gmdate('YmdH', $now);
+            $isNew = !is_file($hourFile);
+            $h = @fopen($hourFile, 'c+');
+            if ($h === false) {
+                return true;
+            }
+            // zámek bez čekání, nejvýš 5 pokusů po 1 ms; obsazený zámek = jen omezení v procesu
+            $locked = false;
+            for ($i = 0; $i < 5 && !$locked; $i++) {
+                $locked = flock($h, LOCK_EX | LOCK_NB);
+                if (!$locked) {
+                    usleep(1000);
+                }
+            }
+            if (!$locked) {
+                return true;
+            }
+            $count = (int)stream_get_contents($h);
+            if ($count >= self::SHARED_MAX_PER_HOUR) {
+                return false;
+            }
+            ftruncate($h, 0);
+            rewind($h);
+            fwrite($h, (string)($count + 1));
+            fflush($h);
+            @touch($fpFile, $now);
+            if ($isNew) {
+                self::cleanThrottleDir($dir, $now);
+            }
+            return true;
+        } catch (Throwable) {
+            return true;
+        } finally {
+            if ($h !== false) {
+                @flock($h, LOCK_UN);
+                @fclose($h);
+            }
+        }
+    }
+
+    private static function cleanThrottleDir(string $dir, int $now): void
+    {
+        // staré počítadlo hodin (> 2 h) a prošlé otisky (> 1 h) se mažou příležitostně
+        foreach ((array)glob($dir . '/hour-*') as $f) {
+            if (is_string($f) && $now - (int)@filemtime($f) > 7200) {
+                @unlink($f);
+            }
+        }
+        foreach ((array)glob($dir . '/fp-*') as $f) {
+            if (is_string($f) && $now - (int)@filemtime($f) > self::SHARED_FP_SECONDS) {
+                @unlink($f);
+            }
         }
     }
 

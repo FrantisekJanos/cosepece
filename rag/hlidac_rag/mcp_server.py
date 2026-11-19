@@ -345,6 +345,8 @@ def build_app():
 
 
 def main() -> None:
+    # Sentry hned na začátku, ať se nahlásí i selhání připojení k DB při startu
+    sentry.init("mcp")
     # migraci dělá jen rag-ingest; MCP má jen číst, ať dva procesy nemigrují souběžně
     conn = db.connect()
     try:
@@ -354,7 +356,6 @@ def main() -> None:
         conn.close()
     if chybi:
         raise SystemExit(f"Chybí schémata {', '.join(chybi)}: spusťte nejdřív rag-ingest (provede migraci).")
-    sentry.init("mcp")
     uvicorn.run(build_app(), host=os.environ.get("MCP_HOST", "0.0.0.0"), port=int(os.environ.get("MCP_PORT", "8000")),
                 proxy_headers=True, forwarded_allow_ips="*", log_level="info")
 

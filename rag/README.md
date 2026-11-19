@@ -100,5 +100,6 @@ do `eval/vysledky/RRRR-MM-DD.md` (výběr fází do `RRRR-MM-DD-<fáze>.md`) a p
 Ingest i MCP server hlásí neošetřené chyby do Sentry (`sentry-sdk`, modul `hlidac_rag/sentry.py`).
 Zapíná se proměnnou `SENTRY_DSN_RAG` v `docker/.env` (do kontejnerů jde jako `SENTRY_DSN`); prázdná = vypnuto.
 Události nesou tag `component` (`ingest` / `mcp`) a release z `SENTRY_RELEASE`. Před odesláním se z nich odstraní
-citlivé klíče, e-maily, IP adresy, tokeny a cesty serveru (stejná pravidla jako PHP `app/Sentry.php`);
-`ToolError` (očekávané chyby nástrojů) se neodesílá.
+citlivé klíče, e-maily, IP adresy, tokeny, hesla z řetězců připojení (`password=…`) a cesty serveru (stejná pravidla
+jako PHP `app/Sentry.php`); lokální proměnné framů se neposílají. `ToolError` (očekávané chyby nástrojů) se neodesílá.
+Limit: každý proces pošle nejvýš 5 událostí za hodinu a stejný otisk jen jednou za hodinu.

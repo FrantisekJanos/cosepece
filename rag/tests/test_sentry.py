@@ -70,9 +70,10 @@ def test_before_send_dedup_stejneho_otisku():
     assert sentry.before_send(udalost(), {}) is None
 
 
-def test_before_send_strop_20_udalosti():
+def test_before_send_strop_udalosti():
     prosly = [sentry.before_send({"message": f"jiná chyba {i}"}, {}) for i in range(25)]
-    assert sum(1 for e in prosly if e is not None) == 20
+    assert sentry.MAX_EVENTS == 5
+    assert sum(1 for e in prosly if e is not None) == sentry.MAX_EVENTS
 
 
 def test_before_send_okno_se_po_hodine_nuluje(monkeypatch):
@@ -89,3 +90,74 @@ def test_tool_error_se_nepocita_do_stropu():
     for _ in range(30):
         assert sentry.before_send({"message": "x"}, hint) is None
     assert sentry.before_send({"message": "skutečná chyba"}, {}) is not None
+
+
+def test_scrub_heslo_v_retezci_pripojeni():
+    s = sentry.scrub("user=hlidac password=SECRETPW123 host=db dbname=hlidac")
+    assert "SECRETPW123" not in s and "password=***" in s
+    assert "abc" not in sentry.scrub("pwd=abc1 pass=abc2")
+
+
+def test_before_send_heslo_v_promennych_framu():
+    # psycopg drží řetězec připojení v lokální proměnné conninfo
+    event = {"exception": {"values": [{"type": "OperationalError", "value": "connection refused",
+             "stacktrace": {"frames": [{"function": "connect",
+                                        "vars": {"conninfo": "'user=hlidac password=SECRETPW123 host=db'"}}]}}]}}
+    out = sentry.before_send(event, {})
+    assert "SECRETPW123" not in repr(out)
+
+
+def test_init_vypina_lokalni_promenne(monkeypatch):
+    import sentry_sdk
+
+    zachyceno = {}
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@o1.ingest.de.sentry.io/456")
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kw: zachyceno.update(kw))
+    monkeypatch.setattr(sentry_sdk, "set_tag", lambda *a, **k: None)
+    assert sentry.init("mcp") is True
+    assert zachyceno["include_local_variables"] is False
+    assert zachyceno["send_default_pii"] is False
+
+
+def test_heslo_db_neodejde_v_udalosti(monkeypatch):
+    # celá cesta: skutečné sentry_sdk, selhané připojení psycopg (port 1 = odmítnuto, bez sítě), zachycená obálka
+    import sentry_sdk
+    from sentry_sdk.transport import Transport
+
+    from hlidac_rag import db
+
+    obalky = []
+
+    class Zachyt(Transport):
+        def capture_envelope(self, envelope):
+            obalky.append(envelope.serialize())
+
+        def flush(self, timeout=None, callback=None):
+            return None
+
+        def kill(self):
+            return None
+
+    puvodni_init = sentry_sdk.init
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kw: puvodni_init(transport=Zachyt(), **kw))
+    monkeypatch.setenv("SENTRY_DSN", "https://abc123@sentry.invalid/456")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for k, v in {"PGPASSWORD": "SECRETPW123", "PGHOST": "127.0.0.1", "PGPORT": "1",
+                 "PGUSER": "hlidac", "PGDATABASE": "hlidac", "PGCONNECT_TIMEOUT": "2"}.items():
+        monkeypatch.setenv(k, v)
+    try:
+        assert sentry.init("ingest") is True
+        try:
+            db.connect()
+        except Exception as ex:  # noqa: BLE001
+            sentry_sdk.capture_exception(ex)
+        else:
+            pytest.fail("připojení na port 1 mělo selhat")
+        sentry_sdk.flush()
+        data = b"".join(obalky)
+        assert b'"type":"event"' in data
+        assert b"SECRETPW123" not in data
+    finally:
+        sentry_sdk.get_client().close()
+        monkeypatch.delenv("SENTRY_DSN")
+        puvodni_init(dsn=None)  # klient bez DSN: nic se neodesílá

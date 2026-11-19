@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../template/fonts.css">
+<link rel="stylesheet" href="reel.css">
+<link rel="stylesheet" href="formats.css">
+<link rel="stylesheet" href="landscape.css">
+</head>
+<body>
+<!-- Texty scén vznikají až v loadCard: tento blok si vyžádá všechna písma (latin i latin-ext) předem,
+     aby document.fonts.ready počkalo na ně a fit() měřil skutečnou sazbu. -->
+<div id="fontload" aria-hidden="true">
+  <span style="font: 400 20px Anton">Aaž ěščřů 0–9 §</span>
+  <span style="font: 600 20px 'IBM Plex Sans'">Aaž ěščřů 0–9 §</span>
+  <span style="font: 400 20px 'IBM Plex Sans'">Aaž ěščřů 0–9 §</span>
+  <span style="font: 500 20px 'IBM Plex Mono'">Aaž ěščřů 0–9 §</span>
+</div>
+<div id="frame">
+  <div id="bg">
+    <div id="dots"></div>
+    <svg id="ring" viewBox="-800 -800 1600 1600" aria-hidden="true">
+      <circle r="560" fill="none" stroke="#1D1E22" stroke-width="5" stroke-dasharray="6 30"/>
+      <circle r="700" fill="none" stroke="#1A1B1F" stroke-width="3" stroke-dasharray="420 180"/>
+    </svg>
+  </div>
+
+  <div id="stage">
+    <!-- společné: rubrika formátu, volitelné velké číslo (karta.hook = {big, unit, sub}), titulek -->
+    <section class="scene" id="s-hook">
+      <div class="body two">
+        <div class="side-a" data-min="2">
+          <div class="lab"><i class="sq" id="hk-sq"></i><span id="hk-rub"></span></div>
+          <div class="hkrow" id="hk-row"><span class="big" id="hk-big"></span><span class="of" id="hk-unit"></span></div>
+          <div class="m" id="hk-sub"></div>
+        </div>
+        <div class="side-b">
+          <div class="h mask" id="hk-title" data-fit="1" data-m="title"></div>
+          <div class="metarow"><span class="tag" id="hk-faze"></span><span class="m" id="hk-meta"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- společné: o co jde (karta.perex) a kdo návrh přináší (karta.typ_navrhu, karta.kdo) -->
+    <section class="scene" id="s-ctx">
+      <div class="body two">
+        <div class="side-a" data-min="2">
+          <div class="lab">O co jde</div>
+          <div class="t2" id="cx-name" data-fit="1"></div>
+        </div>
+        <div class="side-b">
+          <div class="pwrap"><i id="perex-bar"></i><div class="t" id="cx-perex" data-fit="1" data-m="perex"></div></div>
+          <div class="metarow" id="cx-who"><span class="klub" id="cx-typ"></span><span class="m" id="cx-kdo"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „cesta“: karta.cesta = {kroky: [{date, label, hot}], dni, dni_popis} -->
+    <section class="scene" id="s-c-osa">
+      <div class="body">
+        <div class="lab">Cesta Sněmovnou</div>
+        <div id="co-tl"><i id="co-line"></i><div id="co-rows"></div></div>
+        <div class="sumrow" id="co-sum">
+          <span class="pnbig" id="co-days">0</span>
+          <div class="pntxt"><div class="t2" id="co-days-w"></div><div class="m" id="co-days-sub"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „cesta“: karta.cesta.normalne = [{label, par, normal, actual, unit, norm_txt, tady_txt, hot}], karta.cesta.ferove -->
+    <section class="scene" id="s-c-norm">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Běžně × tady</div>
+          <div id="cn-rows"></div>
+        </div>
+        <div class="side-b">
+          <div class="stamps" id="cn-stamps"></div>
+          <div class="m" id="cn-fer" data-fit="1" data-m="ferove"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formáty „cesta“ a „pn“: karta.pn_dny = {dny: [{date, count, late}], note, sub} -->
+    <section class="scene" id="s-dny">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Kdy přišly pozměňovací návrhy</div>
+          <div><div id="dn-chart"></div><div id="dn-dates"></div></div>
+        </div>
+        <div class="side-b">
+          <div class="t" id="dn-note" data-fit="1" data-m="dny_note"></div>
+          <div class="m" id="dn-sub" data-fit="1"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „zmena“: karta.zmena.body = [{kde, co, pred, po, citace, zdroj}] (nejvýš 3 scény, obsah staví reel.js) -->
+    <section class="scene s-z" id="s-z-1"><div class="body two"></div></section>
+    <section class="scene s-z" id="s-z-2"><div class="body two"></div></section>
+    <section class="scene s-z" id="s-z-3"><div class="body two"></div></section>
+
+    <!-- formát „zmena“: karta.zmena.proc = {text, zdroj}, karta.zmena.pozor = {text, zdroj, lab} -->
+    <section class="scene" id="s-z-proc">
+      <div class="body">
+        <div class="blk proc" id="zp-proc">
+          <div class="lab">Proč to navrhují</div>
+          <div class="t" id="zp-proc-t" data-fit="1" data-m="proc"></div>
+          <div class="chip" id="zp-proc-src"></div>
+        </div>
+        <div class="blk pozor" id="zp-pozor">
+          <div class="lab" id="zp-pozor-lab"></div>
+          <div class="t" id="zp-pozor-t" data-fit="1" data-m="pozor"></div>
+          <div class="chip" id="zp-pozor-src"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „rozprava“: karta.rozprava = {projevu, recniku, sub, kluby: [{klub, projevu}], neautorizovano, pozn} -->
+    <section class="scene" id="s-r-kdo">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Rozprava v číslech</div>
+          <div class="pnrow">
+            <span class="pnbig" id="rk-n">0</span>
+            <div class="pntxt"><div class="t2" id="rk-w"></div><div class="m" id="rk-sub"></div></div>
+          </div>
+        </div>
+        <div class="side-b">
+          <div class="kbars" id="rk-kluby"></div>
+          <div class="metarow" id="rk-meta"><span class="unauth" id="rk-unauth" data-m="rk_unauth"></span></div>
+          <div class="src" id="rk-note"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „rozprava“: karta.rozprava.pro / namitky / odpovedi = {kdo, body: [{text, zdroj, kluby, autorizovano, url}], pozn} -->
+    <section class="scene s-bul pro" id="s-r-pro"><div class="body"></div></section>
+    <section class="scene s-bul proti" id="s-r-proti"><div class="body"></div></section>
+    <section class="scene s-bul odp" id="s-r-odp"><div class="body"></div></section>
+
+    <!-- formát „pn“: karta.pn = {count, authors, late_count, autori: [{jmeno, klub, count}], pozn} -->
+    <section class="scene" id="s-p-kolik">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Pozměňovací návrhy</div>
+          <div class="pnrow">
+            <span class="pnbig" id="pk-n">0</span>
+            <div class="pntxt"><div class="t2" id="pk-w"></div><div class="m" id="pk-auth"></div></div>
+          </div>
+          <div id="pk-slips"></div>
+        </div>
+        <div class="side-b">
+          <div class="kbars" id="pk-autori"></div>
+          <div class="m" id="pk-note" data-fit="1" data-m="pn_pozn"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „pn“: karta.pn.jine_zakony = [{sb, nazev, pn: [čísla]}], karta.pn.jine_pozn; razítko jen s důvodem pn_other_law -->
+    <section class="scene" id="s-p-jine">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Sahají i do jiných zákonů</div>
+          <div id="pj-list"></div>
+        </div>
+        <div class="side-b">
+          <div class="stamps" id="pj-stamps"></div>
+          <div class="m" id="pj-note" data-fit="1" data-m="jine_pozn"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- formát „pn“: karta.pn.top = [{cislo, autor, klub, titulek}] -->
+    <section class="scene" id="s-p-top">
+      <div class="body">
+        <div class="labrow"><div class="lab">Co navrhují</div><span class="aibadge" id="pt-ai" data-m="pt_ai">titulky: AI</span></div>
+        <div id="pt-list"></div>
+        <div class="src" id="pt-note"></div>
+      </div>
+    </section>
+
+    <section class="scene red" id="s-end">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab dark">Celý rozbor a zdroje</div>
+          <div class="logo" id="end-logo"></div>
+          <div class="t dark" id="end-ct"></div>
+          <div class="url" id="end-url-box"><span id="end-url"></span><i id="end-cursor"></i></div>
+        </div>
+        <div class="side-b">
+          <div class="chip dark" id="ai-note" data-m="ai_note"></div>
+          <div class="m dark" id="end-src"></div>
+          <div class="m dark" id="end-motto">Hodnotíme postup, ne politický obsah.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="flash"></div>
+  <div id="wipe"></div>
+
+  <header id="top">
+    <div class="toprow"><span><i id="rec"></i>Hlídač zákonů</span><span id="top-ct"></span></div>
+    <div id="prog"></div>
+  </header>
+  <footer id="footer"></footer>
+</div>
+<script src="reel.js"></script>
+</body>
+</html>

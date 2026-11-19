@@ -1,0 +1,177 @@
+/* Šablona Reelu v2. Vizuální jazyk podle plátna Claude Design (paleta, Anton + IBM Plex, razítka, patka).
+   Veškerý pohyb nastavuje reel.js ve funkci seek(t); CSS nesmí obsahovat transition ani animation. */
+:root { --ink: #0E0E10; --paper: #F4F1EA; --red: #E4002B; --yellow: #FFD400; --grey: #8A8D91; --line: #2A2B2F; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1080px; height: 1920px; background: var(--ink); overflow: hidden; }
+i { font-style: normal; display: block; }
+#frame { position: relative; width: 1080px; height: 1920px; background: var(--ink); color: var(--paper); overflow: hidden; }
+
+/* pozadí: tečkovaný rastr a přerušované kruhy (jen dekorace, žádný text) */
+#bg { position: absolute; inset: 0; }
+#dots { position: absolute; inset: -60px; background-image: radial-gradient(#1F2024 2.5px, transparent 3px); background-size: 54px 54px; }
+#ring { position: absolute; width: 1600px; height: 1600px; left: 380px; top: 60px; }
+
+#stage { position: absolute; inset: 0; }
+.scene { position: absolute; inset: 0; display: none; overflow: hidden; }
+.scene.red { background: var(--red); }
+/* bezpečné zóny: 150 px nahoře, 340 px dole, 60 px po stranách */
+.body { position: absolute; top: 280px; bottom: 450px; left: 72px; right: 72px; display: flex; flex-direction: column;
+  justify-content: center; gap: 44px; }
+
+#top { position: absolute; top: 150px; left: 72px; right: 72px; z-index: 10; color: var(--grey); }
+.toprow { display: flex; justify-content: space-between; align-items: center;
+  font: 500 38px/1 'IBM Plex Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.toprow span { display: flex; align-items: center; }
+#rec { width: 22px; height: 22px; border-radius: 50%; background: var(--red); margin-right: 18px; }
+#prog { display: flex; gap: 10px; margin-top: 22px; }
+#prog .seg { flex: 1; height: 8px; background: var(--line); overflow: hidden; }
+#prog .seg i { height: 100%; background: var(--paper); transform-origin: 0 50%; transform: scaleX(0); }
+#footer { position: absolute; left: 72px; right: 72px; bottom: 340px; font: 500 28px/1.4 'IBM Plex Mono', monospace;
+  color: var(--grey); white-space: nowrap; z-index: 10; }
+#frame.end #top, #frame.end #footer { color: var(--ink); }
+#frame.end #rec { background: var(--ink); }
+#frame.end #prog .seg { background: rgba(14, 14, 16, .28); }
+#frame.end #prog .seg i { background: var(--ink); }
+
+#wipe { position: absolute; inset: 0; background: var(--red); z-index: 5; transform: scaleX(0); }
+#flash { position: absolute; inset: 0; background: var(--red); z-index: 4; opacity: 0; pointer-events: none; }
+
+/* typografie */
+.lab { font: 500 38px/1.15 'IBM Plex Mono', monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--grey);
+  display: flex; align-items: center; }
+.lab .sq { width: 26px; height: 26px; background: var(--red); margin-right: 18px; }
+.h { font: 400 112px/1.2 Anton, sans-serif; text-transform: uppercase; overflow-wrap: break-word; }
+.t { font: 600 62px/1.32 'IBM Plex Sans', sans-serif; overflow-wrap: break-word; }
+.m { font: 500 40px/1.4 'IBM Plex Mono', monospace; color: #C9C6BF; }
+.num { font-weight: inherit; color: var(--yellow); }
+.dark { color: var(--ink) !important; }
+.chip { align-self: flex-start; font: 500 34px/1.3 'IBM Plex Mono', monospace; color: var(--paper); background: var(--line);
+  padding: 12px 24px; }
+.chip.dark { background: var(--ink); color: var(--paper) !important; }
+.rule { width: 260px; height: 16px; background: var(--red); transform-origin: 0 50%; }
+
+/* slova: .w obal (u .mask ořezává), .wi vnitřek, který vyjíždí zdola */
+.w { display: inline-block; vertical-align: top; }
+.wi { display: inline-block; }
+.mask .w { overflow: hidden; padding: .17em .05em .13em; margin: -.17em -.05em -.13em; }
+
+/* 1 hook */
+.scorerow { display: flex; align-items: baseline; transform-origin: 0 80%; }
+.big { font: 400 440px/1 Anton, sans-serif; }
+.of { font: 400 120px/1 Anton, sans-serif; color: var(--grey); margin-left: 20px; }
+.gauge { display: flex; flex-direction: column; gap: 14px; }
+#ticks { display: flex; gap: 6px; height: 84px; align-items: flex-end; }
+#ticks i { flex: 1; height: 100%; background: var(--line); transform-origin: 50% 100%; }
+.scale { display: flex; justify-content: space-between; font: 500 30px/1 'IBM Plex Mono', monospace; color: var(--grey); }
+.metarow { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 28px; }
+.tag { font: 500 40px/1.2 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--ink);
+  background: var(--paper); padding: 10px 22px; transform-origin: 0 50%; }
+
+/* volitelná změna X → Y */
+.shiftrow { display: flex; align-items: center; gap: 44px; font: 400 330px/1 Anton, sans-serif; }
+.shiftrow.small { font-size: 220px; gap: 30px; }
+.from { position: relative; color: var(--grey); transform-origin: 50% 60%; }
+#shift-strike { position: absolute; left: -8%; right: -8%; top: 46%; height: .08em; background: var(--red);
+  transform-origin: 0 50%; }
+#shift-arrow { width: .52em; height: .32em; flex: none; }
+.to { color: var(--yellow); transform-origin: 50% 60%; }
+.unit { font: 400 110px/1.2 Anton, sans-serif; text-transform: uppercase; color: var(--paper); }
+
+/* perex */
+.pwrap { position: relative; padding-left: 44px; }
+#perex-bar { position: absolute; left: 0; top: 8px; bottom: 8px; width: 14px; background: var(--red); transform-origin: 50% 0; }
+
+/* citace jako výstřižek */
+.paper { position: relative; background: var(--paper); color: var(--ink); padding: 96px 48px 50px; margin: 70px 40px 0 6px;
+  box-shadow: 16px 16px 0 var(--red); transform-origin: 50% 50%; }
+.q { font: 500 46px/1.52 'IBM Plex Mono', monospace; overflow-wrap: break-word; }
+.q.short { font-size: 62px; }
+.qw { background: linear-gradient(var(--yellow), var(--yellow)) no-repeat 0 60% / 0% 76%; }
+.qm { position: absolute; left: 36px; top: -208px; font: 400 280px/1 Anton, sans-serif; color: var(--red);
+  transform-origin: 30% 80%; }
+
+/* průběh projednávání + počet pozměňovacích návrhů */
+#tl { position: relative; padding-left: 64px; }
+#tl-line { position: absolute; left: 13px; top: 20px; bottom: 30px; width: 6px; background: var(--line); transform-origin: 50% 0; }
+#tl-rows { display: flex; flex-direction: column; gap: 30px; }
+.step { position: relative; }
+.step .dot { position: absolute; left: -64px; top: 8px; width: 32px; height: 32px; border-radius: 50%; background: var(--yellow); }
+.step.last .dot { background: var(--red); }
+.step .d { font: 500 38px/1.2 'IBM Plex Mono', monospace; color: var(--yellow); }
+.step.last .d { color: var(--red); }
+.step .s { font: 600 52px/1.25 'IBM Plex Sans', sans-serif; margin-top: 4px; }
+#pn { display: flex; flex-direction: column; gap: 22px; border-top: 6px solid var(--line); padding-top: 34px; }
+#pn.solo { border-top: 0; padding-top: 0; }
+.pnrow { display: flex; align-items: center; gap: 32px; }
+.pnbig { font: 400 190px/1 Anton, sans-serif; color: var(--paper); }
+#pn.solo .pnbig { font-size: 360px; }
+.t2 { font: 600 52px/1.2 'IBM Plex Sans', sans-serif; }
+#pn-slips { display: flex; flex-wrap: wrap; gap: 12px; }
+#pn-slips i { width: 44px; height: 58px; background: linear-gradient(var(--ink), var(--ink)) no-repeat 8px 14px / 28px 5px,
+  linear-gradient(var(--ink), var(--ink)) no-repeat 8px 27px / 20px 5px, var(--paper); }
+#pn-slips i.late { background-color: var(--red); }
+.m.late { color: var(--red); }
+
+/* NORMÁLNĚ × TADY */
+.dlrow { display: flex; flex-direction: column; gap: 12px; }
+.dlhead { font: 500 40px/1 'IBM Plex Mono', monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); }
+.dlval { font: 400 200px/1 Anton, sans-serif; color: var(--grey); display: flex; align-items: baseline; gap: 26px; }
+.dlval .u { font-size: 90px; text-transform: uppercase; line-height: 1.2; }
+.tady .dlhead { color: var(--paper); }
+.tady .dlval { color: var(--red); font-size: 280px; }
+.track { height: 14px; background: var(--line); margin-top: 16px; }
+.track i { height: 100%; background: var(--yellow); transform-origin: 0 50%; }
+.track.big { height: 44px; margin-top: 0; background: transparent; }
+#dl-bar-n { background: var(--grey); }
+#dl-bar-a { background: var(--red); }
+
+/* důvody skóre */
+.list { display: flex; flex-direction: column; gap: 34px; }
+.lirow { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
+.litxt { flex: 1; font: 600 50px/1.25 'IBM Plex Sans', sans-serif; }
+.pts { font: 400 88px/1 Anton, sans-serif; color: var(--yellow); min-width: 170px; text-align: right; }
+.li.hot .track i { background: var(--red); }
+
+/* razítka: jen podle klíčů důvodů */
+.stamps { display: flex; flex-wrap: wrap; gap: 44px 56px; padding: 22px 0 22px 22px; }
+.stamps:empty { display: none; }
+.stamp { border: 12px solid var(--red); outline: 4px solid var(--red); outline-offset: 8px; color: var(--red);
+  font: 400 104px/1.25 Anton, sans-serif; padding: 2px 36px; letter-spacing: .04em; text-transform: uppercase; }
+
+/* konec */
+.logo { font: 400 172px/1.05 Anton, sans-serif; color: var(--ink); text-transform: uppercase; white-space: nowrap; display: flex; }
+.logo span { display: inline-block; }
+.url { align-self: flex-start; display: flex; align-items: center; background: var(--ink); color: var(--paper);
+  font: 500 42px/1.3 'IBM Plex Mono', monospace; padding: 16px 26px; transform-origin: 0 50%; }
+#end-cursor { width: 22px; height: 46px; background: var(--yellow); margin-left: 10px; }
+
+/* předkladatel: portrétní typografie (monogram místo fotky), šedý štítek klubu, žádné stranické barvy */
+#s-who .body { gap: 34px; }
+.whotyp { align-self: flex-start; font: 400 76px/1.2 Anton, sans-serif; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--ink); background: var(--yellow); padding: 4px 28px; transform-origin: 0 50%; }
+.whorow { display: flex; align-items: center; gap: 40px; }
+.mono { position: relative; flex: none; width: 210px; height: 262px; border: 8px solid var(--paper); display: flex;
+  align-items: center; justify-content: center; font: 400 120px/1 Anton, sans-serif; color: var(--paper);
+  transform-origin: 50% 100%; }
+#who-corner { position: absolute; right: -8px; bottom: -8px; width: 44px; height: 44px; background: var(--red); }
+#who-name { flex: 1; min-width: 0; font-size: 104px; }
+.klub { font: 500 38px/1.3 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--ink);
+  background: var(--grey); padding: 8px 22px; transform-origin: 0 50%; }
+#who-sig { display: flex; flex-direction: column; gap: 18px; border-top: 6px solid var(--line); padding-top: 26px; }
+#who-sig .pnbig { font-size: 150px; }
+#who-sig-slips { display: flex; flex-wrap: wrap; gap: 12px; }
+#who-sig-slips i { width: 34px; height: 46px; background: var(--paper); border-radius: 17px 17px 0 0; }
+#who-sig-kluby { display: flex; flex-wrap: wrap; gap: 14px; }
+#who-sig-kluby .klub { font-size: 34px; }
+
+/* co předkladatel řekl na plénu */
+#s-said .body { gap: 34px; }
+#s-said .paper { box-shadow: 16px 16px 0 var(--yellow); }
+.saidwho { display: flex; flex-direction: column; gap: 6px; padding-left: 6px; }
+.unauth { font: 500 34px/1.3 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--ink);
+  background: var(--grey); padding: 12px 24px; transform-origin: 0 50%; }
+#said-meta { gap: 20px; }
+#said-meta .chip, #said-meta .unauth { font-size: 32px; }
+
+/* dvě strany scény pro rozvržení na šířku (landscape.css); na výšku se děti řadí přímo do .body */
+.side-a, .side-b { display: contents; }

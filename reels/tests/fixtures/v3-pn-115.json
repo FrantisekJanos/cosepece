@@ -1,0 +1,168 @@
+{
+  "ct": 115,
+  "nazev": "Novela trestního zákoníku",
+  "faze": "3. čtení",
+  "score": 68,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "points": 20,
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (280/2009 Sb., 120/2001 Sb., 588/2020 Sb., 99/1963 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí"
+    },
+    {
+      "key": "ai",
+      "points": 18,
+      "label": "Rozbor PN č. 1417 (Aleš Juchelka): závažnost 6/10 – Pozměňovací návrh vkládá do návrhu o trestním zákoníku a obětech trestných činů úpravy trestního řádu, zákona o Policii ČR a daňového řádu, včetně rozšíření odposlechů a výměny daňových informací, přičemž účinnost je nastavena na pozdější datum a zpětnost nevzniká.; 5 z 29 PN se závažností ≥ 6"
+    },
+    {
+      "key": "mp_bill",
+      "points": 15,
+      "label": "Poslanecký návrh postupuje projednáváním – text nepřipravovalo ministerstvo v připomínkovém řízení; vláda si k němu připomínky nevyžádala"
+    },
+    {
+      "key": "p90_requested",
+      "points": 10,
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)"
+    },
+    {
+      "key": "pn_many",
+      "points": 5,
+      "label": "10 z 29 pozměňovacích návrhů je problematických"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=115",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-02-18",
+  "kdo": "Andrej Babiš a 5 dalších poslanců",
+  "format": "pn",
+  "title": "Novela trestního zákoníku: pozměňovací návrhy sahají do 6 dalších zákonů",
+  "perex": "Šest poslanců navrhlo novelu trestního zákoníku a zákona o obětech trestných činů. Pozměňovací návrhy k ní chtějí měnit i další zákony.",
+  "hook": {
+    "big": 29,
+    "unit": "návrhů",
+    "sub": "pozměňovacích, od 9 poslanců"
+  },
+  "pn": {
+    "count": 29,
+    "authors": 9,
+    "late_count": 3,
+    "autori": [
+      {
+        "jmeno": "Barbora Urbanová",
+        "klub": "STAN",
+        "count": 7
+      },
+      {
+        "jmeno": "Helena Válková",
+        "klub": "ANO2011",
+        "count": 5
+      },
+      {
+        "jmeno": "Václav Pláteník",
+        "klub": "KDU-ČSL",
+        "count": 5
+      },
+      {
+        "jmeno": "Kateřina Stojanová",
+        "klub": "Piráti",
+        "count": 4
+      },
+      {
+        "jmeno": "Aleš Juchelka",
+        "klub": "ANO2011",
+        "count": 3
+      }
+    ],
+    "pozn": "O pozměňovacích návrzích se hlasuje až ve 3. čtení.",
+    "jine_zakony": [
+      {
+        "sb": "280/2009",
+        "nazev": "daňový řád",
+        "pn": [
+          1417,
+          1418,
+          1422
+        ]
+      },
+      {
+        "sb": "120/2001",
+        "nazev": "exekuční řád",
+        "pn": [
+          1503,
+          1572,
+          1581
+        ]
+      },
+      {
+        "sb": "588/2020",
+        "nazev": "náhradní výživné",
+        "pn": [
+          1504
+        ]
+      },
+      {
+        "sb": "99/1963",
+        "nazev": "občanský soudní řád",
+        "pn": [
+          1506
+        ]
+      }
+    ],
+    "jine_pozn": "Podle rozboru AI tyto čtyři zákony s předmětem novely nesouvisejí.",
+    "top": [
+      {
+        "cislo": 1418,
+        "autor": "Aleš Juchelka",
+        "klub": "ANO2011",
+        "titulek": "Vyšší tresty za neoprávněné zaměstnávání, odposlech a výdej daňových informací policii",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=1418&o=10"
+      },
+      {
+        "cislo": 1572,
+        "autor": "Václav Pláteník",
+        "klub": "KDU-ČSL",
+        "titulek": "Exekutor by mohl dlužníkovi pozastavit zbrojní oprávnění a nařídit odevzdání zbraní",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=1572&o=10"
+      },
+      {
+        "cislo": 1504,
+        "autor": "Václav Pláteník",
+        "klub": "KDU-ČSL",
+        "titulek": "Pohledávky z náhradního výživného bude od roku 2028 vymáhat také celní úřad",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=1504&o=10"
+      }
+    ],
+    "top_pozn": "výběr: návrhy měnící jiné zákony · cosepece.cz"
+  },
+  "pn_dny": {
+    "dny": [
+      {
+        "date": "2026-04",
+        "label": "duben",
+        "count": 5
+      },
+      {
+        "date": "2026-06",
+        "label": "červen",
+        "count": 8
+      },
+      {
+        "date": "2026-07",
+        "label": "červenec",
+        "count": 3
+      },
+      {
+        "date": "2026-09",
+        "label": "září",
+        "count": 13
+      }
+    ],
+    "note": "Návrhy přicházely průběžně od dubna do září 2026.",
+    "sub": "v den konce podrobné rozpravy (23. 9.) jen 3 z 29"
+  },
+  "zdroje": "Zdroj: psp.cz, sněmovní dokumenty k tisku 115"
+}

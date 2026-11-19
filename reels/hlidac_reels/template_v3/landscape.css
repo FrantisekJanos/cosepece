@@ -1,0 +1,87 @@
+/* Šablona Reelu v3 na šířku: 1920 × 1080 pro X.com, bezpečný okraj 60 px dokola.
+   Platí jen s třídou landscape na <html> (nastavuje loadCard(card, "landscape")); stejné scény, pohyb i zvuk
+   jako na výšku, jiné je jen rozvržení. Žádné transition ani animation. */
+html.landscape, html.landscape body, html.landscape #frame { width: 1920px; height: 1080px; }
+html.landscape #ring { left: 840px; top: -260px; }
+
+/* horní lišta a patka: 60 px od okraje, menší písmo (X obraz ničím nepřekrývá) */
+html.landscape #top { top: 60px; left: 80px; right: 80px; }
+html.landscape .toprow { font-size: 28px; }
+html.landscape #rec { width: 16px; height: 16px; margin-right: 14px; }
+html.landscape #prog { gap: 8px; margin-top: 16px; }
+html.landscape #prog .seg { height: 6px; }
+html.landscape #footer { left: 80px; right: 80px; bottom: 60px; font-size: 22px; }
+
+/* tělo scény 1760 × 810; dvousloupcové scény: .side-a vlevo, .side-b vpravo (bez obsahu jedné strany .solo = sloupec) */
+html.landscape .body { top: 148px; bottom: 122px; left: 80px; right: 80px; }
+html.landscape .body.two:not(.solo) { flex-direction: row; justify-content: flex-start; align-items: stretch;
+  column-gap: 88px !important; }
+html.landscape .body.two:not(.solo) > .side-a, html.landscape .body.two:not(.solo) > .side-b { display: flex;
+  flex-direction: column; justify-content: safe center; gap: 32px; min-width: 0; flex: 1 1 0; }
+
+/* hook: velké číslo vlevo, titulek a fáze vpravo; bez čísla titulek přes celou šířku */
+html.landscape #s-hook .body.two:not(.solo) > .side-a { flex: 0 0 auto; }
+html.landscape #hk-sub { max-width: 720px; }
+html.landscape .hkrow .big.txt { font-size: 200px; }
+html.landscape #s-hook .body.solo #hk-title { font-size: 120px; }
+
+/* o co jde: název zákona vlevo, perex a předkladatel vpravo */
+html.landscape #s-ctx .body.two:not(.solo) > .side-a { flex: .45 1 0; }
+html.landscape #cx-perex { font-size: 70px; }
+html.landscape #cx-name { font-size: 58px; }
+html.landscape #s-ctx .metarow .klub, html.landscape #s-ctx .metarow .m { font-size: 42px; }
+
+/* cesta: osa vodorovně (--n = počet kroků, nastavuje reel.js), odstupy ve dnech sedí na lince mezi body */
+html.landscape #s-c-osa .body { gap: 44px; }
+html.landscape #co-tl { padding-left: 0; }
+html.landscape #co-line { left: 16px; top: 13px; bottom: auto; width: auto; height: 6px; transform-origin: 0 50%;
+  right: calc((100% - (var(--n) - 1) * 28px) / var(--n) - 16px); }
+html.landscape #co-rows, html.landscape #co-tl.dense #co-rows { flex-direction: row; gap: 28px; }
+html.landscape #co-rows .step { flex: 1 1 0; min-width: 0; padding-top: 58px; }
+html.landscape #co-rows .step .dot { left: 0; top: 0; }
+html.landscape #co-rows .step .d { font-size: 34px; }
+html.landscape #co-tl.dense .step .d { font-size: 30px; }
+html.landscape #co-rows .step .s { font-size: calc(64px - var(--n) * 4px); margin-top: 6px; overflow-wrap: break-word; }
+html.landscape #co-rows .gapd { position: absolute; top: -63px; left: calc(-50% + 2px); transform: translateX(-50%);
+  white-space: nowrap; }
+
+/* běžně × tady: srovnání vlevo, razítko a poznámka vpravo */
+html.landscape #s-c-norm .body.two:not(.solo) > .side-a { flex: 1.5 1 0; }
+html.landscape #cn-rows { gap: 26px; }
+html.landscape .cmpv { font-size: 60px; }
+html.landscape .cmpline .track { height: 34px; }
+
+/* graf PN po dnech: širší graf vlevo, komentář vpravo */
+html.landscape #s-dny .body.two:not(.solo) > .side-a { flex: 1.4 1 0; }
+html.landscape #dn-chart { height: 540px; }
+
+/* zmena: dnes × po novele vlevo, doslovná citace se zdrojem vpravo */
+html.landscape .zrow.big .zv { font-size: 140px; }
+html.landscape .zrow.mid .zv { font-size: 84px; }
+html.landscape .paper.small .q { font-size: 40px; }
+
+/* proč to navrhují × na co se dívat vedle sebe */
+html.landscape #s-z-proc .body { flex-direction: row; align-items: center; justify-content: flex-start;
+  column-gap: 88px !important; }
+html.landscape #s-z-proc .blk { flex: 1 1 0; min-width: 0; }
+
+/* rozprava v číslech: počet vlevo, kluby vpravo */
+html.landscape #s-r-kdo .body.two > .side-a { flex: 0 0 auto; }
+html.landscape #s-r-kdo .pnrow { flex-direction: column; align-items: flex-start; gap: 10px; }
+html.landscape #s-r-kdo .pnbig { font-size: 340px; }
+html.landscape #s-r-kdo .pntxt { max-width: 620px; }
+
+/* body shrnutí vedle sebe jako sloupce */
+html.landscape .bul { flex-direction: row; gap: 56px; }
+html.landscape .bu { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 20px; }
+html.landscape .bt { font-size: 44px; }
+
+/* pozměňovací návrhy: počet a lístky vlevo, autoři vpravo; návrhy „co navrhují“ vedle sebe */
+html.landscape #s-p-kolik .body.two:not(.solo) > .side-a { flex: .7 1 0; }
+html.landscape #s-p-jine .body.two:not(.solo) > .side-a { flex: 1.5 1 0; }
+html.landscape #pt-list { flex-direction: row; gap: 48px; align-items: flex-start; }
+html.landscape .pc { flex: 1 1 0; min-width: 0; }
+
+/* konec: logo a odkaz vlevo, poznámky o zdrojích vpravo */
+html.landscape #s-end .body.two > .side-a { flex: 0 0 auto; }
+html.landscape .logo { font-size: 184px; }

@@ -1,0 +1,32 @@
+/* Vizuální jazyk podle plátna Claude Design (karta 300 × 533 px → 1080 × 1920, měřítko 3,6). */
+:root { --ink: #0E0E10; --paper: #F4F1EA; --red: #E4002B; --yellow: #FFD400; --grey: #8A8D91; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1080px; height: 1920px; background: var(--ink); overflow: hidden; }
+#frame { position: relative; width: 1080px; height: 1920px; background: var(--ink); color: var(--paper); }
+/* bezpečné zóny: 150 px nahoře, 340 px dole, 60 px po stranách */
+.top { position: absolute; top: 150px; left: 72px; right: 72px; display: flex; justify-content: space-between;
+  font: 500 38px/1 'IBM Plex Mono', monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); z-index: 2; }
+.src { position: absolute; left: 72px; right: 72px; bottom: 340px; font: 500 28px/1.4 'IBM Plex Mono', monospace;
+  color: var(--grey); white-space: nowrap; z-index: 2; }
+.scene { position: absolute; inset: 0; display: none; }
+.scene.red { background: var(--red); }
+.red .dark { color: var(--ink); }
+.body { position: absolute; top: 240px; bottom: 470px; left: 72px; right: 72px; display: flex; flex-direction: column;
+  justify-content: center; gap: 48px; overflow: hidden; }
+.big { font: 400 380px/1 Anton, sans-serif; }
+.big .of { font-size: 120px; color: var(--grey); margin-left: 16px; }
+.h { font: 400 120px/1.2 Anton, sans-serif; text-transform: uppercase; overflow-wrap: break-word; }
+.t { font: 600 64px/1.3 'IBM Plex Sans', sans-serif; overflow-wrap: break-word; }
+.m { font: 500 46px/1.45 'IBM Plex Mono', monospace; color: #C9C6BF; }
+.q { font: italic 400 60px/1.42 'IBM Plex Sans', sans-serif; overflow-wrap: break-word; }
+.qm { font: 400 260px/.6 Anton, sans-serif; color: var(--red); height: 120px; margin-bottom: 70px; }
+.lab { font: 500 38px/1 'IBM Plex Mono', monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); }
+.chip { align-self: flex-start; font: 500 34px/1.3 'IBM Plex Mono', monospace; color: var(--paper); background: #2A2B2F;
+  padding: 10px 22px; }
+.chip.dark { background: var(--ink); color: var(--paper); }
+.list { display: flex; flex-direction: column; }
+.li { font: 600 58px/1.25 'IBM Plex Sans', sans-serif; padding: 26px 0; border-bottom: 4px solid #2A2B2F; }
+.li .pts { font: 500 40px 'IBM Plex Mono', monospace; color: var(--yellow); margin-left: 18px; white-space: nowrap; }
+.stamps { display: flex; flex-wrap: wrap; gap: 40px; min-height: 0; }
+.stamp { border: 14px solid var(--red); color: var(--red); font: 400 110px/1.1 Anton, sans-serif; padding: 6px 40px;
+  letter-spacing: .04em; transform: rotate(-8deg); }

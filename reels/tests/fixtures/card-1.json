@@ -1,0 +1,55 @@
+{
+  "ct": 311,
+  "nazev": "Novela z. o daních z příjmů",
+  "faze": "2. čtení",
+  "score": 85,
+  "title": "Nová zemědělská daňová zvýhodnění: zvláštní odpisy, rezervy a odpočty od roku 2028",
+  "perex": "Rozsáhlý nový režim zemědělských daňových zvýhodnění a úprava záloh je vložen pozměňovacím návrhem do novely zákona o daních z příjmů.",
+  "quote": "Za § 21i se vkládají § 21j až 21m, které včetně nadpisů znějí:",
+  "quote_source": "pozměňovací návrh č. 2315",
+  "verified": true,
+  "reasons": [
+    {
+      "key": "ai",
+      "label": "Rozbor PN č. 2315 (Marian Jurečka): závažnost 7/10 – Jde o zásadní nový režim zvýhodnění vymezené skupiny zemědělských poplatníků, včetně nových institutů a výjimek, vložený pozměňovacím návrhem do novely zákona o daních z příjmů, která takový režim neobsahuje.",
+      "points": 21
+    },
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Nová daňová povinnost se zpětně použije na zdaňovací období započaté v roce 2026, tedy před dnem nabytí účinnosti, a tíží úzce vymezený okruh poplatníků, přičemž přechodné ustanovení č. 1 a č. 2 si v tomto ohledu odporují.",
+      "points": 18
+    },
+    {
+      "key": "deadline_cut",
+      "label": "Zkrácená lhůta při projednávání",
+      "points": 15
+    },
+    {
+      "key": "late_pn",
+      "label": "26 pozměňovacích návrhů podaných v den konce podrobné rozpravy",
+      "points": 10
+    },
+    {
+      "key": "watched",
+      "label": "Sledovaný zákon",
+      "points": 10
+    },
+    {
+      "key": "pn_large",
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem",
+      "points": 6
+    },
+    {
+      "key": "surge",
+      "label": "Nával pozměňovacích návrhů",
+      "points": 5
+    },
+    {
+      "key": "pn_many",
+      "label": "9 problematických pozměňovacích návrhů",
+      "points": 0
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=311",
+  "data_date": "2026-11-19"
+}

@@ -1,0 +1,48 @@
+{
+  "ct": 221,
+  "nazev": "Novela z. o střetu zájmů",
+  "faze": "1. čtení",
+  "score": 47,
+  "title": "Lhůta pro vrácení zemědělských dotací se zkracuje z 10 na 4 roky – i zpětně",
+  "perex": "Zkrácení lhůty pro zahájení řízení o vrácení dotace se použije i na platby poskytnuté před účinností; v rozpočtových pravidlech je nově 4letá lhůta pro odvody.",
+  "quote": "Lhůta pro zahájení řízení o vrácení dotace se posuzuje podle zákona č. 256/2000 Sb., ve znění účinném ode dne nabytí účinnosti tohoto zákona, i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona.",
+  "quote_source": "text návrhu zákona",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 9/10 – Lhůta, v níž stát může vymáhat neoprávněně vyplacené dotace, se zkracuje z 10 na 4 roky a podle přechodného ustanovení se použije i na platby poskytnuté před účinností, přičemž zkrácení lhůty pro odvody v rozpočtových pravidlech s deklarovanou tematikou střetu zájmů souvisí jen volně.",
+      "points": 27
+    },
+    {
+      "key": "watched",
+      "label": "Sledovaný zákon",
+      "points": 10
+    },
+    {
+      "key": "mp_bill",
+      "label": "Poslanecký návrh – text nepřipravovalo ministerstvo v připomínkovém řízení (zatím nepostoupil do 2. čtení); vláda si ke stanovisku vyžádala připomínky 7 míst na 8 dní",
+      "points": 5
+    },
+    {
+      "key": "topic",
+      "label": "Citlivá oblast: střet zájmů",
+      "points": 5
+    }
+  ],
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-06-08",
+  "predkladatel": {
+    "typ": "Poslanecký návrh",
+    "jmeno": "Radek Vondráček",
+    "funkce": "poslanec, první z navrhovatelů",
+    "klub": "ANO",
+    "predlozeno": "2026-06-08",
+    "skupina": {
+      "count": 4
+    },
+    "poznamka": "Na plénu zatím neuvedeno: ve stenozáznamech k tisku není žádný projev."
+  },
+  "url": "https://cosepece.cz/tisk.php?ct=221",
+  "data_date": "2026-11-19"
+}

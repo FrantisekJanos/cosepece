@@ -1,0 +1,35 @@
+{
+  "ct": 7,
+  "nazev": "N.z.v souvislosti s přij.zákona o Úřadu pro prevenci korupce",
+  "faze": "1. čtení",
+  "score": 51,
+  "title": "Promlčecí doba nových přestupků ve střetu zájmů je 6 let, souběžně s přílepky v jiných zákonech",
+  "perex": "Návrh vedle zákona o střetu zájmů mění i trestní řád, trestní zákoník, dotační limity zemědělců a vedení fakultních nemocnic, tedy řadu oblastí mimo předmět.",
+  "quote": "Souhrnná částka BISS vyplácená v jednom kalendářním roce žadatelům náležejícím do téže skupiny propojených žadatelů se zastropuje částkou 100 000 EUR (dále jen „limit“).",
+  "quote_source": "text návrhu",
+  "verified": true,
+  "reasons": [
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Většina změn navazuje na zřízení Úřadu, ale zastropování zemědělské podpory BISS, nová pravidla pro ředitele fakultních nemocnic a změny trestních sazeb a trestního řádu s předmětem souvisejí jen volně a nejde o zpětnou účinnost ani zkrácení lhůt.",
+      "points": 18
+    },
+    {
+      "key": "mp_bill",
+      "label": "Poslanecký návrh – neprošel meziresortním připomínkovým řízením",
+      "points": 15
+    },
+    {
+      "key": "topic",
+      "label": "Citlivá oblast: střet zájmů",
+      "points": 15
+    },
+    {
+      "key": "omnibus",
+      "label": "Souhrnná novela více zákonů",
+      "points": 3
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=7",
+  "data_date": "2026-11-19"
+}

@@ -1,0 +1,42 @@
+PARLAMENT ČESKÉ REPUBLIKY
+
+Poslanecká sněmovna
+2026
+X. volební období
+
+Pozměňovací návrh 
+Poslanců Benjamina Činčily, Vojtěcha Munzara, Jiřího Havránka a poslankyně Venduly Svobodové
+k vládnímu návrhu zákona, kterým se mění zákon č. 586/1992 Sb., o daních z příjmů, ve znění pozdějších předpisů
+(ST311)
+
+Vládní návrh zákona, kterým se mění zákon č. 586/1992 Sb., o daních z příjmů, ve znění pozdějších předpisů (ST 311) se mění takto:
+
+1. V čl. I bodě 2 v § 20ba odst. 2 se za slova „základem daně a“ vkládá slovo „upraveným“.
+2. V čl. I bodě 2 v § 20ba se doplňuje nový odstavec 9, který zní „Upraveným srovnávacím základem daně se rozumí srovnávací základ daně zvýšený o absolutní hodnotu 20 % z tohoto základu.“.
+
+Odůvodnění:
+Pozměňovací návrh zavádí nezdanitelné pásmo ve výši 20 % srovnávacího základu daně. Mimořádnou sektorovou daní bude zdaněna pouze ta část hrubé marže, která převyšuje úroveň srovnávacího období o více než 20 %. Ostatní parametry daně zůstávají beze změny.
+Ne každý nárůst hrubé marže představuje mimořádný zisk. Vládní návrh zdaňuje celý nárůst hrubé marže oproti srovnávacímu období, aniž by rozlišoval jeho příčinu. Zdaněn by tak byl i nárůst plynoucí z vyššího objemu zpracování, lepšího využití kapacit, vyšších prodejů či provozních zlepšení, tedy z běžné podnikatelské činnosti, nikoli z geopolitické krize. To platí tím spíše, že rok 2025 byl pro tuzemské rafinérství mimořádně slabý a jediný poplatník vykázal čistou ztrátu 5,9 mld. Kč. Již samotný návrat k plnému provozu proto vytváří nárůst marže, který s mimořádnou situací nesouvisí.
+Hrubá marže navíc nezohledňuje růst nákladů. Základ daně nezahrnuje náklady na energie, emisní povolenky, mzdy, údržbu, odpisy a financování ani výsledky navazující petrochemické výroby. Část nárůstu hrubé marže proto může pouze kompenzovat růst těchto nákladů a obecné cenové hladiny. Nezdanitelné pásmo ve výši 20 % tento nedostatek konstrukce daně přiměřeně zmírňuje. Vláda v důvodové zprávě uvádí, že je zdaňován „pouze mimořádný nárůst marže“. Bez nezdanitelného pásma by však daň dopadala i na nárůst, který mimořádný není. Pásmo tak lépe propojuje konstrukci daně s jejím deklarovaným účelem a posiluje její přiměřenost vůči jedinému dotčenému poplatníkovi.
+Fiskální dopad této změny je z pohledu celkových příjmů státního rozpočtu omezený, pro rafinérský průmysl však může mít význam z hlediska zachování prostředků na investice do modernizace, dekarbonizace a energetické bezpečnosti i podpory zaměstnanosti v Ústeckém kraji.
+
+Platné znění s vyznačením změn:
+§ 20ba
+Základ mimořádné sektorové daně
+(1) Základ mimořádné sektorové daně se určuje za zdaňovací období nebo období, za které se podává daňové přiznání, započatá v kalendářním roce 2026 a kalendářním roce 2027. 
+(2) Základem mimořádné sektorové daně je rozdíl mezi srovnávaným základem daně a upraveným srovnávacím základem daně. Pokud je tento rozdíl záporný, základ mimořádné sektorové daně je nulový. 
+(3) Srovnávaným základem daně se rozumí rozdíl mezi výnosy z prodeje vlastních výrobků a pořizovací cenou nebo pořizovacími náklady spotřebované ropy v daném zdaňovacím období nebo období, za které se podává daňové přiznání. 
+(4) Srovnávacím základem daně se rozumí rozdíl mezi výnosy z prodeje vlastních výrobků a pořizovací cenou nebo pořizovacími náklady spotřebované ropy ve zdaňovacím období nebo období, za které se podává daňové přiznání, započatém v kalendářním roce 2025. 
+(5) Při určování výše srovnávaného základu daně a srovnávacího základu daně se a) vychází z účetnictví vedeného podle právních předpisů upravujících účetnictví a b) použije ustanovení § 23 odst. 7 a § 23 odst. 3 písm. a) bodu 17 obdobně. 
+(6) Pokud je poplatník mimořádné sektorové daně součástí skupiny podniků pro mimořádnou sektorovou daň pouze po část zdaňovacího období nebo období, za které se podává daňové přiznání, za srovnávaný základ daně se nepovažuje jeho poměrná část připadající na část zdaňovacího období nebo období, za které se podává daňové přiznání, po kterou není součástí této skupiny. 
+(7) Pokud je srovnávací základ daně určen za jinak dlouhé období než srovnávaný základ daně, za srovnávací základ daně se považuje jeho výše přepočítaná poměrně tak, jako by byl srovnávací základ daně určen za stejně dlouhé období. 
+(8) Pokud je srovnávaný základ daně nebo srovnávací základ daně záporný, považuje se za nulový.
+(9) Upraveným srovnávacím základem daně se rozumí srovnávací základ daně zvýšený o absolutní hodnotu 20 % z tohoto základu. 
+
+V Praze dne 13. listopadu 2026
+
+Benjamin Činčila 
+Jiřího Havránka
+Vojtěcha Munzara
+Venduly Svobodové
+v.r.

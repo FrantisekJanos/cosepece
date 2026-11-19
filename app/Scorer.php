@@ -104,7 +104,8 @@ final class Scorer
             $billText[(int)$x['ct']] = $x;
         }
         $surge = [];
-        foreach ($this->db->all("SELECT DISTINCT ct FROM alerts WHERE kind = 'surge'") as $r) {
+        foreach ($this->db->all("SELECT DISTINCT ct FROM alerts WHERE kind = 'surge' AND (obdobi IS NULL OR obdobi = ?)",
+            [(int)$this->db->getMeta('obdobi_cislo', '0')]) as $r) {
             $surge[(int)$r['ct']] = true;
         }
         $watchLaws = $this->config['watch_laws'] ?? [];
@@ -133,7 +134,9 @@ final class Scorer
             $scores[(int)$t['ct']] = (int)$t['score'];
         }
         $this->db->pdo->beginTransaction();
-        foreach ($this->db->all('SELECT alert_key, kind, ct FROM alerts') as $a) {
+        // upozornění minulých období se vztahují k jiným tiskům se stejným číslem, jejich skóre zůstává
+        $obdobi = (int)$this->db->getMeta('obdobi_cislo', '0');
+        foreach ($this->db->all('SELECT alert_key, kind, ct FROM alerts WHERE obdobi IS NULL OR obdobi = ?', [$obdobi]) as $a) {
             $score = min(100, ($scores[(int)$a['ct']] ?? 0) + (self::KIND_BONUS[$a['kind']] ?? 0));
             $this->db->run('UPDATE alerts SET score = ? WHERE alert_key = ?', [$score, $a['alert_key']]);
         }

@@ -86,6 +86,10 @@ kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cac
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 
+Nové volební období (`Importer::switchPeriod`): stará upozornění dostanou klíč `9/…` a odkaz na psp.cz (`alerts.obdobi`),
+texty a rozbory se smažou a nové období začne bootstrapem (nic se neposílá). Nával PN = ≥ `surge_threshold` PN k tisku
+za kalendářní den podle času podání, ne za běh synchronizace.
+
 Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
 
 ## Zdroj dat (psp.cz open data)

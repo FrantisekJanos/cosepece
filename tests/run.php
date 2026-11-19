@@ -470,6 +470,52 @@ check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bsk
 check('Bluesky: krátký text beze změny', Hlidac\Notifier\Bluesky::fit('Krátce', $bskyUrl), 'Krátce');
 check('testy nepíšou do data/posts.log', is_file(APP_ROOT . '/data/posts.log') && filemtime(APP_ROOT . '/data/posts.log') >= $_SERVER['REQUEST_TIME'], false);
 
+echo "Pátá várka: vrácený tisk, nával podle dne, PN před předlohou, nové období\n";
+check('vrácený tisk (rozpočet 17)', Hlidac\Analyzer::analyze([
+    ['typ_stavu' => 1, 'akce_id' => 29, 'datum' => '2025-11-12 00:00:00'],
+    ['typ_stavu' => 6, 'akce_id' => 24, 'datum' => '2025-11-26 00:00:00'],
+])['faze'], 'Vráceno předkladateli');
+
+$surgeDay = date('Y-m-d', strtotime('-1 day'));
+$addPn = function (int $from, int $count, int $ct, string $day): void {
+    for ($i = 0; $i < $count; $i++) {
+        db()->run('INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas) VALUES (?, ?, ?, ?, ?, ?)',
+            [$from + $i, $from + $i, $ct, 1, 'Test Poslanec', $day . ' 1' . ($i % 10) . ':00:00']);
+    }
+};
+$builder = new Hlidac\AlertBuilder(db(), config());
+$addPn(970000, 6, 221, $surgeDay);
+$builder->run();
+check('6 PN za den ještě není nával', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 0);
+$addPn(970100, 5, 221, $surgeDay);
+$builder->run();
+check('11 PN téhož dne ve dvou bězích = nával', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 1);
+$addPn(970200, 3, 221, $surgeDay);
+$builder->run();
+check('další PN téhož dne už druhý nával nevytvoří', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'surge' AND ct = 221 AND event_at LIKE ?", [$surgeDay . '%']), 1);
+
+$addPn(970300, 1, 9999, $surgeDay);
+$builder->run();
+check('PN k tisku, který ještě není v přehledu, čeká', db()->value('SELECT 1 FROM pn_seen WHERE id_dokument = 970300'), null);
+db()->run('DELETE FROM pn WHERE id_dokument >= 970000 AND id_dokument < 980000');
+
+// přelom období: tisk 221 nového období je jiný návrh než tisk 221 minulého
+$keysBefore = (int)db()->value('SELECT COUNT(*) FROM alerts');
+db()->run('UPDATE alerts SET obdobi = 9');
+db()->setMeta('obdobi_id', '999');
+db()->setMeta('obdobi_cislo', '9');
+(new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-switch', $tmp . '/src')))->run();
+check('stará upozornění dostala klíč s obdobím', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key LIKE '9/%'"), $keysBefore);
+check('texty minulého období smazané', [(int)db()->value('SELECT COUNT(*) FROM tisk_text'), (int)db()->value('SELECT COUNT(*) FROM pn_text')], [0, 0]);
+check('nové období začne bootstrapem', db()->getMeta('bootstrapped'), null);
+$created = (new Hlidac\AlertBuilder(db(), config()))->run();
+check('nová upozornění vzniknou i se stejným číslem tisku', $created > 0 && db()->value("SELECT kind FROM alerts WHERE alert_key = 'newbill:221'") !== null, true);
+check('nová upozornění jsou bootstrap (neposílají se)', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE obdobi = 10 AND posted <> 2"), 0);
+$old = db()->one("SELECT * FROM alerts WHERE alert_key LIKE '9/%' LIMIT 1");
+check('staré upozornění vede na psp.cz', str_contains(Hlidac\View::alertUrl($old), 'psp.cz') && str_contains(Hlidac\View::alertUrl($old), 'o=9'), true);
+check('detail tisku ukazuje jen upozornění aktuálního období', array_unique(array_map(fn($a) => (int)$a['obdobi'],
+    (new Hlidac\Repo(db()))->alerts(100, 0, 221))), [10]);
+
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {
     $_GET = $get;

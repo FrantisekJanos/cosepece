@@ -146,6 +146,8 @@ final class Db
         $this->addColumn('tisky', 'lhuta', 'INTEGER');
         $this->addColumn('tisky', 'reasons', $text);
         $this->addColumn('alerts', 'score', 'INTEGER NOT NULL DEFAULT 0');
+        // volební období upozornění (čísla tisků se v každém období počítají znovu od 1)
+        $this->addColumn('alerts', 'obdobi', 'INTEGER');
         // model, který rozbor naposledy udělal (druhé kolo silnějším modelem se pozná podle něj)
         $this->addColumn('tisk_text', 'ai_model', 'VARCHAR(60)');
         $this->addColumn('pn_text', 'ai_model', 'VARCHAR(60)');

@@ -148,14 +148,34 @@ final class AlertBuilder
         }
 
         $threshold = (int)($this->config['surge_threshold'] ?? 10);
+        // nával = aspoň $threshold PN k tisku v jednom kalendářním dni podle času podání (sd_dokument),
+        // nezávisle na tom, jak často běží synchronizace (#7 bod 9)
+        $perDay = [];
+        foreach ($this->db->all('SELECT ct, cas FROM pn') as $r) {
+            $day = substr((string)$r['cas'], 0, 10);
+            $perDay[(int)$r['ct']][$day] = ($perDay[(int)$r['ct']][$day] ?? 0) + 1;
+        }
         $n = 0;
         $this->db->pdo->beginTransaction();
         foreach ($groups as $list) {
             $ct = (int)$list[0]['ct'];
             $t = $tisky[$ct] ?? null;
             $ids = array_map(fn($r) => (int)$r['id_dokument'], $list);
+            if ($t === null) {
+                // PN k tisku, který zatím není v přehledu (dorazil dřív než předloha): počká na další běh (#2 bod 10)
+                continue;
+            }
             if ($t !== null) {
                 $count = count($list);
+                // den s návalem, ke kterému ještě nebylo upozornění „Nával“
+                $surgeDay = null;
+                foreach (array_unique(array_map(fn($r) => substr((string)$r['cas'], 0, 10), $list)) as $day) {
+                    if (($perDay[$ct][$day] ?? 0) >= $threshold && $this->db->value(
+                        "SELECT 1 FROM alerts WHERE kind = 'surge' AND ct = ? AND event_at LIKE ? AND (obdobi IS NULL OR obdobi = ?)",
+                        [$ct, $day . '%', (int)$this->db->getMeta('obdobi_cislo', '0')]) === null) {
+                        $surgeDay = $day;
+                    }
+                }
                 $authors = [];
                 foreach ($list as $r) {
                     $authors[$r['osoba']] = ($authors[$r['osoba']] ?? 0) + 1;
@@ -168,11 +188,17 @@ final class AlertBuilder
                 if (count($authors) > 5) {
                     $names[] = 'a další';
                 }
-                $kind = $count >= $threshold ? 'surge' : 'pn';
+                $kind = $surgeDay !== null ? 'surge' : 'pn';
                 $title = ($kind === 'surge' ? 'Nával pozměňovacích návrhů: ' : $this->pnLabel($count) . ' k tisku: ') . $t['nazev'];
                 $body = $count . ' ' . $this->pnWord($count) . ' od ' . count($authors) . ' ' . (count($authors) === 1 ? 'poslance' : 'poslanců')
                     . ': ' . implode(', ', $names) . '.';
-                $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, (string)end($list)['cas'], $title, $body, $posted);
+                if ($surgeDay !== null) {
+                    $dayTotal = $perDay[$ct][$surgeDay];
+                    $body = 'Dne ' . formatDate($surgeDay) . ' podáno ' . $dayTotal . ' ' . $this->pnWord($dayTotal) . '. ' . $body;
+                }
+                $when = $surgeDay !== null ? max(array_filter(array_map(fn($r) => (string)$r['cas'], $list),
+                    fn(string $c) => str_starts_with($c, $surgeDay))) : (string)end($list)['cas'];
+                $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, $when, $title, $body, $posted);
             }
             foreach ($ids as $id) {
                 $this->db->run('INSERT INTO pn_seen (id_dokument) VALUES (?)', [$id]);
@@ -206,8 +232,9 @@ final class AlertBuilder
             return 0;
         }
         $this->db->run(
-            'INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$key, $kind, (int)$t['ct'], $eventAt, date('Y-m-d H:i:s'), $title, $body, (int)$this->isWatched($t), $posted]
+            'INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted, obdobi) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$key, $kind, (int)$t['ct'], $eventAt, date('Y-m-d H:i:s'), $title, $body, (int)$this->isWatched($t), $posted,
+                (int)$this->db->getMeta('obdobi_cislo', '0') ?: null]
         );
         return 1;
     }

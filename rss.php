@@ -7,6 +7,7 @@ require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\Repo;
 use Hlidac\Scorer;
+use Hlidac\View;
 
 $repo = new Repo(db());
 // do RSS jde jen to důležité (?vse=1 = vše)
@@ -28,7 +29,7 @@ echo '<?xml version="1.0" encoding="utf-8"?>', "\n";
   <?php foreach ($alerts as $a): ?>
   <item>
     <title><?= e($a['title']) ?></title>
-    <link><?= e(siteUrl('tisk.php?ct=' . (int)$a['ct'])) ?></link>
+    <link><?= e(View::alertUrl($a, true)) ?></link>
     <guid isPermaLink="false"><?= e($a['alert_key']) ?></guid>
     <pubDate><?= date(DATE_RSS, strtotime($a['event_at'])) ?></pubDate>
     <description><?= e($a['body']) ?></description>

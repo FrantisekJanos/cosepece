@@ -63,8 +63,17 @@ final class Importer
         }
 
         // přepis tabulek se zdrojovými daty v jedné transakci
+        $oldId = (int)$this->db->getMeta('obdobi_id', '0');
+        $oldCislo = (int)$this->db->getMeta('obdobi_cislo', '0');
         $this->db->pdo->beginTransaction();
         try {
+            if ($oldCislo > 0) {
+                // upozornění bez období patří k období předchozího importu
+                $this->db->run('UPDATE alerts SET obdobi = ? WHERE obdobi IS NULL', [$oldCislo]);
+            }
+            if ($oldId > 0 && $oldId !== $obdobiId) {
+                $this->switchPeriod($oldCislo);
+            }
             $this->db->run('DELETE FROM tisky');
             $this->db->run('DELETE FROM kroky');
             $this->db->run('DELETE FROM pn');
@@ -88,6 +97,25 @@ final class Importer
         }
 
         return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn)];
+    }
+
+    private function switchPeriod(int $oldCislo): void
+    {
+        // nové volební období: čísla tisků začínají znovu od 1, takže tisk 40 je jiný návrh než tisk 40
+        // minulého období (#2 bod 2). Stará upozornění zůstanou v historii pod klíčem s číslem období
+        // (a odkazem na psp.cz), texty a rozbory starých tisků se smažou a nové období začne bootstrapem.
+        foreach ($this->db->all('SELECT alert_key FROM alerts WHERE obdobi = ?', [$oldCislo]) as $a) {
+            $key = (string)$a['alert_key'];
+            if (str_starts_with($key, $oldCislo . '/')) {
+                continue;
+            }
+            $this->db->run('UPDATE alerts SET alert_key = ? WHERE alert_key = ?', [$oldCislo . '/' . $key, $key]);
+            $this->db->run('UPDATE post_log SET alert_key = ? WHERE alert_key = ?', [$oldCislo . '/' . $key, $key]);
+        }
+        $this->db->run('UPDATE alerts SET posted = 3 WHERE posted = 0');
+        $this->db->run('DELETE FROM tisk_text');
+        $this->db->run('DELETE FROM pn_text');
+        $this->db->run("DELETE FROM meta WHERE k = 'bootstrapped'");
     }
 
     private function validate(int $obdobiId, array $tisky, array $kroky, array $pn): ?string

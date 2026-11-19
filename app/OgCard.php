@@ -72,6 +72,10 @@ final class OgCard
                 'Upozornění na sporné kroky ve Sněmovně',
                 'Nové pozměňovací návrhy, schválení podle § 90/2, zkrácené lhůty a vyhlášené zákony. Běžná agenda je potlačená.',
             ],
+            'pripravovane' => [
+                'Připravované zákony u vlády',
+                'Návrhy zákonů, které ministerstva připravují a Sněmovna je ještě nedostala: připomínkové řízení, jeho délka a schválení vládou.',
+            ],
             'zmeny' => [
                 'Co jsme na webu změnili',
                 'Opravy a změny v hodnocení legislativního postupu, hlavně podle připomínek čtenářů.',

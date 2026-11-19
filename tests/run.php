@@ -906,8 +906,34 @@ $prepHtml = (string)ob_get_clean();
 check('detail tisku ukazuje přípravu u vlády', str_contains($prepHtml, 'Příprava návrhu u vlády') && str_contains($prepHtml, 'Připomínky 14 dní (obvykle 4 týdny)')
     && str_contains($prepHtml, 'odok.gov.cz/portal/veklep/material/KORNDQGFVQKI/'), true);
 
+echo "Připravované zákony (#29)\n";
+$up = [];
+foreach ((new Hlidac\Repo(db()))->upcoming() as $u) {
+    $up[$u['pid']] = $u;
+}
+check('jen návrhy zákonů tohoto období mimo Sněmovnu, od nejpokročilejší fáze', array_keys($up), ['KORNUP000003', 'KORNUP000004', 'KORNUP000001']);
+check('verze téhož materiálu: fáze z nejnovější, připomínky ze starší', [$up['KORNUP000003']['faze'], $up['KORNUP000003']['dni'], $up['KORNUP000003']['mist'],
+    $up['KORNUP000003']['vlada'], $up['KORNUP000003']['mimo_plan'], $up['KORNUP000003']['verzi'], $up['KORNUP000003']['zalozeno']],
+    ['schvaleno', 7, 22, '2026-11-04', 1, 2, '2026-09-29']);
+check('u vlády bez připomínek', [$up['KORNUP000004']['faze'], $up['KORNUP000004']['dni']], ['vlada', null]);
+check('v připomínkovém řízení', [$up['KORNUP000001']['faze'], $up['KORNUP000001']['dni'], $up['KORNUP000001']['resort']], ['pripominky', 29, 'Ministerstvo X']);
+check('vládní návrhy už ve Sněmovně (tisky 90, 311) mezi připravovanými nejsou', array_intersect(array_keys($up), ['KORNDQGFVQKI', 'KORNDY5H6KU4', 'KORNDQAAAAAA']), []);
+check('fáze ze stavu ODok', array_map([Hlidac\GovPrep::class, 'phaseOf'], ['2 - v připomínkovém řízení', '3 - připomínkové řízení ukončeno', '7 - zařazeno do evidence', 'B - signováno', 'CE – zaevidováno v PSP', 'DZV - návrh vzat zpět', 'K - publikováno ve Sbírce zákonů']),
+    ['pripominky', 'po_pripominkach', 'vlada', 'schvaleno', null, null, null]);
+$_GET = [];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/pripravovane.php');
+$upHtml = (string)ob_get_clean();
+[$apiCode, $apiBody] = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->handle(['pripravovane' => '1']);
+check('api.php?pripravovane=1', [$apiCode, count($apiBody['pripravovane']), $apiBody['pripravovane'][0]['pripominky']['dni'] ?? null], [200, 3, 7]);
+check('stránka připravovaných zákonů: fáze, štítky a odkaz do VeKLEP', str_contains($upHtml, 'Schváleno vládou') && str_contains($upHtml, 'Připomínky 7 dní (obvykle 4 týdny)')
+    && str_contains($upHtml, 'Připomínkové řízení nedohledáno') && str_contains($upHtml, 'Mimo plán legislativních prací')
+    && str_contains($upHtml, 'odok.gov.cz/portal/veklep/material/KORNUP000001/') && !str_contains($upHtml, 'ekonomické ochraně státu'), true);
+
 echo "Stránky\n";
-foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'pripravovane.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {

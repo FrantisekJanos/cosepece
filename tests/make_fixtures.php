@@ -304,14 +304,15 @@ UNL,
         mkdir($outDir, 0775, true);
     }
     // otevřená data Úřadu vlády (ODok) – zkrácené reálné záznamy tisků 90, 311, 221 a 78
-    $r = fn(string $pid, string $type, string $title, string $at, ?string $finish, int $reviewers, string $reason, ?string $gov) => [
+    $r = fn(string $pid, string $type, string $title, string $at, ?string $finish, int $reviewers, string $reason, ?string $gov, string $status = 'B - signováno', array $psp = []) => [
         'title' => $title, 'pid' => $pid, 'type' => ['id' => $type, 'name' => $type], 'date_authorized' => $at,
-        'author' => ['organization' => ['id' => 'X', 'name' => 'X']], 'status' => ['id' => 'B', 'name' => 'B - signováno'],
+        'author' => ['organization' => ['id' => 'X', 'name' => 'Ministerstvo X']], 'status' => ['id' => substr($status, 0, 1), 'name' => $status], 'psp' => $psp,
         'reason' => $reason, 'notes' => '', 'government_program' => $gov !== null ? ['date' => $gov] : [],
         'review_process' => $finish !== null ? ['date_finish' => $finish, 'reviewers' => array_fill(0, $reviewers, ['id' => 'M', 'name' => 'M'])] : null,
     ];
     @mkdir($outDir . '/odok', 0775, true);
     file_put_contents($outDir . '/odok/requests_2025.json', json_encode(['requests' => [
+        $r('KORNUP000008', 'NZ', 'Návrh zákona z minulého volebního období', '2025-03-01T09:00:00Z', '2025-03-29T21:59:59Z', 30, '', null, '3 - připomínkové řízení ukončeno'),
         $r('KORNDQAAAAAA', 'NZ', 'Vládní návrh zákona, kterým se mění některé zákony v oblasti veřejných rozpočtů', '2025-12-01T09:00:00Z', '2025-12-15T22:59:59Z', 23, 'Plán legislativních prací', null),
     ]], JSON_UNESCAPED_UNICODE));
     file_put_contents($outDir . '/odok/requests_2026.json', json_encode(['requests' => [
@@ -320,6 +321,15 @@ UNL,
         $r('ALBSDUW89Q2L', 'PNZ', 'Návrh poslanců na vydání zákona o střetu zájmů (sněmovní tisk č. 221)', '2026-06-10T08:00:00Z', '2026-06-18T21:59:59Z', 7, 'Žádost o stanovisko', '2026-06-29T10:00:00Z'),
         $r('ALBSDQG99B8P', 'PNZ', 'Návrh poslance na vydání zákona o státních svátcích (sněmovní tisk č. 78)', '2026-01-19T08:00:00Z', null, 0, 'Žádost o stanovisko', null),
         $r('ALBSOLD00001', 'PNZ', 'Návrh poslance z minulého období (sněmovní tisk č. 90)', '2024-03-01T08:00:00Z', '2024-03-10T21:59:59Z', 3, 'Žádost o stanovisko', null),
+        // připravované zákony (#29): v připomínkách; dvě verze (připomínky 7 dní → schváleno vládou); u vlády bez připomínek;
+        // už ve Sněmovně, skartovaný a z minulého období se nezobrazí
+        $r('KORNUP000001', 'NZ', 'Návrh zákona, kterým se mění zákon č. 248/2000 Sb., o podpoře regionálního rozvoje', '2026-11-11T09:00:00Z', '2026-12-10T22:59:59Z', 54, '', null, '2 - v připomínkovém řízení'),
+        $r('KORNUP000002', 'NZ', 'Návrh zákona, kterým se mění zákon č. 300/2013 Sb., o Vojenské policii', '2026-09-29T09:00:00Z', '2026-10-06T21:59:59Z', 22, '', null, '3 - připomínkové řízení ukončeno'),
+        $r('KORNUP000003', 'NZ', 'Návrh zákona, kterým se mění zákon č. 300/2013 Sb., o Vojenské policii.', '2026-10-20T09:00:00Z', null, 0, 'Předkládá se mimo plán legislativních prací vlády.', '2026-11-04T10:00:00Z', '9 - projednáno'),
+        $r('KORNUP000004', 'NZ', 'Návrh zákona, kterým se mění zákon č. 349/1999 Sb., o veřejném ochránci práv', '2026-10-20T09:00:00Z', null, 0, '', null, '7 - zařazeno do evidence'),
+        $r('KORNUP000005', 'NZ', 'Návrh zákona o ekonomické ochraně státu', '2026-08-01T09:00:00Z', '2026-08-29T21:59:59Z', 40, '', '2026-09-30T10:00:00Z', 'CE – zaevidováno v PSP', ['id' => 330, 'period' => 10]),
+        $r('KORNUP000006', 'NZ', 'Návrh zákona o zrušeném záměru', '2026-02-01T09:00:00Z', '2026-03-01T21:59:59Z', 20, '', null, 'Y - skartováno'),
+        $r('KORNUP000007', 'NZ', 'Střednědobý výhled státního rozpočtu na léta 2028 a 2029', '2026-08-31T09:00:00Z', null, 0, '', '2026-09-07T10:00:00Z'),
     ]], JSON_UNESCAPED_UNICODE));
     foreach ($files as $zipName => $entries) {
         $zip = new ZipArchive();

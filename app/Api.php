@@ -23,6 +23,9 @@ final class Api
                 $bill = $ct > 0 ? $this->bill($ct) : null;
                 return $bill === null ? [404, ['error' => 'Tisk nenalezen']] : [200, $this->wrap(['tisk' => $bill])];
             }
+            if (!empty($q['pripravovane'])) {
+                return [200, $this->wrap(['pripravovane' => $this->upcoming()])];
+            }
             $filters = self::filters($q);
             if (!empty($q['upozorneni'])) {
                 return [200, $this->wrap(['upozorneni' => $this->alerts($filters)])];
@@ -125,6 +128,18 @@ final class Api
             }
         }
         return $out;
+    }
+
+    public function upcoming(): array
+    {
+        // připravované zákony u vlády (otevřená data ODok), od nejpokročilejší fáze
+        return array_map(fn(array $u) => [
+            'pid' => $u['pid'], 'nazev' => $u['nazev'], 'resort' => $u['resort'], 'faze' => $u['faze'], 'stav_odok' => $u['stav'],
+            'zalozeno' => $u['zalozeno'], 'zmeneno' => $u['zmeneno'],
+            'pripominky' => $u['dni'] !== null ? ['od' => $u['pripominky_od'], 'do' => $u['pripominky_do'], 'dni' => (int)$u['dni'], 'mist' => (int)$u['mist']] : null,
+            'vlada_projednala' => $u['vlada'], 'mimo_plan' => (bool)$u['mimo_plan'], 'vyjimka' => (bool)$u['vyjimka'],
+            'popis' => $u['popis'], 'duvod' => $u['duvod'], 'veklep_url' => GovPrep::url((string)$u['pid']),
+        ], $this->repo->upcoming());
     }
 
     private function summary(array $t): array

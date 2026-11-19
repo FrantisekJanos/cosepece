@@ -110,6 +110,26 @@ final class Db
             vyjimka INTEGER NOT NULL DEFAULT 0,
             znovu INTEGER NOT NULL DEFAULT 0
         )$suffix");
+        // připravované zákony u vlády, které ještě nejsou ve Sněmovně (otevřená data ODok, app/GovPrep.php)
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS pripravovane (
+            pid VARCHAR(20) PRIMARY KEY,
+            nazev $text,
+            resort VARCHAR(255),
+            faze VARCHAR(20) NOT NULL,
+            stav VARCHAR(80),
+            zalozeno VARCHAR(10),
+            zmeneno VARCHAR(10),
+            pripominky_od VARCHAR(10),
+            pripominky_do VARCHAR(10),
+            dni INTEGER,
+            mist INTEGER NOT NULL DEFAULT 0,
+            vlada VARCHAR(10),
+            duvod $text,
+            popis $text,
+            mimo_plan INTEGER NOT NULL DEFAULT 0,
+            vyjimka INTEGER NOT NULL DEFAULT 0,
+            verzi INTEGER NOT NULL DEFAULT 1
+        )$suffix");
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn (
             id_dokument INTEGER PRIMARY KEY,
             cislo INTEGER NOT NULL,

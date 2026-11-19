@@ -215,4 +215,16 @@ table.vote-clubs td:not(:first-child), table.vote-clubs th:not(:first-child) { t
 .prep dd { margin: 0; }
 .prep .bar { height: 8px; border-radius: 4px; background: var(--line-soft); position: relative; max-width: 360px; }
 .prep .bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); }
+/* připravované zákony (pripravovane.php) */
+.upcoming { margin-top: 16px; }
+.upcoming .card-head h2 { margin: 0; font-size: 18px; }
+.upcoming-list { list-style: none; margin: 0; padding: 0; }
+.upcoming-list li { padding: 16px 20px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 6px; }
+.upcoming-list li:last-child { border-bottom: 0; }
+.upcoming-title { font-weight: 600; color: var(--ink); }
+.upcoming-list details { font-size: 14px; }
+.upcoming-list summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+.upcoming-list details p { margin: 6px 0 0; }
+.upcoming-intro p:first-child { margin-top: 0; }
+.upcoming-intro p:last-child { margin-bottom: 0; }
 @media (max-width: 640px) { .prep dl { grid-template-columns: 1fr; } .prep dt { margin-top: 6px; } }

@@ -85,7 +85,9 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
   1c. GovPrep    příprava návrhu u vlády z otevřených dat Úřadu vlády (odok.gov.cz/opendata, JSON po letech, cache 20 h;
                 robots.txt portálu zakazuje procházení webu, proto jen tyto soubory): vládní návrhy přes tisk_eklep.unl
                 + stejný název verze v připomínkách, nevládní podle „(sněmovní tisk č. N)“; tabulka priprava.
-                Do skóre nevstupuje, upřesňuje jen popis bodů za poslanecký návrh
+                Do skóre nevstupuje, upřesňuje jen popis bodů za poslanecký návrh. Z týchž dat tabulka pripravovane
+                (pripravovane.php, api.php?pripravovane=1): typ NZ z tohoto období, verze seskupené podle normTitle,
+                fáze z nejnovější verze (GovPrep::phaseOf), vyřazené už ve Sněmovně (pole psp, tisk_eklep, název tisku)
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 
@@ -109,7 +111,7 @@ i u PN, když je verzí textu nebo rozboru víc než jedna) → `revize.php?druh
 textu po odstavcích a slovech přes `app/Diff.php`, změny závažnosti a titulku rozboru). Skóre historie neovlivňuje. Nával PN = ≥ `surge_threshold` PN k tisku
 za kalendářní den podle času podání, ne za běh synchronizace.
 
-Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`,
+Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `pripravovane`,
 `text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období).
 
 ## Zdroj dat (psp.cz open data)

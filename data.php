@@ -143,6 +143,7 @@ $toc = [
     'ciselniky' => 'Číselníky',
     'chyby' => 'Chyby',
     'limity' => 'Limity a slušné chování',
+    'mcp' => 'Pro AI asistenty (MCP)',
     'rss' => 'RSS',
     'priklady' => 'Příklady kódu',
     'podminky' => 'Zdroje a podmínky',
@@ -284,6 +285,11 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
         <li>Celé období se vejde do jednoho dotazu (<code>limit=500</code>); není potřeba stahovat tisk po tisku.</li>
         <li>Pokud potřebujete víc (výzkum, hromadná analýza), <a href="<?= e((string)config('issues_url', '')) ?>">napište nám</a>.</li>
       </ul>
+    </section>
+
+    <section class="card pad" id="mcp">
+      <h2>Pro AI asistenty (MCP)</h2>
+      <p>Pro Claude a další AI asistenty je k dispozici MCP server s 21 nástroji nad návrhy zákonů, jejich texty, pozměňovacími návrhy, rozpravami ve Sněmovně a hlasováním. Návod k připojení a přehled nástrojů je na stránce <a href="mcp.php">Pro AI asistenty (MCP)</a>.</p>
     </section>
 
     <section class="card pad" id="rss">

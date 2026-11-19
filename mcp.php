@@ -22,7 +22,9 @@ $canIssue = $tokens->available();
 $issued = null;
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $canIssue) {
     $form = array_map(fn($v) => is_string($v) ? $v : '', $_POST);
-    $issued = $tokens->issue($form, (string)($_SERVER['REMOTE_ADDR'] ?? ''));
+    $issued = $tokens->issue($form, (string)($_SERVER['REMOTE_ADDR'] ?? ''), $_SERVER);
+    // stránka s čerstvým tokenem nenačítá měřicí skript
+    View::$noAnalytics = isset($issued['token']);
     if (!headers_sent()) {
         header('Cache-Control: no-store');
     }
@@ -122,9 +124,9 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
           <label for="ucel">K čemu MCP použijete? <span class="muted small">(nepovinné, pomůže nám s plánováním; nepište osobní údaje)</span></label>
           <input id="ucel" name="ucel" type="text" maxlength="80" placeholder="např. rešerše k článku, výzkum, vlastní projekt" autocomplete="off">
           <input type="text" name="web" value="" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
-          <input type="hidden" name="formular" value="<?= e($tokens->formToken()) ?>">
+          <input type="hidden" name="formular" value="<?= e($tokens->formToken((string)($_SERVER['REMOTE_ADDR'] ?? ''))) ?>">
           <button type="submit" class="btn">Získat token</button>
-          <p class="small muted">Bez registrace a bez e-mailu. Z jedné adresy nejvýš <?= (int)$tokens->limits()['per_ip'] ?> tokeny denně. Token se zobrazí jen jednou.</p>
+          <p class="small muted">Bez registrace a bez e-mailu. Z jedné adresy nejvýš <?= (int)$tokens->limits()['per_ip'] ?> tokeny denně. Token se zobrazí jen jednou. Token, který do týdne nepoužijete nebo ho tři měsíce nepoužíváte, přestane platit; pak si vytvořte nový.</p>
         </form>
       <?php else: ?>
         <p>Token zatím vydáváme na požádání.<?php if ($issues !== ''): ?> <a href="<?= e($issues) ?>">Napište nám</a>, k čemu ho chcete použít; token pak pošleme soukromě, nikdy ho nezveřejňujte v issue ani jinde.<?php endif; ?></p>

@@ -39,10 +39,25 @@ final class SearchIndex
         $index = $this->build();
         $path ??= self::path();
         @mkdir(dirname($path), 0775, true);
-        $tmp = $path . '.tmp';
+        // jedinečný dočasný soubor a atomické přejmenování: souběžné sestavení (web i synchronizace) index nepoškodí
+        $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
         file_put_contents($tmp, json_encode($index, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         rename($tmp, $path);
         return count($index['items']);
+    }
+
+    /** Otisk aktuálních dat pro adresu indexu (mění se s každou synchronizací). */
+    public static function stamp(Db $db): string
+    {
+        return substr(md5((string)$db->getMeta('last_sync', '')), 0, 10);
+    }
+
+    /** Aktuální index jako hotový JSON (soubor z disku, bez dekódování a nového kódování při každém dotazu). */
+    public function raw(): string
+    {
+        $this->load();
+        $raw = @file_get_contents(self::path());
+        return is_string($raw) && $raw !== '' ? $raw : (string)json_encode($this->build(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     /** Uložený index; když chybí nebo vznikl před poslední synchronizací, sestaví se znovu. */

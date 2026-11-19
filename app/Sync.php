@@ -51,6 +51,13 @@ final class Sync
             $ai = (new AiReviewer(db(), $config))->run();
             $scorer->scoreBills();
             $scorer->scoreAlerts();
+            // úklid: prošlé záznamy limitů dotazů a nepoužívané tokeny MCP vydané na webu
+            RateLimit::cleanup();
+            try {
+                $revoked = (new McpTokens(db(), $config))->revokeStale();
+            } catch (\Throwable $ex) {
+                $revoked = ['error' => Http::redact($ex->getMessage())];
+            }
             try {
                 $searchItems = (new SearchIndex(db()))->rebuild();
             } catch (\Throwable $ex) {
@@ -67,6 +74,7 @@ final class Sync
                 'ai' => $ai,
                 'revize_backfill' => $backfill,
                 'search_index' => $searchItems,
+                'mcp_tokens_revoked' => $revoked,
                 'posts' => $posts,
                 'seconds' => round(microtime(true) - $started, 1),
             ];

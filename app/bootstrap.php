@@ -100,10 +100,22 @@ if (PHP_SAPI !== 'cli') {
     // chyby jen do logu, nikdy do stránky (vypsaná cesta a kód pomáhají útočníkovi)
     ini_set('display_errors', '0');
     ini_set('log_errors', '1');
+    // jen čtení: GET a HEAD; POST přijímá jen formulář tokenů (mcp.php) a rozhraní AI (ai_api.php)
+    $script = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $allowed = in_array($script, ['mcp.php', 'ai_api.php'], true) ? ['GET', 'HEAD', 'POST'] : ['GET', 'HEAD'];
+    if (!in_array($method, $allowed, true)) {
+        http_response_code($method === 'OPTIONS' ? 204 : 405);
+        header('Allow: ' . implode(', ', $allowed));
+        exit;
+    }
     // parametry v adrese jsou vždy jednoduchý text; pole (?q[]=x) by v kódu dělala chyby a varování
     foreach ($_GET as $key => $value) {
         if (!is_string($value)) {
             unset($_GET[$key]);
+        } elseif (preg_match('~^-?\d{10,}$~', $value)) {
+            // číslo mimo rozsah sloupce INTEGER by skončilo chybou databáze (500); tak velké číslo tisku ani stránky není
+            $_GET[$key] = '999999999';
         }
     }
 }

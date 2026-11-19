@@ -1070,19 +1070,42 @@ $tokCfg = config();
 $tokCfg['mcp'] = ['token_table' => 'mcp_token', 'tokens_per_day' => 2];
 $tok = new Hlidac\McpTokens(db(), $tokCfg);
 $secret = (new ReflectionMethod($tok, 'secret'))->invoke($tok);
-$ft = $tok->formToken(time() - 10);
-check('ověření formuláře: v pořádku, rychle, vypršelo, podvržené', [
-    Hlidac\McpTokens::verifyFormToken($ft, $secret),
-    Hlidac\McpTokens::verifyFormToken($tok->formToken(), $secret) !== null,
-    Hlidac\McpTokens::verifyFormToken($tok->formToken(time() - 4000), $secret) !== null,
-    Hlidac\McpTokens::verifyFormToken(substr($ft, 0, -1) . (substr($ft, -1) === 'a' ? 'b' : 'a'), $secret) !== null,
-], [null, true, true, true]);
-check('skryté pole vyplněné robotem', isset($tok->issue(['formular' => $ft, 'web' => 'http://spam'], '198.51.100.9')['error']), true);
-$r1 = $tok->issue(['formular' => $ft, 'ucel' => 'test'], '198.51.100.9');
+$ipA = '198.51.100.9';
+$ft = $tok->formToken($ipA, time() - 10);
+check('ověření formuláře: v pořádku, rychle, vypršelo, podvržené, z jiné adresy', [
+    Hlidac\McpTokens::verifyFormToken($ft, $secret, $ipA),
+    Hlidac\McpTokens::verifyFormToken($tok->formToken($ipA), $secret, $ipA) !== null,
+    Hlidac\McpTokens::verifyFormToken($tok->formToken($ipA, time() - 4000), $secret, $ipA) !== null,
+    Hlidac\McpTokens::verifyFormToken(substr($ft, 0, -1) . (substr($ft, -1) === 'a' ? 'b' : 'a'), $secret, $ipA) !== null,
+    Hlidac\McpTokens::verifyFormToken($ft, $secret, '203.0.113.200') !== null,
+], [null, true, true, true, true]);
+check('klíč podpisu formuláře není odvozený z cron_token', $secret !== hash('sha256', 'hlidac-form|' . (string)config('cron_token', '')) && strlen((string)db()->getMeta('form_secret', '')) === 64, true);
+$site = 'https://cosepece.cz';
+check('formulář jen z naší stránky (Origin, Sec-Fetch-Site)', [
+    Hlidac\McpTokens::sameOrigin([], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_ORIGIN' => 'https://cosepece.cz', 'HTTP_SEC_FETCH_SITE' => 'same-origin'], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_ORIGIN' => 'https://evil.example'], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_SEC_FETCH_SITE' => 'cross-site'], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_ORIGIN' => 'http://cosepece.cz'], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_ORIGIN' => 'null'], $site),
+    Hlidac\McpTokens::sameOrigin(['HTTP_ORIGIN' => 'https://cosepece.cz.evil.example'], $site),
+], [true, true, false, false, false, false, false]);
+check('odeslání z cizího webu token nevydá', $tok->issue(['formular' => $ft], $ipA, ['HTTP_ORIGIN' => 'https://evil.example'])['error'] ?? null, 'Formulář lze odeslat jen z této stránky. Načtěte ji znovu.');
+check('skryté pole vyplněné robotem', isset($tok->issue(['formular' => $ft, 'web' => 'http://spam'], $ipA)['error']), true);
+check('podpis z jiné adresy token nevydá', isset($tok->issue(['formular' => $ft], '203.0.113.200')['error']), true);
+$r1 = $tok->issue(['formular' => $ft, 'ucel' => 'test'], $ipA);
 check('vydaný token: v tabulce jen jeho sha256', isset($r1['token']) && db()->value('SELECT jmeno FROM mcp_token WHERE hash = ?', [hash('sha256', (string)($r1['token'] ?? ''))]) === 'web: ' . date('Y-m-d') . ' · test'
     && db()->value('SELECT COUNT(*) FROM mcp_token WHERE hash = ?', [(string)($r1['token'] ?? '')]) == 0, true);
-$tok->issue(['formular' => $ft], '198.51.100.10');
-check('denní strop pro všechny', $tok->issue(['formular' => $ft], '198.51.100.11')['error'] ?? null, 'Dnešní počet nových tokenů je vyčerpaný. Zkuste to zítra.');
+$tok->issue(['formular' => $tok->formToken('198.51.100.10', time() - 10)], '198.51.100.10');
+check('denní strop pro všechny', $tok->issue(['formular' => $tok->formToken('198.51.100.11', time() - 10)], '198.51.100.11')['error'] ?? null, 'Dnešní počet nových tokenů je vyčerpaný. Zkuste to zítra.');
+// úklid nepoužívaných tokenů: nikdy nepoužitý starší než týden a nepoužívaný déle než 90 dní; ruční tokeny zůstávají
+$ago = fn(int $days) => gmdate('Y-m-d H:i:s', time() - 86400 * $days) . '+00:00';
+db()->run('DELETE FROM mcp_token');
+foreach ([['web: starý nepoužitý', 'h1', $ago(8), null], ['web: nový nepoužitý', 'h2', $ago(2), null], ['web: dlouho nepoužívaný', 'h3', $ago(200), $ago(100)],
+    ['web: používaný', 'h4', $ago(200), $ago(3)], ['novinář (ruční)', 'h5', $ago(300), null]] as [$jm, $h, $v, $n]) {
+    db()->run('INSERT INTO mcp_token (jmeno, hash, vytvoren, naposledy) VALUES (?, ?, ?, ?)', [$jm, $h, $v, $n]);
+}
+check('úklid zruší jen nepoužívané tokeny z webu', [$tok->revokeStale(), array_column(db()->all('SELECT hash FROM mcp_token WHERE zrusen IS NOT NULL ORDER BY hash'), 'hash'), $tok->revokeStale()], [2, ['h1', 'h3'], 0]);
 check('bez tabulky služby rag/ (SQLite) se tokeny nevydávají', (new Hlidac\McpTokens(db(), config()))->available(), false);
 
 echo "Limit dotazů\n";
@@ -1090,6 +1113,8 @@ $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);
 check('v limitu projde, nad limit vrátí Retry-After', [$rl('203.0.113.5'), $rl('203.0.113.5'), $rl('203.0.113.5'), is_int($rl('203.0.113.5'))], [null, null, null, true]);
 check('jiná adresa má vlastní počítadlo', $rl('203.0.113.6'), null);
+check('klient pro limity: IPv4 beze změny, IPv6 po sítích /56', [Hlidac\RateLimit::client('203.0.113.5'), Hlidac\RateLimit::client('2001:db8:aa:bb01::1') === Hlidac\RateLimit::client('2001:db8:aa:bbff:1234::9'),
+    Hlidac\RateLimit::client('2001:db8:aa:bb01::1') === Hlidac\RateLimit::client('2001:db8:aa:cc01::1')], ['203.0.113.5', true, false]);
 check('IPv6 ze stejné /64 sítě se počítá dohromady', [Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::1', $rlDir), is_int(Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::ffff', $rlDir))], [null, true]);
 check('soubory neobsahují IP adresu', array_filter(array_map('file_get_contents', glob($rlDir . '/*')), fn($c) => str_contains($c, '203.0.113')) === []
     && array_filter(glob($rlDir . '/*'), fn($f) => str_contains($f, '203.0.113')) === [], true);

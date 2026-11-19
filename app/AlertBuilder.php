@@ -245,6 +245,9 @@ final class AlertBuilder
         }
         $phase = ['pripominky' => 'je v připomínkovém řízení', 'po_pripominkach' => 'je po připomínkovém řízení',
             'vlada' => 'čeká na projednání vládou', 'schvaleno' => 'vláda ho schválila'];
+        // datum z otevřených dat jen ve tvaru RRRR-MM-DD, jinak dnešek (vadný údaj nesmí rozbít výpis ani RSS)
+        $day = fn($value): string => preg_match('~^\d{4}-\d{2}-\d{2}$~', (string)$value) && strtotime((string)$value) !== false
+            ? (string)$value : date('Y-m-d');
         $n = 0;
         foreach ($this->db->all('SELECT * FROM pripravovane') as $u) {
             $pid = (string)$u['pid'];
@@ -254,19 +257,19 @@ final class AlertBuilder
             $where = (string)$u['resort'] . ' · návrh ' . ($phase[$u['faze']] ?? $u['faze']) . '.';
             if ($u['dni'] !== null && (int)$u['dni'] < 21) {
                 $days = (int)$u['dni'];
-                $n += $this->add('prep_review:' . $pid, $days < 10 ? 'prep_velmi' : 'prep_kratke', $t, $u['pripominky_od'] . ' 00:00:00',
+                $n += $this->add('prep_review:' . $pid, $days < 10 ? 'prep_velmi' : 'prep_kratke', $t, $day($u['pripominky_od']) . ' 00:00:00',
                     'Připomínky k návrhu jen ' . $days . ' dní: ' . $name,
                     'Připomínkové řízení ' . formatDate($u['pripominky_od']) . ' – ' . formatDate($u['pripominky_do']) . ' (' . $days . ' dní, '
                     . (int)$u['mist'] . ' připomínkových míst); obvykle trvá 4 týdny. ' . $where, $posted);
             }
             if ((int)$u['mimo_plan'] === 1) {
                 $reason = trim((string)$u['duvod']);
-                $n += $this->add('prep_plan:' . $pid, 'prep_plan', $t, ($u['zalozeno'] ?: date('Y-m-d')) . ' 00:00:00',
+                $n += $this->add('prep_plan:' . $pid, 'prep_plan', $t, $day($u['zalozeno']) . ' 00:00:00',
                     'Mimo plán legislativních prací vlády: ' . $name,
                     $where . ($reason !== '' ? ' Důvod podle předkladatele: ' . mb_substr($reason, 0, 300) : ''), $posted);
             }
             if ($u['faze'] === 'schvaleno' && !empty($u['vlada'])) {
-                $n += $this->add('prep_vlada:' . $pid, 'prep_vlada', $t, $u['vlada'] . ' 00:00:00',
+                $n += $this->add('prep_vlada:' . $pid, 'prep_vlada', $t, $day($u['vlada']) . ' 00:00:00',
                     'Vláda schválila návrh: ' . $name,
                     (string)$u['resort'] . '. Návrh míří do Sněmovny, kde dostane číslo sněmovního tisku.', $posted);
             }

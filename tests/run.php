@@ -1061,6 +1061,30 @@ foreach ([['z' => '159/2006'], []] as $get) {
 }
 $_GET = [];
 
+echo "Tokeny MCP na webu\n";
+check('tvar tokenu jako hlidac_rag.tokens', (bool)preg_match('~^hz_[A-Za-z0-9_-]{43}$~', Hlidac\McpTokens::generate()), true);
+check('jméno tokenu bez řídicích znaků a zkrácené', Hlidac\McpTokens::label("rešerše\nk článku") === 'web: ' . date('Y-m-d') . ' · rešerše k článku'
+    && mb_strlen(Hlidac\McpTokens::label(str_repeat('x', 300))) === mb_strlen('web: ' . date('Y-m-d') . ' · ') + 80, true);
+db()->run('CREATE TABLE IF NOT EXISTS mcp_token (id INTEGER PRIMARY KEY, jmeno TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, vytvoren TEXT NOT NULL, naposledy TEXT, zrusen TEXT)');
+$tokCfg = config();
+$tokCfg['mcp'] = ['token_table' => 'mcp_token', 'tokens_per_day' => 2];
+$tok = new Hlidac\McpTokens(db(), $tokCfg);
+$secret = (new ReflectionMethod($tok, 'secret'))->invoke($tok);
+$ft = $tok->formToken(time() - 10);
+check('ověření formuláře: v pořádku, rychle, vypršelo, podvržené', [
+    Hlidac\McpTokens::verifyFormToken($ft, $secret),
+    Hlidac\McpTokens::verifyFormToken($tok->formToken(), $secret) !== null,
+    Hlidac\McpTokens::verifyFormToken($tok->formToken(time() - 4000), $secret) !== null,
+    Hlidac\McpTokens::verifyFormToken(substr($ft, 0, -1) . (substr($ft, -1) === 'a' ? 'b' : 'a'), $secret) !== null,
+], [null, true, true, true]);
+check('skryté pole vyplněné robotem', isset($tok->issue(['formular' => $ft, 'web' => 'http://spam'], '198.51.100.9')['error']), true);
+$r1 = $tok->issue(['formular' => $ft, 'ucel' => 'test'], '198.51.100.9');
+check('vydaný token: v tabulce jen jeho sha256', isset($r1['token']) && db()->value('SELECT jmeno FROM mcp_token WHERE hash = ?', [hash('sha256', (string)($r1['token'] ?? ''))]) === 'web: ' . date('Y-m-d') . ' · test'
+    && db()->value('SELECT COUNT(*) FROM mcp_token WHERE hash = ?', [(string)($r1['token'] ?? '')]) == 0, true);
+$tok->issue(['formular' => $ft], '198.51.100.10');
+check('denní strop pro všechny', $tok->issue(['formular' => $ft], '198.51.100.11')['error'] ?? null, 'Dnešní počet nových tokenů je vyčerpaný. Zkuste to zítra.');
+check('bez tabulky služby rag/ (SQLite) se tokeny nevydávají', (new Hlidac\McpTokens(db(), config()))->available(), false);
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);

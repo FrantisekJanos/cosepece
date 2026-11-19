@@ -244,7 +244,7 @@ $scorer->scoreBills();
 check('tisk 221 po vrácení rozboru zase 94', $sc(221), 94);
 
 echo "AI rozbor přes claude CLI (falešné CLI, bez sítě)\n";
-$fakeCli = $tmp . '/claude';
+$fakeCli = $tmp . '/claude.php';
 file_put_contents($fakeCli, '#!' . PHP_BINARY . "\n" . <<<'FAKE'
 <?php
 $prompt = stream_get_contents(STDIN);
@@ -260,7 +260,7 @@ FAKE);
 chmod($fakeCli, 0755);
 putenv('ANTHROPIC_API_KEY=nesmi-se-pouzit');
 $aiConfig = config();
-$aiConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $fakeCli, 'model' => 'claude-haiku-5-5'];
+$aiConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $fakeCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5'];
 db()->run('UPDATE tisk_text SET ai_at = NULL, ai_score = NULL WHERE ct = 221');
 $reviewer = new Hlidac\AiReviewer(db(), $aiConfig);
 check('fronta: text tisku 221 s nápovědou pravidel', str_contains($reviewer->queue(5, 221)[0]['prompt'] ?? '', 'možné zpětné použití'), true);
@@ -277,6 +277,8 @@ $reviewer = new Hlidac\AiReviewer(db(), $aiConfig);
 check('fronta ověření: závažný nález 221', array_column($reviewer->queue(5, 221, true), 'id'), [221]);
 check('ověření silnějším modelem', $reviewer->run(5, 221, true), ['reviewed' => 1, 'errors' => 0]);
 check('výsledek ověření nahradí první kolo', [(int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), db()->value('SELECT ai_model FROM tisk_text WHERE ct = 221')], [7, 'claude-sonnet-5-5']);
+check('první kolo zůstane uložené', [(int)db()->value('SELECT ai_prev_score FROM tisk_text WHERE ct = 221'), db()->value('SELECT ai_prev_model FROM tisk_text WHERE ct = 221')], [9, 'claude-haiku-5-5']);
+check('na detailu je vidět i první kolo', str_contains(Hlidac\View::aiRounds(db()->one('SELECT * FROM tisk_text WHERE ct = 221')), 'první kolo claude-haiku-5-5: 9/10'), true);
 check('ověřený nález se znovu neověřuje', $reviewer->queue(5, 221, true), []);
 check('rozbor nese aktuální verzi promptu', (int)db()->value('SELECT ai_prompt FROM tisk_text WHERE ct = 221'), Hlidac\AiReviewer::PROMPT_VERSION);
 check('aktuální rozbor není ve frontě', $reviewer->queue(5, 221), []);

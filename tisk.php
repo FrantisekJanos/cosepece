@@ -120,6 +120,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     <?php if (!empty($bai['prospech_uzke_skupiny'])): ?><span class="chip chip-cut">Prospěch úzké skupiny</span><?php endif; ?>
     <?php if (isset($bai['souvisi_s_predmetem']) && $bai['souvisi_s_predmetem'] === false): ?><span class="chip chip-cut">Nesouvisí s předmětem</span><?php endif; ?>
   </span>
+  <?= View::aiRounds($billText) ?>
   <?php if (!empty($bai['shrnuti'])): ?><p><?= e($bai['shrnuti']) ?></p><?php endif; ?>
   <?php if (!empty($bai['duvod'])): ?><p class="muted"><?= e($bai['duvod']) ?></p><?php endif; ?>
   <?php foreach ((array)($bai['upravy'] ?? []) as $note): ?><p class="muted small">Automatická korekce: <?= e((string)$note) ?></p><?php endforeach; ?>
@@ -170,11 +171,12 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <?php if ($x !== null): ?>
               <span class="chips">
                 <?php if (!empty($x['signals']['other_laws'])): ?><span class="chip chip-cut">Přílepek: <?= e(implode(', ', $x['signals']['other_laws'])) ?></span><?php endif; ?>
-                <?php if (!empty($x['signals']['retro']) && !empty($x['signals']['deadline'])): ?><span class="chip chip-cut">Lhůta i zpětně</span><?php endif; ?>
+                <?php if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])): ?><span class="chip chip-cut">Lhůta a zpětné použití</span><?php endif; ?>
                 <?php if (!empty($x['signals']['large'])): ?><span class="chip chip-surge">Rozsáhlý</span><?php endif; ?>
                 <?php if ($x['ai_score'] !== null): ?><span class="chip <?= (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' ?>">AI <?= (int)$x['ai_score'] ?>/10</span><?php endif; ?>
               </span>
               <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
+              <?= View::aiRounds($x) ?>
               <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
             <?php endif; ?>
           </li>

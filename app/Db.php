@@ -156,6 +156,12 @@ final class Db
         // verze promptu, podle které rozbor vznikl (NULL = starší než verze 2)
         $this->addColumn('tisk_text', 'ai_prompt', 'INTEGER');
         $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
+        // výsledek 1. kola zůstane uložený i po ověření silnějším modelem (#2 bod 4)
+        foreach (['tisk_text', 'pn_text'] as $table) {
+            $this->addColumn($table, 'ai_prev_json', $text);
+            $this->addColumn($table, 'ai_prev_score', 'INTEGER');
+            $this->addColumn($table, 'ai_prev_model', 'VARCHAR(60)');
+        }
         if ($this->driver === 'mysql') {
             // starší MySQL databáze mají u dlouhých textů TEXT (64 kB) → MEDIUMTEXT
             foreach (['tisk_text' => ['text', 'ai_json'], 'pn_text' => ['text', 'ai_json']] as $table => $cols) {

@@ -61,6 +61,7 @@ return [
         'enabled' => false,
         'backend' => 'cli',
         'cli_path' => 'claude', // v cronu bývá potřeba plná cesta, např. /Users/jmeno/.local/bin/claude
+        // 'cli_prefix' => [], // spouštěč před cli_path, např. [PHP_BINARY] pro skript .php (Windows, testy)
         'remote_token' => '',   // token pro ai_api.php; prázdné = cron_token
         'api_key' => '',
         'model' => 'claude-haiku-5-5',

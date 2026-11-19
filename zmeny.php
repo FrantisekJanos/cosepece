@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Napojení pro AI asistenty (MCP)',
+        'Nová stránka Pro AI asistenty (MCP) popisuje, jak připojit Claude a další AI asistenty přímo k našim datům: návrhy zákonů se skóre, texty návrhů a pozměňovacích návrhů po paragrafech, celé rozpravy ve Sněmovně, projevy, hlasování a ověření citací. Je tam návod k připojení, přehled 21 nástrojů, ukázkové dotazy a jak získat přístupový token. Odkaz je v patičce a na stránce Data a API.',
+        [0], false],
     ['2026-11-19', 'Upozornění na připravované zákony',
         'Upozornění nově hlídají i přípravu zákonů u vlády: připomínkové řízení kratší než 3 týdny (úroveň Pozor, kratší než 10 dní Závažné a jde i na sociální sítě), návrh předložený mimo plán legislativních prací vlády (Pozor) a schválení návrhu vládou (běžná agenda). Upozornění vedou na stránku Připravované, a jakmile návrh dostane číslo sněmovního tisku, do VeKLEP. Jsou v přehledu upozornění, v RSS i v API. Dosavadní případy se zapsaly bez rozeslání.',
         [52], false],

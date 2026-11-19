@@ -165,6 +165,7 @@ final class SearchIndex
             ['Jak hodnotíme', 'metodika skóre body váhy omezení odpovědnosti AI', 'metodika.php'],
             ['Připravované zákony', 'vláda připomínkové řízení VeKLEP ministerstvo', 'pripravovane.php'],
             ['Data a API', 'JSON RSS export stažení vývojáři', 'data.php'],
+            ['Pro AI asistenty (MCP)', 'MCP Claude AI asistent napojení nástroje rozprava projevy', 'mcp.php'],
             ['Co jsme změnili', 'změny opravy novinky', 'zmeny.php'],
             ['Upozornění', 'upozornění RSS nové kroky', 'upozorneni.php'],
         ];

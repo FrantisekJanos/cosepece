@@ -37,6 +37,9 @@ return [
     // limity dotazů z jedné IP adresy za minutu (app/RateLimit.php; 0 = bez limitu); popis pro uživatele na data.php#limity
     'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120],
 
+    // adresa MCP serveru pro AI asistenty (stránka mcp.php); prázdné = https://mcp.<doména webu>/mcp
+    'mcp_url' => '',
+
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     // stahování textů pozměňovacích návrhů (Word) a pravidlová analýza přílepků a rozsahu

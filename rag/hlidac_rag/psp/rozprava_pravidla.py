@@ -65,13 +65,13 @@ def _slova_prijmeni(prijmeni: str) -> list[str]:
 def shoda_prijmeni(tvar: str, prijmeni: str) -> bool:
     """Odpovídá ohnutý tvar příjmení (Haase, Vlčka, Adamové) základnímu tvaru (Haas, Vlček, Pekarová Adamová)?
 
-    Bez diakritiky a velikosti písmen; `tvar` se rovná některému slovu příjmení, nebo začíná jeho kmenem
-    (viz _kmen: Marka ~ Marek, ale Maříkovi ne).
+    Bez diakritiky a velikosti písmen; `tvar` začíná některým slovem příjmení (Niemiece ~ Niemiec), nebo
+    jeho kmenem (viz _kmen: Marka ~ Marek, ale Maříkovi ne).
     """
     t = _bez_diakritiky(tvar)
     if not t:
         return False
-    return any(t == s or t.startswith(_kmen(s)) for s in _slova_prijmeni(prijmeni))
+    return any(t.startswith(s) or t.startswith(_kmen(s)) for s in _slova_prijmeni(prijmeni))
 
 
 # --- oslovený řečník -------------------------------------------------------
@@ -155,15 +155,21 @@ RE_PREDKLADATEL = re.compile(
 )
 RE_MINISTR = re.compile(r"ministr|předsed(?:a|kyně) vlády", re.I)
 RE_PREDNOSTNI = re.compile(r"přednostn", re.I)
+RE_PREDNOSTNI_PREDLOZKA = re.compile(r"\b(s|bez)\s+přednostn", re.I)
 RE_PROCEDURALNI = re.compile(r"procedurál", re.I)
+
+
+# konec textu před příjmením je poděkování této osobě: „Děkuji panu poslanci (Josefu) “, „Děkuji, paní poslankyně “
+# (nejvýš 4 slova za „děkuji“, bez čárky a bez „a“ / „s“, za kterými už začíná ohlášení)
+RE_PODEKOVANI_OSOBE = re.compile(r"děkuj\w*,?(?:\s+(?!(?:a|s)\b)[^\W\d_]+){0,4}\s+$", re.I)
 
 
 def _jen_podekovani(veta: str) -> bool:
     return bool(RE_DEKUJI.search(veta)) and not RE_OZNAMENI.search(veta)
 
 
-def _usek_o_osobe(veta: str, prijmeni: str) -> str | None:
-    """Část věty o osobě s daným příjmením (mezi oddělovači „potom“, „a pak“ …)."""
+def _usek_o_osobe(veta: str, prijmeni: str) -> tuple[str, int] | None:
+    """Část věty o osobě s daným příjmením (mezi oddělovači „potom“, „a pak“ …) a pozice příjmení v ní."""
     shoda = None
     for m in RE_SLOVA.finditer(veta):
         if m.group()[0].isupper() and shoda_prijmeni(m.group(), prijmeni):
@@ -179,23 +185,47 @@ def _usek_o_osobe(veta: str, prijmeni: str) -> str | None:
         if o.start() >= shoda.end():
             konec = o.start()
             break
-    return veta[zacatek:konec]
+    return veta[zacatek:konec], shoda.start() - zacatek
 
 
-def _rozhodujici_usek(text: str, prijmeni: str | None) -> str:
+def _rozhodujici_usek(text: str, prijmeni: str | None) -> tuple[str, int | None]:
+    """Úsek řeči předsedajícího, který o druhu rozhoduje, a pozice příjmení v něm (None = bez příjmení).
+
+    Poděkování nerozhoduje: s příjmením se vynechá úsek, kde je osoba ta, které se děkuje („Děkuji panu
+    poslanci Markovi za faktickou poznámku.“); bez příjmení věta, která jen děkuje."""
     vety = [v for v in RE_VETY.split(text) if v.strip()]
     if prijmeni:
-        useky = [u for u in (_usek_o_osobe(v, prijmeni) for v in reversed(vety)) if u is not None]
+        useky = [u for u in (_usek_o_osobe(v, prijmeni) for v in reversed(vety))
+                 if u is not None and not RE_PODEKOVANI_OSOBE.search(u[0][:u[1]])]
         # přednost má úsek s klíčovým slovem (krátké příjmení může omylem sedět na jiné slovo)
         for u in useky:
-            if RE_KLICOVE.search(u):
+            if RE_KLICOVE.search(u[0]):
                 return u
         if useky:
             return useky[0]
     for v in reversed(vety):
         if RE_KLICOVE.search(v) and not _jen_podekovani(v):
-            return v
-    return ""
+            return v, None
+    return "", None
+
+
+def _prednostni(usek: str, pozice: int | None) -> bool:
+    """Ohlášení s přednostním právem, ne „bez přednostního práva“.
+
+    Rozhoduje zmínka s předložkou „s“ / „bez“ nejbližší před příjmením (bez příjmení poslední, když před
+    příjmením žádná není, první za ním): „s přednostním právem – respektive bez přednostního práva – pan
+    předseda Hřib“ přednostní není. Zmínka bez předložky („pořadí přednostních práv: předseda Hřib“) je."""
+    if not RE_PREDNOSTNI.search(usek):
+        return False
+    zminky = list(RE_PREDNOSTNI_PREDLOZKA.finditer(usek))
+    if not zminky:
+        return True
+    if pozice is None:
+        rozhodne = zminky[-1]
+    else:
+        pred = [m for m in zminky if m.start() < pozice]
+        rozhodne = pred[-1] if pred else zminky[0]
+    return rozhodne.group(1).lower() == "s"
 
 
 def druh_vystoupeni(
@@ -207,12 +237,12 @@ def druh_vystoupeni(
     """Druh vystoupení: recnik, fakticka, prednostni, zpravodaj, predkladatel,
     ministr, proceduralni nebo predsedajici.
 
-    Z jedné věty řeči předsedajícího (s příjmením řečníka tu o něm, jinak
+    Z jedné věty řeči předsedajícího (s příjmením řečníka její úsek o něm, jinak
     poslední větu s klíčovým slovem; samotné poděkování nerozhoduje), pak z role.
     """
     if predsedajici:
         return "predsedajici"
-    usek = _rozhodujici_usek(text_predsedajiciho, prijmeni) if text_predsedajiciho else ""
+    usek, pozice = _rozhodujici_usek(text_predsedajiciho, prijmeni) if text_predsedajiciho else ("", None)
     if RE_FAKTICKA.search(usek):
         return "fakticka"
     if RE_ZPRAVODAJ.search(usek):
@@ -221,7 +251,7 @@ def druh_vystoupeni(
         return "predkladatel"
     if role and RE_MINISTR.search(role):
         return "ministr"
-    if RE_PREDNOSTNI.search(usek):
+    if _prednostni(usek, pozice):
         return "prednostni"
     if RE_PROCEDURALNI.search(usek):
         return "proceduralni"

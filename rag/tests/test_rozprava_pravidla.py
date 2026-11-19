@@ -192,6 +192,7 @@ def test_shoda_prijmeni_tabulka_ne(tvar, prijmeni):
     ("Maříkovi", "Marek", False), ("Marně", "Marek", False),
     ("Vlček", "Vlček", True), ("Vlčkovi", "Vlček", True), ("Válek", "Válek", True), ("Němec", "Němec", True),
     ("Havla", "Havel", True), ("STANu", "Staněk", False),
+    ("Niemiece", "Niemiec", True),   # e, které nevypadává: tvar začíná celým příjmením
 ])
 def test_shoda_prijmeni_pohyblive_e(tvar, prijmeni, ocekavano):
     assert shoda_prijmeni(tvar, prijmeni) is ocekavano
@@ -207,6 +208,74 @@ def test_shoda_prijmeni_pohyblive_e(tvar, prijmeni, ocekavano):
 ])
 def test_shoda_prijmeni_viceslovne(tvar, prijmeni, ocekavano):
     assert shoda_prijmeni(tvar, prijmeni) is ocekavano
+
+
+def test_druh_podekovani_nerozhoduje_ani_s_prijmenim():
+    # poděkování předchozímu řečníkovi (i se shodným příjmením a „faktickou“) o druhu dalšího nerozhoduje
+    t = "Děkuji panu poslanci Maříkovi za faktickou poznámku. Nyní vystoupí pan poslanec Marek."
+    assert druh_vystoupeni(t, "Poslanec Josef Marek", False, "Marek") == "recnik"
+    t2 = "Děkuji panu poslanci Markovi za faktickou poznámku. Nyní vystoupí v rozpravě pan poslanec Marek."
+    assert druh_vystoupeni(t2, "Poslanec Josef Marek", False, "Marek") == "recnik"
+    # oznámení s poděkováním v jedné větě rozhoduje dál (věty ze stenoprotokolů)
+    for t3, prijmeni, druh in [
+        ("Děkuji. Další faktická poznámka – Vlastimil Válek. Vaše 2 minuty.", "Válek", "fakticka"),
+        ("Děkujeme a s faktickou poznámkou přichází pan místopředseda Skopeček.", "Skopeček", "fakticka"),
+        ("Děkuji paní poslankyni Janě Pastuchové a s faktickou poznámkou předsedkyně klubu Pirátů, paní Olga "
+         "Richterová.", "Richterová", "fakticka"),
+        ("Děkuji, pane poslanče, a s faktickou poznámkou pan poslanec Michal Zuna.", "Zuna", "fakticka"),
+        ("Děkuji za dodržení času a zatím poslední faktická poznámka Vlastimil Válek.", "Válek", "fakticka"),
+        ("Děkuji, pane místopředsedo, a s přednostním právem předseda Pirátské strany Zdeněk Hřib.", "Hřib",
+         "prednostni"),
+        ("Děkuji s přednostním právem první místopředseda Poslanecké sněmovny Patrik Nacher. Prosím.", "Nacher",
+         "prednostni"),
+        ("Čas, paní poslankyně. Děkuji a ještě jednou pan poslanec Válek. Připraví se paní poslankyně Urbanová "
+         "s faktickou poznámkou.", "Válek", "recnik"),
+    ]:
+        assert druh_vystoupeni(t3, "Poslanec X", False, prijmeni) == druh, t3
+    # poděkovaná osoba je ta, která právě mluvila: její věta o dalším vystoupení nerozhoduje
+    t4 = "Děkuji, paní poslankyně Kovářová, a s faktickou poznámkou pan poslanec Haas."
+    assert druh_vystoupeni(t4, "Poslankyně Věra Kovářová", False, "Kovářová") == "recnik"
+    assert druh_vystoupeni(t4, "Poslanec Karel Haas", False, "Haas") == "fakticka"
+
+
+def test_druh_meni_prijmeni():
+    """Bez příjmení rozhoduje poslední věta s klíčovým slovem, s příjmením úsek o řečníkovi."""
+    t = ("Nyní vystoupí poslední s přednostním právem předseda ODS Martin Kupka a potom se tedy připraví "
+         "paní poslankyně Julie Smejkalová.")
+    assert druh_vystoupeni(t, "Poslankyně Julie Smejkalová", False) == "prednostni"
+    assert druh_vystoupeni(t, "Poslankyně Julie Smejkalová", False, "Smejkalová") == "recnik"
+    # víceslovné příjmení: úsek o paní Pivoňka Vaňkové, ne o paní Ančincové za „potom“
+    t2 = ("Tím pádem tedy otvírám obecnou rozpravu, do které se přihlásily s přednostním právem, stanoviskem klubu "
+          "paní poslankyně Pavla Pivoňka Vaňková a potom vlastně už bez přednostního práva paní poslankyně "
+          "Hana Ančincová.")
+    assert druh_vystoupeni(t2, "Poslankyně Pavla Pivoňka Vaňková", False, "Pivoňka Vaňková") == "prednostni"
+    assert druh_vystoupeni(t2, "Poslankyně Hana Ančincová", False, "Ančincová") == "recnik"
+
+
+# „bez přednostního práva“: rozhoduje zmínka s předložkou nejbližší před příjmením (věty ze stenoprotokolů)
+@pytest.mark.parametrize("text, prijmeni, ocekavano", [
+    ("Ano, nyní vystoupí s přednostním právem – respektive bez přednostního práva, s řádnou přihláškou – "
+     "pan předseda Zdeněk Hřib. Prosím, máte slovo.", "Hřib", "recnik"),                       # 10/1/49/9
+    ("Bez přednostního práva. Dobře. Prosím.", "Hřib", "recnik"),                                   # 10/7/2/6
+    ("V této chvíli jsme vyčerpali poslance s přednostním právem a přihlášeni jsou poslanci bez přednostního "
+     "práva, takže sem k řečništi pozvu Michala Zunu, připraví se Jiří Pospíšil.", "Zuna", "recnik"),  # 10/10/16/1
+    ("Takže s přednostním právem Zdeněk Hřib – Zdeněk Hřib ne, Olga Richterová ne, Marian Jurečka s přednostním "
+     "právem ne, takže tady mám dvě přihlášky bez přednostního práva – Petr Bendl a Petr Hladík.\n\n"
+     "Takže já poprosím Petra Bendla.", "Bendl", "recnik"),                                         # 10/20/298/2
+    ("Dalším přihlášeným bez přednostního práva, protože ti, co mají přednostní právo a žádali tady nejsou, "
+     "je pan poslanec Jan Bureš.", "Bureš", "recnik"),                                               # 10/24/30/2
+    ("Nyní tedy paní předsedkyně Olga Richterová – chápu, že se hlásíte bez přednostního práva, když to vidím "
+     "v pořadí?", "Richterová", "recnik"),                                                           # 10/34/461/4
+    ("Je to předseda Hřib, předseda Richterová, předseda Matěj Ondřej Havel, místopředseda Skopeček, předseda "
+     "Jakob, takže s přednostním právem mám pět, a dále je tady bez přednostního práva Marian Jurečka, "
+     "Lukáš Vlček, Gabriela Svárovská a Adriana Chochelová – čtyři.", "Hřib", "prednostni"),         # 10/10/164/6
+    ("Já přečtu to pořadí přednostních práv, abyste se zorientovali, takže: předseda Hřib, předsedkyně "
+     "Richterová...", "Hřib", "prednostni"),                                                         # 10/34/161/1
+    ("Poprosím poslední s přednostním právem, Marek Výborný.", "Výborný", "prednostni"),
+    ("S přednostním právem se přihlásila – jestli to ještě platí – Olga Richterová.", None, "prednostni"),
+])
+def test_druh_bez_prednostniho_prava(text, prijmeni, ocekavano):
+    assert druh_vystoupeni(text, "Poslanec X", False, prijmeni) == ocekavano
 
 
 def test_druh_male_slovo_nepoplete_prijmeni():

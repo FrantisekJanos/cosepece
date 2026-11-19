@@ -82,6 +82,10 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
                 Do skóre nevstupuje; chyba nezastaví synchronizaci
+  1c. GovPrep    příprava návrhu u vlády z otevřených dat Úřadu vlády (odok.gov.cz/opendata, JSON po letech, cache 20 h;
+                robots.txt portálu zakazuje procházení webu, proto jen tyto soubory): vládní návrhy přes tisk_eklep.unl
+                + stejný název verze v připomínkách, nevládní podle „(sněmovní tisk č. N)“; tabulka priprava.
+                Do skóre nevstupuje, upřesňuje jen popis bodů za poslanecký návrh
   8. Publisher     pošle na sítě jen upozornění se skóre ≥ notify.min_score (výchozí 50); post_log, max 3 pokusy
 ```
 

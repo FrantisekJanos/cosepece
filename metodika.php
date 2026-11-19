@@ -17,10 +17,10 @@ $verifyMin = (int)($ai['verify_min'] ?? 6);
 // skupiny signálů: název skupiny, klíč stropu, řádky [body, popis]
 $groups = [
     ['Postup projednávání', 'cap_procedure', [
-        [$w['mp_bill'], 'Poslanecký návrh, který postupuje projednáváním (2. čtení a dál nebo schválení v 1. čtení): neprošel meziresortním připomínkovým řízením (ministerstva, legislativní rada vlády, odborná veřejnost).'],
+        [$w['mp_bill'], 'Poslanecký návrh, který postupuje projednáváním (2. čtení a dál nebo schválení v 1. čtení): text nepřipravovalo ministerstvo v meziresortním připomínkovém řízení (ministerstva, Legislativní rada vlády, odborná veřejnost).'],
         [$w['mp_bill_early'], 'Poslanecký návrh, který zatím nepostoupil do 2. čtení (většina takových návrhů nikdy neprojde).'],
-        [$w['senate_bill'], 'Senátní návrh: také bez meziresortního připomínkového řízení.'],
-        [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: také bez meziresortního připomínkového řízení.'],
+        [$w['senate_bill'], 'Senátní návrh: text také nepřipravovalo ministerstvo v připomínkovém řízení.'],
+        [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: text také nepřipravovalo ministerstvo v připomínkovém řízení.'],
         [$w['p90_requested'], 'Navrženo schválit už v 1. čtení podle § 90 odst. 2 jednacího řádu (jen u tisku, který se ještě projednává).'],
         [$w['p90_passed'], 'Schváleno už v 1. čtení podle § 90 odst. 2, bez 2. a 3. čtení (místo bodů za pouhý návrh).'],
         [$w['deadline_cut'], 'Zkrácená lhůta při projednávání: lhůta pro výbory kratší než 60 dní, nebo Sněmovna lhůtu změnila během projednávání.'],
@@ -109,6 +109,16 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
   <p>Texty navíc posuzuje jazykový model Claude. Hodnotí jen formu a postup: přílepek, zpětnou účinnost, zkrácení lhůt, prospěch úzké skupiny a zásadní novou úpravu bez připomínkového řízení. Každé zjištění musí doložit doslovnou citací; citace, která v textu není, se zahodí. Zpětnost ve prospěch veřejnosti (např. nové osvobození od poplatku) má nízkou závažnost. Nálezy se závažností <?= $verifyMin ?> a víc znovu posoudí silnější model a u nálezu je pak poznámka „ověřeno druhým modelem“. U pozměňovacích návrhů se takový nález do skóre počítá naplno až po tomto ověření, do té doby nejvýš jako <?= $verifyMin - 1 ?>/10. Přílepek se posuzuje proti zákonům, které mění název i text samotného návrhu. Tisk s nálezem od <?= (int)$w['finding_ai_min'] ?>/10, který ověřil silnější model a doložil citací, je v hlavních nálezech na úvodní stránce i tehdy, když celkové skóre nedosahuje <?= (int)$w['finding_min'] ?> bodů (jinak jsou tam tisky od <?= (int)$w['finding_min'] ?> bodů).</p>
   <?php endif; ?>
   <p>Když psp.cz text návrhu nebo pozměňovacího návrhu vymění, uloží se nové znění jako další verze a rozbor se udělá znovu. Předchozí znění i dřívější rozbory zůstávají uložené: v detailu tisku vede odkaz „Historie“ na seznam verzí, rozdíl mezi nimi a změny závažnosti rozboru. Do skóre se počítá jen poslední verze. Texty a rozbory z minulého volebního období se uchovávají v archivu, ale ke stejně očíslovaným tiskům nového období se nepoužijí.</p>
+</section>
+
+<section class="card pad" aria-label="Příprava u vlády">
+  <h2>Příprava u vlády (připomínkové řízení)</h2>
+  <p>U tisku ukazujeme, jak návrh prošel přípravou u vlády. Údaje bereme z otevřených dat Úřadu vlády (portál ODok/VeKLEP), aktualizují se denně.</p>
+  <ul>
+    <li><b>Vládní návrh:</b> meziresortní připomínkové řízení (od–do, počet připomínkových míst), kdy návrh schválila vláda, důvod předložení (např. „mimo plán legislativních prací“) a udělené výjimky. Obvyklá délka připomínek jsou 4 týdny; kratší řízení označujeme. Když připomínkové řízení v datech nenajdeme, napíšeme „nedohledáno“ – mohlo proběhnout pod jiným názvem nebo u dřívější verze návrhu.</li>
+    <li><b>Poslanecký, senátní a krajský návrh:</b> text nepřipravovalo ministerstvo. Vláda k němu ale zaujímá stanovisko a k tomu si někdy vyžádá připomínky (v 10. období u většiny takových návrhů, obvykle na 1–2 týdny). Ty se týkají stanoviska vlády, ne úprav návrhu.</li>
+  </ul>
+  <p class="muted small">Tyto údaje zatím do skóre nevstupují; body za poslanecký návrh zůstávají, jen jejich popis uvádí, zda si vláda připomínky vyžádala. Po několika týdnech dat zvážíme, zda a jak je započítat. Stanovisko Legislativní rady vlády a jednotlivé připomínky jsou u materiálu ve VeKLEP.</p>
 </section>
 
 <section class="card pad" aria-label="Omezení">

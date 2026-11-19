@@ -155,6 +155,12 @@ final class Repo
         return $out;
     }
 
+    public function prep(int $ct): ?array
+    {
+        // příprava návrhu u vlády (připomínkové řízení, schůze vlády, důvod předložení)
+        return $this->db->one('SELECT * FROM priprava WHERE ct = ?', [$ct]);
+    }
+
     public function votes(int $ct): array
     {
         // hlasování k tisku od nejnovějšího, s rozdělením podle klubů

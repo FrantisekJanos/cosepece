@@ -25,13 +25,15 @@ SCHEMA_META = "test_rozprava_meta"
 OSOBY = [(1001, "Jan", "Skopeček"), (1002, "Karel", "Haas"), (1003, "Jan", "Berki"),
          (1004, "Václav", "Pláteník"), (1005, "Zuzana", "Mrázová"),
          (1006, "Lukáš", "Vlček"),     # poslanec období (klub), v rozpravě nemluví
-         (1007, "Alois", "Rašín")]     # osoba bez klubu a bez projevu v období
+         (1007, "Alois", "Rašín"),     # osoba bez klubu a bez projevu v období
+         (1008, "Julie", "Smejkalová")]
 # řečník: id_osoba, text odkazu, role, předsedající
 CHAIR = (1001, "Místopředseda PSP Jan Skopeček", "Místopředseda PSP", True)
 HAAS = (1002, "Poslanec Karel Haas", "Poslanec", False)
 BERKI = (1003, "Poslanec Jan Berki", "Poslanec", False)
 PLATENIK = (1004, "Poslanec Václav Pláteník", "Poslanec", False)
 MRAZOVA = (1005, "Ministryně pro místní rozvoj ČR Zuzana Mrázová", "Ministryně pro místní rozvoj ČR", False)
+SMEJKALOVA = (1008, "Poslankyně Julie Smejkalová", "Poslankyně", False)
 BLAZEJ = (None, "Poslanec Blažej", "Poslanec", False)  # bez osoby: příjmení z posledního slova
 BEZ_RECNIKA = (None, None, None, False)  # úsek na začátku části bez kotvy řečníka (aname 0)
 
@@ -267,6 +269,15 @@ def test_prepocet_je_idempotentni(conn):
     assert s[9] == ("fakticka", 5, None)
 
 
+def test_druh_podle_prijmeni_recnika(conn):
+    """Přepočet předá druh_vystoupeni příjmení řečníka: ohlášení dvou lidí rozhodne úsek o tom, kdo mluví."""
+    ohlaseni = ("Nyní vystoupí poslední s přednostním právem předseda ODS Martin Kupka a potom se tedy připraví "
+                "paní poslankyně Julie Smejkalová.")
+    vloz(conn, [p(1, CHAIR, ohlaseni), p(2, SMEJKALOVA, "Děkuji za slovo, vážený pane předsedající.")])
+    prepocitej(conn)
+    assert sloupce(conn)[2][0] == "recnik"         # bez příjmení by rozhodla celá věta: prednostni
+
+
 def test_adresat_z_textu_jen_prijmeni_osoby_obdobi(conn):
     """Tvar z textu bez shody s posledními řečníky bodu se uloží, jen když je to příjmení osoby období
     (člen klubu nebo řečník kteréhokoli projevu období), jinak NULL („Pirátů“, historický Rašín)."""
@@ -439,6 +450,36 @@ def test_assemble_ct_jen_z_bodu_rec(conn):
         tisky_projevu.setdefault(aname, []).append((ct, zdroj))
     assert tisky_projevu == {1: [(285, "nadpis")], 2: [(285, "rec")], 4: [(285, "nadpis")],
                              6: [(76, "bod"), (77, "bod")]}
+
+
+SCHUZE_CT2 = 993
+BOD_NAZEV_311 = 58600   # bod bez ct a s prázdným koncem, tisk jen v názvu bodu
+
+
+def test_assemble_ct_bez_bodu_v_steno_bod_z_nadpisu(conn):
+    """Bod z rec, který ve steno.bod chybí (11 řádků rec), a rec bez bodu: tisk z nadpisu dne (záloha);
+    bod bez ct a s prázdným koncem dá tisk z názvu bodu."""
+    from hlidac_rag.psp import ingest
+
+    sql(conn, "INSERT INTO steno.bod (id_bod, obdobi, schuze, cislo, nazev, konec, ct) VALUES (%s,%s,%s,7,%s,'',NULL)",
+        (BOD_NAZEV_311, OBD, SCHUZE_CT2, "Vládní návrh zákona o daních z příjmů /sněmovní tisk 311/"))
+    cast = (_r(1001, 1, "Místopředseda PSP Jan Skopeček", "Zahajuji projednávání bodu.") + NADPIS_285
+            + _r(1002, 2, "Poslanec Karel Haas", "Děkuji, k tomuto návrhu mám dvě poznámky.")
+            + _r(1003, 3, "Poslanec Jan Berki", "Děkuji, navážu na kolegu.")
+            + _r(1004, 4, "Poslanec Václav Pláteník", "Děkuji, k dani z příjmů."))
+    sql(conn, """INSERT INTO steno.cast (obdobi, schuze, turn, url, datum, jd, stav, html)
+                 VALUES (%s, %s, 50, 'https://x', %s, 3, 'konecna', %s)""", (OBD, SCHUZE_CT2, DEN1, cast))
+    sql(conn, """INSERT INTO steno.rec (obdobi, schuze, turn, aname, id_osoba, id_bod, druh) VALUES
+                 (%s, %s, 50, 2, 1002, 99999, 1), (%s, %s, 50, 3, 1003, NULL, 1), (%s, %s, 50, 4, 1004, %s, 1)""",
+        (OBD, SCHUZE_CT2, OBD, SCHUZE_CT2, OBD, SCHUZE_CT2, BOD_NAZEV_311))
+    ingest.assemble(conn, OBD, SCHUZE_CT2)
+    assert sql(conn, "SELECT aname, id_bod, ct, ct_zdroj FROM steno.projev WHERE schuze = %s ORDER BY aname",
+               (SCHUZE_CT2,)) == [
+        (1, None, 285, "nadpis"),
+        (2, 99999, 285, "nadpis"),        # bod z rec ve steno.bod chybí: nadpis
+        (3, None, 285, "nadpis"),         # rec bez bodu: nadpis
+        (4, BOD_NAZEV_311, 311, "bod"),   # bod bez ct a konce: tisk z názvu bodu
+    ]
 
 
 # --- get_tisk: body pořadu a počty projevů z projev_tisk ---------------------------------------------------

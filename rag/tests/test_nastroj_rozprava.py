@@ -607,3 +607,50 @@ def test_pg_filtr_ct_pres_projev_tisk(pgconn):
         assert [p["klic"] for p in tools.zmeny_projevu(pgconn, ct=ct)["projevy"]] == ["10/980/7/1"], ct
     assert tools.projevy_recnika(pgconn, 2001, ct=77)["celkem"] == 1
     assert tools.hledej_v_projevech(pgconn, "sloučené rozpravě", ct=78)["celkem"] == 0
+
+
+@pytest.mark.pg
+@bez_db
+def test_pg_projevy_k_tisku_pres_projev_tisk_a_druh(pgconn):
+    """SQL projevy_k_tisku: projev sloučené rozpravy (tisky 76 i 77) je u každého tisku právě jednou, filtr druh."""
+    def klice(ct, **kw):
+        r = tools.projevy_k_tisku(pgconn, ct, min_znaku=0, **kw)
+        k = [p["klic"] for p in r["projevy"]]
+        assert r["celkem"] == len(k) == len(set(k))
+        return k
+
+    assert klice(76) == ["10/981/1/1", "10/980/2/1", "10/980/5/1", "10/980/7/1", "10/980/9/1"]
+    assert klice(77) == ["10/980/6/1", "10/980/7/1"]
+    assert klice(76, druh=["fakticka"]) == ["10/980/5/1", "10/980/9/1"]
+    assert klice(76, druh=["Zpravodaj", "recnik"]) == ["10/981/1/1", "10/980/2/1", "10/980/7/1"]
+    assert klice(77, druh=["fakticka"]) == []
+    # předsedající jen na přání, zrušený nikdy
+    assert klice(76, vcetne_predsedajicich=True) == ["10/981/1/1", "10/980/1/1", "10/980/2/1", "10/980/3/1",
+                                                      "10/980/5/1", "10/980/7/1", "10/980/8/1", "10/980/9/1"]
+    r = tools.projevy_k_tisku(pgconn, 76, min_znaku=0)
+    assert {p["druh"] for p in r["projevy"]} == {"zpravodaj", "recnik", "fakticka"}
+
+
+@pytest.mark.pg
+@bez_db
+def test_pg_get_pn_projevy(pgconn):
+    """get_pn: projevy z steno.projev_pn bez předsedajících a zrušených, s počtem; PN bez zmínek = prázdný seznam."""
+    with pgconn.cursor() as cur:
+        cur.execute(f"CREATE SCHEMA {SCHEMA_WEB}")
+        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn (cislo int, ct int, id_osoba int, osoba text, cas text, "
+                    "id_dokument int)")
+        cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.pn_text (id_dokument int, ai_score int, ai_model text, ai_json text,
+                        signals text, laws text, chars int, docx_url text)""")
+        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.pn (cislo, ct, id_osoba, osoba, id_dokument) VALUES (%s,%s,%s,%s,%s)",
+                        [(2244, 76, 2001, "Karel Haas", 1), (2246, 76, 2001, "Karel Haas", 2)])
+        cur.execute(f"SET search_path TO {SCHEMA_WEB}, public")
+        # zmínka v projevu předsedajícího (turn 3) a ve zrušeném projevu (turn 4) se nepočítá
+        cur.execute("""INSERT INTO steno.projev_pn (projev_id, cislo_pn)
+                       SELECT id, 2244 FROM steno.projev WHERE schuze = %s AND turn IN (3, 4)""", (SCHUZE,))
+    pgconn.commit()
+    r = tools.get_pn(pgconn, 2244)
+    assert r["projevy_celkem"] == 1
+    assert r["projevy"] == [{"klic": "10/980/2/1", "datum": DEN1.isoformat(), "recnik": "Poslanec Karel Haas",
+                             "klub": "ANO2011", "druh": "recnik", "url": "https://www.psp.cz/s980002.htm#r1"}]
+    r = tools.get_pn(pgconn, 2246)
+    assert r["projevy"] == [] and r["projevy_celkem"] == 0

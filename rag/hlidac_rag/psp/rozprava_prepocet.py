@@ -105,7 +105,8 @@ def prepocitej_rozpravu(cur, obdobi: int, schuze: int) -> dict:
 
 
 def _tisky_projevu(p: _ProjevRozpravy, tisky_bodu: dict[int, list[int]]) -> dict[int, str]:
-    """ct -> zdroj: ct projevu s jeho zdrojem (rec | nadpis) a tisky z konce či názvu bodu (bod)."""
+    """ct -> zdroj: ct projevu s jeho zdrojem (rec | bod | nadpis, viz ingest._ct_bodu) a tisky z konce či názvu
+    bodu (bod)."""
     zdroje: dict[int, str] = {}
     vlastni = [(p.ct, p.ct_zdroj)] if p.ct is not None else []
     for ct, zdroj in vlastni + [(t, "bod") for t in tisky_bodu.get(p.id_bod, [])]:

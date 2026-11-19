@@ -280,10 +280,22 @@ def test_projevy_recnika_q_bez_diakritiky():
 
 def test_tisky_menici_zakon_razeni():
     row = dict(ct=76, nazev="n", typ_navrhu="x", faze="f", sbirka=None, score=50, zdroj="pn")
-    conn = FakeConn([dict(n=1)], [row])
+    conn = FakeConn([dict(ok=False)], [dict(n=1)], [row])
     r = tools.tisky_menici_zakon(conn, "586/1992")
-    assert "ORDER BY score DESC NULLS LAST, ct" in conn.sql[1]
+    assert "ORDER BY score DESC NULLS LAST, ct" in conn.sql[2]
+    assert "texty.cel" not in conn.sql[2]
     assert r["celkem"] == 1 and r["dalsi_offset"] is None and r["tisky"][0]["url_psp"]
+
+
+def test_tisky_menici_zakon_z_celku_textu():
+    """E10: zákon měněný jen částí textu návrhu (256/2000 v tisku 221), ne názvem ani PN."""
+    row = dict(ct=221, nazev="n", typ_navrhu="x", faze="f", sbirka=None, score=47, zdroj="text")
+    conn = FakeConn([dict(ok=True)], [dict(n=1)], [row])
+    r = tools.tisky_menici_zakon(conn, "256/2000")
+    assert "texty.cel" in conn.sql[1] and "texty.cel" in conn.sql[2]
+    assert conn.params[1] == ("%,256/2000,%", "%,256/2000,%", "256/2000")
+    assert "WHEN bool_or(x.zdroj = 'text') THEN 'text'" in conn.sql[2]
+    assert r["tisky"][0]["ct"] == 221 and r["tisky"][0]["zdroj"] == "text"
 
 
 _TISK_ROW = dict(ct=231, druh=1, typ_navrhu="vládní", navrhovatel="vláda", nazev="N", uplny_nazev="N", predlozeno=None,

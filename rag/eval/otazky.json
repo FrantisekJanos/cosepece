@@ -466,10 +466,6 @@
     },
     "kontroly": [
      {
-      "cesta": "score",
-      "rovna_se": 82
-     },
-     {
       "cesta": "pn.*.cislo",
       "rovna_se": 1344
      },
@@ -490,13 +486,13 @@
       "je_chyba": false
      },
      {
-      "cesta": "",
-      "obsahuje": "přede dnem nabytí účinnosti"
+      "cesta": "vysledky.*.oznaceni",
+      "rovna_se": "Čl. VI"
      }
     ]
    }
   ],
-  "rucne": "Citace z docs/reels-styl.md jsou neověřeny proti textu (§ 11a odst. 1 číslo 10 nahrazeno 4; přechodné ustanovení „i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti“). Uvést označení celku. Nenazývat přílepkem (je v původním textu). Skóre 82, ne 79."
+  "rucne": "Citace z docs/reels-styl.md jsou neověřeny proti textu (§ 11a odst. 1 číslo 10 nahrazeno 4; přechodné ustanovení „i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti“). Uvést označení celku. Nenazývat přílepkem (je v původním textu). Skóre se nekontroluje, mění ho metodika webu (PR #30: 82 → 47). Úryvek má shodu v « », proto se kontroluje označení celku."
  },
  {
   "id": "E12",

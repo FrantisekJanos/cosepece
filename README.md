@@ -12,6 +12,12 @@ Data se berou z [otevřených dat Poslanecké sněmovny](https://www.psp.cz/sqw/
 
 Podněty a chyby: <https://github.com/FrantisekJanos/cosepece/issues>
 
+## Licence
+
+Kód je pod licencí [GNU AGPL-3.0](LICENSE). Web můžete volně nasadit, upravovat a šířit; kdo provozuje
+upravenou verzi jako veřejně dostupnou službu, musí její zdrojový kód zpřístupnit pod stejnou licencí.
+Data pocházejí z otevřených dat Poslanecké sněmovny; písmo Noto Sans v `assets/fonts` má vlastní licenci SIL OFL 1.1.
+
 ## Požadavky
 
 - PHP 8.1+ s rozšířeními `pdo_sqlite` (nebo `pdo_mysql`), `zip`, `curl`, `iconv`, `mbstring`

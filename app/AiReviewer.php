@@ -1,8 +1,5 @@
 <?php
-// Volitelný rozbor textu návrhů zákonů a pozměňovacích návrhů přes Claude (výchozí levný model Haiku):
-// backend 'cli' = claude -p přes předplatné (na stroji s Claude Code), 'api' = placené API s klíčem.
-// Hodnotí formu a postup (přílepek, zpětná účinnost, zkrácení lhůt, prospěch konkrétního subjektu),
-// ne politickou správnost návrhu. Každé zjištění musí být doloženo doslovnou citací, kterou ověříme v textu.
+
 
 declare(strict_types=1);
 
@@ -12,8 +9,6 @@ final class AiReviewer
 {
     private const API = 'https://api.anthropic.com/v1/messages';
 
-    // verze promptu a pravidel: po změně promptu ji zvyšte, fronta pak postupně znovu posoudí starší rozbory
-    // (původní výsledek zůstává zobrazený, dokud ho nový nenahradí). 2 = bez jména předkladatele a typu návrhu (#7)
     public const PROMPT_VERSION = 2;
 
     private const CRITERIA = <<<'TXT'
@@ -79,20 +74,20 @@ TXT;
 
     public static function apiKey(array $config): string
     {
-        // klíč z config.php, jinak z proměnné prostředí ANTHROPIC_API_KEY
+
         $key = (string)($config['ai']['api_key'] ?? '');
         return $key !== '' ? $key : (string)(getenv('ANTHROPIC_API_KEY') ?: '');
     }
 
     public static function backend(array $config): string
     {
-        // 'cli' = Claude Code přes předplatné (claude -p), 'api' = placené API s klíčem
+
         return ($config['ai']['backend'] ?? 'cli') === 'api' ? 'api' : 'cli';
     }
 
     public static function cliPath(array $config): ?string
     {
-        // cesta ke claude CLI; na sdíleném hostingu obvykle není, AI pak běží vzdáleně (bin/ai.php --remote)
+
         if (!function_exists('proc_open')) {
             return null;
         }
@@ -111,7 +106,7 @@ TXT;
 
     public function available(): bool
     {
-        // lze AI spustit přímo na tomto stroji?
+
         if (empty($this->config['ai']['enabled'])) {
             return false;
         }
@@ -120,20 +115,19 @@ TXT;
 
     public static function model(array $config): string
     {
-        // levný model pro hrubé třídění všech textů
+
         return (string)($config['ai']['model'] ?? 'claude-haiku-5-5');
     }
 
     public static function verifyModel(array $config): string
     {
-        // silnější model, který znovu posoudí jen nejzávažnější nálezy (ty jdou na homepage a na sítě)
+
         return (string)($config['ai']['verify_model'] ?? 'claude-sonnet-5-5');
     }
 
     public function run(?int $limit = null, ?int $onlyCt = null, bool $verify = false): array
     {
-        // rozbor přímo nad místní databází (cron na stroji s CLI nebo s API klíčem);
-        // $verify = druhé kolo silnějším modelem nad nálezy se závažností ≥ ai.verify_min
+
         $stats = ['reviewed' => 0, 'errors' => 0];
         if (!$this->available()) {
             return $stats + ['skipped' => true];
@@ -144,7 +138,7 @@ TXT;
                 $this->saveResult($item['kind'], $item['id'], $this->callModel($item['prompt'], $model), $model);
                 $stats['reviewed']++;
             } catch (\Throwable $ex) {
-                // chyba ověření nesmaže původní rozbor, jen se zapíše
+
                 $this->saveError($item['kind'], $item['id'], $ex->getMessage());
                 $stats['errors']++;
             }
@@ -154,9 +148,7 @@ TXT;
 
     public function queue(int $limit, ?int $onlyCt = null, bool $verify = false): array
     {
-        // texty čekající na rozbor (bez tisků, které už jsou zákonem): nejdřív samotné návrhy zákonů od nejnověji
-        // předložených, pak PN od nejnovějších. Při ověření: už posouzené texty se závažností ≥ ai.verify_min,
-        // které silnější model ještě neviděl, od nejzávažnějších tisků.
+
         $cfg = $this->config['ai'] ?? [];
         $items = [];
         $params = [];
@@ -166,13 +158,13 @@ TXT;
             $params[] = $onlyCt;
         }
         if ($verify) {
-            // ověřuje se jen rozbor podle aktuální verze promptu
+
             $where = 'x.ai_at IS NOT NULL AND x.ai_prompt = ? AND x.ai_score >= ? AND (x.ai_model IS NULL OR x.ai_model <> ?)';
             $params = array_merge([self::PROMPT_VERSION, (int)($cfg['verify_min'] ?? 6), self::verifyModel($this->config)], $params);
             $orderBills = 't.score DESC, x.ai_score DESC, t.ct DESC';
             $orderPn = 't.score DESC, x.ai_score DESC, p.cas DESC';
         } else {
-            // nové texty, pak rozbory podle starší verze promptu (od nejzávažnějších tisků)
+
             $where = '(x.ai_at IS NULL OR x.ai_prompt IS NULL OR x.ai_prompt < ?)';
             $params = array_merge([self::PROMPT_VERSION], $params);
             $orderBills = 'CASE WHEN x.ai_at IS NULL THEN 0 ELSE 1 END, t.score DESC, t.predlozeno DESC, t.ct DESC';
@@ -210,7 +202,7 @@ TXT;
 
     public function saveResult(string $kind, int $id, array $result, ?string $model = null): void
     {
-        // uložení rozboru; citace ověříme proti textu v naší databázi (vymyšlené zahodíme)
+
         [$table, $column] = self::target($kind);
         $text = $this->db->value("SELECT text FROM $table WHERE $column = ?", [$id]);
         if ($text === null) {
@@ -225,12 +217,7 @@ TXT;
 
     public static function sanitize(array $result): array
     {
-        // pojistky nad odpovědí modelu (levný model občas přehání):
-        // - zpětnost ve prospěch veřejnosti má nejvýš závažnost 3,
-        // - „zpětně“ v titulku jen u zpětnosti, která oslabuje vymáhání, zvýhodňuje úzkou skupinu nebo ukládá povinnost,
-        // - nález bez ověřené citace má nejvýš závažnost 2,
-        // - titulek a perex pro homepage držíme krátké.
-        // Každý zásah zapíšeme do „upravy“, aby byl na webu dohledatelný.
+
         $notes = [];
         $direction = (string)($result['zpetnost_smer'] ?? 'neni');
         $score = max(0, min(10, (int)($result['zavaznost'] ?? 0)));
@@ -238,8 +225,7 @@ TXT;
             $notes[] = 'závažnost snížena z ' . $score . ' na 3: zpětnost je ve prospěch veřejnosti';
             $score = 3;
         }
-        // nález bez jediné ověřené citace není doložený → nejvýš 2 (issue #7, bod 2); platí pro výsledky,
-        // které prošly ověřením citací v saveResult (mají klíč „citace“), i pro už uložené rozbory (--resanitize)
+
         $quoted = array_filter((array)($result['citace'] ?? []), fn($q) => trim((string)$q) !== '');
         if (array_key_exists('citace', $result) && $quoted === [] && $score > 2) {
             $notes[] = 'závažnost snížena z ' . $score . ' na 2: žádná citace se nepodařila ověřit v textu';
@@ -265,7 +251,7 @@ TXT;
 
     public static function stripRetroWord(string $title): string
     {
-        // odstraní „(– | , | tedy) (i | a) zpětně“ i samostatné „zpětně“ a uklidí interpunkci
+
         $t = preg_replace('~\s*[–—-]\s*(?:(?:tedy|a|i)\s+)*zpětně\b~iu', '', $title) ?? $title;
         $t = preg_replace('~,?\s+(?:(?:tedy|a|i|to)\s+)*zpětně\b~iu', '', $t) ?? $t;
         $t = preg_replace('~^zpětně\s+~iu', '', $t) ?? $t;
@@ -275,7 +261,7 @@ TXT;
 
     public function resanitizeStored(): int
     {
-        // znovu použije pojistky na už uložené rozbory (po změně pravidel), bez volání modelu
+
         $n = 0;
         foreach (['tisk', 'pn'] as $kind) {
             [$table, $column] = self::target($kind);
@@ -297,7 +283,7 @@ TXT;
 
     public function saveError(string $kind, int $id, string $message): void
     {
-        // chybu zapíšeme; ai_at zůstane prázdné a další běh to zkusí znovu
+
         [$table, $column] = self::target($kind);
         $this->db->run("UPDATE $table SET error = ? WHERE $column = ?", [mb_substr(Http::redact($message), 0, 500), $id]);
     }
@@ -313,8 +299,7 @@ TXT;
 
     private function billPrompt(array $row, string $text, array $cfg): string
     {
-        // typ a předkladatel se modelu záměrně neposílají: chybějící připomínkové řízení boduje Scorer
-        // (nesčítat dvakrát) a jméno ani strana nemají vliv na posouzení postupu (#7)
+
         [$body, $truncated] = self::clip($text, (int)($cfg['max_chars'] ?? 150000));
         return strtr(self::PROMPT_BILL, [
             '{CRITERIA}' => self::CRITERIA,
@@ -346,7 +331,7 @@ TXT;
 
     private static function hints(string $signalsJson): string
     {
-        // pravidlové nálezy předáme modelu jako vodítko, které má ověřit (ne převzít)
+
         $signals = json_decode($signalsJson, true) ?: [];
         $lines = [];
         foreach ($signals['retro'] ?? [] as $q) {
@@ -363,7 +348,7 @@ TXT;
 
     public static function verifyQuotes(array $quotes, string $text): array
     {
-        // ponechá jen citace, které se v textu vyskytují (po sjednocení mezer a uvozovek)
+
         $norm = fn(string $s): string => mb_strtolower(trim(preg_replace('~\s+~u', ' ', str_replace(['„', '“', '”', '"', '‚', '‘', '’'], '', $s)) ?? $s));
         $haystack = $norm($text);
         $out = [];
@@ -409,7 +394,7 @@ TXT;
 
     private function callCli(string $prompt, string $model): array
     {
-        // claude -p přes předplatné: bez nástrojů, bez MCP, bez nastavení projektu, prompt na stdin
+
         $cfg = $this->config['ai'] ?? [];
         $cli = self::cliPath($this->config);
         if ($cli === null) {
@@ -418,7 +403,7 @@ TXT;
         $cmd = [$cli, '-p', '--model', $model, '--tools', '',
             '--output-format', 'json', '--no-session-persistence', '--setting-sources', '', '--strict-mcp-config',
             '--system-prompt', 'Jsi nestranný legislativní analytik. Odpovídáš pouze JSON objektem podle zadání.'];
-        // bez API klíče v prostředí, aby se účtovalo předplatné a ne API
+
         $env = getenv();
         unset($env['ANTHROPIC_API_KEY'], $env['ANTHROPIC_AUTH_TOKEN']);
         $env['PATH'] = ($env['PATH'] ?? '/usr/bin:/bin') . PATH_SEPARATOR . dirname($cli);
@@ -468,7 +453,7 @@ TXT;
 
     private static function parseJson(string $out, string $note): array
     {
-        // z odpovědi vezmeme první JSON objekt
+
         if (!preg_match('~\{.*\}~s', $out, $m)) {
             throw new \RuntimeException('Odpověď AI neobsahuje JSON' . $note);
         }

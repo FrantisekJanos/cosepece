@@ -1,5 +1,5 @@
 <?php
-// Mastodon: příspěvek přes REST API s přístupovým tokenem aplikace.
+
 
 declare(strict_types=1);
 
@@ -20,7 +20,7 @@ final class Mastodon implements Notifier
 
     public function maxLength(): int
     {
-        // odkaz se na Mastodonu počítá jako 23 znaků
+
         return 500 - 24;
     }
 

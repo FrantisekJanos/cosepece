@@ -9,14 +9,26 @@ services:
     environment: &appenv
       HLIDAC_CONFIG: /run/hlidac/config.php
       DB_PASSWORD: ${DB_PASSWORD}
+      APP_ENV: production
+      APP_DEBUG: 'false'
+      APP_KEY: ${APP_KEY:-}
+      CACHE_STORE: file
+      LOG_CHANNEL: stderr
     ports:
       - "${BIND:-127.0.0.1:8100}:80"
     volumes:
       - ./config.php:/run/hlidac/config.php:ro
       - appdata:/var/www/html/data
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/up') === false ? 1 : 0);"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
 
-  # synchronizace s psp.cz každou hodinu (náhrada cronu)
+  # Laravel scheduler: synchronizace každou hodinu, zámek proti souběhu
   sync:
     build:
       context: ..
@@ -27,8 +39,10 @@ services:
     volumes:
       - ./config.php:/run/hlidac/config.php:ro
       - appdata:/var/www/html/data
-    command: ["sh", "-c", "while true; do php /var/www/html/bin/sync.php; sleep 3600; done"]
-    depends_on: [db]
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      web:
+        condition: service_healthy
 
   # stenoprotokoly psp.cz → steno.* (každou hodinu; změny textu hlídá hash části)
   rag-ingest:
@@ -64,6 +78,11 @@ services:
       POSTGRES_DB: hlidac
       POSTGRES_USER: hlidac
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hlidac -d hlidac"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     volumes:
       - pgdata:/var/lib/postgresql/data
 

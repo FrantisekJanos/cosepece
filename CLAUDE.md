@@ -13,51 +13,46 @@ Telegram, X). E-mail se záměrně nepoužívá.
 **Zásada neutrality:** skóre hodnotí *postup a formu* (jak se zákon prosazuje), nikdy politický obsah nebo stranu.
 Žádné váhy podle strany či jména poslance. Každý bod skóre musí mít čitelný důvod zobrazený na webu.
 
-## Nasazení (čti jako první, pokud jde o instalaci)
+## Nasazení
 
-Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. Shrnutí:
-
-- **Hosting (PHP, FTP):** obsah ZIPu do kořene webu, `config.php` z `config.example.php` (`site_url`, `cron_token`,
-  `ai.enabled = true`, `ai.remote_token`, `notify.dry_run = true`), `data/` zapisovatelné, ověřit 403 na
-  `config.php` a `data/`, první běh `cron.php?token=…`, pak cron/webcron každou hodinu.
-- **AI rozbor:** neběží na hostingu, ale na počítači s přihlášeným Claude Code (předplatné, ne API klíč):
-  `deploy/ai-remote.sh` (nastavení `deploy/ai-remote.env` podle `.example`) naplánovaný přes launchd
-  (`deploy/cz.hlidac.ai.plist`, nahradit `CESTA_K_PROJEKTU`) nebo cron na Linuxu. Skript volá
-  `bin/ai.php --remote … --all` (Haiku) a `--verify` (Sonnet); log `data/ai-remote.log`.
-- **Balík:** `bin/package.sh` vytvoří ZIP s hotovou databází `data/hlidac.sqlite` (texty + AI rozbor, čistá kopie
-  přes VACUUM INTO), ale bez `config.php`, logů, záloh, `deploy/ai-remote.env` a `.git` (`--bez-dat` = bez DB).
-  Přibalená DB funguje jen se SQLite; při aktualizaci webu se `data/` na hostingu nepřepisuje.
-- Tokeny a klíče sítí patří jen do `config.php` na hostingu a do `deploy/ai-remote.env`. Nikdy je nevypisuj
-  do chatu, nenahrávej do gitu ani nevkládej do URL mimo vlastní web.
-- Při nasazování neměň logiku skóre ani prompty AI; při chybě nejdřív `php tests/run.php` (musí vypsat `VŠE OK`).
+Při instalaci, aktualizaci, konfiguraci hostingu nebo převodu databáze čti **NASAZENI.md**.
+Web běží na Laravelu 13 a PHP 8.3+, DocumentRoot je `public/`. Docker zachovává původní datové volumes.
+`config/hlidac.php` obsahuje výchozí nastavení; `.env` předává provozní hodnoty.
+Původní konfiguraci lze načíst přes `HLIDAC_CONFIG`, její DSN platí pouze bez explicitního `DB_CONNECTION`.
+Změny konfigurace se po `config:cache` projeví až po opětovném vytvoření cache.
 
 ## Konvence
 
-- Komentáře v kódu **česky**, názvy funkcí, tříd a proměnných **anglicky**.
+- Běžné PHP komentáře `//`, `#` a `/* */` jsou v aplikačním kódu zakázané pravidlem PHPStan `code.comments`. PHPDoc `/** */` pro typové informace je povolený. Názvy funkcí, tříd a proměnných jsou anglicky.
 - Texty na webu a v příspěvcích **česky** (cílovka je česká veřejnost).
 - Při úpravách vždy dodávej **celé funkce**, ne fragmenty.
-- PHP 8.1+, bez frameworku a bez Composeru (cíl je sdílený PHP hosting přes FTP). `declare(strict_types=1)`.
-- Databáze přes `Hlidac\Db` (PDO); SQL musí fungovat v **SQLite i MySQL/MariaDB** (žádné `||`, `INSERT OR REPLACE`,
-  `ON CONFLICT`; nové sloupce přidávej přes `Db::addColumn()` v `migrate()`).
+- Laravel 13, PHP 8.3+, Composer. `declare(strict_types=1)`.
+- `Hlidac\Db` používá PDO ze spojení Laravelu. SQL webu musí fungovat v SQLite, PostgreSQL i MySQL/MariaDB.
+- Schéma měň novými migracemi v `database/migrations/`. Tabulky webu přímo čte Python MCP a ingest, zachovej jejich kontrakt.
+- Doménová konfigurace se čte přes `hlidacConfig()`, standardní `config()` patří Laravelu.
+- HTTP logiku dávej do pojmenovaných akcí controllerů, HTML do Blade šablon a příkazy do `app/Console/Commands/`. `__invoke()` v controllerech je zakázaný pravidlem PHPStan `controller.invokable`; routy uvádějí třídu i název metody.
+- Každá veřejná akce controlleru přijímá jako první parametr vlastní `App\Http\DTO\RequestDTO` s validací. Vstupní vlastnosti DTO jsou `readonly` a obsahují typované ověřené hodnoty; registruj ho v `RequestDTOServiceProvider`. Controller čte pouze jeho vlastnosti. I akce bez parametrů má vlastní DTO bez vstupních polí. Pravidlo `controller.requestDto` v `tools/phpstan/Rules/ControllerRequestDTORule.php` kontroluje tuto povinnost přes `composer analyse`.
+- Validaci DTO deklaruj pouze pomocí konkrétních atributů `Spatie\LaravelData\Attributes\Validation`. Mapování vstupních názvů patří do `MapInputName`. `config/data.php` používá jen `AttributesRuleInferrer`. PHPStan pravidlo `RequestDTOValidationAttributesRule` hlídá atributy a zakazuje `rules()`, `withValidator()`, ruční validátory, `WithoutValidation` a obecný `Rule`.
+- Synchronizace zachovává pořadí kroků a zámek sdílený s webcronem. Historie `pn_seen`, `alerts`, `post_log` a `meta` zabraňuje opakovanému rozesílání.
 
 ## Příkazy
 
 ```bash
-php tests/run.php                 # end-to-end test nad reálnými řádky z psp.cz (bez sítě)
-php bin/sync.php                  # synchronizace (import → upozornění → texty PN a tisků → AI → skóre → sítě)
+composer test                     # regresní scénáře a PHPUnit HTTP/migrační testy
+php artisan hlidac:sync           # synchronizace (import → upozornění → texty PN a tisků → AI → skóre → sítě)
 php bin/ai.php --ct=221           # AI rozbor přes claude CLI (předplatné) nad místní DB
 HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (ai_api.php, token v hlavičce X-Hlidac-Token)
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
-HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099   # lokální náhled
+HLIDAC_CONFIG=/cesta/config.php php artisan serve --port=8099   # lokální náhled
 ```
 
-Test vypisuje `VŠE OK`; po každé změně logiky ho spusť a případně rozšiř.
+Po změně logiky spusť `composer test`. Regresní scénáře vypíší `VŠE OK`, PHPUnit musí skončit bez selhání.
 
 ## Architektura
 
 ```
-cron.php / bin/sync.php → Hlidac\Sync::run()
+SyncController / hlidac:sync → Hlidac\Sync::run()
   1. Importer      stáhne tisky.zip, sd.zip, poslanci.zip, přepíše tabulky tisky / kroky / pn (aktuální období)
   2. AlertBuilder  vytvoří upozornění s jednoznačným klíčem (bez duplicit); 1. běh = bootstrap (posted=2, nic se nepošle)
   3. Scorer        předběžné skóre (určuje pořadí front textů a AI)
@@ -79,13 +74,15 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
 ```
 
 Náhledy pro sítě: každá stránka má `og:`/`twitter:` značky (`View::header`, 4. parametr), obrázek 1200 × 630
-kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `assets/fonts`, cache `data/cache/og`, bez GD
-`assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
+kreslí `og.php` → `app/OgCard.php` (GD + FreeType, písmo `public/assets/fonts`, cache `data/cache/og`, bez GD
+`public/assets/og-default.png`). Při změně vzhledu zvyš `OgCard::VERSION`.
 
-Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
-`upozorneni.php`, `rss.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
+Soubory a příkazy jsou popsané v README.md. `data/` zůstává mimo veřejný adresář; cestu mění `HLIDAC_DATA_PATH`.
+Původní `.php` URL obsluhují Laravel routy, fyzické vstupní soubory v kořeni byly nahrazeny controllery.
+`bin/ai.php`, `bin/texts.php` a `bin/sync.php` jsou kompatibilní vstupy do Artisanu.
 
-Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
+Tabulky webu: `tisky`, `kroky`, `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`.
+Python vlastní schémata `steno` a `texty`, Laravel migrace je nemění. Podrobnosti při změnách MCP nebo ingestu čti v `rag/README.md`.
 
 ## Zdroj dat (psp.cz open data)
 

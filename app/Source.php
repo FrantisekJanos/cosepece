@@ -1,5 +1,5 @@
 <?php
-// Stažení a čtení ZIP balíků otevřených dat psp.cz (soubory .unl, oddělovač „|“, windows-1250).
+
 
 declare(strict_types=1);
 
@@ -25,7 +25,7 @@ final class Source
 
     public function fetch(string $package): string
     {
-        // vrátí cestu k ZIPu; z lokálního adresáře (testy) nebo stažením z psp.cz
+
         if ($this->localDir !== null) {
             $path = rtrim($this->localDir, '/') . '/' . $package . '.zip';
             if (!is_file($path)) {
@@ -63,7 +63,7 @@ final class Source
 
     public function rows(string $package, string $file): \Generator
     {
-        // postupně vrací řádky souboru jako pole sloupců (bez načtení celého souboru do paměti)
+
         $zip = $this->open($package);
         $stream = $zip->getStream($file);
         if ($stream === false) {
@@ -85,7 +85,7 @@ final class Source
 
     public function map(string $package, string $file, int $keyCol, int $valueCol): array
     {
-        // číselník jako pole klíč => hodnota
+
         $out = [];
         foreach ($this->rows($package, $file) as $cols) {
             $out[$cols[$keyCol]] = $cols[$valueCol] ?? '';

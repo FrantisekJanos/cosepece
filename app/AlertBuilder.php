@@ -1,10 +1,11 @@
 <?php
-// Tvorba upozornění z importovaných dat. Každé upozornění má jednoznačný klíč,
-// takže opakované spuštění nevytvoří duplicity.
+
 
 declare(strict_types=1);
 
 namespace Hlidac;
+
+use App\Models\SeenAmendment;
 
 final class AlertBuilder
 {
@@ -14,7 +15,7 @@ final class AlertBuilder
 
     public function run(): int
     {
-        // při prvním běhu se historie jen zapíše (posted = 2), aby se na sítě neposlalo stovky starých zpráv
+
         $bootstrap = $this->db->getMeta('bootstrapped') === null;
         $posted = $bootstrap ? 2 : 0;
         $created = 0;
@@ -36,7 +37,7 @@ final class AlertBuilder
 
     private function fromBills(array $tisky, int $posted): int
     {
-        // nový poslanecký nebo senátní návrh zákona
+
         $n = 0;
         foreach ($tisky as $t) {
             if ($t['typ_navrhu'] === 'vládní' || (int)$t['druh'] !== 2) {
@@ -95,15 +96,12 @@ final class AlertBuilder
 
     private function fromPublication(array $tisky, int $posted): int
     {
-        // „Vyhlášeno“ až podle doloženého data vyhlášení (hist.zaver_publik). Přechod do stavu Sbírka
-        // nastává už při doručení nebo odeslání k publikaci, tedy o dny až týdny dřív.
+
         $n = 0;
         foreach ($tisky as $ct => $t) {
             $day = (string)($t['vyhlaseno'] ?? '');
             if ($day === '') {
-                // starší verze vytvářela „Vyhlášeno“ už při doručení nebo odeslání k publikaci; bez doloženého
-                // data vyhlášení upozornění odstraníme (po vyhlášení vznikne znovu se správným datem).
-                // Skutečně odeslané na sítě (posted = 1) necháme kvůli historii.
+
                 $this->db->run("DELETE FROM alerts WHERE alert_key = ? AND kind = 'law' AND posted <> 1", ["law:$ct"]);
                 continue;
             }
@@ -113,7 +111,7 @@ final class AlertBuilder
                 : 'Zákon byl vyhlášen ve Sbírce zákonů ' . date('j. n. Y', (int)strtotime($day)) . '.';
             $added = $this->add("law:$ct", 'law', $t, $eventAt, 'Vyhlášeno ve Sbírce zákonů: ' . $t['nazev'], $body, $posted);
             if ($added === 0) {
-                // dřív vytvořené upozornění mohlo dostat datum doručení nebo odeslání – opravíme datum i text
+
                 $this->db->run("UPDATE alerts SET event_at = ?, body = ? WHERE alert_key = ? AND kind = 'law' AND (event_at <> ? OR body <> ?)",
                     [$eventAt, $body, "law:$ct", $eventAt, $body]);
             }
@@ -124,14 +122,13 @@ final class AlertBuilder
 
     private function fromAmendments(array $tisky, bool $bootstrap, int $posted): int
     {
-        // pozměňovací návrhy, které zatím nebyly v žádném upozornění
+
         $rows = $this->db->all('SELECT p.* FROM pn p LEFT JOIN pn_seen s ON s.id_dokument = p.id_dokument
                                 WHERE s.id_dokument IS NULL ORDER BY p.cas');
         if ($rows === []) {
             return 0;
         }
 
-        // při bootstrapu skupiny po dnech (historie), jinak jedna skupina na tisk za běh
         $groups = [];
         foreach ($rows as $r) {
             $key = $bootstrap ? $r['ct'] . '|' . substr((string)$r['cas'], 0, 10) : (string)$r['ct'];
@@ -166,7 +163,7 @@ final class AlertBuilder
                 $n += $this->add($kind . ':' . $ct . ':' . max($ids), $kind, $t, (string)end($list)['cas'], $title, $body, $posted);
             }
             foreach ($ids as $id) {
-                $this->db->run('INSERT INTO pn_seen (id_dokument) VALUES (?)', [$id]);
+                SeenAmendment::query()->create(['id_dokument' => $id]);
             }
         }
         $this->db->pdo->commit();

@@ -1,10 +1,11 @@
 <?php
-// Rozesílání nových upozornění na zapnuté sociální sítě.
+
 
 declare(strict_types=1);
 
 namespace Hlidac;
 
+use App\Models\PostLog;
 use Hlidac\Notifier\Bluesky;
 use Hlidac\Notifier\Mastodon;
 use Hlidac\Notifier\Notifier;
@@ -41,11 +42,10 @@ final class Publisher
         $kindsOff = $this->config['notify']['kinds_off'] ?? [];
         $limit = (int)($this->config['notify']['max_posts_per_run'] ?? 10);
         $dryRun = !empty($this->config['notify']['dry_run']);
-        // co se posílá: all = vše nad prahem, watch = jen sledované zákony, off = nic (platí i pro dry_run)
+
         $mode = strtolower(trim((string)($this->config['notify']['post'] ?? 'all')));
         $stats = ['sent' => 0, 'filtered' => 0, 'errors' => 0];
 
-        // nejzávažnější první; běžná agenda pod prahem zůstane jen na webu (potlačeno)
         $pending = $this->db->all('SELECT * FROM alerts WHERE posted = 0 ORDER BY score DESC, event_at');
         foreach ($pending as $alert) {
             $modeOff = $mode === 'off' || ($mode === 'watch' && !(int)$alert['watched']);
@@ -55,7 +55,7 @@ final class Publisher
                 continue;
             }
             if ($this->notifiers === [] && !$dryRun) {
-                // žádná síť není zapnutá: upozornění zůstane jen na webu a v RSS
+
                 $this->db->run('UPDATE alerts SET posted = 3 WHERE alert_key = ?', [$alert['alert_key']]);
                 $stats['filtered']++;
                 continue;
@@ -73,7 +73,7 @@ final class Publisher
                 $text = $this->compose($alert, $notifier?->maxLength() ?? 300);
                 try {
                     if ($notifier === null) {
-                        file_put_contents(APP_ROOT . '/data/posts.log', date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
+                        file_put_contents(hlidacDataPath('posts.log'), date('c') . "\n" . $text . "\n" . $url . "\n\n", FILE_APPEND);
                     } else {
                         $notifier->send($text, $url);
                     }
@@ -102,7 +102,7 @@ final class Publisher
 
     private function compose(array $alert, int $max): string
     {
-        // titulek + text, případně hashtagy, zkrácené na limit sítě
+
         $text = $alert['title'] . "\n" . $alert['body'];
         $tags = trim((string)($this->config['notify']['hashtags'] ?? ''));
         if ($tags !== '' && mb_strlen($text) + mb_strlen($tags) + 1 <= $max) {
@@ -116,15 +116,19 @@ final class Publisher
 
     private function isFinished(string $key, string $network): bool
     {
-        // hotovo = úspěšně odesláno, nebo vyčerpán počet pokusů
-        $ok = (int)$this->db->value("SELECT COUNT(*) FROM post_log WHERE alert_key = ? AND network = ? AND status = 'ok'", [$key, $network]);
-        $errors = (int)$this->db->value("SELECT COUNT(*) FROM post_log WHERE alert_key = ? AND network = ? AND status = 'error'", [$key, $network]);
+
+        $attempts = PostLog::query()->where('alert_key', $key)->where('network', $network);
+        $ok = (clone $attempts)->where('status', 'ok')->count();
+        $errors = (clone $attempts)->where('status', 'error')->count();
         return $ok > 0 || $errors >= self::MAX_ERRORS;
     }
 
     private function log(string $key, string $network, string $status, ?string $error): void
     {
-        $this->db->run('INSERT INTO post_log (alert_key, network, status, at, error) VALUES (?, ?, ?, ?, ?)',
-            [$key, $network, $status, date('Y-m-d H:i:s'), $error === null ? null : mb_substr(Http::redact($error), 0, 500)]);
+        PostLog::query()->create([
+            'alert_key' => $key, 'network' => $network, 'status' => $status,
+            'at' => date('Y-m-d H:i:s'),
+            'error' => $error === null ? null : mb_substr(Http::redact($error), 0, 500),
+        ]);
     }
 }

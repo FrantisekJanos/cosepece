@@ -1,7 +1,5 @@
 <?php
-// Obrázek pro sdílení na sociálních sítích (og:image, 1200 × 630 px): značka webu, o co jde,
-// u tisku skóre a hlavní důvody. Kreslí se přes GD s písmem Noto Sans z assets/fonts,
-// hotové PNG se ukládá do data/cache/og (klíč = obsah karty, změna skóre = nový soubor).
+
 
 declare(strict_types=1);
 
@@ -11,7 +9,7 @@ final class OgCard
 {
     public const WIDTH = 1200;
     public const HEIGHT = 630;
-    // zvýšit při změně vzhledu, aby se nepoužily staré obrázky z cache
+
     public const VERSION = 2;
 
     private const PAD = 72;
@@ -24,14 +22,14 @@ final class OgCard
 
     public static function available(): bool
     {
-        // GD s FreeType je potřeba pro text; bez něj se použije statický obrázek assets/og-default.png
+
         return function_exists('imagettftext') && function_exists('imagepng')
             && is_file(self::font('bold')) && is_file(self::font('regular'));
     }
 
     public static function forBill(array $t, array $config): array
     {
-        // karta tisku: kdo a v jaké fázi, celý název, proč takové skóre
+
         $score = (int)$t['score'];
         $level = Scorer::level($score, $config);
         $reasons = View::reasonShortLabels($t['reasons_list'] ?? [], 4);
@@ -57,7 +55,7 @@ final class OgCard
 
     public static function forPage(string $page, array $config, int $obdobi = 0): array
     {
-        // karty běžných stránek: o čem web je a co na stránce najdu
+
         $period = $obdobi > 0 ? $obdobi . '. volební období' : 'aktuální volební období';
         $pages = [
             'prehled' => [
@@ -96,7 +94,7 @@ final class OgCard
 
     public static function cached(array $card, string $dir): string
     {
-        // vrátí cestu k PNG; vykreslí ho jen poprvé
+
         $path = rtrim($dir, '/') . '/' . self::cacheKey($card) . '.png';
         if (!is_file($path)) {
             if (!is_dir($dir)) {
@@ -126,7 +124,6 @@ final class OgCard
 
         imagefilledrectangle($im, 0, 0, $w, $h, $c['ground']);
 
-        // tmavý pruh se značkou jako na webu, vpravo adresa webu
         $barH = 100;
         imagefilledrectangle($im, 0, 0, $w, $barH, $c['ink']);
         self::drawLogo($im, $pad, 30, 40, $c['white']);
@@ -137,7 +134,6 @@ final class OgCard
             imagettftext($im, 24, 0, $w - $pad - $dw, 61, $c['bar_sub'], $bold, $domain);
         }
 
-        // barevný pruh vlevo podle úrovně skóre (u stránek modrý)
         $levelColor = match ($card['level']) {
             Scorer::LEVEL_MAJOR => $c['major'],
             Scorer::LEVEL_WATCH => $c['watch'],
@@ -149,7 +145,6 @@ final class OgCard
         $maxW = $w - 2 * $pad;
         $y = $barH + 64;
 
-        // skóre vpravo nahoře: spodní pruh obrázku na X překrývá titulek odkazu, proto nic důležitého dole
         $pillW = 0;
         if ($card['score'] !== null) {
             $labels = [Scorer::LEVEL_MAJOR => 'Závažné', Scorer::LEVEL_WATCH => 'Pozor', Scorer::LEVEL_NORMAL => 'Běžné'];
@@ -173,12 +168,10 @@ final class OgCard
             imagettftext($im, 24, 0, $px + 24 + $numW + 4 + $ofW + 16, $py + 42, $fg, $bold, $label);
         }
 
-        // nadtitulek: tisk, typ návrhu, fáze (vedle skóre)
         $eyebrow = mb_strtoupper((string)$card['eyebrow']);
         $eyebrow = self::fit($eyebrow, 20, $bold, $maxW - ($pillW > 0 ? $pillW + 24 : 0), 1)[0];
         imagettftext($im, 20, 0, $pad, $y, $c['accent'], $bold, $eyebrow);
 
-        // titulek: co nejvíc čitelný, zmenšuje se podle délky, max. 3–4 řádky
         $footerTop = $h - 96;
         $text = trim((string)$card['text']);
         $textSize = 26;
@@ -204,14 +197,12 @@ final class OgCard
             imagettftext($im, $size, 0, $pad, $ty - (int)round($size * 0.22), $c['ink'], $bold, $line);
         }
 
-        // popis nebo důvody skóre
         $ty += 22;
         foreach ($textLines as $line) {
             $ty += (int)round($textSize * 1.45);
             imagettftext($im, $textSize, 0, $pad, $ty - 8, $c['ink2'], $regular, $line);
         }
 
-        // spodní řádek jen doplňkový (na X ho překryje titulek odkazu)
         imageline($im, $pad, $footerTop, $w - $pad, $footerTop, $c['line']);
         imagettftext($im, 20, 0, $pad, $footerTop + 54, $c['muted'], $regular,
             'Hlídáme postup, ne politiku · z otevřených dat Poslanecké sněmovny');
@@ -223,7 +214,7 @@ final class OgCard
 
     public static function fit(string $text, int $size, string $font, int $maxW, int $maxLines, ?bool &$complete = null): array
     {
-        // zalomí text do řádků dané šířky; když se nevejde, poslední řádek zkrátí a doplní „…“
+
         $words = preg_split('/\s+/u', trim($text)) ?: [];
         $lines = [];
         $line = '';
@@ -257,7 +248,7 @@ final class OgCard
             }
             $lines[] = rtrim($last, " ,;:–-") . ' …';
         }
-        // i jediné dlouhé slovo musí mít strop šířky
+
         foreach ($lines as $k => $l) {
             while (mb_strlen($l) > 1 && self::textWidth($l, $size, $font) > $maxW) {
                 $l = mb_substr($l, 0, -2) . '…';
@@ -269,8 +260,7 @@ final class OgCard
 
     public static function cleanTitle(string $title): string
     {
-        // úplný název bez úvodu „Návrh poslanců X, Y… na vydání zákona“ a opakujících se formulí,
-        // ať je z karty hned vidět, co zákon mění (předkladatel je v nadtitulku a na webu)
+
         $short = preg_replace_callback(
             '/^(?:vládní\s+|senátní\s+)?návrh\b.*?\b(?:na\s+vydání\s+)?(ústavního\s+)?zákona\b/iu',
             fn(array $m) => ($m[1] ?? '') !== '' ? 'Ústavní zákon' : 'Zákon',
@@ -293,7 +283,7 @@ final class OgCard
 
     private static function font(string $weight): string
     {
-        return APP_ROOT . '/assets/fonts/NotoSans-' . ($weight === 'bold' ? 'Bold' : 'Regular') . '.ttf';
+        return public_path('assets/fonts/NotoSans-' . ($weight === 'bold' ? 'Bold' : 'Regular') . '.ttf');
     }
 
     private static function textWidth(string $text, int $size, string $font): int
@@ -319,7 +309,7 @@ final class OgCard
 
     private static function drawLogo(\GdImage $im, int $x, int $y, int $s, int $color): void
     {
-        // budova se sloupy jako ikona v hlavičce webu (viewBox 24 × 24)
+
         $k = $s / 24;
         $p = fn(float $v) => (int)round($v * $k);
         imagesetthickness($im, max(2, $p(1.8)));

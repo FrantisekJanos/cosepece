@@ -1,7 +1,5 @@
 <?php
-// Stažení textu samotného návrhu zákona (Word ze stránky sněmovního tisku) a pravidlová analýza:
-// zpětné použití a změny lhůt pro vymáhání. Zásadní změny bývají přímo v poslaneckých návrzích,
-// ne jen v pozměňovacích návrzích (např. tisk 221: lhůta pro vymáhání dotací 4 roky i zpětně).
+
 
 declare(strict_types=1);
 
@@ -22,7 +20,6 @@ final class TiskText
         $limit = (int)($cfg['per_run'] ?? 15);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
-        // vše kromě tisků, které už jsou zákonem (vyhlášeno); od nejnověji předložených
         $rows = $this->db->all(
             "SELECT t.* FROM tisky t
              LEFT JOIN tisk_text x ON x.ct = t.ct
@@ -43,14 +40,14 @@ final class TiskText
                 $this->save($ct, null, '', mb_substr($ex->getMessage(), 0, 500));
                 $stats['errors']++;
             }
-            usleep(300_000); // šetrně k serveru psp.cz
+            usleep(300_000);
         }
         return $stats;
     }
 
     private function findDocxUrl(int $ct, int $obdobi): ?string
     {
-        // stránka „Soubory sněmovního tisku“: <a href="/sqw/text/orig2.sqw?idd=..." title="Dokument DOCX">
+
         $base = 'https://www.psp.cz';
         $html = Http::get($base . '/sqw/text/tiskt.sqw?o=' . $obdobi . '&ct=' . $ct . '&ct1=0');
         $html = iconv('CP1250', 'UTF-8//IGNORE', $html) ?: $html;
@@ -62,7 +59,7 @@ final class TiskText
 
     public static function analyze(string $text): array
     {
-        // normativní část (bez důvodové zprávy) a signály zpětného použití a lhůt
+
         $normative = PnText::normativePart($text);
         return ['chars' => mb_strlen($normative), 'signals' => PnText::procedureSignals($normative)];
     }

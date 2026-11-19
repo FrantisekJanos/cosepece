@@ -1,5 +1,5 @@
 <?php
-// Jednoduchý HTTP klient nad cURL pro volání API sociálních sítí.
+
 
 declare(strict_types=1);
 
@@ -11,7 +11,7 @@ final class Http
 {
     public static function get(string $url, int $maxBytes = 20_000_000, array $headers = []): string
     {
-        // stažení obsahu (HTML, DOCX) s limitem velikosti
+
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_HTTPHEADER => $headers,
@@ -61,7 +61,7 @@ final class Http
 
     public static function redact(string $text): string
     {
-        // tokeny a hesla z URL a odpovědí nesmí skončit v chybách, logu ani v post_log (balík s databází)
+
         $text = (string)preg_replace('~(api\.telegram\.org/bot)[^/\s]+~i', '$1***', $text);
         $text = (string)preg_replace('~([?&](?:token|access_token|key|api_key|password|secret)=)[^&\s"\']+~i', '$1***', $text);
         $text = (string)preg_replace('#(Bearer\s+)[A-Za-z0-9._~+/=-]+#', '$1***', $text);

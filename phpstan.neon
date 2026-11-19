@@ -1,0 +1,20 @@
+parameters:
+    # Samostatná kontrola architektury, bez předstírání úplné typové analýzy Laravelu.
+    customRulesetUsed: true
+    paths:
+        - app
+        - routes
+        - config
+        - bootstrap/app.php
+        - bootstrap/providers.php
+        - database
+        - public/index.php
+        - bin
+        - tools/phpstan
+    tmpDir: .phpstan-cache
+
+rules:
+    - Project\PHPStan\Rules\ControllerRequestDTORule
+    - Project\PHPStan\Rules\RequestDTOValidationAttributesRule
+    - Project\PHPStan\Rules\NoInvokableControllerRule
+    - Project\PHPStan\Rules\NoCommentsRule

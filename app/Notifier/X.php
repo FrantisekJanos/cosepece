@@ -1,5 +1,5 @@
 <?php
-// X (Twitter): příspěvek přes API v2, podepsaný OAuth 1.0a (uživatelský kontext účtu).
+
 
 declare(strict_types=1);
 
@@ -22,7 +22,7 @@ final class X implements Notifier
 
     public function maxLength(): int
     {
-        // odkaz se počítá jako 23 znaků + zalomení řádku
+
         return 280 - 24;
     }
 
@@ -35,7 +35,7 @@ final class X implements Notifier
 
     private function oauthHeader(string $method, string $url): string
     {
-        // u JSON těla se do podpisu zahrnují jen parametry OAuth
+
         $params = [
             'oauth_consumer_key' => $this->cfg['api_key'],
             'oauth_nonce' => bin2hex(random_bytes(16)),

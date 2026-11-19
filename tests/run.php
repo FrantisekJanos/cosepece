@@ -20,9 +20,31 @@ $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu 
 $base['tisk_text']['enabled'] = false;
 $base['ai']['enabled'] = false;
 file_put_contents($tmp . '/config.php', '<?php return ' . var_export($base, true) . ';');
+// Test nesmí převzít provozní DB_CONNECTION, APP_URL ani konfigurační cache z .env.
+putenv('DB_CONNECTION=' . explode(':', $base['db_dsn'], 2)[0]);
+putenv('APP_CONFIG_CACHE=' . $tmp . '/config-cache.php');
+putenv('APP_ROUTES_CACHE=' . $tmp . '/routes-cache.php');
+putenv('APP_ENV=testing');
 putenv('HLIDAC_CONFIG=' . $tmp . '/config.php');
+putenv('HLIDAC_DATA_PATH=' . $tmp . '/data');
 
 require dirname(__DIR__) . '/app/bootstrap.php';
+$driver = explode(':', $base['db_dsn'], 2)[0];
+$connection = config('database.connections.' . $driver);
+if ($driver === 'sqlite') {
+    $connection['database'] = substr($base['db_dsn'], 7);
+} else {
+    foreach (explode(';', explode(':', $base['db_dsn'], 2)[1]) as $part) {
+        if (str_contains($part, '=')) {
+            [$key, $value] = explode('=', $part, 2);
+            $connection[$key === 'dbname' ? 'database' : $key] = $value;
+        }
+    }
+    $connection['username'] = $base['db_user'];
+    $connection['password'] = $base['db_pass'];
+}
+config(['database.connections.' . $driver => $connection, 'hlidac' => $base + ['data_path' => $tmp . '/data']]);
+Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
 
 $failures = 0;
 function check(string $label, mixed $actual, mixed $expected): void
@@ -33,6 +55,15 @@ function check(string $label, mixed $actual, mixed $expected): void
         $failures++;
     }
     echo ($ok ? '  OK   ' : '  FAIL ') . $label . ($ok ? '' : ' → ' . var_export($actual, true) . ' (čekáno ' . var_export($expected, true) . ')') . "\n";
+}
+
+function testPage(string $path, array $query = []): string
+{
+    $kernel = app(Illuminate\Contracts\Http\Kernel::class);
+    $request = Illuminate\Http\Request::create($path, 'GET', $query);
+    $response = $kernel->handle($request);
+    $kernel->terminate($request, $response);
+    return (string)$response->getContent();
 }
 
 echo "1. běh (bootstrap)\n";
@@ -65,12 +96,12 @@ check('tisk 78: „Vyhlášeno“ s datem vyhlášení, ne doručení', db()->va
 check('tisk 311 bez vyhlášení nemá „Vyhlášeno“', db()->value("SELECT 1 FROM alerts WHERE alert_key = 'law:311'"), null);
 // dřív vytvořené upozornění s datem doručení se při dalším běhu opraví
 db()->run("UPDATE alerts SET event_at = '2026-04-28 00:00:00', body = 'x' WHERE alert_key = 'law:78'");
-(new Hlidac\AlertBuilder(db(), config()))->run();
+(new Hlidac\AlertBuilder(db(), hlidacConfig()))->run();
 check('staré datum „Vyhlášeno“ opraveno', db()->value("SELECT event_at FROM alerts WHERE alert_key = 'law:78'"), '2026-05-12 00:00:00');
 // předčasné „Vyhlášeno“ (zákon ještě není ve Sbírce) se odstraní, odeslané na sítě zůstane
 db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES ('law:311', 'law', 311, '2026-11-04 00:00:00', '2026-11-04 00:00:00', 'Vyhlášeno', 'x', 0, 2)");
 db()->run("INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted) VALUES ('law:221', 'law', 221, '2026-11-04 00:00:00', '2026-11-04 00:00:00', 'Vyhlášeno', 'x', 0, 1)");
-(new Hlidac\AlertBuilder(db(), config()))->run();
+(new Hlidac\AlertBuilder(db(), hlidacConfig()))->run();
 check('předčasné „Vyhlášeno“ bez data vyhlášení odstraněno', db()->value("SELECT 1 FROM alerts WHERE alert_key = 'law:311'"), null);
 check('odeslané na sítě zůstane', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key = 'law:221'"), 1);
 check('správné „Vyhlášeno“ zůstane', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key = 'law:78'"), 1);
@@ -91,18 +122,18 @@ $pnTextSample = "Pozměňovací návrh\nk vládnímu návrhu zákona, kterým se
     . "Za § 21i se vkládají nové § 21j až 21m.\n"
     . str_repeat('Text úpravy. ', 1200)
     . "\nOdůvodnění\nV zákoně č. 999/2020 Sb. se nic nemění, jen příklad v odůvodnění.";
-$a = Hlidac\PnText::analyze($pnTextSample, ['586/1992'], config());
+$a = Hlidac\PnText::analyze($pnTextSample, ['586/1992'], hlidacConfig());
 check('přílepek rozpoznán', $a['signals']['other_laws'] ?? [], ['252/1997']);
 check('odůvodnění se nepočítá', in_array('999/2020', $a['laws'], true), false);
 check('rozsáhlý PN', isset($a['signals']['large']), true);
 check('skóre pravidel PN', $a['score'], 30);
 db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, fetched_at) VALUES (31312, 311, 2312, 'x', 15000, '252/1997', ?, 30, ?)",
     [json_encode($a['signals']), date('Y-m-d H:i:s')]);
-$scorer = new Hlidac\Scorer(db(), config());
+$scorer = new Hlidac\Scorer(db(), hlidacConfig());
 $scorer->scoreBills();
 $scorer->scoreAlerts();
 check('tisk 311 po přílepku je závažný (55)', $sc(311), 55);
-check('úroveň závažnosti', Hlidac\Scorer::level($sc(311), config()), 'major');
+check('úroveň závažnosti', Hlidac\Scorer::level($sc(311), hlidacConfig()), 'major');
 // rozbor AI potvrdil, že změna jiného zákona s předmětem souvisí → přílepek se nepočítá
 db()->run("UPDATE pn_text SET ai_json = ? WHERE id_dokument = 31312", [json_encode(['souvisi_s_predmetem' => true])]);
 $scorer->scoreBills();
@@ -159,10 +190,10 @@ $r3 = Hlidac\Sync::run();
 check('2 nová upozornění', $r3['alerts_new'], 2);
 check('tisk 221 nyní závažný (55)', $sc(221), 55);
 check('odesláno jen nad prahem (dry run)', $r3['posts']['sent'], 2);
-$log = (string)@file_get_contents(APP_ROOT . '/data/posts.log');
+$log = (string)@file_get_contents(hlidacDataPath('posts.log'));
 check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisk.php?ct=221'), true);
 check('příspěvek o PN', str_contains($log, 'Nový pozměňovací návrh k tisku: Novela z. o střetu zájmů'), true);
-@unlink(APP_ROOT . '/data/posts.log');
+@unlink(hlidacDataPath('posts.log'));
 
 echo "4. běh (běžný PN pod prahem se nepošle)\n";
 db()->run("UPDATE alerts SET posted = 1 WHERE posted = 0");
@@ -195,7 +226,7 @@ check('zpětně použitá lhůta tisku 221 se pozná', isset($ba['signals']['ret
 $capped = Hlidac\Scorer::applyCaps([
     ['key' => 'pn_other_law', 'points' => 20, 'label' => 'a'], ['key' => 'ai_bill', 'points' => 18, 'label' => 'b'],
     ['key' => 'ai', 'points' => 24, 'label' => 'c'], ['key' => 'mp_bill', 'points' => 15, 'label' => 'd'],
-], Hlidac\Scorer::weights(config()));
+], Hlidac\Scorer::weights(hlidacConfig()));
 check('strop obsahové skupiny 45', array_sum(array_column($capped, 'points')), 60);
 check('krácený důvod zůstane vidět', count($capped), 4);
 $quotes = Hlidac\AiReviewer::verifyQuotes([
@@ -217,16 +248,11 @@ $scorer->scoreBills();
 check('tisk 221: zpětně použitá změna lhůty', in_array('retro_deadline', $keys(221), true), true);
 check('tisk 221: rozbor textu návrhu', in_array('ai_bill', $keys(221), true), true);
 check('tisk 221: 55 + 15 + 8×3 = 94', $sc(221), 94);
-$_GET = ['ct' => '221'];
-ob_start();
-(function (string $file): void {
-    require $file;
-})(APP_ROOT . '/tisk.php');
-$html221 = (string)ob_get_clean();
+$html221 = testPage('/tisk.php', ['ct' => '221']);
 check('detail tisku ukazuje rozbor a citaci', str_contains($html221, 'Rozbor textu návrhu') && str_contains($html221, 'nejpozději do 4 let'), true);
 // celá cesta saveResult: nález bez ověřené citace se uloží se závažností 2 a do skóre tisku se nepromítne (issue #7, bod 2)
 $saved221 = db()->one('SELECT ai_json, ai_score, ai_at, ai_model FROM tisk_text WHERE ct = 221');
-$saveReviewer = new Hlidac\AiReviewer(db(), config());
+$saveReviewer = new Hlidac\AiReviewer(db(), hlidacConfig());
 $saveReviewer->saveResult('tisk', 221, ['zavaznost' => 8, 'titulek' => 'x', 'citace' => ['Vymyšlená věta, která v textu návrhu vůbec není.']]);
 check('saveResult: vymyšlená citace → ai_score 2', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = 221'), 2);
 $scorer->scoreBills();
@@ -255,7 +281,7 @@ echo json_encode(['type' => 'result', 'is_error' => false, 'stop_reason' => 'end
 FAKE);
 chmod($fakeCli, 0755);
 putenv('ANTHROPIC_API_KEY=nesmi-se-pouzit');
-$aiConfig = config();
+$aiConfig = hlidacConfig();
 $aiConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $fakeCli, 'model' => 'claude-haiku-5-5'];
 db()->run('UPDATE tisk_text SET ai_at = NULL, ai_score = NULL WHERE ct = 221');
 $reviewer = new Hlidac\AiReviewer(db(), $aiConfig);
@@ -297,12 +323,7 @@ $hard = Hlidac\AiReviewer::sanitize(['titulek' => 'Daň se použije i zpětně z
 check('zpětná nová daň zůstane beze změny', [$hard['zavaznost'], $hard['titulek'], isset($hard['upravy'])], [8, 'Daň se použije i zpětně za rok 2026', false]);
 db()->run("UPDATE tisky SET posledni = '2020-01-01', faze = '1. čtení' WHERE ct = 221"); // rozpracovaný, dlouho bez aktivity
 $scorer->scoreBills();
-$_GET = [];
-ob_start();
-(function (string $file): void {
-    require $file;
-})(APP_ROOT . '/index.php');
-$home = (string)ob_get_clean();
+$home = testPage('/index.php');
 check('homepage: srozumitelný titulek místo názvu novely', str_contains($home, 'Lhůta pro vymáhání dotací se zkracuje na 4 roky – i zpětně'), true);
 check('homepage: citace u nálezu', str_contains($home, 'nejpozději do 4 let'), true);
 check('bez CLI se AI přeskočí', (new Hlidac\AiReviewer(db(), $aiConfig))->run(), ['reviewed' => 0, 'errors' => 0, 'skipped' => true]);
@@ -312,7 +333,7 @@ db()->run('UPDATE alerts SET posted = 2 WHERE posted = 0');
 $postAlert = fn(string $key, int $watched) => db()->run(
     "INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted, score) VALUES (?, 'cut', 311, '2026-11-18 10:00:00', '2026-11-18 10:00:00', 't', 'b', ?, 0, 90)",
     [$key, $watched]);
-$postCfg = config();
+$postCfg = hlidacConfig();
 $postCfg['notify']['dry_run'] = true;
 $postAlert('test:off', 1);
 $postCfg['notify']['post'] = 'off';
@@ -332,7 +353,7 @@ db()->run("DELETE FROM post_log WHERE alert_key LIKE 'test:%'");
 echo "Prompt AI bez jména předkladatele a typu návrhu\n";
 $promptOf = function (string $method, array $row): string {
     $m = new ReflectionMethod(Hlidac\AiReviewer::class, $method);
-    return $m->invoke(new Hlidac\AiReviewer(db(), config()), $row, 'text', []);
+    return $m->invoke(new Hlidac\AiReviewer(db(), hlidacConfig()), $row, 'text', []);
 };
 $pnPrompt = $promptOf('pnPrompt', ['uplny_nazev' => 'Návrh X', 'osoba' => 'Marian Jurečka', 'signals' => '{}']);
 check('prompt PN neobsahuje jméno předkladatele', str_contains($pnPrompt, 'Jurečka'), false);
@@ -366,20 +387,20 @@ check('důvod zapsán v meta', str_contains((string)db()->getMeta('import_error'
 check('úplný import chybu smaže', db()->getMeta('import_error'), '');
 
 echo "Stav rozboru textů\n";
-$repoTest = new Hlidac\Repo(db());
-$rs = $repoTest->reviewStatus();
+$reviewsTest = new App\Services\ReviewStatusService();
+$rs = $reviewsTest->statuses();
 check('tisk 311: počet textů k posouzení = PN', $rs[311]['total'] ?? null, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311') + (int)db()->value('SELECT COUNT(*) FROM tisk_text WHERE ct = 311'));
-check('štítek bez rozboru', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 0]), 'Text neposouzen');
-check('štítek částečně', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 1]), 'Posouzeno 1 z 3 textů');
-check('štítek vše posouzeno', Hlidac\Repo::reviewLabel(['total' => 3, 'done' => 3]), null);
-check('jeden tisk = stejný výsledek jako hromadně', $repoTest->reviewStatus(311)[311] ?? null, $rs[311] ?? null);
+check('štítek bez rozboru', App\Services\ReviewStatusService::label(['total' => 3, 'done' => 0]), 'Text neposouzen');
+check('štítek částečně', App\Services\ReviewStatusService::label(['total' => 3, 'done' => 1]), 'Posouzeno 1 z 3 textů');
+check('štítek vše posouzeno', App\Services\ReviewStatusService::label(['total' => 3, 'done' => 3]), null);
+check('jeden tisk = stejný výsledek jako hromadně', $reviewsTest->statuses(311)[311] ?? null, $rs[311] ?? null);
 
 echo "Tokeny se neukládají do chyb\n";
 $leak = Hlidac\Http::redact('HTTP chyba při volání https://api.telegram.org/bot123456:ABC-tajne/sendMessage: timeout; '
     . 'https://web.cz/ai_api.php?token=tajne123&action=queue; Authorization: Bearer tajneJWT.x; {"accessJwt":"tajne.jwt"}');
 check('maskování tokenů v chybě', str_contains($leak, 'tajne'), false);
 check('maskování ponechá zbytek zprávy', str_contains($leak, 'api.telegram.org/bot***/sendMessage: timeout'), true);
-$reviewerLeak = new Hlidac\AiReviewer(db(), config());
+$reviewerLeak = new Hlidac\AiReviewer(db(), hlidacConfig());
 $leakId = (int)db()->value('SELECT id_dokument FROM pn_text ORDER BY id_dokument LIMIT 1');
 $reviewerLeak->saveError('pn', $leakId, 'HTTP 500 z https://web.cz/ai_api.php?token=tajne123&action=result: x');
 check('saveError uloží chybu bez tokenu', str_contains((string)db()->value('SELECT error FROM pn_text WHERE id_dokument = ?', [$leakId]), 'tajne'), false);
@@ -393,24 +414,22 @@ $gapRow(990001, '2026-06-30', 21, 23);
 $gapRow(990002, '2026-06-30', 5, 86);   // administrativní krok se nepočítá
 $gapRow(990003, '2026-07-02', 5, 71);   // projednávání ukončeno
 $gapRow(990004, '2026-07-08', 5, 238);  // zahájeno (datované později)
-(new Hlidac\Scorer(db(), config()))->scoreBills();
+(new Hlidac\Scorer(db(), hlidacConfig()))->scoreBills();
 $gap = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 311'), true),
     fn(array $r): bool => $r['key'] === 'short_gap'));
 check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny');
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {
-    $_GET = $get;
-    ob_start();
     try {
-        (function (string $file): void {
-            require $file;
-        })(APP_ROOT . '/' . $page);
-        $html = ob_get_clean();
-        check("$page se vyrenderuje", strlen($html) > 500 && !str_contains($html, 'Warning') && !str_contains($html, 'Fatal'), true);
+        $kernel = app(Illuminate\Contracts\Http\Kernel::class);
+        $request = Illuminate\Http\Request::create('/' . $page, 'GET', $get);
+        $response = $kernel->handle($request);
+        $html = $response->getContent();
+        check("$page se vyrenderuje", $response->getStatusCode() === 200 && strlen($html) > 500 && !str_contains($html, 'Warning') && !str_contains($html, 'Fatal'), true);
         file_put_contents($tmp . '/' . str_replace('.php', '.html', $page), $html);
+        $kernel->terminate($request, $response);
     } catch (Throwable $ex) {
-        ob_end_clean();
         check("$page se vyrenderuje", $ex->getMessage(), 'bez chyby');
     }
 }
@@ -427,10 +446,10 @@ check('název bez výčtu předkladatelů',
 check('vládní návrh ústavního zákona', Hlidac\OgCard::cleanTitle('Vládní návrh ústavního zákona o bezpečnosti České republiky'), 'Ústavní zákon o bezpečnosti České republiky');
 check('krátký název zůstane', Hlidac\OgCard::cleanTitle('Návrh zákona'), 'Návrh zákona');
 if (Hlidac\OgCard::available()) {
-    $font = APP_ROOT . '/assets/fonts/NotoSans-Bold.ttf';
+    $font = public_path('assets/fonts/NotoSans-Bold.ttf');
     $lines = Hlidac\OgCard::fit(str_repeat('slovo ', 200), 40, $font, 600, 2, $complete);
     check('dlouhý text se zalomí a zkrátí', [count($lines), $complete, str_ends_with($lines[1], '…')], [2, false, true]);
-    $card = Hlidac\OgCard::forBill(db()->one('SELECT * FROM tisky WHERE ct = 90') + ['reasons_list' => []], config());
+    $card = Hlidac\OgCard::forBill(db()->one('SELECT * FROM tisky WHERE ct = 90') + ['reasons_list' => []], hlidacConfig());
     check('karta tisku má skóre a důvod', [$card['score'] !== null, str_starts_with($card['text'], 'Běžné') || str_starts_with($card['text'], 'Proč:')], [true, true]);
     $png = Hlidac\OgCard::cached($card, $tmp . '/og');
     $size = getimagesize($png);
@@ -439,7 +458,7 @@ if (Hlidac\OgCard::available()) {
 } else {
     echo "  (GD s FreeType není k dispozici, kreslení obrázku se netestuje)\n";
 }
-check('záložní obrázek existuje', is_file(APP_ROOT . '/assets/og-default.png'), true);
+check('záložní obrázek existuje', is_file(public_path('assets/og-default.png')), true);
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

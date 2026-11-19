@@ -1,5 +1,5 @@
 <?php
-// Bluesky (AT Protocol): přihlášení heslem aplikace a vytvoření příspěvku s klikatelným odkazem.
+
 
 declare(strict_types=1);
 
@@ -31,7 +31,6 @@ final class Bluesky implements Notifier
         $session = $this->login($service);
         $full = $text . "\n" . $url;
 
-        // facet s odkazem; pozice se počítají v bajtech UTF-8
         $start = strlen($text . "\n");
         $record = [
             '$type' => 'app.bsky.feed.post',

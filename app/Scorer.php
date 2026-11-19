@@ -1,7 +1,5 @@
 <?php
-// Skóre závažnosti tisku (0–100) a upozornění. Hodnotí se postup, ne politický obsah:
-// obcházení připomínkového řízení, zrychlené čtení, zkrácené lhůty, PN na poslední chvíli,
-// přílepky a rozsáhlé změny v PN, zpětně použité změny lhůt, rozbor textu AI, citlivé oblasti (střet zájmů, dotace, kontrolní instituce…).
+
 
 declare(strict_types=1);
 
@@ -13,7 +11,6 @@ final class Scorer
     public const LEVEL_WATCH = 'watch';
     public const LEVEL_NORMAL = 'normal';
 
-    // bonus k upozornění podle typu události
     private const KIND_BONUS = ['p90' => 10, 'cut' => 10, 'passed' => 5, 'surge' => 5, 'law' => 0, 'newbill' => 0, 'pn' => 0];
 
     public function __construct(private Db $db, private array $config)
@@ -22,7 +19,7 @@ final class Scorer
 
     public static function defaults(): array
     {
-        // výchozí váhy; v config.php je lze přepsat klíčem 'scoring'
+
         return [
             'mp_bill' => 15,
             'senate_bill' => 5,
@@ -42,7 +39,7 @@ final class Scorer
             'pn_large_chars' => 12000,
             'pn_many_flagged' => 5,
             'retro_deadline' => 15,
-            // stropy skupin, aby se příbuzné signály nesčítaly donekonečna
+
             'cap_procedure' => 40,
             'cap_content' => 45,
             'cap_context' => 25,
@@ -54,7 +51,7 @@ final class Scorer
                 'dotace a SZIF' => 'dotac|zemědělsk\w* intervenční|SZIF',
                 'veřejné zakázky' => 'veřejn\w+ zakáz',
                 'kontrolní instituce' => 'Nejvyšším kontrolním|NKÚ|státním zastupitelství|soudech a soudcích|registru smluv|svobodném přístupu k informacím',
-                // trestní zákoník sám o sobě citlivý není (běžná agenda); sledujeme pravomoci policie a služeb
+
                 'policie a zpravodajské služby' => 'Policii České republiky|zpravodajských služb',
                 'volby a parlament' => 'volb|jednacím řádu|politických stran',
                 'veřejnoprávní média' => 'České televizi|Českém rozhlasu|mediálních služeb',
@@ -126,7 +123,7 @@ final class Scorer
 
     public function scoreAlerts(): void
     {
-        // skóre upozornění = aktuální skóre tisku + bonus podle typu události
+
         $scores = [];
         foreach ($this->db->all('SELECT ct, score FROM tisky') as $t) {
             $scores[(int)$t['ct']] = (int)$t['score'];
@@ -149,14 +146,12 @@ final class Scorer
             }
         };
 
-        // 1. obcházení připomínkového řízení
         if ($t['typ_navrhu'] === 'poslanecký') {
             $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením');
         } elseif ($t['typ_navrhu'] === 'senátní') {
             $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – neprošel meziresortním připomínkovým řízením');
         }
 
-        // 2. zrychlené projednání
         if ((int)$t['p90ok']) {
             $add('p90_passed', (int)$w['p90_passed'], 'Schváleno už v 1. čtení (§ 90 odst. 2) bez 2. a 3. čtení');
         } elseif ((int)$t['p90']) {
@@ -166,7 +161,6 @@ final class Scorer
             $add('deadline_cut', (int)$w['deadline_cut'], 'Zkrácená lhůta při projednávání');
         }
 
-        // 3. krátký čas mezi rozesláním PN a 3. čtením
         $pnDay = null;
         $thirdDay = null;
         $detailEnd = null;
@@ -179,9 +173,7 @@ final class Scorer
             if ($typ === 4 && (int)$k['akce_id'] === 23 && $day) {
                 $detailEnd = $day;
             }
-            // nejdřívější krok skutečného projednávání 3. čtení (zahájeno 238, ukončeno 71, ukončena 23):
-            // „zahájeno“ bývá v hist.unl datované až po „projednávání ukončeno“; administrativní kroky
-            // (rozeslání, „GV nebude projednávat“) se nepočítají
+
             if ($typ === 5 && in_array((int)$k['akce_id'], [238, 71, 23], true) && $pnDay !== null && $day
                 && $day >= $pnDay && ($thirdDay === null || $day < $thirdDay)) {
                 $thirdDay = $day;
@@ -194,7 +186,6 @@ final class Scorer
             }
         }
 
-        // 4. PN na poslední chvíli (v den ukončení podrobné rozpravy)
         if ($detailEnd !== null) {
             $late = count(array_filter($pnDates, fn(string $d): bool => $d === $detailEnd));
             if ($late >= (int)$w['late_pn_min']) {
@@ -205,7 +196,6 @@ final class Scorer
             $add('surge', (int)$w['surge'], 'Nával pozměňovacích návrhů');
         }
 
-        // 5. obsah textu návrhu a PN: přílepky, rozsáhlé změny, zpětně použité změny lhůt, rozbor AI
         $anyLarge = false;
         $maxAi = 0;
         $flagged = 0;
@@ -219,12 +209,10 @@ final class Scorer
         }
         foreach ($pnText as $x) {
             $signals = json_decode((string)$x['signals'], true) ?: [];
-            // přílepek podle čísla zákona v textu PN; když rozbor AI výslovně potvrdil, že změna s předmětem
-            // návrhu souvisí (např. navazující změny jiných zákonů), za přílepek ji nepočítáme
+
             $aiJson = json_decode((string)($x['ai_json'] ?? ''), true) ?: [];
             $related = ($aiJson['souvisi_s_predmetem'] ?? null) === true;
-            // pravidlové body PN rozlišujeme podle zdroje (rule_score je součet přílepku a rozsahu):
-            // přílepek, který AI označila za související, PN nečiní problematickým (issue #7, bod 1)
+
             $large = !empty($signals['large']);
             $anyLarge = $anyLarge || $large;
             $ruleFlag = $large || (!empty($signals['other_laws']) && !$related);
@@ -271,7 +259,6 @@ final class Scorer
             $add('ai', $maxAi * (int)$w['ai_multiplier'], 'Rozbor PN č. ' . $aiWorst['cislo'] . ' (' . $aiWorst['osoba'] . '): závažnost ' . $maxAi . '/10' . ($why !== '' ? ' – ' . $why : ''));
         }
 
-        // 6. citlivé oblasti a souhrnné novely
         $title = $t['nazev'] . ' ' . $t['uplny_nazev'];
         foreach ($w['topics'] as $label => $regex) {
             if (@preg_match('~' . $regex . '~iu', $title)) {
@@ -292,7 +279,7 @@ final class Scorer
 
     public static function applyCaps(array $reasons, array $w): array
     {
-        // body v každé skupině nejvýš do stropu; důvod zůstane vidět i s krácenými (nebo nulovými) body
+
         $groups = [
             'procedure' => ['mp_bill', 'senate_bill', 'p90_passed', 'p90_requested', 'deadline_cut', 'short_gap', 'late_pn', 'surge'],
             'content' => ['pn_other_law', 'pn_large', 'retro_deadline', 'pn_many', 'ai_bill', 'ai'],

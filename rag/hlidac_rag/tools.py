@@ -12,6 +12,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from .psp.rozprava_pravidla import DRUHY
 from .texty.ingest import JEN_PDF
 
 OBDOBI = 10
@@ -341,13 +342,32 @@ def get_pn(conn, cislo: int) -> dict:
     r["osnova_dostupna"] = _texty_ok(conn) and bool(_one(conn, f"""
         SELECT EXISTS (SELECT 1 FROM texty.dokument d WHERE d.druh = 'pn' AND d.cislo_pn = %s AND {_DOSTUPNY}) AS ok""",
         (cislo,))["ok"])
+    r["projevy"], r["projevy_celkem"] = _projevy_pn(conn, cislo)
     return r
+
+
+def _projevy_pn(conn, cislo: int, limit: int = 20) -> tuple[list[dict], int]:
+    """Projevy, které PN zmiňují (steno.projev_pn): bez předsedajících a zrušených, nejvýš limit, a jejich celkový počet.
+
+    Bez tabulek rozpravy (starší databáze) vrátí prázdný seznam."""
+    if not _one(conn, "SELECT to_regclass('steno.projev_pn') IS NOT NULL AS ok")["ok"]:
+        return [], 0
+    z = """FROM steno.projev p JOIN steno.projev_pn pp ON pp.projev_id = p.id
+           WHERE pp.cislo_pn = %s AND p.zruseno IS NULL AND NOT p.predsedajici"""
+    celkem = _one(conn, f"SELECT count(*) AS n {z}", (cislo,))["n"]
+    rows = _rows(conn, f"""SELECT p.schuze, p.turn, p.aname, p.datum, p.recnik, p.klub, p.druh, p.url, p.autorizovano
+                           {z} ORDER BY p.datum, p.schuze, p.poradi LIMIT {int(limit)}""", (cislo,))
+    out = []
+    for r in rows:
+        r = _speech_meta(r)
+        out.append({k: r[k] for k in ("klic", "datum", "recnik", "klub", "druh", "url")})
+    return out, celkem
 
 
 # ---------------------------------------------------------------- projevy
 
 _SPEECH_COLS = """p.schuze, p.turn, p.aname, p.datum, p.cas, p.id_osoba, p.recnik, p.role, p.klub, p.predsedajici,
-                  p.ct, p.znaku, p.autorizovano, p.verze, p.url, b.nazev AS bod"""
+                  p.ct, p.znaku, p.autorizovano, p.verze, p.url, p.druh, b.nazev AS bod"""
 
 
 def _speech_meta(r: dict) -> dict:
@@ -390,8 +410,17 @@ def _resolve_klub(conn, klub: str) -> list[str]:
 
 def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None = None, od: str | None = None,
                     do: str | None = None, min_znaku: int = 200, vcetne_predsedajicich: bool = False,
-                    limit: int = 50, offset: int = 0) -> dict:
-    where, params = ["p.ct = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [ct, min_znaku]
+                    limit: int = 50, offset: int = 0, druh: list[str] | None = None) -> dict:
+    """Rejstřík vystoupení k tisku s filtry. Tisk se hledá přes steno.projev_tisk, takže sloučená rozprava
+    (tisky 76 a 77) vrátí stejné projevy u obou tisků; každý projev je v tabulce u tisku nejvýš jednou."""
+    druhy = [str(d).strip().lower() for d in druh or []]
+    platne = [d for d in DRUHY if d != "predsedajici"]
+    if set(druhy) - set(platne):
+        raise ValueError(f"Neznámý druh: {', '.join(sorted(set(druhy) - set(platne)))}. Platné: {', '.join(platne)}.")
+    where, params = ["pt.ct = %s", "p.zruseno IS NULL", "p.znaku >= %s"], [ct, min_znaku]
+    if druhy:
+        where.append("p.druh = ANY(%s)")
+        params.append(druhy)
     if not vcetne_predsedajicich:
         where.append("NOT p.predsedajici")
     if id_osoba:
@@ -407,9 +436,11 @@ def projevy_k_tisku(conn, ct: int, id_osoba: int | None = None, klub: str | None
         where.append("p.datum <= %s")
         params.append(_date(do, "do"))
     w = " AND ".join(where)
-    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p WHERE {w}", params)["n"]
+    spoj = "JOIN steno.projev_tisk pt ON pt.projev_id = p.id"
+    total = _one(conn, f"SELECT count(*) AS n FROM steno.projev p {spoj} WHERE {w}", params)["n"]
     off = _offset(offset)
-    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
+    rows = _rows(conn, f"""SELECT {_SPEECH_COLS}, p.text FROM steno.projev p {spoj}
+                           LEFT JOIN steno.bod b ON b.id_bod = p.id_bod
                            WHERE {w} ORDER BY p.datum, p.schuze, p.poradi LIMIT %s OFFSET %s""",
                  (*params, _limit(limit), off))
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),

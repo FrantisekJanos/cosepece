@@ -272,10 +272,11 @@ def test_cteni_z_tabulky_kroky():
     rozprava(conn, 76)
     sql = conn.sql[1]
     assert "FROM kroky" in sql and "left(datum, 10)::date" in sql
-    # R9b: 1. čtení kterýmkoli krokem (i § 90/2 bez „zahájeno“), 2. a 3. čtení nejdřívějším krokem projednávání
+    # R9b: 1. čtení kterýmkoli krokem (i § 90/2 bez „zahájeno“), 2. a 3. čtení krokem projednávání; čtení
+    # začíná prvním krokem úseku po sobě jdoucích kroků téhož čtení
     assert r"stav ~ '^1\. čtení'" in sql and r"stav ~ '^[23]\. čtení'" in sql
     assert "akce IN ('zahájeno', 'projednávání ukončeno', 'ukončena')" in sql and "akce_id IN (238, 71, 23)" in sql
-    assert "PARTITION BY cteni ORDER BY datum, id_hist" in sql and "cteni NOT IN ('2', '3') OR n = 1" in sql
+    assert "lag(cteni) OVER (ORDER BY datum, id_hist)" in sql and "predchozi IS DISTINCT FROM cteni" in sql
     assert "Sněmovna (Senát)" in sql and "Sněmovna (Prezident)" in sql
     assert "ORDER BY k.datum DESC, k.id_hist DESC" in sql
     assert conn.params[1] == (76, 76)
@@ -499,7 +500,7 @@ def test_pg_cteni_z_kroku_a_nazev_z_tisku(pgconn):
         (3, 76, "2026-09-30 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),
         (4, 76, "2026-10-14 00:00:00", "3. čtení", "zahájeno"),
         (5, 76, "2026-10-15 10:06:00", "Sněmovna (Senát)", "rozeslán"),
-        (6, 76, "2026-10-15 12:00:00", "3. čtení", "projednávání ukončeno"),
+        (6, 76, "2026-10-14 12:00:00", "3. čtení", "projednávání ukončeno"),   # týž úsek 3. čtení, nic nemění
         (7, 76, "", "1. čtení", "zahájeno"),                           # nečitelné datum se přeskočí
         (8, 76, None, "1. čtení", "zahájeno"),
         (9, 77, "2026-10-15 00:00:00", "Sněmovna (Prezident)", "rozeslán"),   # jiný tisk
@@ -546,13 +547,14 @@ def test_pg_cteni_1_u_paragrafu_90(pgconn):
 @pytest.mark.pg
 @bez_db
 @pytest.mark.parametrize("ukonceno", [("projednávání ukončeno", None), (None, 71)])
-def test_pg_cteni_3_od_nejdrivejsiho_kroku(pgconn, ukonceno):
+def test_pg_cteni_od_prvniho_kroku_useku(pgconn, ukonceno):
     """Tisk 198: „3. čtení | projednávání ukončeno“ (2. 7.) je v historii dřív než „3. čtení | zahájeno“ (8. 7.).
-    Začátek 2. a 3. čtení je nejdřívější krok s akcí zahájeno / projednávání ukončeno / ukončena (jako Scorer.php,
-    akce podle textu nebo akce_id 238 / 71 / 23); pozdější krok téhož čtení nic nemění."""
+    Čtení začíná prvním krokem každého úseku po sobě jdoucích kroků téhož čtení (2. a 3. čtení akce zahájeno /
+    projednávání ukončeno / ukončena jako Scorer.php, podle textu nebo akce_id 238 / 71 / 23): pozdější krok
+    téhož úseku nic nemění, opakované 2. čtení po vrácení (tisk 48) začne nový úsek."""
     s198 = 983
     dny = [date(2026, 6, 2), date(2026, 6, 30), date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 5), date(2026, 7, 8),
-           date(2026, 7, 20)]
+           date(2026, 7, 12), date(2026, 7, 20)]
     with pgconn.cursor() as cur:
         _vloz_projevy(cur, [(s198, i, d, HAAS, False, "recnik", None, True, False, [198], [], f"Projev {i}.")
                             for i, d in enumerate(dny, 1)])
@@ -564,12 +566,13 @@ def test_pg_cteni_3_od_nejdrivejsiho_kroku(pgconn, ukonceno):
         (34, 198, "2026-06-30 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),
         (35, 198, "2026-06-30 00:00:00", "2. čtení - podrobná rozprava", "ukončena"),
         (36, 198, "2026-07-02 00:00:00", "3. čtení", *ukonceno),
-        (37, 198, "2026-07-08 00:00:00", "3. čtení", "zahájeno"),
-        (38, 198, "2026-07-08 00:00:00", "Odesíláno do Senátu", "souhlas"),
-        (39, 198, "2026-07-15 00:00:00", "2. čtení - podrobná rozprava", "ukončena"),     # pozdější krok 2. čtení
+        (37, 198, "2026-07-08 00:00:00", "3. čtení", "zahájeno"),                        # týž úsek 3. čtení
+        (38, 198, "2026-07-10 00:00:00", "2. čtení - obecná rozprava", "vrácen"),        # vrácení do 2. čtení
+        (39, 198, "2026-07-15 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),      # opakované 2. čtení
+        (40, 198, "2026-07-15 00:00:00", "2. čtení - podrobná rozprava", "ukončena"),
     ])
     r = rozprava(pgconn, 198)
-    assert [v["cteni"] for v in r["vystoupeni"]] == ["1", "2", "2", "3", "3", "3", "3"]
+    assert [v["cteni"] for v in r["vystoupeni"]] == ["1", "2", "2", "3", "3", "3", "3", "2"]
     assert [v["klic"] for v in rozprava(pgconn, 198, cteni="3")["vystoupeni"]] == [
         "10/983/4/1", "10/983/5/1", "10/983/6/1", "10/983/7/1"]
 

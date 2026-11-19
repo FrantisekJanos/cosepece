@@ -21,11 +21,12 @@ OHLASENI = 300     # nejvýš znaků konce ohlášení faktické poznámky
 POZNAMKA = ("druh, cteni a reaguje_na_odhad jsou odvozené automaticky z textu předsedajícího, řečníka a historie "
             "tisku, ověřujte je v plném textu.")
 
-# čtení k datu projevu (tabulka kroky webu, datum je varchar(19)), poslední z kroků: 1. čtení kterýkoli krok
-# „1. čtení…“ (u § 90/2 je jen „1. čtení (§ 90, odst. 2) - ob. rozprava | doporučen“, nikdy „zahájeno“),
-# návrat do Sněmovny po Senátu či prezidentovi, 2. a 3. čtení jen jejich začátek = nejdřívější krok skutečného
-# projednávání (akce zahájeno 238, projednávání ukončeno 71, ukončena 23; jako Scorer.php): „zahájeno“ bývá
-# v historii datované až po „projednávání ukončeno“ (tisk 198), pozdější krok téhož čtení se nepočítá
+# čtení k datu projevu (tabulka kroky webu, datum je varchar(19)) = poslední začátek čtení do dne projevu.
+# Kroky čtení: 1. čtení kterýkoli krok „1. čtení…“ (u § 90/2 je jen „1. čtení (§ 90, odst. 2) - ob. rozprava |
+# doporučen“, nikdy „zahájeno“), 2. a 3. čtení krok skutečného projednávání (akce zahájeno 238, projednávání
+# ukončeno 71, ukončena 23; jako Scorer.php), návrat do Sněmovny po Senátu či prezidentovi. Začátek čtení = první
+# krok každého úseku po sobě jdoucích kroků téhož čtení: „zahájeno“ datované až po „projednávání ukončeno“
+# (tisk 198) nic nemění, opakované 2. čtení po vrácení (tisk 48) začne nový úsek.
 _KROKY = r"""WITH s AS (
     SELECT left(datum, 10)::date AS den, datum, id_hist,
            CASE WHEN stav LIKE 'Sněmovna (Senát)%%' THEN 'senat'
@@ -38,8 +39,8 @@ _KROKY = r"""WITH s AS (
            OR stav LIKE 'Sněmovna (Senát)%%' OR stav LIKE 'Sněmovna (Prezident)%%')),
 k AS MATERIALIZED (
     SELECT den, datum, id_hist, cteni
-    FROM (SELECT s.*, row_number() OVER (PARTITION BY cteni ORDER BY datum, id_hist) AS n FROM s) x
-    WHERE cteni NOT IN ('2', '3') OR n = 1)
+    FROM (SELECT s.*, lag(cteni) OVER (ORDER BY datum, id_hist) AS predchozi FROM s) x
+    WHERE predchozi IS DISTINCT FROM cteni)
 """
 _CTENI = "(SELECT k.cteni FROM k WHERE k.den <= p.datum ORDER BY k.datum DESC, k.id_hist DESC LIMIT 1)"
 _VYSTOUPENI = """SELECT p.id, p.schuze, p.turn, p.aname, p.datum, p.id_osoba, p.recnik,

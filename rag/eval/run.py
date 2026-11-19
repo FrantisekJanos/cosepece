@@ -64,6 +64,12 @@ def check(odpoved: dict | str, kontrola: dict) -> tuple[bool, str]:
         if any(h == cil for h in nalezene):
             return True, ""
         return False, f"{popis}: očekáváno {cil!r}, nalezeno {nalezene[:3]!r}"
+    if "jeden_z" in kontrola:
+        # otázka s více správnými odpověďmi v korpusu (např. kdo kritizoval…): stačí kterákoli z nich
+        cile = kontrola["jeden_z"]
+        if any(h in cile for h in nalezene):
+            return True, ""
+        return False, f"{popis}: očekáváno jedno z {cile!r}, nalezeno {nalezene[:3]!r}"
     if "obsahuje" in kontrola:
         cil = kontrola["obsahuje"]
         if any(cil in _text(h) for h in nalezene):

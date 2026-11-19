@@ -116,3 +116,10 @@ def test_rozloz_cil_a_recall():
         rozloz_cil("pn:1:navrh:1")
     assert recall({1, 2}, [5, 1, 7], 2) == 0.5 and recall({1, 2}, [5, 1, 7], 1) == 0.0
     assert recall(set(), [1], 10) == 0.0
+
+
+def test_check_jeden_z():
+    odp = {"projevy": [{"klic": "a"}, {"klic": "b"}]}
+    assert check(odp, {"cesta": "projevy.*.klic", "jeden_z": ["x", "b"]}) == (True, "")
+    ok, msg = check(odp, {"cesta": "projevy.*.klic", "jeden_z": ["x", "y"]})
+    assert not ok and "jedno z" in msg

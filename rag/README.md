@@ -154,7 +154,8 @@ hledá se jen podle slov a `poznamka` řekne proč. Prázdný dotaz s filtrem v 
 - Proměnné: `OPENAI_API_KEY` (bez něj se indexování přeskočí a hledá se jen podle slov; klíč nikdy do repa ani
   logu), `EMBED_MODEL` (výchozí `text-embedding-3-large`), `EMBED_DIM` (1024, musí sedět se sloupcem),
   `EMBED_MAX_TOKENS_PER_RUN` (strop tokenů za hodinový běh, výchozí 3 000 000; odhad 2 znaky na token),
-  `EMBED_DOTAZY_DEN` (denní strop embeddingů dotazů v procesu MCP napříč tokeny, výchozí 20 000, den podle UTC).
+  `EMBED_DOTAZY_DEN` (denní strop embeddingů dotazů v procesu MCP napříč tokeny, výchozí 20 000, den podle UTC), `EMBED_MAX_VZDALENOST` (práh kosinové vzdálenosti hustých výsledků, výchozí 0,60: věcné
+  dotazy mají nejbližší úseky 0,43–0,55, nesouvisející 0,61+, takže dotaz mimo témata Sněmovny podle významu nic nevrátí).
 - Cena: `-large` 0,13 USD, `-small` 0,02 USD za milion tokenů. Čeština s hlavičkami vychází na 2,2 znaku na
   token (změřeno na vzorku), celý korpus (~65 mil. znaků textu) tedy odhadem 35–40 mil. tokenů, asi 5 USD s `-large`. Výsledek běhu (úseky, tokeny, odhad USD) je v `steno.beh` a
   v `stav_dat` (`embeddingy`, `steno_last_result.embeddingy`). Během indexace se součty zapisují do

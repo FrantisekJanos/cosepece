@@ -27,6 +27,10 @@ RRF_K = 60
 HUSTYCH = 50             # husté výsledky (úseky) do slučování
 NA_ZDROJ = 2             # nejvýš úseků z jednoho projevu nebo celku
 EF_SEARCH = 100          # hnsw.ef_search pro husté hledání (výchozí 40 je pro top-50 málo)
+# Kosinová vzdálenost, nad kterou úsek s dotazem nesouvisí (EMBED_MAX_VZDALENOST). Změřeno 19. 11. 2026 na celém
+# korpusu (3-large@1024): nejbližší úseky k věcným dotazům 0,43–0,55, k nesouvisejícím (recept, fotbal) 0,61–0,68,
+# k nesmyslu 0,78. Bez prahu by hledání podle významu vždy vrátilo něco, i když k dotazu nic není.
+MAX_VZDALENOST = 0.60
 
 _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="embed-dotaz")
 _cache: OrderedDict[tuple, list[float]] = OrderedDict()
@@ -35,6 +39,14 @@ _stav = threading.local()
 _klienti: dict[tuple, Klient] = {}
 DOTAZY_DEN = 20000       # výchozí denní strop embeddingů dotazů (EMBED_DOTAZY_DEN), napříč všemi tokeny MCP
 _den = {"datum": None, "pocet": 0}   # počítadlo volání API za den (UTC) v paměti procesu MCP
+
+
+def max_vzdalenost() -> float:
+    """Práh kosinové vzdálenosti hustých výsledků z EMBED_MAX_VZDALENOST (nečitelná hodnota = MAX_VZDALENOST)."""
+    try:
+        return float((os.environ.get("EMBED_MAX_VZDALENOST") or "").strip() or MAX_VZDALENOST)
+    except ValueError:
+        return MAX_VZDALENOST
 
 
 def _dnes() -> str:
@@ -168,7 +180,7 @@ def husty(conn, vektor: list[float], zdroj: str, filtry_sql: str, params: list, 
 
     filtry_sql je podmínka nad aliasy p (projev) nebo c, d (celek, dokument) s parametry params. Úzký filtr by
     s obyčejným HNSW vrátil méně než limit, proto iterativní průchod indexu (relaxed_order, pořadí se srovná
-    vnějším ORDER BY)."""
+    vnějším ORDER BY). Úseky dál než max_vzdalenost() se zahodí: k dotazu bez souvislosti nic nevrátí."""
     if zdroj not in _SPOJENI:
         raise ValueError(f"neznámý zdroj {zdroj}")
     v = _vektor_sql(vektor)
@@ -181,9 +193,9 @@ def husty(conn, vektor: list[float], zdroj: str, filtry_sql: str, params: list, 
                       FROM rag.usek u {_SPOJENI[zdroj]}
                       WHERE u.zdroj = %s AND u.model = %s AND ({filtry_sql or 'TRUE'})
                       ORDER BY u.embedding <=> %s::halfvec LIMIT %s) x) y
-              WHERE n <= {NA_ZDROJ} ORDER BY vzdalenost LIMIT %s"""
+              WHERE n <= {NA_ZDROJ} AND vzdalenost <= %s ORDER BY vzdalenost LIMIT %s"""
     with conn.cursor(row_factory=_dict_row()) as cur:
-        cur.execute(sql, (v, zdroj, model or aktualni_model(), *params, v, limit * 3, limit))
+        cur.execute(sql, (v, zdroj, model or aktualni_model(), *params, v, limit * 3, max_vzdalenost(), limit))
         return list(cur.fetchall())
 
 

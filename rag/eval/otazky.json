@@ -1907,12 +1907,15 @@
      },
      {
       "cesta": "projevy.*.klic",
-      "rovna_se": "10/24/341/7"
+      "jeden_z": [
+       "10/24/341/7",
+       "10/20/248/2"
+      ]
      }
     ]
    }
   ],
-  "rucne": "Filipovičová 10/24/341/7: interpelace k odhadu 14,4 mld. Kč z nové EET (RIA, dvojnásobná efektivita)."
+  "rucne": "Filipovičová 10/24/341/7: interpelace k odhadu 14,4 mld. Kč z nové EET (RIA, dvojnásobná efektivita). Na celém korpusu jsou správné i další projevy: Hřib 10/20/248/2 (interpelace, 3. 6. 2026): ptá se, jak MF odhadlo 15 mld. z EET, když přínosy prvního EET byly sporné."
  },
  {
   "id": "E4-03",
@@ -1961,12 +1964,16 @@
      },
      {
       "cesta": "projevy.*.klic",
-      "rovna_se": "10/13/58/2"
+      "jeden_z": [
+       "10/13/58/2",
+       "10/20/42/8",
+       "10/5/223/2"
+      ]
      }
     ]
    }
   ],
-  "rucne": "Okamura 10/13/58/2: závěrečné hlasování o snížení povinných odvodů živnostníků."
+  "rucne": "Okamura 10/13/58/2: závěrečné hlasování o snížení povinných odvodů živnostníků. Na celém korpusu jsou správné i další projevy: Schillerová 10/20/42/8 (opakované hlasování po zamítnutí Senátem) a Juchelka 10/5/223/2 návrh snížení odvodů OSVČ hájí."
  },
  {
   "id": "E4-05",

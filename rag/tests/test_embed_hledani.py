@@ -118,6 +118,7 @@ def test_husty_sql_iterative_scan():
     assert "steno.projev_tisk" in sql and "<=>" in sql and "row_number()" in sql
     assert "u.model = %s" in conn.sql[-1]
     assert 311 in conn.params[-1] and "[0.1,0.2]" in conn.params[-1]
+    assert "vzdalenost <= %s" in conn.sql[-1] and hledani.MAX_VZDALENOST in conn.params[-1]
     with pytest.raises(ValueError):
         hledani.husty(conn, [0.1], "nic", "", [], model="m")
 
@@ -427,3 +428,27 @@ def test_hybrid_spatny_vektor_fallback_pg(pgconn, monkeypatch):
     monkeypatch.setattr(hledani, "vektor_dotazu", lambda d: [0.1, 0.2, 0.3])   # jiný rozměr než sloupec
     r = tools.hledej_v_projevech(pgconn, "Žatecku")
     assert r["rezim_pouzity"] == "fulltext" and r["projevy"][0]["klic"] == "10/36/100/2"
+
+
+def test_max_vzdalenost_z_prostredi(monkeypatch):
+    monkeypatch.setenv("EMBED_MAX_VZDALENOST", "0.5")
+    assert hledani.max_vzdalenost() == 0.5
+    monkeypatch.setenv("EMBED_MAX_VZDALENOST", "nic")
+    assert hledani.max_vzdalenost() == hledani.MAX_VZDALENOST
+    monkeypatch.delenv("EMBED_MAX_VZDALENOST")
+    assert hledani.max_vzdalenost() == 0.60
+
+
+@pytest.mark.pg
+@bez_db
+def test_husty_prah_vzdalenosti_pg(pgconn, monkeypatch):
+    """Vzdálený vektor dotazu (nesouvisející téma) nevrátí žádný hustý výsledek, totožný vrátí."""
+    from hlidac_rag.embed.indexer import indexuj
+    from test_embed_indexer import FalesnyKlient
+
+    ids = _projevy(pgconn)
+    indexuj(pgconn, FalesnyKlient())
+    vektor = _vektor_useku(pgconn, ids["elektrina"])
+    assert hledani.husty(pgconn, vektor, "projev", "", [], model="text-embedding-3-large")
+    opacny = [-x for x in vektor]
+    assert hledani.husty(pgconn, opacny, "projev", "", [], model="text-embedding-3-large") == []

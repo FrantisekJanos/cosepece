@@ -151,7 +151,7 @@ def osnova_textu(ct: int | None = None, pn: int | None = None, verze: str | None
     """Osnova textu návrhu zákona (ct) nebo pozměňovacího návrhu (pn), zadejte právě jedno: celky (část, článek, §,
     bod novely) s poradi, oznaceni, cesta, znaku, meni_zakon (číslo/rok Sb.) a prvními 150 znaky.
     verze tisku "puvodni" | "schvalene" (výchozí schválené znění, existuje-li). Důvodová zpráva jen
-    s vcetne_duvodove=True. Stránkování: celkem, dalsi_offset. Celý celek pak přes get_cel.
+    s vcetne_duvodove=True. Stránkování: celkem, dalsi_offset (limit nejvýš 100). Celý celek pak přes get_cel.
     Příklad: osnova_textu(ct=311)."""
     return _call("osnova_textu", tools.osnova_textu, ct, pn, verze, vcetne_duvodove, limit, offset)
 
@@ -172,8 +172,10 @@ def hledej_v_textech(dotaz: str, ct: int | None = None, pn: int | None = None, d
                      meni_zakon: str | None = None, verze: str | None = None, vcetne_duvodove: bool = False,
                      limit: int = 20, offset: int = 0) -> dict:
     """Fulltext v textech návrhů zákonů a PN po celcích (všechna slova, bez ohledu na diakritiku; čísla předpisů
-    jako "586/1992" přesně). Filtry: ct, pn, druh ("tisk" | "pn"), meni_zakon ("586/1992"), verze. Bez důvodové
-    zprávy, pokud vcetne_duvodove=False. Vrací celky s uryvek (shoda v « ») a poradi pro get_cel.
+    jako "586/1992" přesně). Filtry: ct (text tisku i PN podaných k tomuto tisku), pn, druh ("tisk" | "pn"),
+    meni_zakon ("586/1992"), verze. Prázdný dotaz s filtrem (ct, pn nebo meni_zakon) vrátí všechny odpovídající
+    celky v pořadí dokumentu, např. hledej_v_textech("", meni_zakon="256/2000"). Bez důvodové zprávy, pokud
+    vcetne_duvodove=False. Vrací celky s uryvek (shoda v « ») a poradi pro get_cel; limit nejvýš 100.
     Stránkování: celkem, dalsi_offset. Příklad: hledej_v_textech("paušální daň", ct=311)."""
     return _call("hledej_v_textech", tools.hledej_v_textech, dotaz, ct, pn, druh, meni_zakon, verze,
                  vcetne_duvodove, limit, offset)

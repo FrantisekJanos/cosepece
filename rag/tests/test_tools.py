@@ -18,6 +18,7 @@ class FakeConn:
     def __init__(self, *results):
         self.results = list(results)
         self.sql: list[str] = []
+        self.params: list = []
 
     def cursor(self, row_factory=None):
         return self
@@ -30,6 +31,7 @@ class FakeConn:
 
     def execute(self, sql, params=()):
         self.sql.append(sql)
+        self.params.append(params)
         return self
 
     def fetchall(self):
@@ -524,3 +526,35 @@ def test_stav_dat_ma_texty():
     assert r["texty"] == {"dokumentu": 3, "celku": 40, "jen_pdf": 1, "schvalenych": 1}
     r = tools.stav_dat(FakeConn([{"projevu": 1}], [], [], [{"ok": False}]))
     assert r["texty"] is None
+
+
+def test_get_cel_sousedni_shody_z_ruznych_clanku_jsou_chyba():
+    conn = FakeConn(_OK, [_dok()], [dict(poradi=3, cesta="Čl. I / bod 1"), dict(poradi=4, cesta="Čl. II / bod 1")])
+    with pytest.raises(ValueError, match="poradi 4"):
+        tools.get_cel(conn, ct=311, oznaceni="bod 1")
+
+
+def test_hledej_v_textech_jen_filtr():
+    text = "Zákon č. 256/2000 Sb., o Státním zemědělském intervenčním fondu, se mění takto: " + "x " * 300
+    row = dict(druh="tisk", ct=221, cislo_pn=0, verze="puvodni", poradi=1, oznaceni="Čl. I", cesta="Čl. I",
+               docx_url="u", text=text)
+    conn = FakeConn(_OK, [dict(n=1)], [row])
+    r = tools.hledej_v_textech(conn, "", meni_zakon="256/2000")
+    assert "tsv" not in conn.sql[1] and "ts_rank" not in conn.sql[2] and "c.meni_zakon = %s" in conn.sql[2]
+    assert "ORDER BY d.ct DESC, d.cislo_pn, c.poradi" in conn.sql[2]
+    v = r["vysledky"][0]
+    assert v["ct"] == 221 and v["uryvek"].startswith("Zákon č. 256/2000 Sb., o Státním") and len(v["uryvek"]) <= 302
+    assert r["dotaz"] is None and r["celkem"] == 1
+    with pytest.raises(ValueError, match="filtr"):
+        tools.hledej_v_textech(FakeConn(), "  ")
+    with pytest.raises(ValueError, match="příliš krátký"):
+        tools.hledej_v_textech(FakeConn(), "a v", ct=311)
+
+
+def test_texty_limit_nejvys_100():
+    conn = FakeConn(_OK, [dict(n=0)], [])
+    tools.hledej_v_textech(conn, "daně", limit=200)
+    assert conn.params[-1][-2] == 100
+    conn = FakeConn(_OK, [_dok()], [dict(n=0)], [])
+    tools.osnova_textu(conn, ct=311, limit=200)
+    assert conn.params[-1][-2] == 100

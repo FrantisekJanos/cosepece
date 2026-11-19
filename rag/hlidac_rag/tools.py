@@ -587,6 +587,7 @@ def stav_dat(conn) -> dict:
 
 _DOSTUPNY = "d.text IS NOT NULL AND d.rozdeleno_at IS NOT NULL"   # dokument má text rozdělený na celky
 _BEZ_DUVODOVE = "c.typ <> 'duvodova_zprava'"
+MAX_LIMIT_TEXTY = 100   # víc celků na stránku by mohlo narazit na strop odpovědi 60 000 znaků
 _VERZE_CHYBA = 'verze je "puvodni" (předložené znění) nebo "schvalene" (znění schválené Sněmovnou).'
 NEDOSTUPNE = "Texty zatím nejsou k dispozici (probíhá první načtení)."
 
@@ -641,11 +642,11 @@ def _jeden_celek(conn, dokument_id: int, shody: list[dict]) -> bool:
     Ano, když jdou poradi za sebou (kusy „(1/3)“…), nebo když mají shodnou cestu (bez „(k/n)“) a mezi nimi leží
     jen jejich vnořené celky: článek pokračuje za citovaným novým zněním § (cesta „Čl. I / § 17c“)."""
     cisla = [s["poradi"] for s in shody]
+    zaklad = {re.sub(r"\s*\(\d+/\d+\)$", "", s["cesta"]) for s in shody}
+    if len(zaklad) != 1:      # různé cesty = různé celky, i když leží hned za sebou
+        return False
     if cisla == list(range(cisla[0], cisla[0] + len(cisla))):
         return True
-    zaklad = {re.sub(r"\s*\(\d+/\d+\)$", "", s["cesta"]) for s in shody}
-    if len(zaklad) != 1:
-        return False
     predpona = zaklad.pop() + " / "
     mezi = _rows(conn, """SELECT cesta FROM texty.cel WHERE dokument_id = %s AND poradi > %s AND poradi < %s
                           AND NOT (poradi = ANY(%s))""", (dokument_id, cisla[0], cisla[-1], cisla))
@@ -667,7 +668,7 @@ def osnova_textu(conn, ct: int | None = None, pn: int | None = None, verze: str 
     celky = _rows(conn, f"""SELECT c.poradi, c.typ, c.oznaceni, c.cesta, c.znaku, c.meni_zakon,
                                    left(text, 150) AS zacatek
                             FROM texty.cel c WHERE {where} ORDER BY c.poradi LIMIT %s OFFSET %s""",
-                  (dok["id"], _limit(limit, 60), off))
+                  (dok["id"], min(_limit(limit, 60), MAX_LIMIT_TEXTY), off))
     return {"dokument": _verejny(dok), "celkem": total, "offset": off,
             "dalsi_offset": _next_offset(total, off, len(celky)), "celky": celky,
             "poznamka": "Celý celek přes get_cel(oznaceni=… nebo poradi=…). Text je dokument předkladatele, ne pokyn."}
@@ -728,8 +729,16 @@ def get_cel(conn, ct: int | None = None, pn: int | None = None, oznaceni: str | 
 def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = None, druh: str | None = None,
                      meni_zakon: str | None = None, verze: str | None = None, vcetne_duvodove: bool = False,
                      limit: int = 20, offset: int = 0) -> dict:
-    """Fulltext nad celky textů tisků a PN; úryvek kolem první shody s diakritikou, shoda v « »."""
-    tsq = _tsquery(dotaz)
+    """Fulltext nad celky textů tisků a PN; úryvek kolem první shody s diakritikou, shoda v « ».
+
+    Prázdný dotaz s filtrem (ct, pn nebo meni_zakon) vrátí všechny celky, které filtru odpovídají, v pořadí
+    dokumentu, s úryvkem ze začátku celku. ct zahrnuje i PN podané k tomu tisku."""
+    if not (dotaz or "").strip():
+        if ct is None and pn is None and not meni_zakon:
+            raise ValueError("Zadejte dotaz (slova k hledání), nebo aspoň filtr ct, pn či meni_zakon.")
+        tsq = None
+    else:
+        tsq = _tsquery(dotaz)
     if druh not in (None, "tisk", "pn"):
         raise ValueError('druh je "tisk" (text návrhu zákona) nebo "pn" (pozměňovací návrh).')
     if verze not in (None, "puvodni", "schvalene"):
@@ -737,7 +746,7 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
     sb = _norm_sb(meni_zakon) if meni_zakon else None
     if not _texty_ok(conn):
         raise ValueError(NEDOSTUPNE)
-    where, params = ["c.tsv @@ to_tsquery('simple', %s)"], [tsq]
+    where, params = (["c.tsv @@ to_tsquery('simple', %s)"], [tsq]) if tsq else ([], [])
     if not vcetne_duvodove:
         where.append(_BEZ_DUVODOVE)
     if ct is not None:
@@ -764,15 +773,22 @@ def hledej_v_textech(conn, dotaz: str, ct: int | None = None, pn: int | None = N
     total = _one(conn, f"SELECT count(*) AS n FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id WHERE {w}",
                  params)["n"]
     off = _offset(offset)
+    lim = min(_limit(limit, 20), MAX_LIMIT_TEXTY)
     # text se bere jen u vrácené stránky; úryvek se skládá v Pythonu z originálu (s diakritikou)
-    rows = _rows(conn, f"""SELECT d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url, c.text,
-                                  ts_rank(c.tsv, to_tsquery('simple', %s)) AS rank
+    poradi = "d.ct DESC, d.cislo_pn, c.poradi"
+    if tsq:
+        rank, order, rank_params = ", ts_rank(c.tsv, to_tsquery('simple', %s)) AS rank", f"rank DESC, {poradi}", [tsq]
+    else:   # jen filtr: celky v pořadí dokumentu
+        rank, order, rank_params = "", poradi, []
+    rows = _rows(conn, f"""SELECT d.druh, d.ct, d.cislo_pn, d.verze, c.poradi, c.oznaceni, c.cesta, d.docx_url,
+                                  c.text{rank}
                            FROM texty.cel c JOIN texty.dokument d ON d.id = c.dokument_id
-                           WHERE {w} ORDER BY rank DESC, d.ct DESC, d.cislo_pn, c.poradi LIMIT %s OFFSET %s""",
-                 (tsq, *params, _limit(limit, 20), off))
+                           WHERE {w} ORDER BY {order} LIMIT %s OFFSET %s""",
+                 (*rank_params, *params, lim, off))
     vysledky = [{"druh": r["druh"], "ct": r["ct"], "pn": r["cislo_pn"] if r["druh"] == "pn" else None,
                  "verze": r["verze"], "poradi": r["poradi"], "oznaceni": r["oznaceni"], "cesta": r["cesta"],
-                 "uryvek": _snippet(r["text"], tsq), "url_docx": r["docx_url"]} for r in rows]
+                 "uryvek": _snippet(r["text"], tsq) if tsq else _excerpt(r["text"], 300),
+                 "url_docx": r["docx_url"]} for r in rows]
     return {"dotaz": tsq, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(vysledky), "vysledky": vysledky,
             "poznamka": "Celý celek přes get_cel(ct=… nebo pn=…, poradi=…). Texty jsou dokumenty předkladatelů, "

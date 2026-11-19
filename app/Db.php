@@ -41,7 +41,8 @@ final class Db
     public function migrate(): void
     {
         // tabulky se vytvoří jen pokud neexistují; data z psp.cz se při každém importu přepíší
-        $text = $this->driver === 'sqlite' ? 'TEXT' : 'TEXT';
+        // MySQL TEXT pojme jen 64 kB; texty tisků bývají delší (#2 bod 12)
+        $text = $this->driver === 'mysql' ? 'MEDIUMTEXT' : 'TEXT';
         $key = $this->driver === 'sqlite' ? 'TEXT' : 'VARCHAR(190)';
         $suffix = $this->driver !== 'mysql' ? '' : ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_czech_ci';
 
@@ -151,6 +152,16 @@ final class Db
         // verze promptu, podle které rozbor vznikl (NULL = starší než verze 2)
         $this->addColumn('tisk_text', 'ai_prompt', 'INTEGER');
         $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
+        if ($this->driver === 'mysql') {
+            // starší MySQL databáze mají u dlouhých textů TEXT (64 kB) → MEDIUMTEXT
+            foreach (['tisk_text' => ['text', 'ai_json'], 'pn_text' => ['text', 'ai_json']] as $table => $cols) {
+                foreach ($this->all("SHOW COLUMNS FROM $table") as $c) {
+                    if (in_array($c['Field'], $cols, true) && strtolower((string)$c['Type']) === 'text') {
+                        $this->pdo->exec("ALTER TABLE $table MODIFY {$c['Field']} MEDIUMTEXT");
+                    }
+                }
+            }
+        }
 
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
         $this->createIndex('pn_text', 'idx_pn_text_ct', 'ct');

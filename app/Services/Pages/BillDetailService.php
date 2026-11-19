@@ -28,13 +28,14 @@ final class BillDetailService
             'steps' => fn ($query) => $query->orderBy('id_hist'),
             'amendments' => fn ($query) => $query->orderByDesc('cas'),
             'alerts' => fn ($query) => $query->orderByDesc('event_at')->limit(10),
-            'text', 'amendmentTexts',
+            'text', 'amendmentTexts', 'preparation',
             'votes' => fn ($query) => $query->with(['clubs' => fn ($clubs) => $clubs->orderBy('klub')])->orderByDesc('datum')->orderByDesc('id_hlasovani'),
         ])->where('ct', $ct)->first() : null;
         if ($bill === null) {
             return null;
         }
 
+        $prep = $bill->preparation?->getAttributes();
         $t = $this->presentation->present($bill);
         $obdobi = (int)(Meta::query()->whereKey('obdobi_cislo')->value('v') ?? '10');
         $billRev = $this->revisions->counts('tisk', $ct, $obdobi)[$ct] ?? ['text' => 0, 'ai' => 0];
@@ -77,7 +78,7 @@ final class BillDetailService
             'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
         ];
 
-        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'votes', 'stepByVote', 'pn', 'authors', 'alerts', 'texts', 'billText', 'billRev', 'pnRev', 'review', 'laws', 'days');
+        return compact('title', 'active', 'description', 'og', 'ct', 't', 'obdobi', 'steps', 'votes', 'stepByVote', 'pn', 'authors', 'alerts', 'texts', 'billText', 'prep', 'billRev', 'pnRev', 'review', 'laws', 'days');
     }
     private function textData(BillText|AmendmentText $text): array
     {

@@ -69,6 +69,16 @@ use Hlidac\View;
   <p>Když psp.cz text návrhu nebo pozměňovacího návrhu vymění, uloží se nové znění jako další verze a rozbor se udělá znovu. Předchozí znění i dřívější rozbory zůstávají uložené: v detailu tisku vede odkaz „Historie“ na seznam verzí, rozdíl mezi nimi a změny závažnosti rozboru. Do skóre se počítá jen poslední verze. Texty a rozbory z minulého volebního období se uchovávají v archivu, ale ke stejně očíslovaným tiskům nového období se nepoužijí.</p>
 </section>
 
+<section class="card pad" aria-label="Příprava u vlády">
+  <h2>Příprava u vlády (připomínkové řízení)</h2>
+  <p>U tisku ukazujeme, jak návrh prošel přípravou u vlády. Údaje bereme z otevřených dat Úřadu vlády (portál ODok/VeKLEP), aktualizují se denně.</p>
+  <ul>
+    <li><b>Vládní návrh:</b> meziresortní připomínkové řízení (od–do, počet připomínkových míst), kdy návrh schválila vláda, důvod předložení (např. „mimo plán legislativních prací“) a udělené výjimky. Obvyklá délka připomínek jsou 4 týdny; kratší řízení označujeme. Když připomínkové řízení v datech nenajdeme, napíšeme „nedohledáno“ – mohlo proběhnout pod jiným názvem nebo u dřívější verze návrhu.</li>
+    <li><b>Poslanecký, senátní a krajský návrh:</b> text nepřipravovalo ministerstvo. Vláda k němu ale zaujímá stanovisko a k tomu si někdy vyžádá připomínky (v 10. období u většiny takových návrhů, obvykle na 1–2 týdny). Ty se týkají stanoviska vlády, ne úprav návrhu.</li>
+  </ul>
+  <p class="muted small">Tyto údaje zatím do skóre nevstupují; body za poslanecký návrh zůstávají, jen jejich popis uvádí, zda si vláda připomínky vyžádala. Po několika týdnech dat zvážíme, zda a jak je započítat. Stanovisko Legislativní rady vlády a jednotlivé připomínky jsou u materiálu ve VeKLEP.</p>
+</section>
+
 <section class="card pad" aria-label="Omezení">
   <h2>Co skóre nevidí</h2>
   <ul>

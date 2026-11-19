@@ -60,6 +60,8 @@ SyncController / hlidac:sync → Hlidac\Sync::run()
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
                 Do skóre nevstupuje; chyba nezastaví synchronizaci
+  1c. GovPrep     příprava návrhu u vlády z otevřených dat ODok, tabulka priprava.
+                  Chyba nezastaví synchronizaci; údaje upřesňují popis bodů, jejich výši nemění.
   2. AlertBuilder  vytvoří upozornění s jednoznačným klíčem (bez duplicit); 1. běh = bootstrap (posted=2, nic se nepošle)
   3. Scorer        předběžné skóre (určuje pořadí front textů a AI)
   4. PnText        stáhne Word verze PN (sd.sqw → odkaz class="file docx"), pravidla: přílepek, rozsah,

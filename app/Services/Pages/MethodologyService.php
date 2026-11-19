@@ -17,10 +17,10 @@ final class MethodologyService
 
         $groups = [
             ['Postup projednávání', 'cap_procedure', [
-                [$w['mp_bill'], 'Poslanecký návrh, který postupuje projednáváním (2. čtení a dál nebo schválení v 1. čtení): neprošel meziresortním připomínkovým řízením (ministerstva, legislativní rada vlády, odborná veřejnost).'],
+                [$w['mp_bill'], 'Poslanecký návrh, který postupuje projednáváním (2. čtení a dál nebo schválení v 1. čtení): text nepřipravovalo ministerstvo v meziresortním připomínkovém řízení (ministerstva, Legislativní rada vlády, odborná veřejnost).'],
                 [$w['mp_bill_early'], 'Poslanecký návrh, který zatím nepostoupil do 2. čtení (většina takových návrhů nikdy neprojde).'],
-                [$w['senate_bill'], 'Senátní návrh: také bez meziresortního připomínkového řízení.'],
-                [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: také bez meziresortního připomínkového řízení.'],
+                [$w['senate_bill'], 'Senátní návrh: text také nepřipravovalo ministerstvo v připomínkovém řízení.'],
+                [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: text také nepřipravovalo ministerstvo v připomínkovém řízení.'],
                 [$w['p90_requested'], 'Navrženo schválit už v 1. čtení podle § 90 odst. 2 jednacího řádu (jen u tisku, který se ještě projednává).'],
                 [$w['p90_passed'], 'Schváleno už v 1. čtení podle § 90 odst. 2, bez 2. a 3. čtení (místo bodů za pouhý návrh).'],
                 [$w['deadline_cut'], 'Zkrácená lhůta při projednávání: lhůta pro výbory kratší než 60 dní, nebo Sněmovna lhůtu změnila během projednávání.'],

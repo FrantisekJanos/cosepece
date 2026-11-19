@@ -28,6 +28,12 @@ final class Sync
             $backfill = Revisions::backfill(db());
             $import = (new Importer(db(), $source))->run();
             try {
+                $prep = (new GovPrep(db(), $source, $config))->run();
+            } catch (\Throwable $ex) {
+
+                $prep = ['error' => Http::redact($ex->getMessage())];
+            }
+            try {
                 $votes = (new Votes(db(), $source))->run();
             } catch (\Throwable $ex) {
 
@@ -47,6 +53,7 @@ final class Sync
             $result = [
                 'import' => $import,
                 'votes' => $votes,
+                'priprava' => $prep,
                 'alerts_new' => $alerts,
                 'pn_text' => $pnText,
                 'tisk_text' => $tiskText,

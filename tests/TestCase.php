@@ -19,6 +19,7 @@ abstract class TestCase extends BaseTestCase
         config([
             'hlidac.data_path' => $this->dataDirectory,
             'hlidac.source_dir' => $this->dataDirectory . '/src',
+            'hlidac.odok' => ['enabled' => true, 'local_dir' => $this->dataDirectory . '/src/odok'],
             'hlidac.site_url' => 'https://hlidac.test',
             'hlidac.cron_token' => 'test-cron-token',
             'hlidac.ai.remote_token' => 'test-ai-token',

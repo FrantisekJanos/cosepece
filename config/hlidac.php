@@ -28,6 +28,8 @@ $defaults = [
 
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
+    'odok' => ['enabled' => true],
+
     'pn_text' => [
         'enabled' => true,
         'per_run' => 40,

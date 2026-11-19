@@ -21,7 +21,7 @@ if ($dst->driver === 'sqlite') {
 }
 Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
 
-$tables = ['tisky', 'kroky', 'pn', 'pn_seen', 'pn_text', 'tisk_text', 'alerts', 'post_log', 'meta', 'hlasovani', 'hlasovani_kluby', 'text_revize', 'ai_revize', 'tisk_text_archiv', 'pn_text_archiv'];
+$tables = ['tisky', 'kroky', 'pn', 'pn_seen', 'pn_text', 'tisk_text', 'alerts', 'post_log', 'meta', 'hlasovani', 'hlasovani_kluby', 'text_revize', 'ai_revize', 'tisk_text_archiv', 'pn_text_archiv', 'priprava'];
 $available = array_column($src->all("SELECT name FROM sqlite_master WHERE type = 'table'"), 'name');
 $tables = array_values(array_intersect($tables, $available));
 

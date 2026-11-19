@@ -45,6 +45,11 @@ final class Bill extends Model
         ];
     }
 
+    public function preparation(): HasOne
+    {
+        return $this->hasOne(GovernmentPreparation::class, 'ct', 'ct');
+    }
+
     public function votes(): HasMany
     {
         return $this->hasMany(Vote::class, 'ct', 'ct');

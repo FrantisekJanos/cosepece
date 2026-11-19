@@ -44,6 +44,11 @@ return [
     ],
 
     // stahování textů samotných návrhů zákonů (Word); zásadní změny bývají přímo v poslaneckých návrzích
+    // příprava návrhu u vlády z otevřených dat Úřadu vlády (ODok/VeKLEP); jen zobrazení u tisku
+    'odok' => [
+        'enabled' => true,
+    ],
+
     'tisk_text' => [
         'enabled' => true,
         'per_run' => 15, // přednost mají poslanecké a senátní návrhy, § 90/2 a zkrácené lhůty

@@ -13,6 +13,9 @@ final class Scorer
 
     private const KIND_BONUS = ['p90' => 10, 'cut' => 10, 'passed' => 5, 'surge' => 5, 'law' => 0, 'newbill' => 0, 'pn' => 0];
 
+    /** @var array<int, array> příprava návrhu u vlády podle čísla tisku (jen pro popis důvodu) */
+    private array $prep = [];
+
     public function __construct(private Db $db, private array $config)
     {
     }
@@ -132,6 +135,11 @@ final class Scorer
 
         $count = 0;
         $this->db->pdo->beginTransaction();
+        $prep = [];
+        foreach ($this->db->all('SELECT ct, druh, dni, mist FROM priprava') as $p) {
+            $prep[(int)$p['ct']] = $p;
+        }
+        $this->prep = $prep;
         foreach ($this->db->all('SELECT * FROM tisky') as $t) {
             $ct = (int)$t['ct'];
             $reasons = $this->billReasons($t, $kroky[$ct] ?? [], $pnDates[$ct] ?? [], $pnText[$ct] ?? [],
@@ -184,15 +192,22 @@ final class Scorer
         }
         $closed = in_array((string)$t['faze'], ['Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'], true);
         if ($t['typ_navrhu'] === 'poslanecký') {
+
+
+            $p = $this->prep[(int)$t['ct']] ?? null;
+            $note = $p === null || $p['druh'] !== 'stanovisko' ? ''
+                : ($p['dni'] !== null
+                    ? '; vláda si ke stanovisku vyžádala připomínky ' . (int)$p['mist'] . ' míst na ' . (int)$p['dni'] . ' dní'
+                    : '; vláda si k němu připomínky nevyžádala');
             if ($progressed) {
-                $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh postupuje projednáváním – neprošel meziresortním připomínkovým řízením');
+                $add('mp_bill', (int)$w['mp_bill'], 'Poslanecký návrh postupuje projednáváním – text nepřipravovalo ministerstvo v připomínkovém řízení' . $note);
             } else {
-                $add('mp_bill', (int)$w['mp_bill_early'], 'Poslanecký návrh – neprošel meziresortním připomínkovým řízením (zatím nepostoupil do 2. čtení)');
+                $add('mp_bill', (int)$w['mp_bill_early'], 'Poslanecký návrh – text nepřipravovalo ministerstvo v připomínkovém řízení (zatím nepostoupil do 2. čtení)' . $note);
             }
         } elseif ($t['typ_navrhu'] === 'senátní') {
-            $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – neprošel meziresortním připomínkovým řízením');
+            $add('senate_bill', (int)$w['senate_bill'], 'Senátní návrh – text nepřipravovalo ministerstvo v připomínkovém řízení');
         } elseif ($t['typ_navrhu'] === 'krajský') {
-            $add('region_bill', (int)$w['region_bill'], 'Návrh krajského zastupitelstva – neprošel meziresortním připomínkovým řízením');
+            $add('region_bill', (int)$w['region_bill'], 'Návrh krajského zastupitelstva – text nepřipravovalo ministerstvo v připomínkovém řízení');
         }
 
         if ((int)$t['p90ok']) {

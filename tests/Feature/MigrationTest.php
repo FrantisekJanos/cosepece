@@ -38,7 +38,7 @@ final class MigrationTest extends TestCase
             $this->assertSame($rows, $actual, $table);
         }
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
-        $this->assertSame(5, (int)db()->value('SELECT COUNT(*) FROM migrations'));
+        $this->assertSame(6, (int)db()->value('SELECT COUNT(*) FROM migrations'));
     }
 
     public function test_upstream_columns_preserve_existing_ai_results(): void

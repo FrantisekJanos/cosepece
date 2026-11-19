@@ -264,8 +264,10 @@ def test_cteni_z_tabulky_kroky():
     rozprava(conn, 76)
     sql = conn.sql[1]
     assert "FROM kroky" in sql and "left(datum, 10)::date" in sql
-    # R9b: 1. čtení kterýmkoli krokem (i § 90/2 bez „zahájeno“), 2. a 3. čtení jen zahájením
-    assert r"stav ~ '^1\. čtení'" in sql and r"stav ~ '^[23]\. čtení' AND akce = 'zahájeno'" in sql
+    # R9b: 1. čtení kterýmkoli krokem (i § 90/2 bez „zahájeno“), 2. a 3. čtení nejdřívějším krokem projednávání
+    assert r"stav ~ '^1\. čtení'" in sql and r"stav ~ '^[23]\. čtení'" in sql
+    assert "akce IN ('zahájeno', 'projednávání ukončeno', 'ukončena')" in sql and "akce_id IN (238, 71, 23)" in sql
+    assert "PARTITION BY cteni ORDER BY datum, id_hist" in sql and "cteni NOT IN ('2', '3') OR n = 1" in sql
     assert "Sněmovna (Senát)" in sql and "Sněmovna (Prezident)" in sql
     assert "ORDER BY k.datum DESC, k.id_hist DESC" in sql
     assert conn.params[1] == (76, 76)
@@ -421,8 +423,9 @@ def _tabulky_webu(conn, kroky: list[tuple], tisky: list[tuple] = ()) -> None:
         cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.kroky (id_hist int PRIMARY KEY, id_tisk int, ct int, datum varchar(19),
                         typ_stavu int, stav varchar(120), akce_id int, akce varchar(120), id_hlasovani int)""")
         cur.executemany(f"INSERT INTO {SCHEMA_WEB}.tisky VALUES (%s, %s)", tisky)
-        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.kroky (id_hist, ct, datum, stav, akce) VALUES (%s, %s, %s, %s, %s)",
-                        kroky)
+        # krok = (id_hist, ct, datum, stav, akce[, akce_id])
+        cur.executemany(f"""INSERT INTO {SCHEMA_WEB}.kroky (id_hist, ct, datum, stav, akce, akce_id)
+                            VALUES (%s, %s, %s, %s, %s, %s)""", [(*k, None)[:6] for k in kroky])
         cur.execute(f"SET search_path TO {SCHEMA_WEB}, public")
     conn.commit()
 
@@ -510,7 +513,7 @@ def test_pg_cteni_z_kroku_a_nazev_z_tisku(pgconn):
 @bez_db
 def test_pg_cteni_1_u_paragrafu_90(pgconn):
     """§ 90/2 (R9b): 1. čtení má jen krok „1. čtení (§ 90, odst. 2) - ob. rozprava | doporučen“, nikdy „zahájeno“;
-    1. čtení začíná kterýmkoli krokem „1. čtení…“, 2. a 3. čtení dál jen akcí „zahájeno“."""
+    1. čtení začíná kterýmkoli krokem „1. čtení…“, 2. a 3. čtení jen krokem projednávání (zahájeno, ukončeno)."""
     s90, pred, den, podrobna = 982, date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 25)
     with pgconn.cursor() as cur:
         _vloz_projevy(cur, [
@@ -523,10 +526,41 @@ def test_pg_cteni_1_u_paragrafu_90(pgconn):
         (21, 85, "2026-02-20 00:00:00", "Přijímáno do PS", "předložen"),
         (22, 85, "2026-03-03 00:00:00", "1. čtení (§ 90, odst. 2) - ob. rozprava", "doporučen"),
         (23, 85, "2026-03-25 00:00:00", "1. čtení (§ 90, odst. 2) - podr. rozprava", "souhlas s RJ"),
-        (24, 85, "2026-03-25 00:00:00", "3. čtení", "projednávání ukončeno"),      # bez „zahájeno“ se nepočítá
+        (24, 85, "2026-03-25 00:00:00", "3. čtení", "rozeslán"),                   # administrativní krok se nepočítá
     ])
     r = rozprava(pgconn, 85)
     assert [(v["klic"], v.get("cteni")) for v in r["vystoupeni"]] == [
         ("10/982/1/1", None), ("10/982/2/1", "1"), ("10/982/3/1", "1")]
     f = rozprava(pgconn, 85, cteni="1")
     assert [(v["poradi"], v["klic"]) for v in f["vystoupeni"]] == [(1, "10/982/2/1"), (2, "10/982/3/1")]
+
+
+@pytest.mark.pg
+@bez_db
+@pytest.mark.parametrize("ukonceno", [("projednávání ukončeno", None), (None, 71)])
+def test_pg_cteni_3_od_nejdrivejsiho_kroku(pgconn, ukonceno):
+    """Tisk 198: „3. čtení | projednávání ukončeno“ (2. 7.) je v historii dřív než „3. čtení | zahájeno“ (8. 7.).
+    Začátek 2. a 3. čtení je nejdřívější krok s akcí zahájeno / projednávání ukončeno / ukončena (jako Scorer.php,
+    akce podle textu nebo akce_id 238 / 71 / 23); pozdější krok téhož čtení nic nemění."""
+    s198 = 983
+    dny = [date(2026, 6, 2), date(2026, 6, 30), date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 5), date(2026, 7, 8),
+           date(2026, 7, 20)]
+    with pgconn.cursor() as cur:
+        _vloz_projevy(cur, [(s198, i, d, HAAS, False, "recnik", None, True, False, [198], [], f"Projev {i}.")
+                            for i, d in enumerate(dny, 1)])
+    pgconn.commit()
+    _tabulky_webu(pgconn, [
+        (31, 198, "2026-05-27 00:00:00", "1. čtení", "doporučen"),
+        (32, 198, "2026-06-02 00:00:00", "1. čtení", "zahájeno"),
+        (33, 198, "2026-06-02 00:00:00", "2. čtení - obecná rozprava", "přikázán"),       # administrativní
+        (34, 198, "2026-06-30 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),
+        (35, 198, "2026-06-30 00:00:00", "2. čtení - podrobná rozprava", "ukončena"),
+        (36, 198, "2026-07-02 00:00:00", "3. čtení", *ukonceno),
+        (37, 198, "2026-07-08 00:00:00", "3. čtení", "zahájeno"),
+        (38, 198, "2026-07-08 00:00:00", "Odesíláno do Senátu", "souhlas"),
+        (39, 198, "2026-07-15 00:00:00", "2. čtení - podrobná rozprava", "ukončena"),     # pozdější krok 2. čtení
+    ])
+    r = rozprava(pgconn, 198)
+    assert [v["cteni"] for v in r["vystoupeni"]] == ["1", "2", "2", "3", "3", "3", "3"]
+    assert [v["klic"] for v in rozprava(pgconn, 198, cteni="3")["vystoupeni"]] == [
+        "10/983/4/1", "10/983/5/1", "10/983/6/1", "10/983/7/1"]

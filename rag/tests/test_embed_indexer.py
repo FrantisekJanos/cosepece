@@ -305,3 +305,33 @@ def test_davka_nepreroste_pozadavek(conn, monkeypatch):
     k = FalesnyKlient()
     r = indexer.indexuj(conn, k, zdroje=("projev",))
     assert r["zdroju"] == 5 and all(len(v) <= 4 for v in k.volani)
+
+
+def test_prubeh_hlasi_kazdou_davku(conn):
+    """Průběžné hlášení: po každém odeslání dávky dostane volající kopii součtů (přerušený běh je pak dohledatelný)."""
+    from hlidac_rag.embed.indexer import indexuj
+
+    _projev(conn, 1, DLOUHY)
+    _dokument(conn, [("clanek", "Lhůta pro zahájení řízení o vrácení dotace se zkracuje na 4 roky.")])
+    hlaseni: list[dict] = []
+    r = indexuj(conn, FalesnyKlient(), prubeh=hlaseni.append)
+    assert hlaseni, "aspoň jedna dávka"
+    assert hlaseni[-1]["tokenu"] == r["tokenu"] and hlaseni[-1]["useku"] == r["useku"]
+    assert hlaseni[-1]["odhad_usd"] > 0
+    assert hlaseni[0] is not hlaseni[-1] or len(hlaseni) == 1
+
+
+def test_beh_prubeh_a_nedokoncene(conn):
+    """Průběžný zápis embeddingů do steno.beh a označení běhů, které skončily zvenku (restart kontejneru)."""
+    from hlidac_rag import run
+
+    stary = _sql(conn, "INSERT INTO steno.beh DEFAULT VALUES RETURNING id")[0][0]
+    run._zapis_prubeh(conn, stary, {"tokenu": 123, "odhad_usd": 0.1})
+    novy = _sql(conn, "INSERT INTO steno.beh DEFAULT VALUES RETURNING id")[0][0]
+    with conn.cursor() as cur:
+        assert run._oznac_nedokoncene(cur, novy) >= 1
+    conn.commit()
+    v, konec = _sql(conn, "SELECT vysledek, konec FROM steno.beh WHERE id = %s", (stary,))[0]
+    assert v["nedokonceno"] is True and v["embeddingy"]["tokenu"] == 123 and v["embeddingy"]["bezi"] is True
+    assert konec is not None
+    assert _sql(conn, "SELECT konec FROM steno.beh WHERE id = %s", (novy,))[0][0] is None

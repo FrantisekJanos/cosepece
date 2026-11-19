@@ -46,6 +46,9 @@ services:
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-large}
+      # stropy útraty OpenAI: tokeny indexace na hodinový běh (3 mil. ≈ 0,39 USD), embeddingy dotazů MCP za den (UTC)
+      EMBED_MAX_TOKENS_PER_RUN: ${EMBED_MAX_TOKENS_PER_RUN:-3000000}
+      EMBED_DOTAZY_DEN: ${EMBED_DOTAZY_DEN:-20000}
     command: ["sh", "-c", "while true; do python -m hlidac_rag.run; sleep 3600; done"]
     depends_on: [db]
 

@@ -43,3 +43,15 @@ def test_strop_nula_neni_vychozi(monkeypatch):
     ap_args = run._parser().parse_args(["--jen-embeddingy", "--embed-max-tokenu", "0"])
     assert run._strop(ap_args) == 0
     assert run._strop(run._parser().parse_args([])) == run._vychozi_strop()
+
+
+def test_krok_embeddingy_predava_prubeh(monkeypatch):
+    volano = {}
+
+    def falesny_indexuj(conn, klient, max_tokenu, prubeh=None):
+        prubeh({"tokenu": 10})
+        return {"zdroju": 1}
+    monkeypatch.setattr(run, "_klient_z_prostredi", lambda: "klient")
+    monkeypatch.setattr(run, "indexuj", falesny_indexuj)
+    r = run.krok_embeddingy("conn", 5, prubeh=lambda d: volano.update(d))
+    assert r["ok"] is True and volano == {"tokenu": 10}

@@ -153,11 +153,18 @@ def _zapis(conn, tabulka: str, zdroj: str, zdroj_id: int, useky: list[dict], mod
         raise
 
 
+def _usd(tokenu: int, model: str) -> float:
+    """Odhad ceny embeddingů v USD podle ceníku modelu (neznámý model = cena 3-large)."""
+    return round(tokenu / 1e6 * CENA_USD_ZA_MILION.get(model, 0.13), 6)
+
+
 def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] = ("projev", "cel"),
-            tabulka: str = "rag.usek", dim: int = DIM, omezeni: dict[str, list[int]] | None = None) -> dict:
+            tabulka: str = "rag.usek", dim: int = DIM, omezeni: dict[str, list[int]] | None = None,
+            prubeh=None) -> dict:
     """Doindexuje kandidáty zdrojů do stropu tokenů. Chyba API běh nepřeruší výjimkou: vrátí se v klíči chyba
     a nezapsané zdroje zůstanou na příští běh. omezeni = {zdroj: [id]} indexuje jen vybrané zdroje (porovnání
-    modelů na vzorku); úklid se pak nedělá."""
+    modelů na vzorku); úklid se pak nedělá. prubeh(dict) dostane po každé zapsané dávce kopii součtů, aby běh
+    ukončený zvenku (restart kontejneru) nechal záznam o zaplacených tokenech."""
     t = _tabulka(tabulka)
     model = klient.model
     out = {"model": model, "zdroju": 0, "useku": 0, "tokenu": 0, "odhad_usd": 0.0, "zbyva_zdroju": 0,
@@ -182,6 +189,8 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
             out["useku"] += len(us)
         out["tokenu"] += tokenu
         davka.clear()
+        if prubeh is not None:
+            prubeh({**out, "odhad_usd": _usd(out["tokenu"], model)})
 
     try:
         for zdroj in zdroje:
@@ -211,7 +220,7 @@ def indexuj(conn, klient, max_tokenu: int = 3_000_000, zdroje: tuple[str, ...] =
         log.warning("embeddingy: %s", e)
         out["chyba"] = str(e)[:300]
         davka.clear()
-    out["odhad_usd"] = round(out["tokenu"] / 1e6 * CENA_USD_ZA_MILION.get(model, 0.13), 6)
+    out["odhad_usd"] = _usd(out["tokenu"], model)
     out["zbyva_zdroju"] = sum(pocet_kandidatu(conn, z, model, t, omez.get(z)) for z in zdroje)
     conn.commit()
     return out

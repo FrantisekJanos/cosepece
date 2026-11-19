@@ -157,7 +157,10 @@ hledá se jen podle slov a `poznamka` řekne proč. Prázdný dotaz s filtrem v 
   `EMBED_DOTAZY_DEN` (denní strop embeddingů dotazů v procesu MCP napříč tokeny, výchozí 20 000, den podle UTC).
 - Cena: `-large` 0,13 USD, `-small` 0,02 USD za milion tokenů. Čeština s hlavičkami vychází na 2,2 znaku na
   token (změřeno na vzorku), celý korpus (~65 mil. znaků textu) tedy odhadem 35–40 mil. tokenů, asi 5 USD s `-large`. Výsledek běhu (úseky, tokeny, odhad USD) je v `steno.beh` a
-  v `stav_dat` (`embeddingy`, `steno_last_result.embeddingy`).
+  v `stav_dat` (`embeddingy`, `steno_last_result.embeddingy`). Během indexace se součty zapisují do
+  `steno.beh.vysledek.embeddingy` po každé dávce (`bezi: true`); běh ukončený zvenku (restart kontejneru při
+  redeployi, ukončené `docker compose exec`) označí další běh `nedokonceno: true` a zaplacené tokeny v záznamu
+  zůstanou. Úvodní indexaci proto nepouštět těsně před redeployem. Oba stropy nastavuje `docker/docker-compose.yml`.
 - Porovnání modelů na vzorku (jen proti lokální kopii dat):
   `DATABASE_URL=… python -m eval.porovnani_modelu --vzorek 1500` (odhad ceny předem, nad 0,50 USD jen s `--ano`;
   recall@10/@20 na otázkách fáze 4 s polem `cile` v `eval/otazky.json`).

@@ -69,13 +69,32 @@ def _klient_z_prostredi():
     return Klient.z_prostredi()
 
 
-def krok_embeddingy(conn, max_tokenu: int) -> dict:
-    """Doindexování embeddingů; bez klíče přeskočí, chyba API se vrátí ve výsledku (ok False)."""
+def krok_embeddingy(conn, max_tokenu: int, prubeh=None) -> dict:
+    """Doindexování embeddingů; bez klíče přeskočí, chyba API se vrátí ve výsledku (ok False).
+    prubeh dostává průběžné součty po každé dávce (viz indexuj)."""
     klient = _klient_z_prostredi()
     if klient is None:
         return {"ok": False, "duvod": "bez OPENAI_API_KEY"}
-    r = indexuj(conn, klient, max_tokenu=max_tokenu)
+    r = indexuj(conn, klient, max_tokenu=max_tokenu, **({"prubeh": prubeh} if prubeh else {}))
     return {"ok": not r.get("chyba"), **r}
+
+
+def _oznac_nedokoncene(cur, run_id: int) -> int:
+    """Běhy bez konce, které nejsou tenhle (zámek drží jen jeden běh): proces skončil zvenku, typicky restart
+    kontejneru při redeployi nebo ukončené `docker compose exec`. Dostanou konec = poslední známý stav
+    a příznak nedokonceno; průběžné součty embeddingů v nich zůstanou."""
+    cur.execute(
+        "UPDATE steno.beh SET konec = now(), vysledek = COALESCE(vysledek, '{}'::jsonb) || '{\"nedokonceno\": true}'"
+        " WHERE konec IS NULL AND id <> %s", (run_id,))
+    return cur.rowcount
+
+
+def _zapis_prubeh(conn, run_id: int, embeddingy: dict) -> None:
+    """Průběžný stav embeddingů do steno.beh (vysledek.embeddingy, bezi = true); konec zůstává prázdný."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE steno.beh SET vysledek = COALESCE(vysledek, '{}'::jsonb) || %s WHERE id = %s",
+                    (json.dumps({"embeddingy": {**embeddingy, "bezi": True}}), run_id))
+    conn.commit()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -115,7 +134,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         cur.execute("INSERT INTO steno.beh DEFAULT VALUES RETURNING id")
         run_id = cur.fetchone()[0]
+        nedokoncene = _oznac_nedokoncene(cur, run_id)
     conn.commit()
+    if nedokoncene:
+        log.warning("%d dřívějších běhů skončilo bez zápisu výsledku, označeny nedokonceno", nedokoncene)
 
     # přepočet rozpravy jde jen z uložených částí: bez stahování a bez textů
     fetcher = None if args.prepocitej_rozpravu or args.jen_embeddingy else Fetcher(delay=args.delay)
@@ -175,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.prepocitej_rozpravu:
         # embeddingy po textech (indexují i nové celky); vlastní try, chyba neshodí běh
         try:
-            result["embeddingy"] = krok_embeddingy(conn, _strop(args))
+            result["embeddingy"] = krok_embeddingy(conn, _strop(args),
+                                                   prubeh=lambda e: _zapis_prubeh(conn, run_id, e))
         except Exception:
             log.exception("embeddingy selhaly")
             conn.rollback()

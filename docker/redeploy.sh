@@ -7,7 +7,9 @@ cd "$(dirname "$0")/.."
 git fetch --quiet origin main
 git reset --hard origin/main
 cd docker
-docker compose up -d --build
+# --pull: i bezpečnostní aktualizace základních obrazů (php:8.3-apache, python)
+docker compose build --pull
+docker compose up -d
 docker image prune -f >/dev/null
 docker compose ps --format '{{.Service}} {{.Status}}'
 # chybějící BIND v .env nesmí skript ukončit (set -e + pipefail); kontrola musí skončit 200

@@ -76,6 +76,10 @@ final class OgCard
                 'Připravované zákony u vlády',
                 'Návrhy zákonů, které ministerstva připravují a Sněmovna je ještě nedostala: připomínkové řízení, jeho délka a schválení vládou.',
             ],
+            'data' => [
+                'Data a API Hlídače zákonů',
+                'Tisky se skóre a důvody, hlasování, upozornění a připravované zákony v JSON a RSS. Bez registrace, s popisem všech polí a příklady.',
+            ],
             'zmeny' => [
                 'Co jsme na webu změnili',
                 'Opravy a změny v hodnocení legislativního postupu, hlavně podle připomínek čtenářů.',

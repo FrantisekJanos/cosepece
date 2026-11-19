@@ -92,3 +92,21 @@ function siteUrl(string $path = ''): string
 {
     return rtrim((string)config('site_url', ''), '/') . '/' . ltrim($path, '/');
 }
+
+if (PHP_SAPI !== 'cli') {
+    // chyby jen do logu, nikdy do stránky (vypsaná cesta a kód pomáhají útočníkovi)
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    // parametry v adrese jsou vždy jednoduchý text; pole (?q[]=x) by v kódu dělala chyby a varování
+    foreach ($_GET as $key => $value) {
+        if (!is_string($value)) {
+            unset($_GET[$key]);
+        }
+    }
+}
+
+// limit dotazů z jedné IP na všechny veřejné stránky (přísnější limity mají api.php, rss.php a og.php);
+// cron.php a ai_api.php chrání token a fronta AI posílá výsledky v rychlém sledu
+if (PHP_SAPI !== 'cli' && !in_array(basename((string)($_SERVER['SCRIPT_NAME'] ?? '')), ['cron.php', 'ai_api.php'], true)) {
+    \Hlidac\RateLimit::guard('web', 240, false);
+}

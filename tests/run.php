@@ -932,8 +932,26 @@ check('stránka připravovaných zákonů: fáze, štítky a odkaz do VeKLEP', s
     && str_contains($upHtml, 'Připomínkové řízení nedohledáno') && str_contains($upHtml, 'Mimo plán legislativních prací')
     && str_contains($upHtml, 'odok.gov.cz/portal/veklep/material/KORNUP000001/') && !str_contains($upHtml, 'ekonomické ochraně státu'), true);
 
+echo "Limit dotazů\n";
+$rlDir = $tmp . '/ratelimit';
+$rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);
+check('v limitu projde, nad limit vrátí Retry-After', [$rl('203.0.113.5'), $rl('203.0.113.5'), $rl('203.0.113.5'), is_int($rl('203.0.113.5'))], [null, null, null, true]);
+check('jiná adresa má vlastní počítadlo', $rl('203.0.113.6'), null);
+check('IPv6 ze stejné /64 sítě se počítá dohromady', [Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::1', $rlDir), is_int(Hlidac\RateLimit::hit('api', 1, 60, '2001:db8::ffff', $rlDir))], [null, true]);
+check('soubory neobsahují IP adresu', array_filter(array_map('file_get_contents', glob($rlDir . '/*')), fn($c) => str_contains($c, '203.0.113')) === []
+    && array_filter(glob($rlDir . '/*'), fn($f) => str_contains($f, '203.0.113')) === [], true);
+$peek = fn() => Hlidac\RateLimit::hit('auth', 2, 900, '198.51.100.7', $rlDir, false);
+$fail = fn() => Hlidac\RateLimit::hit('auth', 2, 900, '198.51.100.7', $rlDir);
+$states = [$peek()];
+$fail();
+$states[] = $peek();
+$fail();
+$states[] = is_int($peek());
+check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
+check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
+
 echo "Stránky\n";
-foreach (['index.php' => [], 'pripravovane.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {

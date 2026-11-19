@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Dokumentace dat a API, limity dotazů',
+        'Nová stránka Data a API (odkaz v patičce) popisuje všechny strojové výstupy: adresy JSON API a RSS, filtry, význam každého pole, číselníky (důvody skóre, druhy upozornění, fáze), chybové kódy a příklady pro curl, JavaScript a Python. Ukázky odpovědí jsou živá data. Zároveň platí limity počtu dotazů z jedné IP adresy (API 60 za minutu, RSS 30, stránky 240), aby web nešlo snadno přetížit; při překročení vrátí server kód 429. Při bezpečnostní prověrce jsme také vypnuli vypisování chybových hlášení do stránky, přidali ochranu proti hádání přístupových tokenů a bezpečnostní hlavičky prohlížeče.',
+        [45], false],
     ['2026-11-19', 'Připravované zákony',
         'Nová stránka Připravované ukazuje návrhy zákonů, které ministerstva připravují a Sněmovna je ještě nedostala: zda jsou v připomínkovém řízení, po něm, u vlády, nebo je vláda už schválila. U každého je délka připomínkového řízení a počet připomínkových míst. Kratší připomínky a nedohledané připomínkové řízení označujeme stejně jako u tisků. Jakmile návrh dostane číslo sněmovního tisku, přesune se mezi tisky. Skóre se nemění. Data: otevřená data Úřadu vlády, také jako api.php?pripravovane=1. Díky podnětu z GitHubu.',
         [44], false],

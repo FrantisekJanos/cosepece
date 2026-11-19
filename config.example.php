@@ -34,6 +34,9 @@ return [
     ],
 
     // odkaz na veřejné issues (podněty a chyby)
+    // limity dotazů z jedné IP adresy za minutu (app/RateLimit.php; 0 = bez limitu); popis pro uživatele na data.php#limity
+    'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120],
+
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     // stahování textů pozměňovacích návrhů (Word) a pravidlová analýza přílepků a rozsahu

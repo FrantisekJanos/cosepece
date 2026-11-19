@@ -27,7 +27,13 @@ function aiApiReply(array $data, int $status = 200): never
 $expected = (string)(config('ai.remote_token') ?: config('cron_token', ''));
 // token v hlavičce X-Hlidac-Token; ?token= zůstává jen kvůli starším klientům (končí v access logu)
 $token = (string)($_SERVER['HTTP_X_HLIDAC_TOKEN'] ?? $_GET['token'] ?? '');
+// po 10 chybných tokenech za 15 minut se adresa dočasně odmítá (hádání tokenu)
+$blocked = Hlidac\RateLimit::authBlocked();
+if ($blocked !== null) {
+    aiApiReply(['error' => 'Příliš mnoho chybných pokusů, zkuste to za ' . $blocked . ' s'], 429);
+}
 if ($expected === '' || str_starts_with($expected, 'ZMENTE') || !hash_equals($expected, $token)) {
+    Hlidac\RateLimit::authFailed();
     aiApiReply(['error' => 'Neplatný token'], 403);
 }
 if (empty(config('ai.enabled'))) {
@@ -67,5 +73,6 @@ try {
     }
     aiApiReply(['error' => 'Neznámá akce'], 400);
 } catch (Throwable $ex) {
-    aiApiReply(['error' => $ex->getMessage()], 500);
+    error_log('ai_api.php: ' . $ex->getMessage());
+    aiApiReply(['error' => Hlidac\Http::redact($ex->getMessage())], 500);
 }

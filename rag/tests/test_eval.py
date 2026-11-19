@@ -60,3 +60,22 @@ def test_odpoved_z_vysledku_structured_text_a_chyba():
     chyba = odpoved_z_vysledku(CallToolResult(content=[TextContent(type="text", text="Tisk nenalezen")], is_error=True))
     assert chyba == {"__error__": "Tisk nenalezen"}
     assert check(chyba, {"je_chyba": True})[0]
+
+
+def test_jen_faze_bez_otazek_je_exit_2(monkeypatch, capsys):
+    from eval import run
+    monkeypatch.setenv("MCP_TOKEN", "x")
+    monkeypatch.setattr(run, "_spust", lambda *a: (_ for _ in ()).throw(AssertionError("nemá se spustit")))
+    assert run.main(["--url", "http://localhost/mcp", "--jen-faze", "neexistuje"]) == 2
+    assert "neexistuje" in capsys.readouterr().err
+
+
+def test_vyber_fazi_ma_vlastni_soubor_a_srovnani(tmp_path):
+    from eval.run import nacti_predchozi, nazev_vysledku
+    assert nazev_vysledku("2026-11-19", None) == "2026-11-19"
+    assert nazev_vysledku("2026-11-19", "pr2, dnes") == "2026-11-19-dnes+pr2"
+    for jmeno, ok in (("2026-11-10", 10), ("2026-11-12-dnes+pr2", 3), ("2026-11-15-texty", 1)):
+        (tmp_path / f"{jmeno}.md").write_text(f'<!-- souhrn: {{"ok": {ok}}} -->', encoding="utf-8")
+    assert nacti_predchozi(tmp_path, "2026-11-19") == {"ok": 10}
+    assert nacti_predchozi(tmp_path, "2026-11-19", "dnes,pr2") == {"ok": 3}
+    assert nacti_predchozi(tmp_path, "2026-11-19", "pr2") is None

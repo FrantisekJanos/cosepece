@@ -72,11 +72,23 @@ def check(odpoved: dict | str, kontrola: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _faze(jen_faze: str | None) -> list[str]:
+    return sorted({f.strip() for f in (jen_faze or "").split(",") if f.strip()})
+
+
 def vyber_otazky(otazky: list[dict], jen_faze: str | None) -> list[dict]:
-    if not jen_faze:
+    faze = _faze(jen_faze)
+    if not faze:
         return otazky
-    faze = {f.strip() for f in jen_faze.split(",") if f.strip()}
     return [o for o in otazky if o.get("faze") in faze]
+
+
+def nazev_vysledku(dnes: str, jen_faze: str | None) -> str:
+    """Jméno souboru bez přípony: celý běh RRRR-MM-DD, výběr fází RRRR-MM-DD-<fáze>."""
+    faze = _faze(jen_faze)
+    if not faze:
+        return dnes
+    return dnes + "-" + "+".join(re.sub(r"[^\w.]", "_", f) for f in faze)
 
 
 def souhrn(radky: list[dict]) -> dict:
@@ -114,9 +126,12 @@ def render_tabulka(radky: list[dict], datum: str, predchozi: dict | None) -> str
     return "\n".join(out)
 
 
-def nacti_predchozi(slozka: Path, dnes: str) -> dict | None:
-    """Souhrn z posledního souboru ve složce jiného než dnešního data."""
-    soubory = sorted(p for p in slozka.glob("*.md") if p.stem != dnes)
+def nacti_predchozi(slozka: Path, dnes: str, jen_faze: str | None = None) -> dict | None:
+    """Souhrn z posledního souboru stejného druhu (celý běh, nebo stejný výběr fází) jiného než dnešního data.
+    Běh jen s několika fázemi se s celým během nesrovnává (jiný počet otázek)."""
+    pripona = nazev_vysledku(dnes, jen_faze)[len(dnes):]
+    soubory = sorted(p for p in slozka.glob("*.md")
+                     if re.fullmatch(r"\d{4}-\d{2}-\d{2}" + re.escape(pripona), p.stem) and not p.stem.startswith(dnes))
     if not soubory:
         return None
     m = SOUHRN_RE.search(soubory[-1].read_text(encoding="utf-8"))
@@ -174,11 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         print("Chybí proměnná prostředí MCP_TOKEN.", file=sys.stderr)
         return 2
     otazky = vyber_otazky(json.loads(OTAZKY.read_text(encoding="utf-8")), args.jen_faze)
+    if not otazky:
+        print(f"Žádná otázka nemá fázi z --jen-faze {args.jen_faze!r}.", file=sys.stderr)
+        return 2
     radky = asyncio.run(_spust(args.url, token, otazky))
     dnes = date.today().isoformat()
-    md = render_tabulka(radky, dnes, nacti_predchozi(VYSLEDKY, dnes))
+    md = render_tabulka(radky, dnes, nacti_predchozi(VYSLEDKY, dnes, args.jen_faze))
     VYSLEDKY.mkdir(exist_ok=True)
-    (VYSLEDKY / f"{dnes}.md").write_text(md, encoding="utf-8")
+    (VYSLEDKY / f"{nazev_vysledku(dnes, args.jen_faze)}.md").write_text(md, encoding="utf-8")
     print(md)
     return 0 if all(r["ok"] for r in radky) else 1
 

@@ -4,10 +4,12 @@
 1. otevřená data (osoby, kluby, schůze, body, kostra částí, rec) – nejvýš jednou za 20 hodin
 2. objevení nových částí podle indexu a jednacích dnů posledních schůzí
 3. stažení částí s prošlou kontrolou, hlídání změn (hash)
-4. složení projevů u schůzí, kde se něco změnilo, a přepočet rozpravy (projev_tisk, druh, projev_pn)
+4. složení projevů u schůzí, kde se něco změnilo, a přepočet rozpravy (projev_tisk, druh, projev_pn);
+   všech schůzí po --reassemble, po importu otevřených dat a při prázdné projev_tisk (první běh po nasazení)
 5. texty návrhů zákonů a PN (schéma texty), samostatně: chyba neshodí běh stenoprotokolů
 --prepocitej-rozpravu: jen krok 4 pro všechny schůze z uložených částí, bez sítě (po změně pravidel).
-Výsledek se zapíše do steno.beh a meta.steno_last_result.
+Výsledek se zapíše do steno.beh a meta.steno_last_result (přepočet jen do steno.beh: stav_dat dál ukazuje
+poslední běh synchronizace).
 """
 from __future__ import annotations
 
@@ -41,6 +43,13 @@ def _schuze_s_html(conn, obdobi: int) -> set[int]:
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT schuze FROM steno.cast WHERE obdobi = %s AND html IS NOT NULL", (obdobi,))
         return {r[0] for r in cur.fetchall()}
+
+
+def _bez_rozpravy(conn) -> bool:
+    """projev_tisk je prázdná (nasazení rozpravy, nová databáze): rozprava se ještě nepřepočítala."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT NOT EXISTS (SELECT 1 FROM steno.projev_tisk)")
+        return cur.fetchone()[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,8 +100,9 @@ def main(argv: list[str] | None = None) -> int:
             cr = ingest.crawl(conn, fetcher, obdobi, limit=args.limit)
             result["crawl"] = {k: v for k, v in cr.__dict__.items() if k != "dirty"}
             dirty = cr.dirty
-            if args.reassemble or "opendata" in result:
-                # nová rec data mohou doplnit osoby a body u všech schůzí
+            if args.reassemble or "opendata" in result or _bez_rozpravy(conn):
+                # nová rec data mohou doplnit osoby a body u všech schůzí; prázdná projev_tisk = po nasazení
+                # rozpravy se musí přepočítat všechny schůze, jinak nástroje nad ní do importu dat nic nevrátí
                 dirty = _schuze_s_html(conn, obdobi)
         assembled = {}
         for s in sorted(dirty):
@@ -122,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     result["seconds"] = round(time.time() - started, 1)
     with conn.cursor() as cur:
         cur.execute("UPDATE steno.beh SET konec = now(), vysledek = %s WHERE id = %s", (json.dumps(result), run_id))
-        _meta(cur, "steno_last_result", json.dumps(result, ensure_ascii=False))
+        if not args.prepocitej_rozpravu:
+            # přepočet nemá crawl ani texty: stav_dat má dál ukazovat poslední běh synchronizace
+            _meta(cur, "steno_last_result", json.dumps(result, ensure_ascii=False))
         cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_ID,))
     conn.commit()
     print(json.dumps(result, ensure_ascii=False))

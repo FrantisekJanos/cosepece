@@ -496,6 +496,8 @@ def test_run_prepocitej_rozpravu_bez_site(conn, monkeypatch, capsys):
     sql(conn, f"CREATE SCHEMA {SCHEMA_META}")
     sql(conn, f"CREATE TABLE {SCHEMA_META}.meta (k text PRIMARY KEY, v text)")
     sql(conn, f"INSERT INTO {SCHEMA_META}.meta VALUES ('steno_obdobi', '10')")
+    posledni = '{"crawl": {"fetched": 12}, "texty": {"ok": true}}'
+    sql(conn, f"INSERT INTO {SCHEMA_META}.meta VALUES ('steno_last_result', %s)", (posledni,))
     sql(conn, f"SET search_path TO {SCHEMA_META}, public")
     monkeypatch.setattr(db, "connect", lambda autocommit=False: conn)
     vloz_cast(conn)
@@ -508,3 +510,40 @@ def test_run_prepocitej_rozpravu_bez_site(conn, monkeypatch, capsys):
     assert vysledek["rozprava"] == {"projevu": 3, "projev_tisk": 6, "projev_pn": 1}
     assert "texty" not in vysledek and "discover" not in vysledek
     assert sql(conn, "SELECT vysledek->'rozprava'->>'projevu' FROM steno.beh") == [("3",)]
+    # výsledek posledního běhu synchronizace (stav_dat) přepočet nepřepíše
+    assert sql(conn, f"SELECT v FROM {SCHEMA_META}.meta WHERE k = 'steno_last_result'") == [(posledni,)]
+
+
+class _Fetcher:
+    requests = 0
+
+    def __init__(self, delay=None):
+        pass
+
+
+def test_run_slozi_vse_pri_prazdne_projev_tisk(conn, monkeypatch, capsys):
+    """Po nasazení rozpravy je projev_tisk prázdná: běžný běh složí všechny schůze s uloženými částmi (jako
+    --reassemble), i když crawl nic nezměnil; další běh už jen schůze se změnou."""
+    from hlidac_rag import db, run
+    from hlidac_rag.psp.ingest import CrawlResult
+
+    monkeypatch.setattr(run, "Fetcher", _Fetcher)
+    monkeypatch.setattr(run.ingest, "discover", lambda *a, **k: 0)
+    monkeypatch.setattr(run.ingest, "crawl", lambda *a, **k: CrawlResult())
+    monkeypatch.setattr(run, "sync_texty", lambda *a, **k: {})
+    sql(conn, f"CREATE SCHEMA {SCHEMA_META}")
+    sql(conn, f"CREATE TABLE {SCHEMA_META}.meta (k text PRIMARY KEY, v text)")
+    sql(conn, f"INSERT INTO {SCHEMA_META}.meta VALUES ('steno_obdobi', '10')")
+    sql(conn, f"SET search_path TO {SCHEMA_META}, public")
+    monkeypatch.setattr(db, "connect", lambda autocommit=False: conn)
+    vloz_cast(conn)
+
+    assert run.main(["--no-opendata"]) == 0
+    vysledek = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert vysledek["assemble"]["schuze"] == 1 and vysledek["assemble"]["nove"] == 3
+    over_slozenou_schuzi(conn)
+    assert run.main(["--no-opendata"]) == 0
+    vysledek = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert vysledek["assemble"]["schuze"] == 0
+    # běžný běh výsledek pro stav_dat zapíše
+    assert json.loads(sql(conn, f"SELECT v FROM {SCHEMA_META}.meta WHERE k = 'steno_last_result'")[0][0]) == vysledek

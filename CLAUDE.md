@@ -108,6 +108,10 @@ tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-
 ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
 (PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
 
+Tokeny MCP z webu: `app/McpTokens.php` + formulář v `mcp.php`; zapisuje do `mcp.token` služby rag/ (jen sha256,
+jméno „web: datum · účel“), jen při PostgreSQL. Ochrana: podepsaný údaj formuláře (3 s – 1 h), skryté pole,
+3 tokeny/IP/den (RateLimit 'mcp_token', okno 86400 s), 200 tokenů/den celkem (`config.php → mcp`).
+
 Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
 skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh
 bootstrap (meta `prep_alerts_bootstrapped`). `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP.

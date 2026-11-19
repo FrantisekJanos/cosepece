@@ -299,3 +299,13 @@ table.vote-clubs td:not(:first-child), table.vote-clubs th:not(:first-child) { t
 .pn-item:target { background: #FFF7E0; border-radius: 6px; }
 @media (max-width: 640px) { .search-top, .search-top .search-box, .search-top input { width: 100%; } .search-top { display: flex; } .search-top .search-box { flex: 1; } }
 .upcoming-list li:target { background: #FFF7E0; }
+
+/* vydání tokenu MCP (mcp.php) */
+.token-form { display: grid; gap: 8px; max-width: 560px; }
+.token-form input[type="text"] { height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 10px; font: inherit; font-size: 14px; }
+.token-form .btn { justify-self: start; }
+.token-form .hp { position: absolute; left: -9999px; width: 1px; height: 1px; }
+.token-box { padding: 14px 16px; border: 1px solid #BBD7C3; background: #F1F8F3; border-radius: 10px; }
+.token-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.token-row code { font-size: 14px; padding: 8px 10px; background: #fff; border: 1px solid var(--line); word-break: break-all; }
+.token-error { padding: 10px 12px; border-left: 3px solid #B91C1C; background: #FDF2F2; border-radius: 0; }

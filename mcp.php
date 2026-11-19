@@ -16,6 +16,19 @@ if ($mcpUrl === '') {
 }
 $issues = (string)config('issues_url', '');
 
+// vydání tokenu (formulář níže); výsledek se ukáže jen v této odpovědi, nic se neukládá do mezipaměti
+$tokens = new Hlidac\McpTokens(db(), config());
+$canIssue = $tokens->available();
+$issued = null;
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $canIssue) {
+    $form = array_map(fn($v) => is_string($v) ? $v : '', $_POST);
+    $issued = $tokens->issue($form, (string)($_SERVER['REMOTE_ADDR'] ?? ''));
+    if (!headers_sent()) {
+        header('Cache-Control: no-store');
+    }
+}
+$tokenValue = $issued['token'] ?? 'VÁŠ_TOKEN';
+
 // nástroje podle okruhů: [název, popis]
 $tools = [
     'Návrhy zákonů a zákony' => [
@@ -97,13 +110,31 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
         <dt>Přihlášení</dt><dd>hlavička <code>Authorization: Bearer &lt;token&gt;</code></dd>
         <dt>Limity</dt><dd>60 volání za minutu a 2 000 za den na jeden token</dd>
       </dl>
-      <p>Token zatím vydáváme na požádání (novináři, výzkum, neziskové organizace i jednotlivci).<?php if ($issues !== ''): ?> <a href="<?= e($issues) ?>">Napište nám</a>, k čemu ho chcete použít; token pak pošleme soukromě, nikdy ho nezveřejňujte v issue ani jinde.<?php endif; ?></p>
+      <?php if (isset($issued['token'])): ?>
+        <div class="token-box" role="status">
+          <p><strong>Váš token</strong> – zkopírujte si ho hned, znovu ho už neuvidíte (ukládáme jen jeho otisk):</p>
+          <div class="token-row"><code id="mcp-token"><?= e($issued['token']) ?></code><button type="button" class="btn" data-copy="mcp-token">Kopírovat</button></div>
+          <p class="small muted">Níže v návodu je token už doplněný. Token nikomu neposílejte a nezveřejňujte; kdo ho zná, čerpá vaše limity. Při úniku si vytvořte nový a <?php if ($issues !== ''): ?><a href="<?= e($issues) ?>">napište nám</a>, ať starý zrušíme<?php else: ?>dejte vědět, ať starý zrušíme<?php endif; ?>.</p>
+        </div>
+      <?php elseif ($canIssue): ?>
+        <?php if (isset($issued['error'])): ?><p class="token-error" role="alert"><?= e($issued['error']) ?></p><?php endif; ?>
+        <form class="token-form" method="post" action="mcp.php#pristup">
+          <label for="ucel">K čemu MCP použijete? <span class="muted small">(nepovinné, pomůže nám s plánováním; nepište osobní údaje)</span></label>
+          <input id="ucel" name="ucel" type="text" maxlength="80" placeholder="např. rešerše k článku, výzkum, vlastní projekt" autocomplete="off">
+          <input type="text" name="web" value="" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
+          <input type="hidden" name="formular" value="<?= e($tokens->formToken()) ?>">
+          <button type="submit" class="btn">Získat token</button>
+          <p class="small muted">Bez registrace a bez e-mailu. Z jedné adresy nejvýš <?= (int)$tokens->limits()['per_ip'] ?> tokeny denně. Token se zobrazí jen jednou.</p>
+        </form>
+      <?php else: ?>
+        <p>Token zatím vydáváme na požádání.<?php if ($issues !== ''): ?> <a href="<?= e($issues) ?>">Napište nám</a>, k čemu ho chcete použít; token pak pošleme soukromě, nikdy ho nezveřejňujte v issue ani jinde.<?php endif; ?></p>
+      <?php endif; ?>
     </section>
 
     <section class="card pad" id="pripojeni">
       <h2>Připojení</h2>
       <h3>Claude Code</h3>
-      <pre class="code"><code>claude mcp add --transport http hlidac <?= e($mcpUrl) ?> --header "Authorization: Bearer VÁŠ_TOKEN"</code></pre>
+      <pre class="code"><code>claude mcp add --transport http hlidac <?= e($mcpUrl) ?> --header "Authorization: Bearer <?= e($tokenValue) ?>"</code></pre>
       <h3>Claude Desktop a další klienti s konfiguračním souborem</h3>
       <p class="small">Klienti, kteří neumí poslat vlastní hlavičku, se připojí přes most <code>mcp-remote</code> (potřebuje Node.js):</p>
       <pre class="code"><code>{
@@ -111,7 +142,7 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
     "hlidac": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "<?= e($mcpUrl) ?>",
-               "--header", "Authorization: Bearer VÁŠ_TOKEN"]
+               "--header", "Authorization: Bearer <?= e($tokenValue) ?>"]
     }
   }
 }</code></pre>
@@ -150,5 +181,14 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
     </section>
   </div>
 </div>
+<script>
+// kopírování tokenu do schránky
+document.querySelectorAll('[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var t = document.getElementById(b.getAttribute('data-copy')).textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = 'Zkopírováno'; }, function () { b.textContent = 'Označte a zkopírujte ručně'; });
+  });
+});
+</script>
 <?php
 View::footer();

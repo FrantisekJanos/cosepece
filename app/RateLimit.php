@@ -43,6 +43,8 @@ final class RateLimit
             if (!is_array($state) || (int)($state['start'] ?? 0) <= $now - $window) {
                 $state = ['start' => $now, 'count' => 0];
             }
+            // délka okna v souboru: úklid nesmí smazat záznam s delším oknem (např. den u vydávání tokenů)
+            $state['w'] = $window;
             if ($count) {
                 $state['count'] = (int)$state['count'] + 1;
                 ftruncate($fh, 0);
@@ -111,9 +113,14 @@ final class RateLimit
 
     private static function cleanup(string $dir): void
     {
-        // záznamy starší než hodina už nic neomezují
+        // záznamy, jejichž okno skončilo, už nic neomezují (bez údaje o okně: po hodině)
         foreach (glob($dir . '/*') ?: [] as $file) {
-            if (@filemtime($file) < time() - 3600) {
+            if (@filemtime($file) >= time() - 3600) {
+                continue;
+            }
+            $state = json_decode((string)@file_get_contents($file), true);
+            $end = is_array($state) ? (int)($state['start'] ?? 0) + (int)($state['w'] ?? 3600) : 0;
+            if ($end < time()) {
                 @unlink($file);
             }
         }

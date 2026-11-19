@@ -27,6 +27,7 @@ from hlidac_rag.texty.stahovani import (
     odkaz_docx_tisku,
     odkaz_originalu,
     odkaz_schvalene_stranky,
+    vycisti_kody_poli,
 )
 
 log = logging.getLogger("hlidac_rag")
@@ -57,13 +58,21 @@ ON CONFLICT (druh, ct, cislo_pn, verze) DO UPDATE SET
                       THEN NULL ELSE texty.dokument.rozdeleno_at END
 """
 
-# převzetí z tabulky PHP webu; řádek se mění jen při jiném hashi textu
+# kandidáti na převzetí z tabulky PHP webu: chybějící řádek nebo jiný hash SUROVÉHO textu PHP
+PREVZETI_KANDIDATI = """
+SELECT s.ct, {cislo} AS cislo_pn, s.docx_url, s.text,
+       encode(sha256(convert_to(s.text, 'UTF8')), 'hex') AS hash
+FROM {tabulka} s
+LEFT JOIN texty.dokument d ON d.druh = %(druh)s AND d.ct = s.ct AND d.cislo_pn = {cislo}
+                          AND d.verze = 'puvodni'
+WHERE s.text IS NOT NULL AND btrim(s.text) <> ''
+  AND (d.id IS NULL OR d.hash IS DISTINCT FROM encode(sha256(convert_to(s.text, 'UTF8')), 'hex'))
+"""
+
+# uložený text je očištěný od kódů polí, hash zůstává hashem surového textu PHP
 PREVZETI = """
 INSERT INTO texty.dokument AS d (druh, ct, cislo_pn, verze, docx_url, zdroj_textu, text, hash, znaku)
-SELECT %(druh)s, s.ct, {cislo}, 'puvodni', s.docx_url, %(zdroj)s, s.text,
-       encode(sha256(convert_to(s.text, 'UTF8')), 'hex'), char_length(s.text)
-FROM {tabulka} s
-WHERE s.text IS NOT NULL AND btrim(s.text) <> ''
+VALUES (%(druh)s, %(ct)s, %(cislo_pn)s, 'puvodni', %(docx_url)s, %(zdroj)s, %(text)s, %(hash)s, %(znaku)s)
 ON CONFLICT (druh, ct, cislo_pn, verze) DO UPDATE SET
   docx_url = EXCLUDED.docx_url, zdroj_textu = EXCLUDED.zdroj_textu, text = EXCLUDED.text,
   hash = EXCLUDED.hash, znaku = EXCLUDED.znaku, chyba = NULL, rozdeleno_at = NULL
@@ -98,7 +107,7 @@ def _docx(fetcher: Fetcher, url: str) -> tuple[str | None, str | None]:
     if data is None:
         return None, DOCX_CHYBI
     try:
-        text = docx_to_text(data)
+        text = vycisti_kody_poli(docx_to_text(data))
     except (zipfile.BadZipFile, KeyError) as e:
         log.warning("vadný DOCX %s: %s", url, e)
         return None, VADNY_DOCX
@@ -109,13 +118,19 @@ def _docx(fetcher: Fetcher, url: str) -> tuple[str | None, str | None]:
 
 def _prevezmi(conn: psycopg.Connection) -> int:
     n = 0
+    # pojistka: dva řádky se stejným (ct, cislo) by ON CONFLICT shodily celý krok
+    pn_text = "(SELECT DISTINCT ON (ct, cislo) * FROM pn_text ORDER BY ct, cislo, id_dokument DESC)"
+    davky = (("tisk", "tisk_text", "0", "tisk_text"), ("pn", "pn_text", "s.cislo", pn_text))
     with conn.cursor() as cur:
-        cur.execute(PREVZETI.format(cislo="0", tabulka="tisk_text"), {"druh": "tisk", "zdroj": "tisk_text"})
-        n += cur.rowcount
-        # pojistka: dva řádky se stejným (ct, cislo) by ON CONFLICT shodily celý krok
-        pn_text = "(SELECT DISTINCT ON (ct, cislo) * FROM pn_text ORDER BY ct, cislo, id_dokument DESC)"
-        cur.execute(PREVZETI.format(cislo="s.cislo", tabulka=pn_text), {"druh": "pn", "zdroj": "pn_text"})
-        n += cur.rowcount
+        for druh, zdroj, cislo, tabulka in davky:
+            cur.execute(PREVZETI_KANDIDATI.format(cislo=cislo, tabulka=tabulka), {"druh": druh})
+            for ct, cislo_pn, docx_url, raw, hash_ in cur.fetchall():
+                text = vycisti_kody_poli(raw)
+                cur.execute(PREVZETI, {
+                    "druh": druh, "ct": ct, "cislo_pn": cislo_pn, "docx_url": docx_url, "zdroj": zdroj,
+                    "text": text, "hash": hash_, "znaku": len(text),
+                })
+                n += cur.rowcount
     conn.commit()
     return n
 

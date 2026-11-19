@@ -519,3 +519,18 @@ def test_selhani_deleni_po_zmene_textu_smaze_stare_celky(conn, monkeypatch):
         tools.get_cel(conn, ct=311, oznaceni="Čl. I")
     assert tools.hledej_v_textech(conn, "dani", ct=311)["celkem"] == 0
     conn.commit()
+
+
+def test_prevzeti_cisti_kody_poli_hash_je_ze_suroveho_textu(conn):
+    import hashlib
+
+    from hlidac_rag.texty.ingest import sync_texty
+
+    raw = 'Čl. III\nHYPERLINK "https://www.e-sbirka.cz/"Zákon č. 2/1969 Sb., se mění.'
+    sql(conn, "INSERT INTO tisk_text (ct, text) VALUES (77, %s)", (raw,))
+    assert sync_texty(conn, FakeFetcher(), 10)["prevzato"] == 1
+    text, h = sql(conn, "SELECT text, hash FROM texty.dokument")[0]
+    assert "HYPERLINK" not in text and "Zákon č. 2/1969 Sb." in text
+    assert h == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    # nezměněný text PHP se podruhé nepřebírá
+    assert sync_texty(conn, FakeFetcher(), 10)["prevzato"] == 0

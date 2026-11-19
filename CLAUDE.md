@@ -104,6 +104,10 @@ tisků, připravované, druhy problémů, stránky) do `data/cache/search-index-
 ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejným algoritmem jako `SearchIndex::search()`
 (PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
 
+Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
+a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,
+připravované podle čísla v názvu. Hledání (`SearchIndex`) bere názvy zákonů ze stejného slovníku.
+
 Soubory: `app/` (třídy, namespace `Hlidac\`), stránky v kořeni (`index.php`, `tisky.php`, `tisk.php`,
 `upozorneni.php`, `rss.php`, `revize.php`), `assets/style.css`, `data/` (SQLite, cache, logy – neveřejné, .htaccess).
 

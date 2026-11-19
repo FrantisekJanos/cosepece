@@ -212,6 +212,56 @@ final class Repo
         return $out;
     }
 
+    /**
+     * Spolehlivost rozboru AI (#7 bod 7): shoda rychlého a silnějšího modelu u ověřených textů (zvlášť vysoká
+     * hodnocení a namátkový vzorek nízkých) a rozptyl opakovaných běhů rychlého modelu u hraničních hodnocení.
+     */
+    public function aiReliability(?array $cfg = null): array
+    {
+        $cfg ??= config();
+        $verifier = AiReviewer::verifyModel($cfg);
+        $fast = AiReviewer::model($cfg);
+        $r = AiReviewer::repeatConfig($cfg);
+        $verifyMin = (int)($cfg['ai']['verify_min'] ?? 6);
+        $pointsFrom = 4; // od této závažnosti dává rozbor AI body (Scorer)
+        $empty = fn() => ['n' => 0, 'agree' => 0, 'lower' => 0, 'higher' => 0, 'to_points' => 0, 'to_finding' => 0];
+        $out = ['high' => $empty(), 'sample' => $empty(), 'runs' => ['n' => 0, 'stable' => 0, 'changed_points' => 0, 'max_spread' => 0]];
+        foreach (['tisk_text' => 'ct', 'pn_text' => 'id_dokument'] as $table => $id) {
+            $rows = $this->db->all("SELECT $id AS id, ai_score, ai_prev_score FROM $table
+                WHERE ai_model = ? AND ai_prev_score IS NOT NULL AND ai_prev_model = ? AND ai_prompt = ?", [$verifier, $fast, AiReviewer::PROMPT_VERSION]);
+            foreach ($rows as $row) {
+                $prev = (int)$row['ai_prev_score'];
+                $now = (int)$row['ai_score'];
+                $group = $prev >= $verifyMin ? 'high'
+                    : ($prev < $r['sample_below'] && (int)$row['id'] % $r['sample_every'] === AiReviewer::SAMPLE_REMAINDER ? 'sample' : null);
+                if ($group === null) {
+                    continue;
+                }
+                $g = &$out[$group];
+                $g['n']++;
+                $g['agree'] += abs($now - $prev) <= 1 ? 1 : 0;
+                $g['lower'] += $now <= $prev - 2 ? 1 : 0;
+                $g['higher'] += $now >= $prev + 2 ? 1 : 0;
+                $g['to_points'] += $prev < $pointsFrom && $now >= $pointsFrom ? 1 : 0;
+                $g['to_finding'] += $prev < $verifyMin && $now >= $verifyMin ? 1 : 0;
+                unset($g);
+            }
+            foreach ($this->db->all("SELECT ai_runs FROM $table WHERE ai_run_count > 1 AND ai_prompt = ?", [AiReviewer::PROMPT_VERSION]) as $row) {
+                $runs = array_map('intval', json_decode((string)$row['ai_runs'], true) ?: []);
+                if (count($runs) < 2) {
+                    continue;
+                }
+                $spread = max($runs) - min($runs);
+                $out['runs']['n']++;
+                $out['runs']['stable'] += $spread <= 1 ? 1 : 0;
+                $out['runs']['max_spread'] = max($out['runs']['max_spread'], $spread);
+                // medián dává body jinak než samotný první běh
+                $out['runs']['changed_points'] += ($runs[0] >= $pointsFrom) !== (AiReviewer::median($runs) >= $pointsFrom) ? 1 : 0;
+            }
+        }
+        return $out;
+    }
+
     public function strongAiFindings(): array
     {
         // ct => nejvyšší ověřená závažnost AI od finding_ai_min, s ověřenou citací

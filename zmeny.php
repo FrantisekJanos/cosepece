@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Spolehlivější rozbor AI: opakované běhy a namátková kontrola',
+        'Text, kterému rychlý model dá hraniční závažnost 3–7 (tam se rozhoduje, zda dostane body), posoudí třikrát a platí prostřední hodnota; jedno nahodilé hodnocení tak skóre neurčí. Každý desátý text s nízkým hodnocením nově posoudí i silnější model, aby se ukázalo, kolik problémů rychlý model přehlíží; když najde závažný problém, jeho rozbor platí. Na stránce Jak hodnotíme je nový oddíl Jak ověřujeme rozbor AI s průběžnými čísly o shodě modelů. Skóre některých tisků se může změnit, jak doběhnou opakované běhy. Díky podnětu z GitHubu (#7).',
+        [50], true],
     ['2026-11-19', 'Stránka zákona',
         'Každý zákon má vlastní stránku (např. zakon.php?z=159/2006, odkaz z detailu tisku i z hledání): všechny tisky tohoto období, které ho mění, pozměňovací návrhy k jiným tiskům, jejichž text tento zákon mění (možné přílepky), a připravované změny u vlády. Odkaz vede i na platné znění v e-Sbírce a na RSS jen k tomuto zákonu. Přehled všech zákonů je v patičce pod odkazem Zákony. Skóre se nemění.',
         [51], false],

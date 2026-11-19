@@ -468,6 +468,39 @@ check('pozdní výsledek 1. kola nepřepíše ověřený rozbor', [(int)db()->va
 $guard->saveResult('tisk', $guardCt, ['zavaznost' => 5, 'titulek' => 'y', 'citace' => ['Lhůta činí 4 roky.']], $verifier);
 check('ověřovací model rozbor přepsat smí', (int)db()->value('SELECT ai_score FROM tisk_text WHERE ct = ?', [$guardCt]), 5);
 
+echo "Spolehlivost rozboru AI (#7 bod 7)\n";
+check('medián (u sudého počtu nižší)', [Hlidac\AiReviewer::median([5, 2, 6]), Hlidac\AiReviewer::median([5, 2]), Hlidac\AiReviewer::median([4])], [5, 2, 4]);
+$haiku = Hlidac\AiReviewer::model(config());
+$sonnet = Hlidac\AiReviewer::verifyModel(config());
+// tisk 311: 311 % 4 = 3 → při sample_every = 4 je ve vzorku nízkých hodnocení
+$relCfg = config();
+$relCfg['ai']['sample_every'] = 4;
+$rel = new Hlidac\AiReviewer(db(), $relCfg);
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, fetched_at) VALUES (311, 'Lhůta činí 4 roky.', 18, '[]', ?)", [date('Y-m-d H:i:s')]);
+$inQueue = fn(bool $verify) => in_array(311, array_column($rel->queue(50, 311, $verify), 'id'), true);
+$state = fn() => db()->one('SELECT ai_score, ai_run_count, ai_runs, ai_json FROM tisk_text WHERE ct = 311');
+$rel->saveResult('tisk', 311, ['zavaznost' => 5, 'titulek' => 'a', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+check('hraniční hodnocení 5 → zpět do fronty na další běh', [(int)$state()['ai_run_count'], $inQueue(false)], [1, true]);
+$rel->saveResult('tisk', 311, ['zavaznost' => 2, 'titulek' => 'b', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+check('po 2. běhu nižší medián a ještě 3. běh', [(int)$state()['ai_score'], (int)$state()['ai_run_count'], $inQueue(false)], [2, 2, true]);
+$rel->saveResult('tisk', 311, ['zavaznost' => 6, 'titulek' => 'c', 'citace' => ['Lhůta činí 4 roky.']], $haiku);
+$st = $state();
+// uložený je jen aktuální rozbor: po 2. běhu „b“ (medián 2), po 3. běhu bližší mediánu 5 je „c“ (6) než „b“ (2)
+check('po 3. běhu medián 5, rozbor z běhu blíž mediánu, fronta hotová', [(int)$st['ai_score'], (int)$st['ai_run_count'], json_decode($st['ai_runs'], true),
+    json_decode($st['ai_json'], true)['titulek'], $inQueue(false)], [5, 3, [5, 2, 6], 'c', false]);
+db()->run('UPDATE tisk_text SET ai_score = 1, ai_runs = NULL, ai_run_count = NULL, ai_prev_score = NULL, ai_prev_model = NULL WHERE ct = 311');
+check('nízké hodnocení mimo pásmo se neopakuje', $inQueue(false), false);
+check('nízké hodnocení ve vzorku jde k ověření silnějším modelem', $inQueue(true), true);
+$other = config();
+$other['ai']['sample_every'] = 5;
+check('nízké hodnocení mimo vzorek k ověření nejde', in_array(311, array_column((new Hlidac\AiReviewer(db(), $other))->queue(50, 311, true), 'id'), true), false);
+$rel->saveResult('tisk', 311, ['zavaznost' => 7, 'titulek' => 'd', 'citace' => ['Lhůta činí 4 roky.']], $sonnet);
+$stats = (new Hlidac\Repo(db()))->aiReliability($relCfg);
+check('statistika vzorku: silnější model našel přehlédnutý problém', [$stats['sample']['n'], $stats['sample']['to_points'], $stats['sample']['to_finding'], $stats['sample']['higher']], [1, 1, 1, 1]);
+db()->run('DELETE FROM tisk_text WHERE ct = 311');
+db()->run("DELETE FROM ai_revize WHERE druh = 'tisk' AND ref_id = 311");
+
 $bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
 $fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
 check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);

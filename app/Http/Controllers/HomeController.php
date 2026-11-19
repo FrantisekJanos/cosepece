@@ -12,6 +12,6 @@ final class HomeController
 {
     public function index(OverviewRequestDTO $dto, OverviewService $overview): Response
     {
-        return response()->view('index', $overview->data($dto->findingsShown));
+        return response()->view('index', $overview->data($dto->findingsShown, $dto->sort, $dto->group));
     }
 }

@@ -930,6 +930,39 @@ check('stránka připravovaných zákonů: fáze, štítky a odkaz do VeKLEP', s
     && str_contains($upHtml, 'Připomínkové řízení nedohledáno') && str_contains($upHtml, 'Mimo plán legislativních prací')
     && str_contains($upHtml, 'odok.gov.cz/portal/veklep/material/KORNUP000001/') && !str_contains($upHtml, 'ekonomické ochraně státu'), true);
 
+echo "Řazení a filtr hlavních nálezů\n";
+$fr = app(App\Services\FindingsService::class);
+$base = $fr->findings(0);
+$sets = array_map(fn(string $s) => array_column($fr->findings(0, $s)['rows'], 'ct'), array_keys(App\Services\FindingsService::FINDING_SORTS));
+check('každé řazení vrací stejné tisky', array_map(fn(array $c) => (sort($c) ? $c : $c), $sets) === array_fill(0, count($sets), (function () use ($sets) { $c = $sets[0]; sort($c); return $c; })()), true);
+$aiRows = $fr->findings(0, 'ai')['rows'];
+$aiVals = array_map(fn($t) => $t['ai_verified'] ?? -1, $aiRows);
+$sortedAi = $aiVals;
+rsort($sortedAi);
+check('řazení podle AI: ověřená závažnost sestupně, bez nálezu na konci', $aiVals, $sortedAi);
+check('fáze před hlasováním', array_map([App\Services\FindingsService::class, 'votePhaseRank'], ['3. čtení', 'Sněmovna po vetu', '2. čtení', '1. čtení', 'V Senátu', 'Vyhlášeno']), [0, 0, 1, 2, 3, 3]);
+$voteRanks = array_map(fn($t) => App\Services\FindingsService::votePhaseRank((string)$t['faze']), $fr->findings(0, 'hlasovani')['rows']);
+$sortedRanks = $voteRanks;
+sort($sortedRanks);
+check('řazení „blíží se hlasování“ podle fáze', $voteRanks, $sortedRanks);
+check('druh problému z důvodů skóre, ověřené AI a krátkých připomínek',
+    [$fr->problemGroups(['reasons' => json_encode([['key' => 'pn_other_law'], ['key' => 'p90_requested'], ['key' => 'surge']])]),
+     $fr->problemGroups(['reasons' => '[]'], ['score' => 8, 'rider' => true, 'retro' => true], true),
+     $fr->problemGroups(['reasons' => json_encode([['key' => 'late_pn']])])],
+    [['prilepky', 'par90'], ['prilepky', 'pripominky', 'zpetne'], []]);
+foreach (array_keys(App\Services\FindingsService::PROBLEM_GROUPS) as $g) {
+    $sub = $fr->findings(0, 'skore', $g);
+    $ok = count($sub['rows']) === $base['counts'][$g] && array_filter($sub['rows'], fn($t) => !in_array($g, $t['groups'], true)) === [];
+    if (!$ok) {
+        break;
+    }
+}
+check('filtr druhu: jen tisky toho druhu, počet sedí se štítkem', $ok, true);
+$idx = testPage('/', ['razeni' => 'ai', 'druh' => 'zpetne']);
+check('úvodní stránka s řazením a filtrem v adrese', str_contains($idx, 'Závažnost textu (AI)') && str_contains($idx, 'Co hledám')
+    && (bool)preg_match('~class="pill active"[^>]*>Zpětné použití~', $idx) && (bool)preg_match('~class="pill active"[^>]*>Závažnost textu \(AI\)~', $idx), true);
+check('neznámé řazení a druh se odmítnou validací DTO', app(Illuminate\Contracts\Http\Kernel::class)->handle(Illuminate\Http\Request::create('/', 'GET', ['razeni' => 'cokoli', 'druh' => '<script>']))->getStatusCode(), 422);
+
 echo "Limit dotazů\n";
 $rlDir = $tmp . '/ratelimit';
 $rl = fn(string $ip) => Hlidac\RateLimit::hit('api', 3, 60, $ip, $rlDir);

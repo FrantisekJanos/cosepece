@@ -9,7 +9,7 @@ use App\Services\BillPresentationService;
 
 final class BillListingService
 {
-    public function __construct(private BillPresentationService $presentation)
+    public function __construct(private BillPresentationService $presentation, private \App\Services\FindingsService $findings)
     {
     }
 
@@ -24,6 +24,9 @@ final class BillListingService
             'cut' => 'Zkrácená lhůta',
             'surge' => 'Nával PN',
         ];
+        foreach (['prilepky', 'zmeny_pn', 'zpetne'] as $key) {
+            $filters[$key] = \App\Services\FindingsService::PROBLEM_GROUPS[$key][0];
+        }
         if (!array_key_exists($f, $filters)) {
             $f = '';
         }
@@ -56,10 +59,19 @@ final class BillListingService
         if ($minimumScore > 0) {
             $query->where('score', '>=', $minimumScore);
         }
-        $bills = $search === '' ? $query->limit($limit)->get() : $query->get()->filter(
-            fn (Bill $bill): bool => (string)$bill->ct === trim($search)
-                || str_contains(self::fold($bill->nazev . ' ' . $bill->uplny_nazev . ' ' . $bill->navrhovatel . ' ' . $bill->zakony), self::fold($search)),
-        )->take($limit);
+        $byGroup = isset(\App\Services\FindingsService::PROBLEM_GROUPS[$filter]);
+        $bills = $search === '' && !$byGroup ? $query->limit($limit)->get() : $query->get();
+        if ($byGroup) {
+            $ai = $this->findings->aiSignals();
+            $short = $this->findings->shortReview();
+            $bills = $bills->filter(fn (Bill $bill): bool => in_array($filter,
+                $this->findings->problemGroups($bill->getAttributes(), $ai[(int)$bill->ct] ?? null, isset($short[(int)$bill->ct])), true));
+        }
+        if ($search !== '') {
+            $bills = $bills->filter(fn (Bill $bill): bool => (string)$bill->ct === trim($search)
+                || str_contains(self::fold($bill->nazev . ' ' . $bill->uplny_nazev . ' ' . $bill->navrhovatel . ' ' . $bill->zakony), self::fold($search)));
+        }
+        $bills = $bills->take($limit)->values();
         return $this->presentation->presentMany($bills);
     }
 }

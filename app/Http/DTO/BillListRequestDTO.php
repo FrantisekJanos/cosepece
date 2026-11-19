@@ -15,7 +15,7 @@ use Spatie\LaravelData\Attributes\Validation\StringType;
 final class BillListRequestDTO extends RequestDTO
 {
     public function __construct(
-        #[MapInputName('f'), Sometimes, StringType, In('', 'flagged', 'mp', 'p90', 'cut', 'surge')]
+        #[MapInputName('f'), Sometimes, StringType, In('', 'flagged', 'mp', 'p90', 'cut', 'surge', 'prilepky', 'zmeny_pn', 'zpetne')]
         public readonly string $filter,
         #[MapInputName('q'), Sometimes, StringType, Max(100)]
         public readonly string $search,

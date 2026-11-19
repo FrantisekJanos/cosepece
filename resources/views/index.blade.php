@@ -42,35 +42,56 @@ use Hlidac\View;
   <div class="card-head">
     <div>
       <h2>Hlavní nálezy</h2>
-      <p class="muted small head-note">Rozpracované tisky se skóre od {{ (int)$w['finding_min'] }} bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od {{ (int)$w['finding_ai_min'] }}/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah.</p>
+      <p class="muted small head-note">Rozpracované tisky se skóre od <?= (int)$w['finding_min'] ?> bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah. Titulky a shrnutí připravuje AI a může se mýlit; rozhodující je původní text.</p>
     </div>
-    <a href="{{ route('bills', ['min' => (int)$w['finding_min']], false) }}">Všechny od {{ (int)$w['finding_min'] }} bodů</a>
+    <a href="{{ route('bills', ['min' => (int)$w['finding_min']], false) }}">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
   </div>
+  <?php if ($found['total'] > 0): ?>
+  <div class="finding-controls">
+    <div class="control-row" role="group" aria-label="Řazení nálezů">
+      <span class="control-label">Řadit</span>
+      <?php foreach (\App\Services\FindingsService::FINDING_SORTS as $key => $label): ?>
+        <a class="pill<?= $key === $sort ? ' active' : '' ?>" href="<?= e($findingsUrl(['razeni' => $key === 'skore' ? null : $key])) ?>"<?= $key === $sort ? ' aria-current="true"' : '' ?>><?= e($label) ?></a>
+      <?php endforeach; ?>
+    </div>
+    <div class="control-row" role="group" aria-label="Druh problému">
+      <span class="control-label">Co hledám</span>
+      <a class="pill<?= $group === '' ? ' active' : '' ?>" href="<?= e($findingsUrl(['druh' => null])) ?>">Vše <span class="pill-count"><?= (int)$found['total'] ?></span></a>
+      <?php foreach (\App\Services\FindingsService::PROBLEM_GROUPS as $key => [$label]): ?>
+        <?php if ($found['counts'][$key] === 0 && $group !== $key) continue; ?>
+        <a class="pill<?= $key === $group ? ' active' : '' ?>" href="<?= e($findingsUrl(['druh' => $key])) ?>"<?= $key === $group ? ' aria-current="true"' : '' ?>><?= e($label) ?> <span class="pill-count"><?= (int)$found['counts'][$key] ?></span></a>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($sort === 'ai'): ?><p class="muted small control-note">Podle nejzávažnějšího nálezu v rozboru textu návrhu nebo pozměňovacího návrhu; počítají se jen nálezy ověřené silnějším modelem a doložené citací. Tisky bez ověřeného nálezu jsou na konci.</p>
+    <?php elseif ($sort === 'hlasovani'): ?><p class="muted small control-note">Napřed tisky ve 3. čtení a před hlasováním po Senátu nebo po vetu, pak 2. a 1. čtení; tisky, o kterých už Sněmovna nehlasuje, jsou na konci.</p>
+    <?php elseif ($sort === 'nove'): ?><p class="muted small control-note">Podle posledního kroku v projednávání nebo nového pozměňovacího návrhu.</p><?php endif; ?>
+  </div>
+  <?php endif; ?>
   <?php if ($findings === []): ?>
-    <p class="empty">Žádný tisk nyní nemá skóre aspoň {{ (int)$w['finding_min'] }} bodů.</p>
+    <p class="empty"><?= $group !== '' ? 'Mezi hlavními nálezy teď nic takového není.' : 'Žádný tisk nyní nemá skóre aspoň ' . (int)$w['finding_min'] . ' bodů.' ?></p>
   <?php endif; ?>
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
-      <a class="finding" href="{{ route('bill', ['ct' => (int)$t['ct']], false) }}"{{ $i >= $findingsShown ? ' hidden' : '' }}>
-        <span class="finding-top">{!! View::scoreBadge((int)$t['score']) !!}@if ($t['strong_ai'] !== null)<span class="chip chip-cut" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI {{ (int)$t['strong_ai'] }}/10</span>@endif<span class="muted small">Tisk {{ (int)$t['ct'] }} · {{ $t['nazev'] }} · {{ $t['faze'] }}</span></span>
+      <a class="finding" href="{{ route('bill', ['ct' => (int)$t['ct']], false) }}"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
+        <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null || ($sort === 'ai' && $t['ai_verified'] !== null)): ?><span class="chip <?= (int)$t['ai_verified'] >= 6 ? 'chip-cut' : 'chip-surge' ?>" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['ai_verified'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
-          <strong class="finding-title">{{ $h['title'] }}</strong>
-          <?php if ($h['perex'] !== ''): ?><span class="finding-perex">{{ $h['perex'] }}</span><?php endif; ?>
+          <strong class="finding-title"><?= e($h['title']) ?></strong>
+          <?php if ($h['perex'] !== ''): ?><span class="finding-perex"><?= e($h['perex']) ?></span><?php endif; ?>
           <?php if ($h['quote'] !== ''): ?>
-            <span class="finding-quote small">{{ mb_strlen($h['quote']) > 200 ? mb_substr($h['quote'], 0, 199) . '…' : $h['quote'] }}</span>
+            <span class="finding-quote small"><?= e(mb_strlen($h['quote']) > 200 ? mb_substr($h['quote'], 0, 199) . '…' : $h['quote']) ?></span>
           <?php endif; ?>
-          <span class="muted small">Shrnutí AI z textu ({{ $h['source'] }}), doloženo citací{{ $h['verified'] ? ', ověřeno druhým modelem' : '' }} · body skóre: {!! View::reasonKeysSummary($t['reasons_list'], 3) !!}</span>
+          <span class="muted small">Shrnutí AI z textu (<?= e($h['source']) ?>), doloženo citací<?= $h['verified'] ? ', ověřeno druhým modelem' : '' ?> · body skóre: <?= View::reasonKeysSummary($t['reasons_list'], 3) ?></span>
         <?php else: ?>
-          <strong class="finding-title">{{ $t['uplny_nazev'] ?: $t['nazev'] }}</strong>
-          {!! View::reasons($t['reasons_list'], 3) !!}
+          <strong class="finding-title"><?= e($t['uplny_nazev'] ?: $t['nazev']) ?></strong>
+          <?= View::reasons($t['reasons_list'], 3) ?>
         <?php endif; ?>
       </a>
     <?php endforeach; ?>
   </div>
   <?php if (count($findings) > $findingsShown): ?>
     <div class="findings-more">
-      <a class="btn btn-ghost" id="findings-more" href="{{ route('home', ['n' => $findingsShown + 3], false) }}#nalezy">Zobrazit další nálezy <span class="muted">(zbývá {{ count($findings) - $findingsShown }})</span></a>
+      <a class="btn btn-ghost" id="findings-more" href="<?= e($findingsUrl(['n' => $findingsShown + 3])) ?>">Zobrazit další nálezy <span class="muted">(zbývá <?= count($findings) - $findingsShown ?>)</span></a>
     </div>
     <script>
     // odkryje další 3 nálezy bez načtení stránky; bez JS funguje odkaz ?n=

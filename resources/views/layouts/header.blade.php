@@ -23,6 +23,11 @@
 <meta name="twitter:description" content="{{ $desc }}">
 <meta name="twitter:image" content="{{ $ogImage }}">
 <meta name="twitter:image:alt" content="{{ $ogAlt }}">
+<link rel="icon" href="{{ asset('favicon.ico') }}" sizes="32x32">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="manifest" href="{{ asset('site.webmanifest') }}">
+<meta name="theme-color" content="#15171C">
 <link rel="alternate" type="application/rss+xml" title="Co se peče – upozornění" href="{{ route('rss', [], false) }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">

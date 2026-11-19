@@ -80,6 +80,18 @@ use Hlidac\View;
   <p class="muted small">Tyto údaje zatím do skóre nevstupují; body za poslanecký návrh zůstávají, jen jejich popis uvádí, zda si vláda připomínky vyžádala. Po několika týdnech dat zvážíme, zda a jak je započítat. Stanovisko Legislativní rady vlády a jednotlivé připomínky jsou u materiálu ve VeKLEP.</p>
 </section>
 
+<section class="card pad" id="odpovednost" aria-label="Upozornění a omezení odpovědnosti">
+  <h2>Upozornění a omezení odpovědnosti</h2>
+  <ul>
+    <li><b>Automatické zpracování.</b> Web vzniká automaticky z otevřených dat Poslanecké sněmovny a Úřadu vlády. Data mohou být neúplná, opožděná nebo chybná už u zdroje, nebo se mohou zkreslit při zpracování.</li>
+    <li><b>Umělá inteligence se může mýlit.</b> Rozbory textů návrhů a pozměňovacích návrhů, titulky, shrnutí a hodnocení závažnosti připravuje jazykový model. Citace ověřujeme proti textu a nejzávažnější nálezy posuzuje ještě druhý, silnější model, přesto AI může text špatně pochopit, přehlédnout souvislost nebo závažnost nadsadit či podcenit. Výstupy AI jsou na webu vždy označené.</li>
+    <li><b>Skóre není obvinění.</b> Skóre je výsledek veřejné metodiky na této stránce. Hodnotí postup a formu projednávání, ne politický obsah zákona; netvrdí, že někdo jednal protiprávně nebo v něčím zájmu.</li>
+    <li><b>Není to právní rada ani oficiální informace.</b> Závazné je znění na <a href="https://www.psp.cz">psp.cz</a> a ve Sbírce zákonů (<a href="https://www.e-sbirka.cz">e-Sbírka</a>). Před citací nebo dalším použitím údaje ověřte v původním zdroji; odkazy na něj jsou u každého tisku.</li>
+    <li><b>Odpovědnost.</b> Údaje poskytujeme tak, jak jsou, bez záruky úplnosti a správnosti. V rozsahu, který připouští zákon, neodpovídáme za škodu vzniklou jejich použitím.</li>
+  </ul>
+  <p class="muted small">Najdete-li chybu, <?php if ((string)hlidacConfig('issues_url', '') !== ''): ?><a href="<?= e((string)hlidacConfig('issues_url', '')) ?>">napište nám</a><?php else: ?>napište nám<?php endif; ?>. Opravy uvádíme v <a href="{{ route('changes') }}">přehledu změn</a>.</p>
+</section>
+
 <section class="card pad" aria-label="Omezení">
   <h2>Co skóre nevidí</h2>
   <ul>

@@ -16,18 +16,21 @@ final class OverviewService
 {
     public function __construct(
         private BillPresentationService $presentation,
+        private \App\Services\FindingsService $findingService,
         private BillListingService $listing,
         private \App\Services\AlertPresentationService $alertPresentation,
     ) {
     }
 
-    public function data(int $findingsShown): array
+    public function data(int $findingsShown, string $sort = 'skore', string $group = ''): array
     {
         $w = Scorer::weights(hlidacConfig());
         $s = $this->stats();
 
         $findingsShown = max(9, min(60, $findingsShown));
-        $findings = $this->topFindings((int)$w['finding_min'], 60);
+        $found = $this->findingService->findings((int)$w['finding_min'], $sort, $group);
+        $findings = array_slice($found['rows'], 0, 60);
+        $findingsUrl = fn(array $set): string => route('home', array_filter(array_merge(['razeni' => $sort === 'skore' ? null : $sort, 'druh' => $group ?: null], $set)), false) . '#nalezy';
         $alerts = $this->alertPresentation->presentMany(Alert::query()->where('score', '>=', (int)$w['level_watch'])->orderByDesc('event_at')->orderByDesc('created_at')->orderByDesc('alert_key')
             ->limit(8)->get());
         $suppressed = Alert::query()->where('score', '<', (int)$w['level_watch'])->count();
@@ -41,19 +44,12 @@ final class OverviewService
         $title = 'Přehled';
         $active = 'prehled';
 
-        return compact('title', 'active', 'w', 's', 'findingsShown', 'findings', 'alerts', 'suppressed', 'watch', 'authors', 'bills', 'maxAuthor');
+        return compact('found', 'sort', 'group', 'findingsUrl', 'title', 'active', 'w', 's', 'findingsShown', 'findings', 'alerts', 'suppressed', 'watch', 'authors', 'bills', 'maxAuthor');
     }
 
     public function topFindings(int $minimumScore, int $limit): array
     {
-        $strong = $this->presentation->strongAiFindings();
-        $findings = $this->presentation->presentMany(
-            Bill::query()->activeFindings($minimumScore, array_keys($strong))->ranked('score')->limit($limit)->get(), true,
-        );
-        foreach ($findings as &$finding) {
-            $finding['strong_ai'] = $strong[(int)$finding['ct']] ?? null;
-        }
-        return $findings;
+        return array_slice($this->findingService->findings($minimumScore)['rows'], 0, $limit);
     }
 
     private function stats(): array

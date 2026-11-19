@@ -73,7 +73,7 @@ $docLabel = function (?string $url): string {
 
 <?php if ($analyses !== []): ?>
 <section class="card" aria-label="Rozbory AI">
-  <div class="card-head"><h2>Rozbory AI</h2><span class="muted small">jazykový model hodnotí formu a postup, ne politický obsah</span></div>
+  <div class="card-head"><h2>Rozbory AI</h2><span class="muted small">jazykový model hodnotí formu a postup, ne politický obsah, a může se mýlit</span></div>
   <div class="table-wrap">
     <table class="table-compact">
       <thead><tr><th class="num">Verze</th><th>Datum</th><th>Model</th><th class="num">Závažnost</th><th>Titulek</th><th>K textu</th></tr></thead>

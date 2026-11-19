@@ -101,7 +101,7 @@ use Hlidac\View;
     <blockquote class="quote"><a class="quote-document-link" href="{{ route('bill-documents', ['ct' => $ct], false) }}#citace={{ rawurlencode(trim((string)$q)) }}" title="Najít citaci v původním dokumentu">{{ trim((string)$q) }} <span aria-hidden="true">↗</span><span class="sr-only"> – najít v dokumentu</span></a></blockquote>
   <?php endforeach; ?>
   <p class="muted small">Citace jsou doslovně z textu návrhu{{ $billText['docx_url'] ? ' (<a href="' . $billText['docx_url'] . '">Word na psp.cz</a>)' : '' }}.
-    {{ $bai !== null ? 'Rozbor připravil jazykový model; hodnotí formu a postup, ne politický obsah.' : 'Pasáže vybrala automatická pravidla.' }}
+    {{ $bai !== null ? 'Rozbor připravil jazykový model (AI) a může se mýlit; hodnotí formu a postup, ne politický obsah. Rozhodující je původní text.' : 'Pasáže vybrala automatická pravidla.' }}
     @if (\Hlidac\Revisions::hasHistory($billRev))
     <a href="{{ route('revisions', ['druh' => 'tisk', 'id' => $ct], false) }}">Historie ({{ \Hlidac\Revisions::versionsLabel($billRev['text'] + $billRev['ai']) }})</a> – předchozí znění textu a rozbory.
     @endif
@@ -133,6 +133,7 @@ use Hlidac\View;
 
   <section class="card pad compact" aria-label="Pozměňovací návrhy" id="pozmenovaci-navrhy">
     <h2>Pozměňovací návrhy <span class="muted small">{{ count($pn) }}</span></h2>
+    <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
       @if (!empty($t['souhrn_pn']))
       <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o={{ (int)$obdobi }}&amp;ct={{ $ct }}&amp;ct1={{ (int)$t['souhrn_pn'] }}">Souhrn platně podaných pozměňovacích návrhů (tisk {{ $ct }}/{{ (int)$t['souhrn_pn'] }})</a> <span class="muted">rozeslán {{ formatDate((string)$t['souhrn_pn_at'] . ':00', true) }}</span></p>
       @endif

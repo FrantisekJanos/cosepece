@@ -315,6 +315,33 @@ def test_usek_bez_recnika_neni_predchozi_ani_adresat(conn):
     assert s[2] == ("recnik", 1, None) and s[16][1] == 1
 
 
+def test_migrace_neceka_na_cteni_projevu(conn):
+    """Hodinový běh volá db.migrate: když sloupce rozpravy už existují, nesmí brát exkluzivní zámek steno.projev
+    (ALTER TABLE … IF NOT EXISTS ho bere vždy), jinak čeká za běžícím čtením MCP a další čtení blokuje."""
+    from hlidac_rag import db
+
+    # chybějící sloupec (databáze před nasazením rozpravy) migrace doplní
+    sql(conn, "ALTER TABLE steno.projev DROP COLUMN reaguje_na_odhad")
+    db.migrate(conn)
+    ctenar = db.connect()
+    try:
+        ctenar.execute("SELECT count(*) FROM steno.projev").fetchone()   # otevřená transakce drží ACCESS SHARE
+        conn.execute("SET lock_timeout = '500ms'")
+        db.migrate(conn)                                                   # druhá migrace: sloupce už jsou
+        db.migrate(conn)
+        sloupce = sql(conn, """SELECT column_name FROM information_schema.columns
+                               WHERE table_schema = 'steno' AND table_name = 'projev'
+                                 AND column_name IN ('druh', 'predchozi_recnik_id', 'reaguje_na_odhad')
+                               ORDER BY 1""")
+        assert sloupce == [("druh",), ("predchozi_recnik_id",), ("reaguje_na_odhad",)]
+    finally:
+        conn.rollback()
+        conn.execute("RESET lock_timeout")
+        conn.commit()
+        ctenar.rollback()
+        ctenar.close()
+
+
 # --- volání z assemble a run.py ------------------------------------------------
 
 SCHUZE_ASM = 991

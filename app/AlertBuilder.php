@@ -48,7 +48,7 @@ final class AlertBuilder
                 $t,
                 ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
                 'Nový ' . $t['typ_navrhu'] . ' návrh: ' . $t['nazev'],
-                'Předkladatel: ' . $t['navrhovatel'] . '. Návrh poslanců ani senátorů neprochází meziresortním připomínkovým řízením.',
+                'Předkladatel: ' . $t['navrhovatel'] . '. Návrh poslanců, Senátu ani krajů neprochází meziresortním připomínkovým řízením.',
                 $posted
             );
         }
@@ -87,6 +87,15 @@ final class AlertBuilder
                 $n += $this->add("passed:$ct", 'passed', $t, $when,
                     'Sněmovna schválila: ' . $t['nazev'],
                     'Zákon míří do Senátu. Písemných pozměňovacích návrhů: ' . (int)$t['pn_count'] . '.',
+                    $posted);
+            }
+        }
+        // návrh na § 90/2 evidovaný u tisku (tisky.rj), ke kterému ještě není krok v historii
+        foreach ($tisky as $ct => $t) {
+            if ((int)$t['p90'] && !isset($seen["p90:$ct"])) {
+                $n += $this->add("p90:$ct", 'p90', $t, ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
+                    'Navrženo schválit už v 1. čtení: ' . $t['nazev'],
+                    'Předkladatel navrhuje postup podle § 90 odst. 2 jednacího řádu: zákon může projít bez 2. a 3. čtení. Zablokovat to může námitka dvou poslaneckých klubů nebo 50 poslanců.',
                     $posted);
             }
         }

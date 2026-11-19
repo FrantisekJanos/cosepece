@@ -112,9 +112,9 @@ Výchozí váhy v `Scorer::defaults()`, přepis přes `config.php → scoring`. 
 
 | Signál | Body |
 |---|---|
-| Poslanecký návrh (bez připomínkového řízení) / senátní | 15 / 5 |
-| § 90/2 navrženo / schváleno v 1. čtení | 10 / 25 |
-| Zkrácená lhůta | 15 |
+| Poslanecký návrh (bez připomínkového řízení) / senátní / krajský (podle `tisky.id_navrh`) | 15 / 5 / 5 |
+| § 90/2 navrženo (krok v historii nebo `tisky.rj = 1`) / schváleno v 1. čtení | 10 / 25 |
+| Zkrácená lhůta (akce změny lhůty nebo lhůta pro výbory `tisky.lhuta` < 60 dní) | 15 |
 | Mezi PN a zahájením 3. čtení < 7 dní | 15 |
 | ≥ 3 PN v den konce podrobné rozpravy | 10 |
 | Nával PN (≥ surge_threshold za běh) | 5 |

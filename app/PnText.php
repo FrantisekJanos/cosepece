@@ -24,16 +24,20 @@ final class PnText
         $limit = (int)($cfg['per_run'] ?? 40);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
-        // PN k tiskům, které ještě nejsou zákonem; přednost mají PN, které ještě nebyly v upozornění, pak nejnovější
+        // PN k tiskům, které ještě nejsou zákonem; přednost mají PN, které ještě nebyly v upozornění, pak nejnovější.
+        // Neúspěšné stažení (chyba sítě, chybějící Word) se zkusí znovu po retry_hours, až po nových textech.
+        $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, (int)($cfg['retry_hours'] ?? 24)));
         $rows = $this->db->all(
-            'SELECT p.*, t.zakony FROM pn p
+            "SELECT p.*, t.zakony FROM pn p
              LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
              LEFT JOIN pn_seen s ON s.id_dokument = p.id_dokument
              JOIN tisky t ON t.ct = p.ct
-             WHERE x.id_dokument IS NULL AND t.faze <> ?
-             ORDER BY CASE WHEN s.id_dokument IS NULL THEN 0 ELSE 1 END, p.cas DESC
-             LIMIT ' . $limit,
-            ['Vyhlášeno']
+             WHERE t.faze <> ? AND (x.id_dokument IS NULL
+                OR (x.error IS NOT NULL AND (x.text IS NULL OR x.text = '') AND x.fetched_at < ?))
+             ORDER BY CASE WHEN x.id_dokument IS NULL THEN 0 ELSE 1 END,
+                CASE WHEN s.id_dokument IS NULL THEN 0 ELSE 1 END, p.cas DESC
+             LIMIT " . $limit,
+            ['Vyhlášeno', $retryBefore]
         );
 
         $stats = ['fetched' => 0, 'errors' => 0];

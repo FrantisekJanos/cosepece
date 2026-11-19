@@ -142,6 +142,7 @@ final class Db
         // doplnění sloupců do databází založených starší verzí
         $this->addColumn('tisky', 'score', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('tisky', 'vyhlaseno', 'VARCHAR(10)');
+        $this->addColumn('tisky', 'lhuta', 'INTEGER');
         $this->addColumn('tisky', 'reasons', $text);
         $this->addColumn('alerts', 'score', 'INTEGER NOT NULL DEFAULT 0');
         // model, který rozbor naposledy udělal (druhé kolo silnějším modelem se pozná podle něj)

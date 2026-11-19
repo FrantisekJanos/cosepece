@@ -45,9 +45,9 @@ final class Importer
             $tiskyRows[] = $tisk + [
                 'faze' => $a['faze'],
                 'posledni' => $a['posledni'],
-                'p90' => (int)$a['p90'],
+                'p90' => (int)($a['p90'] || $tisk['rj']),
                 'p90ok' => (int)$a['p90ok'],
-                'zl' => (int)$a['zl'],
+                'zl' => (int)($a['zl'] || Analyzer::committeeCut($tisk['lhuta'])),
                 'pn_count' => $pnByCt[$tisk['ct']]['count'] ?? 0,
                 'pn_last' => $pnByCt[$tisk['ct']]['last'] ?? null,
                 'sbirka' => $this->sbirka($list),
@@ -71,7 +71,7 @@ final class Importer
             $this->db->insertMany('tisky', [
                 'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
                 'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
-                'vyhlaseno',
+                'vyhlaseno', 'lhuta',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce',
@@ -171,12 +171,16 @@ final class Importer
                 'id_tisk' => (int)$c[0],
                 'ct' => (int)$c[3],
                 'druh' => (int)$c[1],
-                'typ_navrhu' => Analyzer::typNavrhu((int)$c[1], $uplny),
+                'typ_navrhu' => Analyzer::typNavrhu((int)$c[1], $uplny, (int)($c[5] ?? 0)),
                 'navrhovatel' => trim($c[9] ?? ''),
                 'nazev' => trim($c[10] ?? ''),
                 'uplny_nazev' => $uplny,
                 'predlozeno' => $this->czDate($c[11] ?? ''),
                 'zakony' => implode(',', Analyzer::zakony($uplny)),
+                // rj = 1: předkladatel navrhl projednání podle § 90 odst. 2 (eviduje se dřív než krok v historii)
+                'rj' => trim($c[18] ?? '') === '1',
+                // lhůta pro výbory ve dnech (výchozí 60, Sněmovna ji může zkrátit)
+                'lhuta' => (int)($c[17] ?? 0) ?: null,
             ];
         }
         return $out;

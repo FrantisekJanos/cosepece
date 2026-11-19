@@ -174,7 +174,10 @@ $zip->close();
 $r4 = Hlidac\Sync::run();
 check('vzniklo upozornění', $r4['alerts_new'], 1);
 check('nic neodesláno (skóre 28 < 50)', $r4['posts']['sent'], 0);
-check('potlačeno', $r4['posts']['filtered'], 1);
+check('pod prahem čeká na rozbor textů (hold_hours)', [$r4['posts']['held'], $r4['posts']['filtered']], [1, 0]);
+db()->run('UPDATE alerts SET created_at = ? WHERE posted = 0', [date('Y-m-d H:i:s', time() - 49 * 3600)]);
+$r4b = (new Hlidac\Publisher(db(), config()))->run();
+check('po uplynutí čekání potlačeno', [$r4b['filtered'], $r4b['sent']], [1, 0]);
 
 echo "Text návrhu zákona (tisk 221: lhůta pro vymáhání dotací 4 roky i zpětně)\n";
 $billSample = "Návrh\nZÁKON\nkterým se mění zákon č. 159/2006 Sb., o střetu zájmů\n"
@@ -397,6 +400,44 @@ $gapRow(990004, '2026-07-08', 5, 238);  // zahájeno (datované později)
 $gap = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 311'), true),
     fn(array $r): bool => $r['key'] === 'short_gap'));
 check('odstup se počítá od nejdřívějšího kroku 3. čtení', $gap[0]['label'] ?? null, 'Mezi pozměňovacími návrhy a 3. čtením jen 2 dny');
+
+echo "Předkladatel, § 90/2 a lhůta pro výbory z údajů tisku\n";
+check('kraj podle id_navrh', Hlidac\Analyzer::typNavrhu(2, 'Návrh Zastupitelstva Jihomoravského kraje na vydání zákona', 16), 'krajský');
+check('kraj podle názvu i s velkým Z', Hlidac\Analyzer::typNavrhu(2, 'Návrh Zastupitelstva hlavního města Prahy na vydání zákona'), 'krajský');
+check('skupina poslanců', Hlidac\Analyzer::typNavrhu(2, 'Návrh poslanců …', 3), 'poslanecký');
+check('vláda podle id_navrh', Hlidac\Analyzer::typNavrhu(1, 'Vládní návrh zákona', 1), 'vládní');
+check('lhůta pro výbory 30 dní = zkrácená', [Hlidac\Analyzer::committeeCut(30), Hlidac\Analyzer::committeeCut(60), Hlidac\Analyzer::committeeCut(null)], [true, false, false]);
+$imp = db()->one('SELECT p90, zl, lhuta, typ_navrhu FROM tisky WHERE ct = 221');
+check('importované tisky mají lhůtu a typ', is_array($imp) && array_key_exists('lhuta', $imp), true);
+db()->run("UPDATE tisky SET zl = 1, lhuta = 30 WHERE ct = 90");
+(new Hlidac\Scorer(db(), config()))->scoreBills();
+$cut = array_values(array_filter(json_decode((string)db()->value('SELECT reasons FROM tisky WHERE ct = 90'), true),
+    fn(array $r): bool => $r['key'] === 'deadline_cut'));
+check('důvod uvádí zkrácenou lhůtu pro výbory', $cut[0]['label'] ?? null, 'Zkrácená lhůta pro výbory: 30 dní místo 60');
+db()->run("UPDATE tisky SET p90 = 1 WHERE ct = 90");
+db()->run("DELETE FROM alerts WHERE alert_key = 'p90:90'");
+(new Hlidac\AlertBuilder(db(), config()))->run();
+check('návrh na § 90/2 z údajů tisku vytvoří upozornění', db()->value("SELECT kind FROM alerts WHERE alert_key = 'p90:90'"), 'p90');
+
+echo "Opakované stažení neúspěšných textů\n";
+$retryCt = (int)db()->value("SELECT ct FROM tisky WHERE faze <> 'Vyhlášeno' ORDER BY ct LIMIT 1");
+db()->run('DELETE FROM tisk_text WHERE ct = ?', [$retryCt]);
+db()->run("INSERT INTO tisk_text (ct, docx_url, text, chars, signals, fetched_at, error) VALUES (?, NULL, '', 0, '[]', ?, 'Chyba sítě')", [$retryCt, date('Y-m-d H:i:s')]);
+$queue = fn(): array => array_map('intval', array_column(Hlidac\TiskText::queue(db(), 1000, 24), 'ct'));
+check('čerstvá chyba se hned neopakuje', in_array($retryCt, $queue(), true), false);
+db()->run('UPDATE tisk_text SET fetched_at = ? WHERE ct = ?', [date('Y-m-d H:i:s', time() - 25 * 3600), $retryCt]);
+check('po 24 h se stažení zopakuje', in_array($retryCt, $queue(), true), true);
+db()->run("UPDATE tisk_text SET text = 'obsah', error = NULL WHERE ct = ?", [$retryCt]);
+check('úspěšně stažený text se neopakuje', in_array($retryCt, $queue(), true), false);
+
+echo "Hledání bez diakritiky\n";
+check('fold', Hlidac\Repo::fold('Školský ZÁKON'), 'skolsky zakon');
+$repoQ = new Hlidac\Repo(db());
+$nameWord = explode(' ', (string)db()->value('SELECT nazev FROM tisky WHERE ct = 221'));
+$hit = fn(string $q): bool => in_array(221, array_map(fn($t) => (int)$t['ct'], $repoQ->bills('', $q)), true);
+check('hledání „střetu“ najde tisk 221', $hit('STŘETU'), true);
+check('hledání bez diakritiky „stretu zajmu“', $hit('stretu zajmu'), true);
+check('hledání podle čísla tisku', $hit('221'), true);
 
 echo "Stránky\n";
 foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'rss.php' => []] as $page => $get) {

@@ -19,9 +19,10 @@ $groups = [
     ['Postup projednávání', 'cap_procedure', [
         [$w['mp_bill'], 'Poslanecký návrh: neprošel meziresortním připomínkovým řízením (ministerstva, legislativní rada vlády, odborná veřejnost).'],
         [$w['senate_bill'], 'Senátní návrh: také bez meziresortního připomínkového řízení.'],
+        [$w['region_bill'], 'Návrh krajského zastupitelstva nebo hlavního města Prahy: také bez meziresortního připomínkového řízení.'],
         [$w['p90_requested'], 'Navrženo schválit už v 1. čtení podle § 90 odst. 2 jednacího řádu.'],
         [$w['p90_passed'], 'Schváleno už v 1. čtení podle § 90 odst. 2, bez 2. a 3. čtení (místo bodů za pouhý návrh).'],
-        [$w['deadline_cut'], 'Zkrácená lhůta při projednávání (např. lhůta pro výbory nebo pro pozměňovací návrhy).'],
+        [$w['deadline_cut'], 'Zkrácená lhůta při projednávání: lhůta pro výbory kratší než 60 dní, nebo Sněmovna lhůtu změnila během projednávání.'],
         [$w['short_gap'], 'Mezi pozměňovacími návrhy a zahájením 3. čtení méně než ' . (int)$w['short_gap_days'] . ' dní.'],
         [$w['late_pn'], 'Aspoň ' . (int)$w['late_pn_min'] . ' pozměňovací návrhy podané v den konce podrobné rozpravy.'],
         [$w['surge'], 'Nával pozměňovacích návrhů: najednou jich přibylo hodně.'],

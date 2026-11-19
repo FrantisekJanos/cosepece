@@ -39,6 +39,8 @@ View::header('Tisky', 'tisky');
     <label for="q" class="sr-only">Hledat tisky</label>
     <input id="q" name="q" type="search" value="<?= e($q) ?>" placeholder="Tisk, číslo zákona nebo poslanec">
     <?php if ($f !== ''): ?><input type="hidden" name="f" value="<?= e($f) ?>"><?php endif; ?>
+    <?php if ($sort === 'recent'): ?><input type="hidden" name="sort" value="recent"><?php endif; ?>
+    <?php if ($min > 0): ?><input type="hidden" name="min" value="<?= $min ?>"><?php endif; ?>
     <button type="submit">Hledat</button>
   </form>
 </section>

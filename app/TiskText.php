@@ -22,14 +22,7 @@ final class TiskText
         $limit = (int)($cfg['per_run'] ?? 15);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '10');
 
-        // vše kromě tisků, které už jsou zákonem (vyhlášeno); od nejnověji předložených
-        $rows = $this->db->all(
-            "SELECT t.* FROM tisky t
-             LEFT JOIN tisk_text x ON x.ct = t.ct
-             WHERE x.ct IS NULL AND t.faze <> 'Vyhlášeno'
-             ORDER BY t.predlozeno DESC, t.ct DESC
-             LIMIT " . $limit
-        );
+        $rows = self::queue($this->db, $limit, (int)($cfg['retry_hours'] ?? 24));
 
         $stats = ['fetched' => 0, 'errors' => 0];
         foreach ($rows as $row) {
@@ -46,6 +39,22 @@ final class TiskText
             usleep(300_000); // šetrně k serveru psp.cz
         }
         return $stats;
+    }
+
+    public static function queue(Db $db, int $limit, int $retryHours = 24): array
+    {
+        // vše kromě tisků, které už jsou zákonem (vyhlášeno); od nejnověji předložených.
+        // Neúspěšné stažení (chyba sítě, chybějící Word) se zkusí znovu po $retryHours, až po nových textech.
+        $retryBefore = date('Y-m-d H:i:s', time() - 3600 * max(1, $retryHours));
+        return $db->all(
+            "SELECT t.* FROM tisky t
+             LEFT JOIN tisk_text x ON x.ct = t.ct
+             WHERE t.faze <> 'Vyhlášeno' AND (x.ct IS NULL
+                OR (x.error IS NOT NULL AND (x.text IS NULL OR x.text = '') AND x.fetched_at < ?))
+             ORDER BY CASE WHEN x.ct IS NULL THEN 0 ELSE 1 END, t.predlozeno DESC, t.ct DESC
+             LIMIT " . $limit,
+            [$retryBefore]
+        );
     }
 
     private function findDocxUrl(int $ct, int $obdobi): ?string

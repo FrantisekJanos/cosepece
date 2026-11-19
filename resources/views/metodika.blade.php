@@ -80,6 +80,7 @@ use Hlidac\View;
   <p class="muted small">Tyto údaje zatím do skóre nevstupují; body za poslanecký návrh zůstávají, jen jejich popis uvádí, zda si vláda připomínky vyžádala. Po několika týdnech dat zvážíme, zda a jak je započítat. Stanovisko Legislativní rady vlády a jednotlivé připomínky jsou u materiálu ve VeKLEP.</p>
 </section>
 
+  <p><b>Upozornění na připravované zákony</b> (bez čísla tisku, skóre se neodvozuje od tisku): připomínkové řízení kratší než 10 dní má <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_velmi'] ?> bodů (Závažné, jde i na sociální sítě), kratší než 3 týdny <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_kratke'] ?> bodů (Pozor), předložení mimo plán legislativních prací vlády <?= Hlidac\AlertBuilder::UPCOMING_KINDS['prep_plan'] ?> bodů (Pozor); schválení návrhu vládou je běžná agenda.</p>
 <section class="card pad" id="spolehlivost-ai" aria-label="Spolehlivost rozboru AI">
   <h2>Jak ověřujeme rozbor AI</h2>
   <ul>

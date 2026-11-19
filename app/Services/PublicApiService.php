@@ -146,7 +146,7 @@ final class PublicApiService
     private function alert(array $a): array
     {
         return [
-            'id' => $a['alert_key'], 'typ' => $a['kind'], 'ct' => (int)$a['ct'], 'obdobi' => $a['obdobi'] !== null ? (int)$a['obdobi'] : null,
+            'id' => $a['alert_key'], 'typ' => $a['kind'], 'ct' => (int)$a['ct'] > 0 ? (int)$a['ct'] : null, 'obdobi' => $a['obdobi'] !== null ? (int)$a['obdobi'] : null,
             'datum' => $a['event_at'], 'titulek' => $a['title'], 'text' => $a['body'], 'skore' => (int)$a['score'],
             'url' => View::alertUrl($a, true),
         ];

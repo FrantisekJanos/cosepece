@@ -15,6 +15,10 @@ final class View
         'pn' => ['surge', 'Nové PN'],
         'passed' => ['mp', 'Schváleno Sněmovnou'],
         'law' => ['mp', 'Vyhlášeno'],
+        'prep_velmi' => ['cut', 'Připomínky < 10 dní'],
+        'prep_kratke' => ['cut', 'Krátké připomínky'],
+        'prep_plan' => ['surge', 'Mimo plán vlády'],
+        'prep_vlada' => ['mp', 'Schváleno vládou'],
     ];
 
     public const REASON_SHORT = [
@@ -122,6 +126,9 @@ final class View
 
     public static function alertUrl(array $alert, bool $absolute = false): string
     {
+        if (str_starts_with((string)$alert['kind'], 'prep_')) {
+            return app(\App\Services\AlertPresentationService::class)->upcomingUrl($alert, $absolute);
+        }
 
         if (self::isPastPeriod($alert)) {
             return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);

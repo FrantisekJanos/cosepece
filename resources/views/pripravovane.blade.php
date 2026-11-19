@@ -26,7 +26,7 @@
   <ul class="upcoming-list">
     <?php foreach ($byPhase[$key] as $u): ?>
       <?php $days = $u['dni'] !== null ? (int)$u['dni'] : null; $budget = str_contains(mb_strtolower((string)$u['nazev']), 'státním rozpočtu'); ?>
-      <li>
+      <li id="prep-{{ $u['pid'] }}">
         <a class="upcoming-title" href="<?= e(\Hlidac\GovPrep::url((string)$u['pid'])) ?>"><?= e($shortTitle((string)$u['nazev'])) ?></a>
         <div class="muted small"><?= e((string)$u['resort']) ?>
           <?php if ($days !== null): ?> · připomínky <?= e(formatDate($u['pripominky_od'])) ?> – <?= e(formatDate($u['pripominky_do'])) ?> (<?= $days ?> dní, <?= (int)$u['mist'] ?> míst)<?php elseif ($budget): ?> · státní rozpočet má vlastní postup přípravy<?php endif; ?>

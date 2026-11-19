@@ -104,7 +104,7 @@ final class ApiDocumentationService
             'Upozornění' => [
                 ['id', 'text', 'jednoznačný klíč upozornění (vhodný k odstranění duplicit)'],
                 ['typ', 'text', 'druh upozornění (číselník níže)'],
-                ['ct', 'číslo', 'číslo tisku'],
+                ['ct', 'číslo nebo null', 'číslo tisku; u připravovaného zákona null'],
                 ['obdobi', 'číslo', 'volební období tisku'],
                 ['datum', 'datum a čas', 'kdy událost nastala'],
                 ['titulek', 'text', 'nadpis upozornění'],
@@ -138,6 +138,9 @@ final class ApiDocumentationService
             'passed' => 'schváleno Sněmovnou',
             'law' => 'vyhlášeno ve Sbírce zákonů',
         ];
+        foreach (array_keys(\Hlidac\AlertBuilder::UPCOMING_KINDS) as $kind) {
+            $alertKinds[$kind] = \Hlidac\View::KIND_LABELS[$kind][1];
+        }
         $phases = ['Podáno', 'Organizační výbor', 'U vlády', 'Stanovisko vlády', '1. čtení', '2. čtení', '3. čtení', 'Schváleno Sněmovnou',
             'V Senátu', 'Sněmovna po Senátu', 'U prezidenta', 'Sněmovna po vetu', 'Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'];
 

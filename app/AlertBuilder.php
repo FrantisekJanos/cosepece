@@ -28,6 +28,7 @@ final class AlertBuilder
         $created += $this->fromBills($tisky, $posted);
         $created += $this->fromSteps($tisky, $posted);
         $created += $this->fromAmendments($tisky, $bootstrap, $posted);
+        $created += $this->fromUpcoming($posted);
 
         if ($bootstrap) {
             $this->db->setMeta('bootstrapped', date('Y-m-d H:i:s'));
@@ -221,6 +222,60 @@ final class AlertBuilder
         $watchLaws = $this->config['watch_laws'] ?? [];
         $watchTisky = array_map('intval', $this->config['watch_tisky'] ?? []);
         return array_intersect($laws, $watchLaws) !== [] || in_array((int)$t['ct'], $watchTisky, true);
+    }
+
+    /** Úrovně upozornění na připravované zákony: druh => [bonus ke skóre, popis] (skóre tisku tu není, je 0). */
+    public const UPCOMING_KINDS = [
+        'prep_velmi' => 50,
+        'prep_kratke' => 30,
+        'prep_plan' => 30,
+        'prep_vlada' => 0,
+    ];
+
+    private function fromUpcoming(int $posted): int
+    {
+
+
+        if ($this->db->getMeta('prep_alerts_bootstrapped') === null) {
+            $posted = 2;
+            $this->db->setMeta('prep_alerts_bootstrapped', date('Y-m-d H:i:s'));
+        }
+        $phase = ['pripominky' => 'je v připomínkovém řízení', 'po_pripominkach' => 'je po připomínkovém řízení',
+            'vlada' => 'čeká na projednání vládou', 'schvaleno' => 'vláda ho schválila'];
+        $n = 0;
+        foreach ($this->db->all('SELECT * FROM pripravovane') as $u) {
+            $pid = (string)$u['pid'];
+            $name = self::shortTitle((string)$u['nazev']);
+
+            $t = ['ct' => 0, 'zakony' => implode(',', Laws::numbersIn((string)$u['nazev']))];
+            $where = (string)$u['resort'] . ' · návrh ' . ($phase[$u['faze']] ?? $u['faze']) . '.';
+            if ($u['dni'] !== null && (int)$u['dni'] < 21) {
+                $days = (int)$u['dni'];
+                $n += $this->add('prep_review:' . $pid, $days < 10 ? 'prep_velmi' : 'prep_kratke', $t, $u['pripominky_od'] . ' 00:00:00',
+                    'Připomínky k návrhu jen ' . $days . ' dní: ' . $name,
+                    'Připomínkové řízení ' . formatDate($u['pripominky_od']) . ' – ' . formatDate($u['pripominky_do']) . ' (' . $days . ' dní, '
+                    . (int)$u['mist'] . ' připomínkových míst); obvykle trvá 4 týdny. ' . $where, $posted);
+            }
+            if ((int)$u['mimo_plan'] === 1) {
+                $reason = trim((string)$u['duvod']);
+                $n += $this->add('prep_plan:' . $pid, 'prep_plan', $t, ($u['zalozeno'] ?: date('Y-m-d')) . ' 00:00:00',
+                    'Mimo plán legislativních prací vlády: ' . $name,
+                    $where . ($reason !== '' ? ' Důvod podle předkladatele: ' . mb_substr($reason, 0, 300) : ''), $posted);
+            }
+            if ($u['faze'] === 'schvaleno' && !empty($u['vlada'])) {
+                $n += $this->add('prep_vlada:' . $pid, 'prep_vlada', $t, $u['vlada'] . ' 00:00:00',
+                    'Vláda schválila návrh: ' . $name,
+                    (string)$u['resort'] . '. Návrh míří do Sněmovny, kde dostane číslo sněmovního tisku.', $posted);
+            }
+        }
+        return $n;
+    }
+
+    public static function shortTitle(string $title): string
+    {
+
+        $t = trim((string)preg_replace(['~,?\s*ve znění pozdějších předpisů~u', '~\s+~u'], ['', ' '], $title));
+        return mb_strlen($t) > 180 ? rtrim(mb_substr($t, 0, 179)) . '…' : $t;
     }
 
     private function add(string $key, string $kind, array $t, string $eventAt, string $title, string $body, int $posted): int

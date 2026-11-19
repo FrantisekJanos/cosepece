@@ -624,8 +624,32 @@ $voteHtml = (string)ob_get_clean();
 check('detail tisku ukazuje hlasování s klubem a odkazem na psp.cz', str_contains($voteHtml, 'Hlasování ve Sněmovně')
     && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, 'ANO2011'), true);
 
+echo "JSON API a filtry RSS (#28)\n";
+$api = new Hlidac\Api(db(), new Hlidac\Repo(db()), config());
+[$st, $body] = $api->handle(['tisk' => '78']);
+check('api.php?tisk=78: detail s důvody, hlasováním a odkazy', [$st, $body['tisk']['ct'] ?? null, isset($body['tisk']['duvody'], $body['tisk']['upozorneni']),
+    count($body['tisk']['hlasovani'] ?? []), str_contains((string)($body['tisk']['psp_url'] ?? ''), 'psp.cz')], [200, 78, true, 4, true]);
+check('api.php?tisk=…: neznámý tisk 404', $api->handle(['tisk' => '99999'])[0], 404);
+check('api.php?since=špatně: 400', $api->handle(['since' => '1. 11. 2026'])[0], 400);
+check('api.php?zakon=špatně: 400', $api->handle(['zakon' => 'střet'])[0], 400);
+[, $list] = $api->handle(['zakon' => '586/1992']);
+check('filtr podle zákona', array_column($list['tisky'], 'ct'), [311]);
+[, $future] = $api->handle(['since' => '2999-01-01']);
+check('filtr since', $future['tisky'], []);
+[, $al] = $api->handle(['upozorneni' => '1', 'min_score' => '0', 'ct' => '78', 'limit' => '2']);
+check('upozornění k tisku s limitem', [count($al['upozorneni']), array_unique(array_column($al['upozorneni'], 'ct'))], [2, [78]]);
+$_GET = ['zakon' => '586/1992', 'min_score' => '0'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/rss.php');
+$rssXml = (string)ob_get_clean();
+$rssItems = substr_count($rssXml, '<item>');
+check('RSS filtrované podle zákona má jen položky tisku 311', $rssItems > 0 && !str_contains($rssXml, 'tisk.php?ct=78<') && !str_contains($rssXml, 'tisk.php?ct=221<'), true);
+$_GET = [];
+
 echo "Stránky\n";
-foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => []] as $page => $get) {
+foreach (['index.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {

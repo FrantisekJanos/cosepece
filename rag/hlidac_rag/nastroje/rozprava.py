@@ -21,15 +21,16 @@ OHLASENI = 300     # nejvýš znaků konce ohlášení faktické poznámky
 POZNAMKA = ("druh, cteni a reaguje_na_odhad jsou odvozené automaticky z textu předsedajícího, řečníka a historie "
             "tisku, ověřujte je v plném textu.")
 
-# čtení k datu projevu (tabulka kroky webu, datum je varchar(19)): poslední zahájené 1.–3. čtení,
-# nebo návrat do Sněmovny po Senátu či prezidentovi
+# čtení k datu projevu (tabulka kroky webu, datum je varchar(19)), poslední z kroků: 1. čtení kterýkoli krok
+# „1. čtení…“ (u § 90/2 je jen „1. čtení (§ 90, odst. 2) - ob. rozprava | doporučen“, nikdy „zahájeno“),
+# 2. a 3. čtení jen akce „zahájeno“, nebo návrat do Sněmovny po Senátu či prezidentovi
 _KROKY = r"""WITH k AS MATERIALIZED (
     SELECT left(datum, 10)::date AS den, datum, id_hist,
            CASE WHEN stav LIKE 'Sněmovna (Senát)%%' THEN 'senat'
                 WHEN stav LIKE 'Sněmovna (Prezident)%%' THEN 'prezident' ELSE left(stav, 1) END AS cteni
     FROM kroky
     WHERE ct = %s AND datum ~ '^\d{4}-\d{2}-\d{2}'
-      AND ((stav ~ '^[123]\. čtení' AND akce = 'zahájeno')
+      AND (stav ~ '^1\. čtení' OR (stav ~ '^[23]\. čtení' AND akce = 'zahájeno')
            OR stav LIKE 'Sněmovna (Senát)%%' OR stav LIKE 'Sněmovna (Prezident)%%'))
 """
 _CTENI = "(SELECT k.cteni FROM k WHERE k.den <= p.datum ORDER BY k.datum DESC, k.id_hist DESC LIMIT 1)"

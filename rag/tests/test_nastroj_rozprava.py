@@ -263,7 +263,9 @@ def test_cteni_z_tabulky_kroky():
     conn = _conn(_ruzne(), tab=S_KROKY)
     rozprava(conn, 76)
     sql = conn.sql[1]
-    assert "FROM kroky" in sql and "left(datum, 10)::date" in sql and "akce = 'zahájeno'" in sql
+    assert "FROM kroky" in sql and "left(datum, 10)::date" in sql
+    # R9b: 1. čtení kterýmkoli krokem (i § 90/2 bez „zahájeno“), 2. a 3. čtení jen zahájením
+    assert r"stav ~ '^1\. čtení'" in sql and r"stav ~ '^[23]\. čtení' AND akce = 'zahájeno'" in sql
     assert "Sněmovna (Senát)" in sql and "Sněmovna (Prezident)" in sql
     assert "ORDER BY k.datum DESC, k.id_hist DESC" in sql
     assert conn.params[1] == (76, 76)
@@ -387,23 +389,42 @@ def pgconn():
         cur.execute("""INSERT INTO steno.bod (id_bod, obdobi, schuze, cislo, nazev, konec, ct)
                        VALUES (%s, %s, %s, 5, 'Vládní návrh zákona o státních zaměstnancích', '/sněmovní tisk 76/', 76)""",
                     (BOD76, OBD, SCHUZE))
-        for schuze, poradi, datum, (id_osoba, recnik, klub), chair, druh, reaguje, aut, zrus, tisky, pn, text in _pg_projevy():
-            cur.execute("""INSERT INTO steno.projev (obdobi, schuze, turn, aname, datum, poradi, id_osoba, recnik, klub,
-                                  predsedajici, text, znaku, hash, url, autorizovano, druh, reaguje_na_odhad, zruseno)
-                           VALUES (%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,'h',%s,%s,%s,%s,%s) RETURNING id""",
-                        (OBD, schuze, poradi, datum, poradi, id_osoba, recnik, klub, chair, text, len(text),
-                         f"https://www.psp.cz/s{schuze}{poradi:03d}.htm#r1", aut, druh, reaguje,
-                         "2026-10-20" if zrus else None))
-            pid = cur.fetchone()[0]
-            cur.executemany("INSERT INTO steno.projev_tisk (projev_id, ct, zdroj) VALUES (%s, %s, 'bod')",
-                            [(pid, t) for t in tisky])
-            cur.executemany("INSERT INTO steno.projev_pn (projev_id, cislo_pn) VALUES (%s, %s)", [(pid, n) for n in pn])
+        _vloz_projevy(cur, _pg_projevy())
     c.commit()
     yield c
     c.rollback()
     _vycisti(c)
     c.commit()
     c.close()
+
+
+def _vloz_projevy(cur, projevy: list[tuple]) -> None:
+    """Vloží projevy ve tvaru _pg_projevy() s vazbami projev_tisk a projev_pn."""
+    for schuze, poradi, datum, (id_osoba, recnik, klub), chair, druh, reaguje, aut, zrus, tisky, pn, text in projevy:
+        cur.execute("""INSERT INTO steno.projev (obdobi, schuze, turn, aname, datum, poradi, id_osoba, recnik, klub,
+                              predsedajici, text, znaku, hash, url, autorizovano, druh, reaguje_na_odhad, zruseno)
+                       VALUES (%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,'h',%s,%s,%s,%s,%s) RETURNING id""",
+                    (OBD, schuze, poradi, datum, poradi, id_osoba, recnik, klub, chair, text, len(text),
+                     f"https://www.psp.cz/s{schuze}{poradi:03d}.htm#r1", aut, druh, reaguje,
+                     "2026-10-20" if zrus else None))
+        pid = cur.fetchone()[0]
+        cur.executemany("INSERT INTO steno.projev_tisk (projev_id, ct, zdroj) VALUES (%s, %s, 'bod')",
+                        [(pid, t) for t in tisky])
+        cur.executemany("INSERT INTO steno.projev_pn (projev_id, cislo_pn) VALUES (%s, %s)", [(pid, n) for n in pn])
+
+
+def _tabulky_webu(conn, kroky: list[tuple], tisky: list[tuple] = ()) -> None:
+    """Tabulky webu tisky a kroky ve vlastním schématu (kroky.datum je varchar(19) jako na webu), search_path na něj."""
+    with conn.cursor() as cur:
+        cur.execute(f"CREATE SCHEMA {SCHEMA_WEB}")
+        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.tisky (ct int, nazev text)")
+        cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.kroky (id_hist int PRIMARY KEY, id_tisk int, ct int, datum varchar(19),
+                        typ_stavu int, stav varchar(120), akce_id int, akce varchar(120), id_hlasovani int)""")
+        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.tisky VALUES (%s, %s)", tisky)
+        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.kroky (id_hist, ct, datum, stav, akce) VALUES (%s, %s, %s, %s, %s)",
+                        kroky)
+        cur.execute(f"SET search_path TO {SCHEMA_WEB}, public")
+    conn.commit()
 
 
 def _vycisti(c):
@@ -461,25 +482,17 @@ def test_pg_rozprava_nad_tabulkami_rozpravy(pgconn):
 @bez_db
 def test_pg_cteni_z_kroku_a_nazev_z_tisku(pgconn):
     """Tabulky webu tisky a kroky vytvoří test ve vlastním schématu (kroky.datum je varchar(19) jako na webu)."""
-    with pgconn.cursor() as cur:
-        cur.execute(f"CREATE SCHEMA {SCHEMA_WEB}")
-        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.tisky (ct int, nazev text)")
-        cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.kroky (id_hist int PRIMARY KEY, id_tisk int, ct int, datum varchar(19),
-                        typ_stavu int, stav varchar(120), akce_id int, akce varchar(120), id_hlasovani int)""")
-        cur.execute(f"INSERT INTO {SCHEMA_WEB}.tisky VALUES (76, 'Návrh zákona o státních zaměstnancích')")
-        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.kroky (id_hist, ct, datum, stav, akce) VALUES (%s, %s, %s, %s, %s)", [
-            (1, 76, "2026-01-29 00:00:00", "1. čtení", "zahájeno"),
-            (2, 76, "2026-01-14 00:00:00", "1. čtení", "doporučen"),
-            (3, 76, "2026-09-30 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),
-            (4, 76, "2026-10-14 00:00:00", "3. čtení", "zahájeno"),
-            (5, 76, "2026-10-15 10:06:00", "Sněmovna (Senát)", "rozeslán"),
-            (6, 76, "2026-10-15 12:00:00", "3. čtení", "projednávání ukončeno"),
-            (7, 76, "", "1. čtení", "zahájeno"),                           # nečitelné datum se přeskočí
-            (8, 76, None, "1. čtení", "zahájeno"),
-            (9, 77, "2026-10-15 00:00:00", "Sněmovna (Prezident)", "rozeslán"),   # jiný tisk
-        ])
-        cur.execute(f"SET search_path TO {SCHEMA_WEB}, public")
-    pgconn.commit()
+    _tabulky_webu(pgconn, [
+        (1, 76, "2026-01-29 00:00:00", "1. čtení", "zahájeno"),
+        (2, 76, "2026-01-14 00:00:00", "1. čtení", "doporučen"),
+        (3, 76, "2026-09-30 00:00:00", "2. čtení - obecná rozprava", "zahájeno"),
+        (4, 76, "2026-10-14 00:00:00", "3. čtení", "zahájeno"),
+        (5, 76, "2026-10-15 10:06:00", "Sněmovna (Senát)", "rozeslán"),
+        (6, 76, "2026-10-15 12:00:00", "3. čtení", "projednávání ukončeno"),
+        (7, 76, "", "1. čtení", "zahájeno"),                           # nečitelné datum se přeskočí
+        (8, 76, None, "1. čtení", "zahájeno"),
+        (9, 77, "2026-10-15 00:00:00", "Sněmovna (Prezident)", "rozeslán"),   # jiný tisk
+    ], [(76, "Návrh zákona o státních zaměstnancích")])
 
     r = rozprava(pgconn, 76)
     assert r["nazev"] == "Návrh zákona o státních zaměstnancích"
@@ -491,3 +504,29 @@ def test_pg_cteni_z_kroku_a_nazev_z_tisku(pgconn):
                                                                    (3, "10/980/7/1")]
     assert t["vystoupeni"][1]["ohlaseni"] == OHLASENI
     assert rozprava(pgconn, 76, cteni="prezident")["celkem"] == 0
+
+
+@pytest.mark.pg
+@bez_db
+def test_pg_cteni_1_u_paragrafu_90(pgconn):
+    """§ 90/2 (R9b): 1. čtení má jen krok „1. čtení (§ 90, odst. 2) - ob. rozprava | doporučen“, nikdy „zahájeno“;
+    1. čtení začíná kterýmkoli krokem „1. čtení…“, 2. a 3. čtení dál jen akcí „zahájeno“."""
+    s90, pred, den, podrobna = 982, date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 25)
+    with pgconn.cursor() as cur:
+        _vloz_projevy(cur, [
+            (s90, 1, pred, HAAS, False, "recnik", None, True, False, [85], [], "Den před prvním čtením."),
+            (s90, 2, den, HAAS, False, "predkladatel", None, True, False, [85], [], "Uvádím návrh podle § 90 odst. 2."),
+            (s90, 3, podrobna, BERKI, False, "recnik", None, True, False, [85], [], "Podrobná rozprava."),
+        ])
+    pgconn.commit()
+    _tabulky_webu(pgconn, [
+        (21, 85, "2026-02-20 00:00:00", "Přijímáno do PS", "předložen"),
+        (22, 85, "2026-03-03 00:00:00", "1. čtení (§ 90, odst. 2) - ob. rozprava", "doporučen"),
+        (23, 85, "2026-03-25 00:00:00", "1. čtení (§ 90, odst. 2) - podr. rozprava", "souhlas s RJ"),
+        (24, 85, "2026-03-25 00:00:00", "3. čtení", "projednávání ukončeno"),      # bez „zahájeno“ se nepočítá
+    ])
+    r = rozprava(pgconn, 85)
+    assert [(v["klic"], v.get("cteni")) for v in r["vystoupeni"]] == [
+        ("10/982/1/1", None), ("10/982/2/1", "1"), ("10/982/3/1", "1")]
+    f = rozprava(pgconn, 85, cteni="1")
+    assert [(v["poradi"], v["klic"]) for v in f["vystoupeni"]] == [(1, "10/982/2/1"), (2, "10/982/3/1")]

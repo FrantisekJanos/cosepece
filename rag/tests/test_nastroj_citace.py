@@ -64,7 +64,7 @@ CITACE = "Tento zákon nepodpoříme, protože zkracuje lhůtu"
 
 
 def _projev(**kw) -> dict:
-    row = dict(recnik="Poslanec Radek Vondráček", klub="ANO2011", datum=date(2026, 10, 14), autorizovano=True,
+    row = dict(recnik="Poslanec Jan Testovací", klub="TEST", datum=date(2026, 10, 14), autorizovano=True,
                url="https://www.psp.cz/x.htm#r6", text=PROJEV)
     row.update(kw)
     return row
@@ -77,7 +77,7 @@ def test_projev_presne():
     assert r["shoda"] == "presne" and r["skore"] == 1.0
     assert PROJEV[r["od_znaku"]:r["do_znaku"]] == r["nalezeny_text"] == CITACE
     assert r["klic"] == "10/35/10/6"           # klíč bez období doplněný na celý tvar
-    assert r["recnik"] == "Poslanec Radek Vondráček" and r["klub"] == "ANO2011"
+    assert r["recnik"] == "Poslanec Jan Testovací" and r["klub"] == "TEST"
     assert r["datum"] == "2026-10-14" and r["autorizovano"] is True and r["url"].endswith("#r6")
     assert "poznamka" not in r
     k = r["kontext"]
@@ -381,7 +381,7 @@ def pg_conn():
     with c.cursor() as cur:
         cur.execute("""INSERT INTO steno.projev (obdobi, schuze, turn, aname, datum, recnik, klub, text, znaku, hash,
                                                  autorizovano, url)
-                       VALUES (10, %s, 1, 2, '2026-11-18', 'Poslanec Test', 'ODS', %s, %s, 'x', false,
+                       VALUES (10, %s, 1, 2, '2026-11-18', 'Poslanec Test', 'TEST', %s, %s, 'x', false,
                                'https://www.psp.cz/test.htm#r2')""", (SCHUZE, PROJEV, len(PROJEV)))
         cur.execute("""INSERT INTO texty.dokument (druh, ct, cislo_pn, verze, zdroj_textu, text, znaku, docx_url,
                                                    rozdeleno_at, chyba)

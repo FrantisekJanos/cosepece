@@ -12,7 +12,8 @@ $blocked = Hlidac\RateLimit::authBlocked();
 if ($blocked !== null) {
     Hlidac\RateLimit::deny($blocked);
 }
-$token = (string)($_GET['token'] ?? '');
+// token v hlavičce X-Hlidac-Token (nekončí v logu přístupů); ?token= zůstává pro webcron na hostingu
+$token = (string)($_SERVER['HTTP_X_HLIDAC_TOKEN'] ?? $_GET['token'] ?? '');
 $expected = (string)config('cron_token', '');
 if ($expected === '' || str_starts_with($expected, 'ZMENTE') || !hash_equals($expected, $token)) {
     Hlidac\RateLimit::authFailed();

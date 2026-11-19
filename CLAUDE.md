@@ -109,8 +109,15 @@ ho posílá prohlížeči (gzip, cache), `assets/search.js` našeptává stejný
 (PHP stránka výsledků) – při změně jednoho uprav i druhý. Dotazy se neukládají.
 
 Tokeny MCP z webu: `app/McpTokens.php` + formulář v `mcp.php`; zapisuje do `mcp.token` služby rag/ (jen sha256,
-jméno „web: datum · účel“), jen při PostgreSQL. Ochrana: podepsaný údaj formuláře (3 s – 1 h), skryté pole,
-3 tokeny/IP/den (RateLimit 'mcp_token', okno 86400 s), 200 tokenů/den celkem (`config.php → mcp`).
+jméno „web: datum · účel“), jen při PostgreSQL. Ochrana: podepsaný údaj formuláře vázaný na IP (3 s – 1 h,
+klíč meta `form_secret`, ne cron_token), kontrola Origin/Sec-Fetch-Site, skryté pole, 3 tokeny/IP/den
+(RateLimit 'mcp_token', započítá se před vložením), 200 tokenů/den celkem; synchronizace ruší tokeny z webu
+nepoužité 7 dní nebo nepoužívané 90 dní (`config.php → mcp`).
+
+Vstupy a limity: `bootstrap.php` odmítá jiné metody než GET/HEAD (POST jen mcp.php a ai_api.php), parametry-pole
+zahazuje a čísla o 10+ číslicích ořízne (jinak chyba INTEGER v PostgreSQL). `RateLimit` počítá IPv4 adresu
+a u IPv6 síť /56; za CDN je nutné doplnit důvěryhodné proxy do `RemoteIPInternalProxy` (docker/Dockerfile),
+jinak by všichni návštěvníci sdíleli jeden limit.
 
 Upozornění na připravované: `AlertBuilder::fromUpcoming` (ct = 0, klíč `prep_review|prep_plan|prep_vlada:<pid>`,
 skóre = `AlertBuilder::UPCOMING_KINDS`: < 10 dní 50, < 21 dní 30, mimo plán 30, schváleno vládou 0); první běh

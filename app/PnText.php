@@ -63,7 +63,7 @@ final class PnText
         $base = 'https://www.psp.cz';
         $html = Http::get($base . '/sqw/sd.sqw?cd=' . $cislo . '&o=' . $obdobi);
         $html = iconv('CP1250', 'UTF-8//IGNORE', $html) ?: $html;
-        if (preg_match('~class="file docx"><a href="([^"]+)"~', $html, $m)) {
+        if (preg_match('~class="file docx"><a href="(/sqw/text/orig2\.sqw\?idd=\d+)"~', $html, $m)) {
             return $base . html_entity_decode($m[1]);
         }
         return null;

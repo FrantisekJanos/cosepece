@@ -40,7 +40,8 @@ return [
     // adresa MCP serveru pro AI asistenty (stránka mcp.php); prázdné = https://mcp.<doména webu>/mcp
     'mcp_url' => '',
     // vydávání tokenů na stránce mcp.php (jen s PostgreSQL a službou rag/): zapnuto, limity na IP a den
-    'mcp' => ['web_tokens' => true, 'tokens_per_ip' => 3, 'tokens_per_day' => 200],
+    // token z webu se zruší, když ho nikdo nepoužije do unused_days dní nebo ho nepoužívá déle než idle_days dní
+    'mcp' => ['web_tokens' => true, 'tokens_per_ip' => 3, 'tokens_per_day' => 200, 'unused_days' => 7, 'idle_days' => 90],
 
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 

@@ -42,7 +42,7 @@ echo '<?xml version="1.0" encoding="utf-8"?>', "\n";
     <title><?= e($a['title']) ?></title>
     <link><?= e(View::alertUrl($a, true)) ?></link>
     <guid isPermaLink="false"><?= e($a['alert_key']) ?></guid>
-    <pubDate><?= date(DATE_RSS, strtotime($a['event_at'])) ?></pubDate>
+    <pubDate><?= date(DATE_RSS, strtotime((string)$a['event_at']) ?: time()) ?></pubDate>
     <description><?= e($a['body']) ?></description>
   </item>
   <?php endforeach; ?>

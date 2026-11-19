@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-19', 'Druhá bezpečnostní prověrka',
+        'Po přidání hledání, stránek zákonů a tokenů pro AI asistenty jsme web znovu prověřili zvenku i nezávislou kontrolou kódu. Opravili jsme chybu, kdy příliš velké číslo v adrese skončilo chybou serveru, a zpřísnili vydávání tokenů: formulář jde odeslat jen z naší stránky a z adresy, která si ho načetla, souběžné pokusy limit nepřekročí a token z webu, který nikdo týden nepoužije nebo ho tři měsíce nepoužívá, přestane platit. Stránky odmítají jiné metody než čtení a soubory začínající tečkou nejsou dostupné.',
+        [56], false],
     ['2026-11-19', 'Token pro AI asistenty přímo na webu',
         'Přístupový token k MCP serveru si teď každý vytvoří sám na stránce Pro AI asistenty (MCP), bez registrace a bez e-mailu. Token se zobrazí jen jednou, rovnou i v návodu k připojení; ukládáme jen jeho otisk. Proti zneužití platí nejvýš 3 tokeny denně z jedné adresy a denní strop pro všechny.',
         [55], false],

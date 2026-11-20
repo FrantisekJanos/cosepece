@@ -18,6 +18,7 @@ reels-enqueue = "hlidac_reels.enqueue:main"
 reels-bot = "hlidac_reels.bot:main"
 reels-threads-backfill = "hlidac_reels.backfill:main"
 reels-generate = "hlidac_reels.generator.generate:main"
+reels-worker = "hlidac_reels.generator.worker:main"
 
 [tool.setuptools.packages.find]
 include = ["hlidac_reels*"]

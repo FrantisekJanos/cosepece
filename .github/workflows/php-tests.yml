@@ -1,0 +1,56 @@
+name: php-tests
+
+# Testy webové části (PHP) nad SQLite i PostgreSQL. U větve main je spouští deploy.yml (před nasazením).
+on:
+  push:
+    branches-ignore: [main]
+    paths-ignore: ["rag/**", "**.md"]
+  pull_request:
+    paths-ignore: ["rag/**", "**.md"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, pgsql]
+    # PostgreSQL jen pro testy; bez hesla, přístup jen z běhu workflow
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: hlidac_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3" # stejná verze jako docker/Dockerfile
+          extensions: mbstring, curl, zip, gd, iconv, pdo_sqlite, pdo_pgsql
+          coverage: none
+      - name: Syntaxe PHP
+        run: find . -name '*.php' -not -path './rag/*' -print0 | xargs -0 -n1 php -l > /dev/null
+      - name: Testy (SQLite)
+        if: matrix.db == 'sqlite'
+        run: php tests/run.php
+      - name: Testy (PostgreSQL)
+        if: matrix.db == 'pgsql'
+        env:
+          HLIDAC_TEST_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=hlidac_test"
+          HLIDAC_TEST_USER: postgres
+          HLIDAC_TEST_PASS: postgres
+        run: php tests/run.php
+      - name: Testy hlášení chyb
+        run: php tests/sentry_test.php

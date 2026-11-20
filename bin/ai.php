@@ -71,6 +71,8 @@ try {
     $base = rtrim((string)$opt['remote'], '/') . '/ai_api.php?v=2';
     $model = $verify ? AiReviewer::verifyModel($config) : AiReviewer::model($config);
     $total = ['reviewed' => 0, 'errors' => 0];
+    // pauzy před opakováním odeslání při výpadku webu (celkem do 2 minut)
+    $retry = [5, 15, 40, 60];
     do {
         $queue = json_decode(Http::get($base . '&action=queue&limit=' . $limit . ($ct !== null ? '&ct=' . $ct : '') . ($verify ? '&verify=1' : ''), 20_000_000, $tokenHeader), true);
         if (!is_array($queue) || !isset($queue['items'])) {
@@ -81,22 +83,31 @@ try {
             $label = $item['kind'] . ' ' . $item['id'] . ' (tisk ' . $item['ct'] . ')';
             try {
                 $result = $reviewer->callModel((string)$item['prompt'], $model);
-                Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'result' => $result, 'model' => $model], true, 60);
-                $stats['reviewed']++;
-                echo date('H:i:s') . " OK    $label: závažnost " . (int)($result['zavaznost'] ?? 0) . "/10\n";
             } catch (Throwable $ex) {
+                // rozbor se nepovedl: chybu zapíšeme k textu na hostingu
                 try {
-                    Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'error' => Http::redact($ex->getMessage())], true, 60);
+                    Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'error' => Http::redact($ex->getMessage())], true, 60, $retry);
                 } catch (Throwable) {
                     // hosting nedostupný – chyba se jen vypíše, text zůstane ve frontě
                 }
                 $stats['errors']++;
                 echo date('H:i:s') . " CHYBA $label: " . Http::redact($ex->getMessage()) . "\n";
+                continue;
+            }
+            try {
+                // výpadek webu při nasazení (502 při výměně kontejneru) přečkáme opakováním, hotový rozbor se neztratí
+                Http::post($base . '&action=result', $tokenHeader, ['kind' => $item['kind'], 'id' => $item['id'], 'result' => $result, 'model' => $model], true, 60, $retry);
+                $stats['reviewed']++;
+                echo date('H:i:s') . " OK    $label: závažnost " . (int)($result['zavaznost'] ?? 0) . "/10\n";
+            } catch (Throwable $ex) {
+                // rozbor je v pořádku, jen se nepodařilo ho odeslat: k textu se chyba nezapisuje, fronta ho nabídne znovu
+                $stats['errors']++;
+                echo date('H:i:s') . " CHYBA $label (odeslání): " . Http::redact($ex->getMessage()) . "\n";
             }
         }
         if ($queue['items'] !== []) {
             // přepočet skóre na hostingu po každé dávce, web se průběžně plní
-            Http::post($base . '&action=done', $tokenHeader, [], true, 120);
+            Http::post($base . '&action=done', $tokenHeader, [], true, 120, $retry);
         }
         $total['reviewed'] += $stats['reviewed'];
         $total['errors'] += $stats['errors'];

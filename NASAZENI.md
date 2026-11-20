@@ -194,6 +194,25 @@ nikdy nepřepisujte, na hostingu je novější než v ZIPu. Nové sloupce datab�
 doplní samy při prvním běhu. Na počítači s AI stačí přepsat soubory ve složce (kromě `deploy/ai-remote.env`
 a `data/`).
 
+## Nasazení v Dockeru: kontrola, návrat a automatické spuštění
+
+Na serveru s Dockerem nasazuje `docker/redeploy.sh` (stáhne `main`, sestaví obrazy, vymění kontejnery):
+
+- **Před výměnou** pustí testy uvnitř nového obrazu webu (bez sítě a bez provozních dat). Když neprojdou, kontejnery
+  se nevymění a dál běží předchozí verze; skript skončí chybou.
+- **Po výměně** ověří, že web i MCP server odpovídají. Když ne, sám vrátí předchozí verzi a skončí chybou.
+- **Ruční návrat:** `docker/rollback.sh` nasadí verzi, která běžela před posledním nasazením (commit je
+  v `docker/.previous-commit`). Další `redeploy.sh` bez parametru nasadí znovu aktuální `main`.
+- Výměna kontejneru trvá pár sekund. Odesílání rozborů AI z počítače ji přečká (opakuje pokus až 2 minuty).
+  Aby krátký výpadek neviděli ani návštěvníci, stačí v Caddy u `reverse_proxy` nastavit `lb_try_duration 15s`.
+
+**Automatické nasazení po sloučení do `main`** (`.github/workflows/deploy.yml`) je připravené, ale vypnuté.
+Zapne ho správce repozitáře na GitHubu: proměnná `DEPLOY_ENABLED = true` a tajemství `DEPLOY_HOST`, `DEPLOY_USER`,
+`DEPLOY_SSH_KEY` (soukromý klíč vyhrazený jen pro nasazení; na serveru ho lze v `authorized_keys` omezit na
+`command="~/hlidac-zakonu/docker/redeploy.sh"`) a `DEPLOY_KNOWN_HOSTS` (výstup `ssh-keyscan` serveru). Nasazení
+běží až po úspěšných testech a jeho neúspěch je vidět jako chyba v GitHub Actions. Testy PHP (SQLite i PostgreSQL)
+běží i u každého pull requestu (`.github/workflows/php-tests.yml`).
+
 ## Hlášení chyb (Sentry, volitelné)
 
 Vyplňte `sentry.dsn` v `config.php` (blok je v `config.example.php`); prázdné = vypnuto, nic se neodesílá.

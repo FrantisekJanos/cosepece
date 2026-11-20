@@ -31,24 +31,34 @@ final class Http
         return (string)$body;
     }
 
-    public static function post(string $url, array $headers, string|array $body, bool $json = true, int $timeout = 30): array
+    /**
+     * @param float[] $retryDelays pauzy (s) před dalšími pokusy při výpadku serveru: chyba spojení nebo HTTP 502, 503, 504
+     *     (např. při výměně kontejneru během nasazení); prázdné = jediný pokus
+     */
+    public static function post(string $url, array $headers, string|array $body, bool $json = true, int $timeout = 30, array $retryDelays = []): array
     {
-        $ch = curl_init($url);
         $payload = is_array($body) ? ($json ? json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : http_build_query($body)) : $body;
         if ($json && is_array($body)) {
             $headers[] = 'Content-Type: application/json';
         }
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_USERAGENT => 'HlidacZakonu/1.0',
-        ]);
-        $response = curl_exec($ch);
-        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
+        for ($attempt = 0; ; $attempt++) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => $timeout,
+                CURLOPT_USERAGENT => 'HlidacZakonu/1.0',
+            ]);
+            $response = curl_exec($ch);
+            $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            if (!self::transient($response === false ? 0 : $status) || !isset($retryDelays[$attempt])) {
+                break;
+            }
+            usleep((int)round(1_000_000 * (float)$retryDelays[$attempt]));
+        }
         if ($response === false) {
             throw new RuntimeException(self::redact("HTTP chyba při volání $url: $error"));
         }
@@ -57,6 +67,12 @@ final class Http
             throw new RuntimeException(self::redact("HTTP $status z $url: " . mb_substr((string)$response, 0, 300)));
         }
         return is_array($data) ? $data : ['raw' => $response];
+    }
+
+    /** Přechodný výpadek, kdy má smysl zkusit to znovu: bez odpovědi (0) nebo 502/503/504 od proxy před webem. */
+    public static function transient(int $status): bool
+    {
+        return in_array($status, [0, 502, 503, 504], true);
     }
 
     public static function redact(string $text): string

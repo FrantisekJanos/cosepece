@@ -31,6 +31,12 @@ Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. 
   do chatu, nenahrávej do gitu ani nevkládej do URL mimo vlastní web.
 - Při nasazování neměň logiku skóre ani prompty AI; při chybě nejdřív `php tests/run.php` (musí vypsat `VŠE OK`).
 
+Docker (cosepece.cz): `docker/redeploy.sh [commit]` – před výměnou kontejnerů pustí `tests/run.php` v novém obrazu webu
+(`docker run --network none`), po výměně ověří web a MCP a při neúspěchu vrátí předchozí verzi; `docker/rollback.sh`
+= ruční návrat (commit v `docker/.previous-commit`, obrazy `:previous`). CI: `.github/workflows/php-tests.yml` (PHP 8.3,
+SQLite i PostgreSQL; testy musí projít na obou), `deploy.yml` (po sloučení do `main`, vypnuto do `DEPLOY_ENABLED`).
+`Http::post(..., $retryDelays)` opakuje jen při výpadku (bez odpovědi, 502–504); `bin/ai.php` tak přečká výměnu kontejneru.
+
 ## Konvence
 
 - Komentáře v kódu **česky**, názvy funkcí, tříd a proměnných **anglicky**.
@@ -132,6 +138,13 @@ po stavu 12 „Senát“ (21/33 schválen, 24 vrácen, 27 zamítnut, 11/37/53 ne
 akce 20 = veto přehlasováno. `Analyzer::senateLines()` dává věty pro detail tisku (`tisk.php#senat`) a API (`tisk.senat`).
 Upozornění `senate:<ct>`, `override:<ct>`, `vetoover:<ct>` (druhy `senate` a `override`, bonus 0, meta
 `senate_alerts_bootstrapped`). Data kroků jsou den, kdy výsledek dorazil do Sněmovny; senat.cz se nenačítá (robots.txt).
+
+Připravovaná nařízení vlády (#59): typ NNV z týchž dat ODok, vlastní tabulka `pripravovana_narizeni` se stejnými sloupci
+(`GovPrep::upcoming(..., 'narizeni')`). Verze se spojují jen v okně `REGULATION_VERSION_DAYS` (každoroční nařízení mají
+stejný název), schválené nařízení zmizí po `REGULATION_KEEP_DAYS` (vyhlášení ve Sbírce data neuvádějí), název resortu se
+doplní podle zkratky z jiných záznamů. Stránka `pripravovane.php?druh=narizeni`, API `api.php?pripravovane=1&druh=narizeni`,
+upozornění jen na připomínky < 10 dní (`prep_narizeni`, klíč `prep_nv:<pid>`, 30 bodů, meta `prep_nv_alerts_bootstrapped`).
+Nařízení se nepárují se zákony (čísla nařízení a zákonů se překrývají). Vyhlášky (NV) a nelegislativní materiály se neberou.
 
 Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
 a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,

@@ -24,6 +24,7 @@ final class View
         'prep_kratke' => ['cut', 'Krátké připomínky'],
         'prep_plan' => ['surge', 'Mimo plán vlády'],
         'prep_vlada' => ['mp', 'Schváleno vládou'],
+        'prep_narizeni' => ['cut', 'Nařízení: krátké připomínky'],
     ];
 
     // krátké názvy důvodů skóre podle klíče (karty, obrázky pro sdílení, dokumentace API)
@@ -232,7 +233,7 @@ final class View
         return !empty($alert['obdobi']) && $current > 0 && (int)$alert['obdobi'] !== $current;
     }
 
-    /** @var array<string, array{pid: string, nazev: string}>|null PID kterékoli verze materiálu => aktuální řádek */
+    /** @var array<string, array{pid: string, nazev: string, druh: string}>|null PID kterékoli verze materiálu => aktuální řádek */
     private static ?array $upcoming = null;
 
     /**
@@ -243,10 +244,12 @@ final class View
     {
         if (self::$upcoming === null) {
             self::$upcoming = [];
-            foreach (db()->all('SELECT pid, pidy, nazev FROM pripravovane') as $u) {
-                $row = ['pid' => (string)$u['pid'], 'nazev' => (string)$u['nazev']];
-                foreach (array_filter(array_merge([(string)$u['pid']], explode(',', (string)$u['pidy']))) as $pid) {
-                    self::$upcoming[$pid] ??= $row;
+            foreach (['zakon' => 'pripravovane', 'narizeni' => 'pripravovana_narizeni'] as $kind => $table) {
+                foreach (db()->all("SELECT pid, pidy, nazev FROM $table") as $u) {
+                    $row = ['pid' => (string)$u['pid'], 'nazev' => (string)$u['nazev'], 'druh' => $kind];
+                    foreach (array_filter(array_merge([(string)$u['pid']], explode(',', (string)$u['pidy']))) as $pid) {
+                        self::$upcoming[$pid] ??= $row;
+                    }
                 }
             }
         }
@@ -264,11 +267,11 @@ final class View
         // připravovaný zákon (bez tisku): na stránku připravovaných, a když už tam není, do VeKLEP
         if (str_starts_with((string)$alert['kind'], 'prep_')) {
             $pid = (string)substr((string)$alert['alert_key'], strpos((string)$alert['alert_key'], ':') + 1);
-            $current = self::upcomingIndex()[$pid]['pid'] ?? null;
+            $current = self::upcomingIndex()[$pid] ?? null;
             if ($current === null) {
                 return GovPrep::url($pid);
             }
-            $path = 'pripravovane.php#prep-' . rawurlencode($current);
+            $path = 'pripravovane.php' . ($current['druh'] === 'narizeni' ? '?druh=narizeni' : '') . '#prep-' . rawurlencode($current['pid']);
             return $absolute ? siteUrl($path) : $path;
         }
         // upozornění minulého období vede na psp.cz (tisk se stejným číslem je teď jiný návrh)
@@ -299,7 +302,7 @@ final class View
           <article class="alert">
             <div class="alert-when"><?= e(formatDate($a['event_at'], true)) ?></div>
             <div class="alert-body">
-              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="<?= e(self::alertUrl($a)) ?>"><?= (int)$a['ct'] > 0 ? 'tisk ' . (int)$a['ct'] : 'připravovaný zákon' ?><?= self::isPastPeriod($a) ? ' (' . (int)$a['obdobi'] . '. období)' : '' ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
+              <div class="alert-meta"><?= self::scoreBadge((int)$a['score']) ?><?= self::kindChip($a['kind']) ?><a href="<?= e(self::alertUrl($a)) ?>"><?= (int)$a['ct'] > 0 ? 'tisk ' . (int)$a['ct'] : ($a['kind'] === 'prep_narizeni' ? 'nařízení vlády' : 'připravovaný zákon') ?><?= self::isPastPeriod($a) ? ' (' . (int)$a['obdobi'] . '. období)' : '' ?></a><?= (int)$a['watched'] ? '<span class="chip chip-watch">Sledovaný</span>' : '' ?></div>
               <h3><a href="<?= e(self::alertUrl($a)) ?>"><?= e($a['title']) ?></a></h3>
               <p><?= e($a['body']) ?></p>
             </div>

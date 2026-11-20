@@ -25,6 +25,15 @@ final class GovPrep
     // stavy materiálu v ODok, kdy už je návrh ve Sněmovně, ve Sbírce, stažený nebo skartovaný
     private const DONE_STATES = ['CE', 'D', 'E', 'F', 'K', 'DZV', 'Y'];
 
+    // nařízení vlády: verze téhož materiálu vznikají během měsíců; nařízení se stejným názvem z jiného roku
+    // (každoroční valorizace) je jiný materiál
+    private const REGULATION_VERSION_DAYS = 240;
+    // schválené nařízení se v datech dál neposouvá (vyhlášení ve Sbírce se neeviduje): po této době z přehledu zmizí
+    private const REGULATION_KEEP_DAYS = 30;
+
+    /** @var array<string, string> zkratka resortu => název */
+    private array $orgNames = [];
+
     public function __construct(private Db $db, private Source $source, private array $config)
     {
     }
@@ -53,8 +62,14 @@ final class GovPrep
             }
         }
         $byTitle = [];
+        // názvy resortů podle zkratky: u nařízení vlády bývá vyplněná jen zkratka („MV“), název je u jiných záznamů
+        $this->orgNames = [];
         foreach ($items as $m) {
             $byTitle[self::normTitle((string)$m['title'])][] = $m;
+            $org = (array)($m['author']['organization'] ?? []);
+            if (!empty($org['id']) && trim((string)($org['name'] ?? '')) !== '') {
+                $this->orgNames[(string)$org['id']] = trim((string)$org['name']);
+            }
         }
 
         $tisky = [];
@@ -96,6 +111,7 @@ final class GovPrep
         $known = array_flip(array_map(fn(array $t) => (int)$t['ct'], $tisky));
         $rows = array_values(array_filter($rows, fn(array $r) => isset($known[$r['ct']])));
         $upcoming = $this->upcoming($byTitle, $start, $tisky, array_flip($eklep));
+        $regulations = $this->upcoming($byTitle, $start, [], [], 'narizeni');
         $this->db->pdo->beginTransaction();
         try {
             $this->db->run('DELETE FROM priprava');
@@ -104,13 +120,16 @@ final class GovPrep
             $this->db->run('DELETE FROM pripravovane');
             $this->db->insertMany('pripravovane', ['pid', 'nazev', 'resort', 'faze', 'stav', 'zalozeno', 'zmeneno', 'pripominky_od',
                 'pripominky_do', 'dni', 'mist', 'vlada', 'duvod', 'popis', 'mimo_plan', 'vyjimka', 'verzi', 'pidy'], $upcoming);
+            $this->db->run('DELETE FROM pripravovana_narizeni');
+            $this->db->insertMany('pripravovana_narizeni', ['pid', 'nazev', 'resort', 'faze', 'stav', 'zalozeno', 'zmeneno', 'pripominky_od',
+                'pripominky_do', 'dni', 'mist', 'vlada', 'duvod', 'popis', 'mimo_plan', 'vyjimka', 'verzi', 'pidy'], $regulations);
             $this->db->pdo->commit();
             View::forgetUpcoming();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
         }
-        return ['materialy' => count($items), 'tisky' => count($rows), 'pripravovane' => count($upcoming)];
+        return ['materialy' => count($items), 'tisky' => count($rows), 'pripravovane' => count($upcoming), 'narizeni' => count($regulations)];
     }
 
     public static function phaseOf(string $status): ?string
@@ -128,10 +147,13 @@ final class GovPrep
         };
     }
 
-    private function upcoming(array $byTitle, string $start, array $tisky, array $eklepPids): array
+    private function upcoming(array $byTitle, string $start, array $tisky, array $eklepPids, string $kind = 'zakon'): array
     {
         // návrhy zákonů ministerstev z tohoto období, které ještě nemají sněmovní tisk; verze téhož materiálu
-        // (k připomínkám, pro vládu) mají jiný PID a stejný název – rozhoduje nejnovější z nich
+        // (k připomínkám, pro vládu) mají jiný PID a stejný název – rozhoduje nejnovější z nich.
+        // $kind 'narizeni': návrhy nařízení vlády (typ NNV). Do Sněmovny nejdou; v přehledu zůstávají od připomínek
+        // do REGULATION_KEEP_DAYS dní po schválení vládou.
+        $regulation = $kind === 'narizeni';
         $tiskTitles = [];
         foreach ($tisky as $t) {
             foreach ([(string)$t['uplny_nazev'], (string)$t['nazev']] as $title) {
@@ -140,32 +162,41 @@ final class GovPrep
                 }
             }
         }
+        $keepFrom = date('Y-m-d', time() - 86400 * (int)($this->config['odok']['regulation_keep_days'] ?? self::REGULATION_KEEP_DAYS));
         $out = [];
         foreach ($byTitle as $norm => $versions) {
-            $versions = array_values(array_filter($versions, fn(array $m) => ($m['type']['id'] ?? '') === 'NZ'
-                && preg_match('~^(vládní\s+)?návrh\s+(ústavního\s+)?zákona~ui', trim((string)$m['title']))));
+            $versions = array_values(array_filter($versions, fn(array $m) => $regulation
+                ? ($m['type']['id'] ?? '') === 'NNV'
+                : ($m['type']['id'] ?? '') === 'NZ' && preg_match('~^(vládní\s+)?návrh\s+(ústavního\s+)?zákona~ui', trim((string)$m['title']))));
             if ($versions === []) {
                 continue;
             }
             usort($versions, fn(array $a, array $b) => strcmp((string)$b['date_authorized'], (string)$a['date_authorized']));
             $last = $versions[0];
+            if ($regulation) {
+                // jen verze z posledních měsíců před nejnovější: starší nařízení se stejným názvem je jiný materiál
+                $from = date('Y-m-d', strtotime(substr((string)$last['date_authorized'], 0, 10)) - 86400 * self::REGULATION_VERSION_DAYS);
+                $versions = array_values(array_filter($versions, fn(array $m) => substr((string)$m['date_authorized'], 0, 10) >= $from));
+            }
             $first = $versions[count($versions) - 1];
             $phase = self::phaseOf((string)($last['status']['name'] ?? ''));
             if ($phase === null || !empty($last['psp']) || (string)$last['date_authorized'] < $start) {
                 continue;
             }
-            // už ve Sněmovně: PID v otevřených datech PSP, nebo tisk se stejným názvem předložený po založení materiálu
-            // (název materiálu bývá i delší: „… na rok 2027 včetně rozpočtové dokumentace“)
-            $since = substr((string)$first['date_authorized'], 0, 10);
-            $inPsp = array_filter($versions, fn(array $m) => isset($eklepPids[(string)$m['pid']]) || !empty($m['psp'])) !== [];
-            foreach ($tiskTitles as $title => $submitted) {
-                if ($submitted >= $since && ($title === $norm || (mb_strlen($title) >= 30 && str_starts_with($norm, $title . ' ')))) {
-                    $inPsp = true;
-                    break;
+            if (!$regulation) {
+                // už ve Sněmovně: PID v otevřených datech PSP, nebo tisk se stejným názvem předložený po založení materiálu
+                // (název materiálu bývá i delší: „… na rok 2027 včetně rozpočtové dokumentace“)
+                $since = substr((string)$first['date_authorized'], 0, 10);
+                $inPsp = array_filter($versions, fn(array $m) => isset($eklepPids[(string)$m['pid']]) || !empty($m['psp'])) !== [];
+                foreach ($tiskTitles as $title => $submitted) {
+                    if ($submitted >= $since && ($title === $norm || (mb_strlen($title) >= 30 && str_starts_with($norm, $title . ' ')))) {
+                        $inPsp = true;
+                        break;
+                    }
                 }
-            }
-            if ($inPsp) {
-                continue;
+                if ($inPsp) {
+                    continue;
+                }
             }
             $review = null;
             $gov = null;
@@ -180,10 +211,14 @@ final class GovPrep
             }
             $row = $this->row(0, 'vladni', $last, $review);
             $changed = max(array_map(fn(array $m) => substr((string)($m['metadata']['date_modified'] ?? $m['date_authorized']), 0, 10), $versions));
+            if ($regulation && $phase === 'schvaleno' && max($changed, (string)$gov) < $keepFrom) {
+                continue;
+            }
+            $org = (array)($last['author']['organization'] ?? []);
             $out[] = [
                 'pid' => (string)$last['pid'],
                 'nazev' => trim(preg_replace('~\s+~u', ' ', (string)$last['title']) ?? ''),
-                'resort' => (string)($last['author']['organization']['name'] ?? ''),
+                'resort' => trim((string)($org['name'] ?? '')) ?: ($this->orgNames[(string)($org['id'] ?? '')] ?? (string)($org['id'] ?? '')),
                 'faze' => $phase,
                 'stav' => mb_substr((string)($last['status']['name'] ?? ''), 0, 80),
                 'zalozeno' => substr((string)$first['date_authorized'], 0, 10),

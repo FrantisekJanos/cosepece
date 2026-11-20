@@ -310,6 +310,15 @@ UNL,
         'reason' => $reason, 'notes' => '', 'government_program' => $gov !== null ? ['date' => $gov] : [],
         'review_process' => $finish !== null ? ['date_finish' => $finish, 'reviewers' => array_fill(0, $reviewers, ['id' => 'M', 'name' => 'M'])] : null,
     ];
+    // návrh nařízení vlády: resort jen zkratkou (jako ve skutečných datech), datum změny = datum založení nebo schůze vlády
+    $soon = fn(int $days): string => gmdate('Y-m-d\TH:i:s\Z', time() + 86400 * $days);
+    $nv = fn(string $pid, string $title, string $at, ?string $finish, int $reviewers, ?string $gov, string $status) => [
+        'title' => $title, 'pid' => $pid, 'type' => ['id' => 'NNV', 'name' => 'Návrh nařízení vlády'], 'date_authorized' => $at,
+        'metadata' => ['date_modified' => $gov ?? $at],
+        'author' => ['organization' => ['id' => 'X', 'name' => '']], 'status' => ['id' => substr($status, 0, 1), 'name' => $status],
+        'reason' => '', 'notes' => '', 'description' => 'Popis nařízení.', 'government_program' => $gov !== null ? ['date' => $gov] : [],
+        'review_process' => $finish !== null ? ['date_finish' => $finish, 'reviewers' => array_fill(0, $reviewers, ['id' => 'M', 'name' => 'M'])] : null,
+    ];
     @mkdir($outDir . '/odok', 0775, true);
     file_put_contents($outDir . '/odok/requests_2025.json', json_encode(['requests' => [
         $r('KORNUP000008', 'NZ', 'Návrh zákona z minulého volebního období', '2025-03-01T09:00:00Z', '2025-03-29T21:59:59Z', 30, '', null, '3 - připomínkové řízení ukončeno'),
@@ -330,6 +339,13 @@ UNL,
         $r('KORNUP000005', 'NZ', 'Návrh zákona o ekonomické ochraně státu', '2026-08-01T09:00:00Z', '2026-08-29T21:59:59Z', 40, '', '2026-09-30T10:00:00Z', 'CE – zaevidováno v PSP', ['id' => 330, 'period' => 10]),
         $r('KORNUP000006', 'NZ', 'Návrh zákona o zrušeném záměru', '2026-02-01T09:00:00Z', '2026-03-01T21:59:59Z', 20, '', null, 'Y - skartováno'),
         $r('KORNUP000007', 'NZ', 'Střednědobý výhled státního rozpočtu na léta 2028 a 2029', '2026-08-31T09:00:00Z', null, 0, '', '2026-09-07T10:00:00Z'),
+        // nařízení vlády (#59): krátké připomínky se zkratkou resortu bez názvu; každoroční nařízení se stejným názvem
+        // (loňské se s letošním nesmí spojit); dávno schválené z přehledu zmizí; čerstvě schválené zůstává
+        $nv('KORNNV000001', 'Nařízení vlády, kterým se mění nařízení vlády č. 222/2010 Sb., o katalogu prací ve veřejných službách a správě', $soon(-20), $soon(-13), 73, null, '3 - připomínkové řízení ukončeno'),
+        $nv('KORNNV000002', 'Nařízení vlády o úpravě náhrady za ztrátu na výdělku', '2025-11-07T09:00:00Z', '2025-11-28T22:59:59Z', 20, '2025-12-10T10:00:00Z', 'B - signováno'),
+        $nv('KORNNV000003', 'Nařízení vlády o úpravě náhrady za ztrátu na výdělku', $soon(-3), null, 0, null, '7 - zařazeno do evidence'),
+        $nv('KORNNV000004', 'Nařízení vlády o dávno schváleném cenovém výměru', '2026-05-14T09:00:00Z', null, 0, '2026-05-18T10:00:00Z', 'B - signováno'),
+        $nv('KORNNV000005', 'Nařízení vlády o čerstvě schválené věci', $soon(-40), $soon(-18), 30, $soon(-5), 'B - signováno'),
     ]], JSON_UNESCAPED_UNICODE));
     foreach ($files as $zipName => $entries) {
         $zip = new ZipArchive();

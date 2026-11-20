@@ -153,15 +153,17 @@ final class SearchIndex
 
         // připravované zákony u vlády
         $phase = ['pripominky' => 'v připomínkovém řízení', 'po_pripominkach' => 'po připomínkovém řízení', 'vlada' => 'předloženo vládě', 'schvaleno' => 'schváleno vládou'];
-        foreach ($this->db->all('SELECT pid, nazev, resort, faze, popis FROM pripravovane') as $u) {
-            $items[] = [
-                'k' => 'prip', 'id' => (string)$u['pid'],
-                't' => self::shorten((string)$u['nazev'], 160),
-                's' => $u['resort'] . ' · ' . ($phase[$u['faze']] ?? $u['faze']),
-                'd' => '', 'x' => self::shorten((string)$u['popis'], 300),
-                'u' => GovPrep::url((string)$u['pid']),
-                'w' => 0,
-            ];
+        foreach (['pripravovane' => '', 'pripravovana_narizeni' => 'nařízení vlády · '] as $table => $label) {
+            foreach ($this->db->all("SELECT pid, nazev, resort, faze, popis FROM $table") as $u) {
+                $items[] = [
+                    'k' => 'prip', 'id' => (string)$u['pid'],
+                    't' => self::shorten((string)$u['nazev'], 160),
+                    's' => $label . $u['resort'] . ' · ' . ($phase[$u['faze']] ?? $u['faze']),
+                    'd' => '', 'x' => self::shorten((string)$u['popis'], 300),
+                    'u' => GovPrep::url((string)$u['pid']),
+                    'w' => 0,
+                ];
+            }
         }
 
         // druhy problémů (filtr hlavních nálezů) a stránky webu
@@ -180,6 +182,7 @@ final class SearchIndex
         $pages = [
             ['Jak hodnotíme', 'metodika skóre body váhy omezení odpovědnosti AI', 'metodika.php'],
             ['Připravované zákony', 'vláda připomínkové řízení VeKLEP ministerstvo', 'pripravovane.php'],
+            ['Připravovaná nařízení vlády', 'nařízení vlády připomínkové řízení VeKLEP ministerstvo', 'pripravovane.php?druh=narizeni'],
             ['Data a API', 'JSON RSS export stažení vývojáři', 'data.php'],
             ['Pro AI asistenty (MCP)', 'MCP Claude AI asistent napojení nástroje rozprava projevy', 'mcp.php'],
             ['Co jsme změnili', 'změny opravy novinky', 'zmeny.php'],

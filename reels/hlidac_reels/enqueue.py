@@ -51,26 +51,35 @@ def main(argv=None) -> int:
     target_dir = Path(os.environ.get("REELS_MEDIA_DIR", "/media")) / "videos"
     target = target_dir / f"{digest}.mp4"
 
-    conn = db.connect()
+    # nejdřív soubor (dočasný název + atomické přejmenování), pak řádek ve frontě:
+    # bot tak nikdy nevidí queued řádek bez hotového souboru
+    tmp = target.with_suffix(".tmp")
+    created = False
     try:
-        db.migrate(conn)
-        # nejdřív vložit, aby duplicita nezanechala zbytečnou kopii; při selhání kopie řádek odstranit
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if not target.exists():  # soubor pod konečným názvem je vždy úplný
+            shutil.copyfile(video, tmp)
+            os.replace(tmp, target)
+            created = True
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        return _fail(f"kopie videa selhala: {e}")
+
+    try:
+        conn = db.connect()
         try:
+            db.migrate(conn)
             new_id = queue.add(conn, video_path=str(target), video_sha256=digest, caption=caption,
                                ct=args.ct, format=args.format)
-        except queue.DuplicateVideo:
-            return _fail("toto video už ve frontě je")
-        try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            if not target.exists():
-                shutil.copyfile(video, target)
-        except OSError as e:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM reel_queue WHERE id=%s", (new_id,))
-            conn.commit()
-            return _fail(f"kopie videa selhala: {e}")
-    finally:
-        conn.close()
+        finally:
+            conn.close()
+    except queue.DuplicateVideo:
+        # existující soubor patří řádku, který už ve frontě je; nemazat
+        return _fail("toto video už ve frontě je")
+    except BaseException:
+        if created:
+            target.unlink(missing_ok=True)
+        raise
     print(new_id)
     return 0
 

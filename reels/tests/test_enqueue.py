@@ -68,3 +68,81 @@ def test_enqueue_zkopiruje_a_vlozi(tmp_path, monkeypatch, capsys):
     assert "už" in capsys.readouterr().err
     assert sum(queue.counts(c0).values()) == 1
     c0.close()
+
+
+class _FakeConn:
+    def close(self):
+        pass
+
+
+def _fake_db(monkeypatch):
+    monkeypatch.setattr(enqueue.db, "connect", lambda: _FakeConn())
+    monkeypatch.setattr(enqueue.db, "migrate", lambda c: None)
+
+
+def test_soubor_existuje_pri_volani_queue_add(tmp_path, monkeypatch):
+    v, c = _files(tmp_path, "ok")
+    monkeypatch.setattr(media, "probe", lambda p: OK)
+    monkeypatch.setenv("REELS_MEDIA_DIR", str(tmp_path / "media"))
+    _fake_db(monkeypatch)
+    seen = {}
+
+    def fake_add(conn, *, video_path, **kw):
+        seen["exists"] = os.path.exists(video_path)
+        seen["tmp"] = os.path.exists(video_path[:-4] + ".tmp")
+        return 7
+    monkeypatch.setattr(enqueue.queue, "add", fake_add)
+    assert enqueue.main(["--video", str(v), "--caption-file", str(c)]) == 0
+    assert seen == {"exists": True, "tmp": False}
+
+
+def test_selhani_kopie_nezanecha_radek_ani_soubor(tmp_path, monkeypatch, capsys):
+    v, c = _files(tmp_path, "ok")
+    monkeypatch.setattr(media, "probe", lambda p: OK)
+    media_dir = tmp_path / "media"
+    monkeypatch.setenv("REELS_MEDIA_DIR", str(media_dir))
+    _fake_db(monkeypatch)
+    calls = []
+    monkeypatch.setattr(enqueue.queue, "add", lambda *a, **k: calls.append(1) or 1)
+
+    def bad_copy(src, dst):
+        open(dst, "wb").write(b"pul")  # poloviční soubor
+        raise OSError("disk plný")
+    monkeypatch.setattr(enqueue.shutil, "copyfile", bad_copy)
+    assert enqueue.main(["--video", str(v), "--caption-file", str(c)]) == 1
+    assert "kopie" in capsys.readouterr().err
+    assert calls == []
+    assert list((media_dir / "videos").iterdir()) == []
+
+
+def test_duplicita_nesmaze_existujici_soubor(tmp_path, monkeypatch, capsys):
+    v, c = _files(tmp_path, "ok")
+    monkeypatch.setattr(media, "probe", lambda p: OK)
+    media_dir = tmp_path / "media"
+    monkeypatch.setenv("REELS_MEDIA_DIR", str(media_dir))
+    _fake_db(monkeypatch)
+    digest = media.sha256(v)
+    target = media_dir / "videos" / f"{digest}.mp4"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"fake-video-bytes")
+
+    def dup(*a, **k):
+        raise enqueue.queue.DuplicateVideo(digest)
+    monkeypatch.setattr(enqueue.queue, "add", dup)
+    assert enqueue.main(["--video", str(v), "--caption-file", str(c)]) == 1
+    assert target.read_bytes() == b"fake-video-bytes"
+
+
+def test_selhani_vlozeni_smaze_nove_vytvoreny_soubor(tmp_path, monkeypatch):
+    v, c = _files(tmp_path, "ok")
+    monkeypatch.setattr(media, "probe", lambda p: OK)
+    media_dir = tmp_path / "media"
+    monkeypatch.setenv("REELS_MEDIA_DIR", str(media_dir))
+    _fake_db(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("DB spadla")
+    monkeypatch.setattr(enqueue.queue, "add", boom)
+    with pytest.raises(RuntimeError):
+        enqueue.main(["--video", str(v), "--caption-file", str(c)])
+    assert list((media_dir / "videos").iterdir()) == []

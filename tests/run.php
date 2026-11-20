@@ -1094,7 +1094,9 @@ echo "Tokeny MCP na webu\n";
 check('tvar tokenu jako hlidac_rag.tokens', (bool)preg_match('~^hz_[A-Za-z0-9_-]{43}$~', Hlidac\McpTokens::generate()), true);
 check('jméno tokenu bez řídicích znaků a zkrácené', Hlidac\McpTokens::label("rešerše\nk článku") === 'web: ' . date('Y-m-d') . ' · rešerše k článku'
     && mb_strlen(Hlidac\McpTokens::label(str_repeat('x', 300))) === mb_strlen('web: ' . date('Y-m-d') . ' · ') + 80, true);
-db()->run('CREATE TABLE IF NOT EXISTS mcp_token (id INTEGER PRIMARY KEY, jmeno TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, vytvoren TEXT NOT NULL, naposledy TEXT, zrusen TEXT)');
+// id se čísluje samo: v SQLite INTEGER PRIMARY KEY, v PostgreSQL (HLIDAC_TEST_DSN) SERIAL, v MySQL AUTO_INCREMENT
+$tokId = match (db()->driver) { 'pgsql' => 'SERIAL PRIMARY KEY', 'mysql' => 'INTEGER PRIMARY KEY AUTO_INCREMENT', default => 'INTEGER PRIMARY KEY' };
+db()->run("CREATE TABLE IF NOT EXISTS mcp_token (id $tokId, jmeno VARCHAR(255) NOT NULL, hash VARCHAR(64) NOT NULL UNIQUE, vytvoren VARCHAR(40) NOT NULL, naposledy VARCHAR(40), zrusen VARCHAR(40))");
 $tokCfg = config();
 $tokCfg['mcp'] = ['token_table' => 'mcp_token', 'tokens_per_day' => 2];
 $tok = new Hlidac\McpTokens(db(), $tokCfg);
@@ -1165,6 +1167,28 @@ $fail();
 $states[] = is_int($peek());
 check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
+
+echo "Opakování odeslání při výpadku webu\n";
+check('přechodné stavy: bez odpovědi a 502–504 ano, 500 a 403 ne', array_map([Hlidac\Http::class, 'transient'], [0, 502, 503, 504, 500, 403, 200]), [true, true, true, true, false, false, false]);
+// místní server: první dva dotazy 502 (jako proxy při výměně kontejneru), pak 200
+$sock = stream_socket_server('tcp://127.0.0.1:0');
+$port = (int)substr(strrchr((string)stream_socket_get_name($sock, false), ':'), 1);
+fclose($sock);
+file_put_contents($tmp . '/router.php', '<?php $f = __DIR__ . "/hits.txt"; $n = (int)@file_get_contents($f) + 1; file_put_contents($f, $n);'
+    . ' if ($n <= (int)getenv("FAIL_FIRST")) { http_response_code(502); exit; } header("Content-Type: application/json"); echo json_encode(["ok" => true, "pokus" => $n]);');
+$server = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $port, $tmp . '/router.php'], [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']], $pipes, null, ['FAIL_FIRST' => '2'] + getenv());
+for ($i = 0; $i < 50 && !@fsockopen('127.0.0.1', $port, $en, $es, 0.1); $i++) {
+    usleep(100_000);
+}
+$url = 'http://127.0.0.1:' . $port . '/';
+$without = (function () use ($url) { try { Hlidac\Http::post($url, [], ['a' => 1]); return 'ok'; } catch (Throwable $ex) { return str_contains($ex->getMessage(), 'HTTP 502') ? '502' : $ex->getMessage(); } })();
+@unlink($tmp . '/hits.txt');
+$with = Hlidac\Http::post($url, [], ['a' => 1], true, 10, [0.05, 0.05, 0.05]);
+@unlink($tmp . '/hits.txt');
+$tooFew = (function () use ($url) { try { Hlidac\Http::post($url, [], ['a' => 1], true, 10, [0.05]); return 'ok'; } catch (Throwable $ex) { return str_contains($ex->getMessage(), 'HTTP 502') ? '502' : $ex->getMessage(); } })();
+proc_terminate($server);
+proc_close($server);
+check('bez opakování chyba 502, s opakováním úspěch na třetí pokus, málo pokusů zase chyba', [$without, $with, $tooFew], ['502', ['ok' => true, 'pokus' => 3], '502']);
 
 echo "Upozornění na připravované zákony\n";
 // bez dat (ODok vypnutý nebo nedostupný) se první běh nepočítá, jinak by se dosavadní stav později rozeslal jako novinky

@@ -1,0 +1,43 @@
+name: deploy
+
+# Nasazení produkce po sloučení do main (#38): nejdřív testy, pak docker/redeploy.sh na serveru.
+# Skript novou verzi před výměnou kontejnerů otestuje a při neúspěchu vrátí předchozí; chyba je vidět tady.
+#
+# Vypnuto, dokud správce repozitáře nenastaví:
+#   proměnnou  DEPLOY_ENABLED = true
+#   tajemství  DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY (soukromý klíč jen pro nasazení), DEPLOY_KNOWN_HOSTS (ssh-keyscan serveru)
+# Prostředí „production“ lze v nastavení repozitáře opatřit ručním schválením.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/php-tests.yml
+
+  deploy:
+    needs: tests
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Nasazení přes SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" '~/hlidac-zakonu/docker/redeploy.sh'

@@ -337,9 +337,11 @@ class Bot:
     def send_next(self, force: bool = False) -> None:
         """Pošle další položku fronty ke schválení (když nic nečeká, nebo s force).
 
+        Pořadí zpráv: video 9:16, video na šířku (když ho položka má), náhled s tlačítky.
         Video, které Telegram odmítne (4xx) nebo jehož soubor nejde přečíst, se vyřadí (rejected,
         bez tlačítka, nikdy se z toho stavu nezveřejní) a zkusí se další, nejvýš SEND_ATTEMPTS za volání.
-        Výpadek sítě nebo 5xx/429 položku nevyřadí: výjimka jde dál, položka zůstane queued.
+        Platí pro obě videa: jedno schválení publikuje obě. Výpadek sítě nebo 5xx/429 položku
+        nevyřadí: výjimka jde dál, položka zůstane queued.
         """
         if not force and queue.pending_count(self.conn) > 0:
             return
@@ -351,6 +353,10 @@ class Bot:
                 return
             try:
                 video_id = self.tg.send_video(self.chat_id, reel.video_path, video_caption(reel))
+                landscape_id = None
+                if reel.video_landscape_path:
+                    landscape_id = self.tg.send_video(self.chat_id, reel.video_landscape_path,
+                                                      video_caption(reel, landscape=True))
             except TelegramError as e:
                 if not e.rejected:
                     raise
@@ -361,8 +367,35 @@ class Bot:
                 continue
             preview_id = self._send_preview(reel)
             queue.transition(self.conn, reel.id, "queued", "pending", sent_at=_now(),
-                             telegram_video_msg_id=video_id, telegram_msg_id=preview_id)
+                             telegram_video_msg_id=video_id, telegram_landscape_msg_id=landscape_id,
+                             telegram_msg_id=preview_id)
             return
+
+    def _send_landscape_updates(self) -> None:
+        """Video na šířku doplněné k čekající položce: pošle ho a nový náhled s tlačítky.
+
+        Id videa se uloží hned po odeslání, aby se video neposílalo v každé obrátce znovu. Náhled,
+        který se nepošle, se dožene v další obrátce: Telegram čísluje zprávy v chatu vzestupně, takže
+        náhled starší než video na šířku má menší message_id (telegram_msg_id < telegram_landscape_msg_id).
+        Do té doby si starý náhled nechá tlačítka. Chyby Telegramu se jen zalogují a zkusí se znovu.
+        """
+        for reel in queue.by_status(self.conn, ("pending",)):
+            if not reel.video_landscape_path:
+                continue
+            if reel.telegram_landscape_msg_id is None:
+                land_id = self._try("video na šířku", self.tg.send_video, self.chat_id,
+                                    reel.video_landscape_path, video_caption(reel, landscape=True))
+                if not land_id:
+                    continue
+                current = queue.get(self.conn, reel.id)
+                # mezitím vyměněné video (reels-add-landscape) se pošle v další obrátce
+                if (current is None or current.video_landscape_path != reel.video_landscape_path
+                        or current.telegram_landscape_msg_id is not None):
+                    continue
+                queue.set_fields(self.conn, reel.id, telegram_landscape_msg_id=land_id)
+                reel = dataclasses.replace(current, telegram_landscape_msg_id=land_id)
+            if (reel.telegram_msg_id or 0) < reel.telegram_landscape_msg_id:
+                self._resend_preview(reel)
 
     def _give_up(self, reel: Reel, exc: Exception) -> None:
         error = f"nelze poslat do Telegramu: {self._safe(exc)}"[:500]
@@ -381,11 +414,18 @@ class Bot:
             self._rollback()
 
     def maybe_send_next(self) -> None:
-        """Nově zařazené video dorazí samo: send_next nejvýš jednou za SEND_INTERVAL s."""
+        """Nově zařazené video (i doplněné video na šířku) dorazí samo, nejvýš jednou za SEND_INTERVAL s."""
         now = self.clock()
         if now < self._next_send_check:
             return
         self._next_send_check = now + SEND_INTERVAL
+        try:
+            self._send_landscape_updates()
+        except Exception as e:  # noqa: BLE001
+            if self._db_lost(e):
+                raise
+            log.warning("odeslání videa na šířku selhalo: %s", self._safe(e))
+            self._rollback()
         self._safe_send_next()
 
     # --- smyčka ----------------------------------------------------------

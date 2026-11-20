@@ -24,6 +24,37 @@ def video_caption(reel: Reel) -> str:
     return " · ".join(parts)[:VIDEO_CAPTION_LIMIT]
 
 
+def _variant_label(reel: Reel) -> str:
+    """v2, nebo v3 s formátem (template_v3)."""
+    if reel.template == "template_v3":
+        return f"v3 {reel.format}" if reel.format else "v3"
+    return "v2"
+
+
+def set_video_caption(reel: Reel) -> str:
+    return f"#{reel.set_id} · varianta {reel.variant} · {_variant_label(reel)}"[:VIDEO_CAPTION_LIMIT]
+
+
+def set_text(items: list[Reel]) -> str:
+    """Zpráva sady nad tlačítky Vybrat: tisk a z každé varianty první 2 řádky popisku."""
+    first = items[0]
+    head = f"Sada #{first.set_id}" + (f" · tisk {first.ct}" if first.ct is not None else "")
+    head += "\nVyber variantu, ostatní se zamítnou."
+    blocks = []
+    for r in items:
+        lines = "\n".join(r.caption.strip().splitlines()[:2])
+        blocks.append(f"{r.variant} ({_variant_label(r)}):\n{lines}")
+    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty
+    room = (TEXT_LIMIT - len(head) - 2 * len(blocks)) // max(len(blocks), 1)
+    blocks = [b if len(b) <= room else b[:max(room - 1, 0)] + "…" for b in blocks]
+    return "\n\n".join([head, *blocks])[:TEXT_LIMIT]
+
+
+def set_buttons(items: list[Reel]) -> list[tuple[str, str]]:
+    picks = [(f"Vybrat {r.variant}", f"pick:{r.id}") for r in items]
+    return picks + [("Zamítnout vše", f"noset:{items[0].set_id}")]
+
+
 def _fb_block(reel: Reel) -> str:
     return f"Náhled #{reel.id}\n\nFacebook:\n{for_network(reel.caption, reel.ct, 'fb')}"
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, fields as dc_fields
-from datetime import datetime
+from datetime import date, datetime
 
 import psycopg
 
@@ -106,9 +106,11 @@ def get(conn, id: int) -> Reel | None:
     return r
 
 
-def next_queued(conn) -> Reel | None:
+def next_queued(conn, sets: bool = True) -> Reel | None:
+    """Nejstarší položka queued; sets=False přeskočí položky sad (denní limit sad je vyčerpaný)."""
+    only_solo = "" if sets else " AND set_id IS NULL"
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued' ORDER BY id LIMIT 1")
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued'{only_solo} ORDER BY id LIMIT 1")
         r = _row(cur)
     conn.commit()
     return r
@@ -145,8 +147,31 @@ def set_items(conn, set_id: int) -> list[Reel]:
 
 
 def pending_count(conn) -> int:
+    """Nevyřízené jednotky ke schválení: sada se počítá jednou, samostatné video taky."""
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM reel_queue WHERE status='pending'")
+        cur.execute("SELECT count(DISTINCT coalesce(set_id, -id)) FROM reel_queue WHERE status='pending'")
+        n = cur.fetchone()[0]
+    conn.commit()
+    return n
+
+
+def local_date(conn, at: datetime) -> date:
+    """Den v Europe/Prague pro okamžik at (časová pásma z PostgreSQL, obraz nepotřebuje tzdata)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT (%s::timestamptz AT TIME ZONE 'Europe/Prague')::date", (at,))
+        d = cur.fetchone()[0]
+    conn.commit()
+    return d
+
+
+def sets_sent_on(conn, day: date) -> int:
+    """Kolik sad odešlo ke schválení v daném dni (Europe/Prague); samostatná videa se nepočítají."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(DISTINCT set_id) FROM reel_queue WHERE set_id IS NOT NULL AND sent_at IS NOT NULL "
+            "AND (sent_at AT TIME ZONE 'Europe/Prague')::date = %s",
+            (day,),
+        )
         n = cur.fetchone()[0]
     conn.commit()
     return n

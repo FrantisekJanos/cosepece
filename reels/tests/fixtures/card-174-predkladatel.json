@@ -1,0 +1,91 @@
+{
+  "ct": 174,
+  "nazev": "Novela z. na ochranu zvířat proti týrání",
+  "faze": "3. čtení",
+  "score": 85,
+  "title": "Zvláštní opatření lze nařídit už před skončením řízení o přestupku či trestném činu",
+  "perex": "Zvláštní opatření lze vydat před skončením řízení o přestupku nebo trestném činu, z jehož skutkového základu vychází, což mění pořadí řízení.",
+  "quote": "Rozhodnutí o zvláštním opatření podle odstavce 1 lze vydat před skončením řízení o přestupku či trestném činu ohledně chování pachatele, které je zároveň podkladem pro řízení o zvláštním opatření.",
+  "quote_source": "text návrhu zákona",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (242/2000 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí",
+      "points": 20
+    },
+    {
+      "key": "mp_bill",
+      "label": "Poslanecký návrh postupuje projednáváním – text nepřipravovalo ministerstvo v připomínkovém řízení; vláda si k němu připomínky nevyžádala",
+      "points": 15
+    },
+    {
+      "key": "short_gap",
+      "label": "Mezi rozesláním souhrnu pozměňovacích návrhů a 3. čtením jen 6 dní",
+      "points": 15
+    },
+    {
+      "key": "ai",
+      "label": "Rozbor PN č. 2044 (Jiří Pospíšil): závažnost 5/10 – Text zavádí nový režim přechodu vlastnictví zvířat na stát, ale neobsahuje výslovnou zpětnou účinnost ani zkrácení lhůt pro vymáhání či kontrolu státu.; 5 z 36 PN se závažností ≥ 5",
+      "points": 15
+    },
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 4/10 – Rozhodnutí o zvláštním opatření lze vydat před skončením řízení o přestupku, což obchází běžné pořadí řízení, a výjimka pro kurzy řidičů a průvodců silničních vozidel je úzce vymezená.",
+      "points": 10
+    },
+    {
+      "key": "p90_requested",
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)",
+      "points": 10
+    },
+    {
+      "key": "late_pn",
+      "label": "24 z 36 pozměňovacích návrhů podáno v den konce podrobné rozpravy",
+      "points": 0
+    },
+    {
+      "key": "surge",
+      "label": "Nával pozměňovacích návrhů",
+      "points": 0
+    }
+  ],
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-04-21",
+  "predkladatel": {
+    "typ": "Poslanecký návrh",
+    "jmeno": "Lucie Šafránková",
+    "funkce": "poslankyně, první z navrhovatelů",
+    "klub": "SPD",
+    "predlozeno": "2026-04-21",
+    "skupina": {
+      "count": 9,
+      "kluby": [
+        {
+          "klub": "ANO",
+          "count": 3
+        },
+        {
+          "klub": "SPD",
+          "count": 3
+        },
+        {
+          "klub": "MS",
+          "count": 3
+        }
+      ]
+    },
+    "citace": {
+      "text": "V posledních letech jsme svědky stále většího počtu otřesných případů týrání zvířat, nelegálních množíren, zanedbávání péče a situací, kdy současná právní úprava neumožňuje státu, obcím ani kontrolním orgánům reagovat dostatečně rychle a účinně.",
+      "datum": "2026-06-30",
+      "schuze": 24,
+      "cteni": "1. čtení",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/024schuz/s024234.htm#r12",
+      "klic": "10/24/234/12",
+      "autorizovano": false,
+      "za": "za navrhovatele"
+    }
+  },
+  "url": "https://cosepece.cz/tisk.php?ct=174",
+  "data_date": "2026-11-19"
+}

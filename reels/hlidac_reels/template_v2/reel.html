@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../template/fonts.css">
+<link rel="stylesheet" href="reel.css">
+<link rel="stylesheet" href="landscape.css">
+</head>
+<body>
+<div id="frame">
+  <div id="bg">
+    <div id="dots"></div>
+    <svg id="ring" viewBox="-800 -800 1600 1600" aria-hidden="true">
+      <circle r="560" fill="none" stroke="#1D1E22" stroke-width="5" stroke-dasharray="6 30"/>
+      <circle r="700" fill="none" stroke="#1A1B1F" stroke-width="3" stroke-dasharray="420 180"/>
+    </svg>
+  </div>
+
+  <div id="stage">
+    <section class="scene" id="s-hook">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Skóre závažnosti postupu</div>
+          <div class="scorerow" id="score-row"><span class="big" id="score">0</span><span class="of" id="score-of">/100</span></div>
+          <div class="gauge" id="gauge">
+            <div id="ticks"></div>
+            <div class="scale"><span>0</span><span>50</span><span>100</span></div>
+          </div>
+        </div>
+        <div class="side-b">
+          <div class="t mask" id="hook-name" data-fit="1"></div>
+          <div class="metarow"><span class="tag" id="hook-faze"></span><span class="m" id="hook-meta"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- volitelný blok: karta.predkladatel = {typ, jmeno, funkce, klub, predlozeno, skupina: {count, kluby: [{klub, count}]}, poznamka} -->
+    <section class="scene" id="s-who">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab"><i class="sq" id="who-sq"></i>Kdo to přináší</div>
+          <div class="whotyp" id="who-typ"></div>
+          <div class="whorow">
+            <div class="mono" id="who-mono"><span id="who-ini"></span><i id="who-corner"></i></div>
+            <div class="h mask" id="who-name" data-fit="1"></div>
+          </div>
+          <div class="m" id="who-funkce"></div>
+          <div class="metarow" id="who-meta"><span class="klub" id="who-klub"></span><span class="m" id="who-predlozeno"></span></div>
+        </div>
+        <div class="side-b">
+          <div id="who-sig">
+            <div class="pnrow">
+              <span class="pnbig" id="who-sig-count">0</span>
+              <div class="pntxt"><div class="t2" id="who-sig-word"></div><div class="m" id="who-sig-sub">skupina navrhovatelů</div></div>
+            </div>
+            <div id="who-sig-slips"></div>
+            <div id="who-sig-kluby"></div>
+          </div>
+          <div class="m" id="who-note" data-fit="1"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- volitelný blok: karta.predkladatel.citace = {text, datum, schuze, cteni, url, autorizovano, recnik: {jmeno, funkce, klub}, za} -->
+    <section class="scene" id="s-said">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab" id="said-lab"></div>
+          <div class="paper" id="said-paper">
+            <div class="qm" id="said-qm">„</div>
+            <div class="q" id="said-quote" data-fit="1"></div>
+          </div>
+        </div>
+        <div class="side-b">
+          <div class="saidwho" id="said-who"><div class="t2" id="said-name"></div><div class="m" id="said-funkce"></div></div>
+          <div class="metarow" id="said-meta"><span class="chip" id="said-source"></span><span class="unauth" id="said-unauth">neautorizováno</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene" id="s-title">
+      <div class="body">
+        <div class="lab"><i class="sq" id="title-sq"></i>Co se peče</div>
+        <div class="h mask" id="title" data-fit="1"></div>
+        <i class="rule" id="title-rule"></i>
+      </div>
+    </section>
+
+    <!-- volitelný blok: karta.shift = {label, from, to, unit, note} -->
+    <section class="scene" id="s-shift">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab" id="shift-lab"></div>
+          <div class="shiftrow" id="shift-row">
+            <span class="from" id="shift-from-box"><span id="shift-from"></span><i id="shift-strike"></i></span>
+            <svg id="shift-arrow" viewBox="0 0 200 120" aria-hidden="true"><path d="M4 60H180M128 14l56 46-56 46" fill="none" stroke="#F4F1EA" stroke-width="18"/></svg>
+            <span class="to" id="shift-to"></span>
+          </div>
+          <div class="unit" id="shift-unit"></div>
+        </div>
+        <div class="side-b">
+          <div class="t" id="shift-note" data-fit="1"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene" id="s-perex">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">O co jde</div>
+        </div>
+        <div class="side-b">
+          <div class="pwrap"><i id="perex-bar"></i><div class="t" id="perex" data-fit="1"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene" id="s-quote">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Černé na bílém</div>
+        </div>
+        <div class="side-b">
+          <div class="paper" id="paper">
+            <div class="qm" id="qm">„</div>
+            <div class="q" id="quote" data-fit="1"></div>
+          </div>
+          <div class="chip" id="quote-source"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- volitelný blok: karta.timeline = [{date, label}], karta.pn = {count, authors, late_count, late_label} -->
+    <section class="scene" id="s-path">
+      <div class="body">
+        <div class="lab" id="path-lab">Průběh projednávání</div>
+        <div id="tl"><i id="tl-line"></i><div id="tl-rows"></div></div>
+        <div id="pn">
+          <div class="pnrow">
+            <span class="pnbig" id="pn-count">0</span>
+            <div class="pntxt"><div class="t2" id="pn-word"></div><div class="m" id="pn-authors"></div></div>
+          </div>
+          <div id="pn-slips"></div>
+          <div class="m late" id="pn-late"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- volitelný blok: karta.deadline = {label, normal, actual, unit} -->
+    <section class="scene" id="s-deadline">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab" id="dl-lab"></div>
+          <div class="dlrow" id="dl-row-n">
+            <div class="dlhead">Normálně</div>
+            <div class="dlval"><span id="dl-normal"></span><span class="u" id="dl-unit-n"></span></div>
+            <div class="track big"><i id="dl-bar-n"></i></div>
+          </div>
+          <div class="dlrow tady" id="dl-row-a">
+            <div class="dlhead">Tady</div>
+            <div class="dlval"><span id="dl-actual"></span><span class="u" id="dl-unit-a"></span></div>
+            <div class="track big"><i id="dl-bar-a"></i></div>
+          </div>
+        </div>
+        <div class="side-b">
+          <div class="stamps" id="dl-stamps"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene" id="s-reasons">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab">Proč to hlídáme</div>
+          <div class="list" id="reasons"></div>
+        </div>
+        <div class="side-b">
+          <div class="stamps" id="stamps"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene red" id="s-end">
+      <div class="body two">
+        <div class="side-a">
+          <div class="lab dark">Celý rozbor a zdroje</div>
+          <div class="logo" id="end-logo"></div>
+          <div class="t dark" id="end-ct"></div>
+          <div class="url" id="end-url-box"><span id="end-url"></span><i id="end-cursor"></i></div>
+        </div>
+        <div class="side-b">
+          <div class="chip dark" id="ai-note"></div>
+          <div class="m dark" id="end-motto">Hodnotíme postup, ne politický obsah.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="flash"></div>
+  <div id="wipe"></div>
+
+  <header id="top">
+    <div class="toprow"><span><i id="rec"></i>Hlídač zákonů</span><span id="top-ct"></span></div>
+    <div id="prog"></div>
+  </header>
+  <footer id="footer"></footer>
+</div>
+<script src="reel.js"></script>
+</body>
+</html>

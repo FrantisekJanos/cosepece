@@ -1,0 +1,74 @@
+/* Šablona Reelu v2 na šířku: 1920 × 1080 pro X.com, bezpečný okraj 60 px dokola.
+   Platí jen s třídou landscape na <html> (nastavuje loadCard(card, "landscape")); stejné scény, pohyb i zvuk
+   jako na výšku, jiné je jen rozvržení. Žádné transition ani animation. */
+html.landscape, html.landscape body, html.landscape #frame { width: 1920px; height: 1080px; }
+html.landscape #ring { left: 840px; top: -260px; }
+
+/* horní lišta a patka: 60 px od okraje, menší písmo (X obraz ničím nepřekrývá) */
+html.landscape #top { top: 60px; left: 80px; right: 80px; }
+html.landscape .toprow { font-size: 28px; }
+html.landscape #rec { width: 16px; height: 16px; margin-right: 14px; }
+html.landscape #prog { gap: 8px; margin-top: 16px; }
+html.landscape #prog .seg { height: 6px; }
+html.landscape #footer { left: 80px; right: 80px; bottom: 60px; font-size: 22px; }
+
+/* tělo scény 1760 × 810; dvousloupcové scény: .side-a vlevo, .side-b vpravo (bez obsahu jedné strany .solo = sloupec) */
+html.landscape .body { top: 148px; bottom: 122px; left: 80px; right: 80px; }
+html.landscape .body.two:not(.solo) { flex-direction: row; justify-content: flex-start; align-items: stretch;
+  column-gap: 88px !important; }
+html.landscape .body.two:not(.solo) > .side-a, html.landscape .body.two:not(.solo) > .side-b { display: flex;
+  flex-direction: column; justify-content: safe center; gap: 32px; min-width: 0; flex: 1 1 0; }
+
+/* hook: skóre se stupnicí vlevo, název zákona a fáze vpravo */
+html.landscape #s-hook .body.two > .side-a { flex: 0 0 auto; }
+html.landscape #gauge { min-width: 640px; }
+html.landscape #hook-name { font-size: 76px; }
+html.landscape #s-hook .metarow .m { font-size: 42px; }
+
+/* titulek přes celou šířku */
+html.landscape #title { font-size: 124px; }
+
+/* změna X → Y vlevo, poznámka vpravo */
+html.landscape #s-shift .body.two:not(.solo) > .side-a { flex: 0 0 auto; }
+html.landscape #shift-strike { left: -3%; right: -3%; }
+html.landscape #shift-note { font-size: 72px; }
+
+/* perex a citace: rubrika jako úzký levý sloupec, text vpravo */
+html.landscape #s-perex .body.two > .side-a, html.landscape #s-quote .body.two > .side-a { flex: 0 0 auto; }
+html.landscape #perex { font-size: 72px; }
+html.landscape .paper { margin-right: 24px; }
+/* uvozovka: rámeček znaku nesmí vyčnívat nad bezpečný okraj, když výstřižek vyplní celou výšku */
+html.landscape .qm { top: -150px; font-size: 220px; }
+
+/* předkladatel */
+html.landscape #s-who .body.two:not(.solo) > .side-a { flex: 1.3 1 0; }
+
+/* průběh projednávání vodorovně (--n = počet kroků, nastavuje reel.js), pod ním pozměňovací návrhy v jednom řádku */
+html.landscape #tl { padding-left: 0; }
+html.landscape #tl-line { left: 16px; top: 13px; bottom: auto; width: auto; height: 6px; transform-origin: 0 50%;
+  right: calc((100% - (var(--n) - 1) * 28px) / var(--n) - 16px); }
+html.landscape #tl-rows { flex-direction: row; gap: 28px; }
+html.landscape #tl-rows .step { flex: 1 1 0; min-width: 0; padding-top: 56px; }
+html.landscape #tl-rows .step .dot { left: 0; top: 0; }
+html.landscape #tl-rows .step .d { font-size: 34px; }
+html.landscape #tl-rows .step .s { font-size: calc(60px - var(--n) * 4px); overflow-wrap: break-word; }
+html.landscape #pn { flex-direction: row; align-items: center; gap: 56px; }
+html.landscape #pn .pnrow { flex: none; }
+html.landscape #pn-slips { flex: 1 1 0; }
+html.landscape #pn-late { flex: none; max-width: 440px; }
+html.landscape #pn.solo .pnbig { font-size: 300px; }
+
+/* NORMÁLNĚ × TADY vlevo pod sebou (pruhy se stejným počátkem), razítko vpravo */
+html.landscape #s-deadline .body.two:not(.solo) > .side-a { flex: 1.5 1 0; }
+html.landscape .dlval { font-size: 170px; }
+html.landscape .tady .dlval { font-size: 240px; }
+
+/* důvody skóre vlevo, razítka vpravo */
+html.landscape #s-reasons .body.two:not(.solo) > .side-a { flex: 1.5 1 0; }
+html.landscape .list { gap: 24px; }
+html.landscape .litxt { font-size: 44px; }
+html.landscape .pts { font-size: 72px; }
+
+/* konec: logo a odkaz vlevo, poznámky vpravo */
+html.landscape #s-end .body.two > .side-a { flex: 0 0 auto; }
+html.landscape .logo { font-size: 184px; }

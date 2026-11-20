@@ -15,6 +15,8 @@ services:
     volumes:
       - ./config.php:/run/hlidac/config.php:ro
       - appdata:/var/www/html/data
+      # veřejné kopie videí pro Instagram (/reels-media/<token>.mp4, Alias v docker/Dockerfile), jen čtení
+      - reelsmedia:/srv/reels-media:ro
     depends_on: [db]
 
   # synchronizace s psp.cz každou hodinu (náhrada cronu)
@@ -64,6 +66,30 @@ services:
       - "${MCP_BIND:-127.0.0.1:8102}:8000"
     depends_on: [db]
 
+  # Reels: Telegram bot pro schválení a publikaci na FB a IG; video do fronty dá reels-enqueue (viz reels/README.md)
+  reels:
+    build:
+      context: ../reels
+    restart: unless-stopped
+    # jen PG* (ne celé *ragenv: klíč OpenAI a Sentry rag sem nepatří)
+    environment:
+      PGHOST: db
+      PGDATABASE: hlidac
+      PGUSER: hlidac
+      PGPASSWORD: ${DB_PASSWORD}
+      META_SYSTEM_TOKEN: ${META_SYSTEM_TOKEN:-}
+      META_PAGE_ID: ${META_PAGE_ID:-}
+      META_IG_USER_ID: ${META_IG_USER_ID:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v23.0}
+      REELS_TELEGRAM_TOKEN: ${REELS_TELEGRAM_TOKEN:-}
+      REELS_TELEGRAM_CHAT_ID: ${REELS_TELEGRAM_CHAT_ID:-}
+      REELS_PUBLIC_BASE: ${REELS_PUBLIC_BASE:-https://cosepece.cz/reels-media}
+      REELS_MEDIA_DIR: /media
+    volumes:
+      - reelsmedia:/media
+    mem_limit: 256m
+    depends_on: [db]
+
   db:
     # PostgreSQL 17 s rozšířením pgvector (pro sémantické hledání). Varianta trixie má stejnou glibc
     # jako původní postgres:17, jinak hrozí nesoulad collation a poškozené řazení textových indexů.
@@ -79,3 +105,4 @@ services:
 volumes:
   appdata:
   pgdata:
+  reelsmedia:

@@ -1,0 +1,81 @@
+{
+  "ct": 115,
+  "nazev": "Novela z. - trestní zákoník",
+  "faze": "3. čtení",
+  "score": 68,
+  "title": "Nepodmíněný trest za zanedbání povinné výživy jen za podmínek stanovených zákonem",
+  "perex": "Procedurálně sporné prvky nebyly zjištěny; návrh mění podmínky pro nepodmíněný trest u zanedbání povinné výživy a výjimku v zákoně o obětech.",
+  "quote": "Za trestný čin zanedbání povinné výživy podle § 196 odst. 1 lze uložit nepodmíněný trest odnětí svobody jen za podmínky, že uložení takového trestu vyžaduje účinná ochrana společnosti nebo není naděje, že by pachatele bylo možno napravit jiným trestem.",
+  "quote_source": "text návrhu zákona",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (280/2009 Sb., 120/2001 Sb., 588/2020 Sb., 99/1963 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí",
+      "points": 20
+    },
+    {
+      "key": "ai",
+      "label": "Rozbor PN č. 1417 (Aleš Juchelka): závažnost 6/10 – Pozměňovací návrh vkládá do návrhu o trestním zákoníku a obětech trestných činů úpravy trestního řádu, zákona o Policii ČR a daňového řádu, včetně rozšíření odposlechů a výměny daňových informací, přičemž účinnost je nastavena na pozdější datum a zpětnost nevzniká.; 5 z 29 PN se závažností ≥ 6",
+      "points": 18
+    },
+    {
+      "key": "mp_bill",
+      "label": "Poslanecký návrh postupuje projednáváním – text nepřipravovalo ministerstvo v připomínkovém řízení; vláda si k němu připomínky nevyžádala",
+      "points": 15
+    },
+    {
+      "key": "p90_requested",
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)",
+      "points": 10
+    },
+    {
+      "key": "pn_many",
+      "label": "10 z 29 pozměňovacích návrhů je problematických",
+      "points": 5
+    }
+  ],
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-02-18",
+  "predkladatel": {
+    "typ": "Poslanecký návrh",
+    "jmeno": "Andrej Babiš",
+    "funkce": "poslanec a předseda vlády, první z navrhovatelů",
+    "klub": "ANO",
+    "predlozeno": "2026-02-18",
+    "skupina": {
+      "count": 6,
+      "kluby": [
+        {
+          "klub": "ANO",
+          "count": 4
+        },
+        {
+          "klub": "MS",
+          "count": 1
+        },
+        {
+          "klub": "SPD",
+          "count": 1
+        }
+      ]
+    },
+    "citace": {
+      "text": "Proč tedy vůbec takovouto změnu, tak brzo a v devadesátce chceme dělat? Odpověď je celkem snadná, protože jsme zjistili, že jsme podcenili generálně preventivní účinek trestání.",
+      "datum": "2026-04-21",
+      "schuze": 14,
+      "cteni": "1. čtení",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/014schuz/s014192.htm#r7",
+      "klic": "10/14/192/7",
+      "autorizovano": true,
+      "recnik": {
+        "jmeno": "Helena Válková",
+        "funkce": "poslankyně, jedna z navrhovatelů",
+        "klub": "ANO"
+      },
+      "za": "za navrhovatele"
+    }
+  },
+  "url": "https://cosepece.cz/tisk.php?ct=115",
+  "data_date": "2026-11-19"
+}

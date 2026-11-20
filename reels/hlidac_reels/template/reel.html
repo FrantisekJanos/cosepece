@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="reel.css">
+</head>
+<body>
+<div id="frame">
+  <header class="top"><span>Hlídač zákonů</span><span id="top-ct"></span></header>
+
+  <section class="scene" id="s-hook">
+    <div class="body">
+      <div class="lab anim">Skóre závažnosti postupu</div>
+      <div class="big anim"><span id="score">0</span><span class="of">/100</span></div>
+      <div class="t anim" id="hook-name"></div>
+      <div class="m anim" id="hook-faze"></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s-title">
+    <div class="body">
+      <div class="lab anim">Co se peče</div>
+      <div class="h anim" id="title" data-fit="1"></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s-perex">
+    <div class="body">
+      <div class="t anim" id="perex" data-fit="1"></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s-quote">
+    <div class="body">
+      <div class="qm anim">„</div>
+      <div class="q anim" id="quote" data-fit="1"></div>
+      <div class="chip anim" id="quote-source"></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s-reasons">
+    <div class="body">
+      <div class="lab anim">Proč to hlídáme</div>
+      <div class="list" id="reasons"></div>
+      <div class="stamps" id="stamps"></div>
+    </div>
+  </section>
+
+  <section class="scene red" id="s-end">
+    <div class="body">
+      <div class="lab anim dark">Celý rozbor a zdroje</div>
+      <div class="h anim">cosepece.cz</div>
+      <div class="t anim" id="end-ct"></div>
+      <div class="chip anim dark" id="ai-note"></div>
+    </div>
+  </section>
+
+  <!-- volitelné bloky (hlasovací pruh, časomíra, NORMÁLNĚ / TADY): zobrazí se jen s daty karty -->
+  <section class="scene" id="s-votes" data-optional="votes"></section>
+  <section class="scene" id="s-clock" data-optional="clock"></section>
+  <section class="scene" id="s-compare" data-optional="compare"></section>
+
+  <footer class="src" id="footer"></footer>
+</div>
+<script src="reel.js"></script>
+</body>
+</html>

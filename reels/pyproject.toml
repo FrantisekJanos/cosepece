@@ -1,0 +1,34 @@
+[project]
+name = "hlidac-reels"
+version = "0.1.0"
+description = "Reels z hlavních nálezů Hlídače zákonů: render videa, fronta a Telegram bot"
+requires-python = ">=3.12"
+# kontejner (bot, reels-enqueue) potřebuje jen tyto; render videa běží lokálně: pip install -e ".[render,dev]"
+dependencies = [
+  "psycopg[binary]==3.3.9",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+render = ["playwright==1.49.1", "numpy>=2.0"]
+dev = ["pytest"]
+
+[project.scripts]
+reels-enqueue = "hlidac_reels.enqueue:main"
+reels-bot = "hlidac_reels.bot:main"
+
+[tool.setuptools.packages.find]
+include = ["hlidac_reels*"]
+
+[tool.setuptools.package-data]
+hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "schema_reels.sql"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+markers = [
+  "render: testy renderu (potřebují Chromium a ffmpeg, jinak se přeskočí)",
+  "pg: testy nad PostgreSQL (potřebují DATABASE_URL, jinak se přeskočí)",
+]

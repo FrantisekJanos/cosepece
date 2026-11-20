@@ -1,0 +1,73 @@
+{
+  "ct": 311,
+  "nazev": "Novela z. o daních z příjmů",
+  "faze": "2. čtení",
+  "score": 85,
+  "title": "Mimořádná daň 50 % pro zpracovatele ropy platí už za rok 2026 – zpětně",
+  "perex": "Nová mimořádná sektorová daň se použije už za zdaňovací období započaté v roce 2026, tedy před nabytím účinnosti zákona, a zatíží úzce vymezenou skupinu poplatníků.",
+  "quote": "Sazba daně pro základ mimořádné sektorové daně činí 50 %.",
+  "quote_source": "text návrhu zákona",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai",
+      "label": "Rozbor PN č. 2315 (Marian Jurečka): závažnost 7/10 – Jde o zásadní nový režim zvýhodnění vymezené skupiny zemědělských poplatníků, včetně nových institutů a výjimek, vložený pozměňovacím návrhem do novely zákona o daních z příjmů, která takový režim neobsahuje.; 8 z 30 PN se závažností ≥ 6",
+      "points": 21
+    },
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Nová daňová povinnost se zpětně použije na zdaňovací období započaté v roce 2026, tedy před dnem nabytí účinnosti, a tíží úzce vymezený okruh poplatníků, přičemž přechodné ustanovení č. 1 a č. 2 si v tomto ohledu odporují.",
+      "points": 18
+    },
+    {
+      "key": "deadline_cut",
+      "label": "Zkrácená lhůta pro výbory: 30 dní místo 60",
+      "points": 15
+    },
+    {
+      "key": "late_pn",
+      "label": "26 z 30 pozměňovacích návrhů podáno v den konce podrobné rozpravy",
+      "points": 10
+    },
+    {
+      "key": "watched",
+      "label": "Sledovaný zákon",
+      "points": 10
+    },
+    {
+      "key": "pn_large",
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem",
+      "points": 6
+    },
+    {
+      "key": "surge",
+      "label": "Nával pozměňovacích návrhů",
+      "points": 5
+    },
+    {
+      "key": "pn_many",
+      "label": "9 z 30 pozměňovacích návrhů je problematických",
+      "points": 0
+    }
+  ],
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-22",
+  "predkladatel": {
+    "typ": "Vládní návrh",
+    "jmeno": "Alena Schillerová",
+    "funkce": "místopředsedkyně vlády a ministryně financí",
+    "klub": "ANO",
+    "predlozeno": "2026-09-22",
+    "citace": {
+      "text": "Cílem této novely je mimořádné zdanění reagující na výrazný růst cen rafinérských produktů. … Výnos této daně bude sloužit k částečné kompenzaci výdajů státního rozpočtu, které byly vynaloženy v souvislosti s dopady růstu cen pohonných hmot.",
+      "datum": "2026-10-13",
+      "schuze": 34,
+      "cteni": "1. čtení",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
+      "klic": "10/34/25/3",
+      "autorizovano": true
+    }
+  },
+  "url": "https://cosepece.cz/tisk.php?ct=311",
+  "data_date": "2026-11-19"
+}

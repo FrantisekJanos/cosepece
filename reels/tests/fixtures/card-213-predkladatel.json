@@ -1,0 +1,63 @@
+{
+  "ct": 213,
+  "nazev": "Novela z. o někt.opatř. v souv. s ozbroj.konf. – Ukrajina",
+  "faze": "3. čtení",
+  "score": 70,
+  "title": "Přísnější pravidla pro azyl, pobyt cizinců a dočasnou ochranu Ukrajinců; vyšší tresty za převaděčství",
+  "perex": "Návrh upravuje azylové řízení, pobyt cizinců, dávky dočasné ochrany a trestní sazby; část změn se použije na již zahájená řízení nebo vzniklé situace.",
+  "quote": "Vlastníkem návykové látky podle zákona č. 167/1998 Sb., o návykových látkách, která byla ke dni nabytí účinnosti tohoto zákona v úschově Ministerstva vnitra, se ode dne nabytí účinnosti tohoto zákona stává stát.",
+  "quote_source": "text návrhu zákona",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai",
+      "label": "Rozbor PN č. 2112 (Kateřina Stojanová): závažnost 9/10 – Rozsáhlá a věcně zásadní reforma správního soudnictví a souvisejících předpisů je vložena pozměňovacím návrhem do zákona o opatřeních souvisejících s konfliktem na Ukrajině, tedy zcela mimo deklarovaný předmět návrhu.; 3 z 8 PN se závažností ≥ 6",
+      "points": 27
+    },
+    {
+      "key": "deadline_cut",
+      "label": "Zkrácená lhůta při projednávání",
+      "points": 15
+    },
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 4/10 – Jde o rozsáhlou novelu v rámci deklarovaného předmětu (bezpečnost, migrace), s dílčími novými povinnostmi použitelnými i na probíhající případy (např. odevzdání cestovního dokladu, přechod vlastnictví návykových látek na stát), avšak přechodná ustanovení zachovávají dosavadní procesní pravidla pro podané žaloby.",
+      "points": 12
+    },
+    {
+      "key": "late_pn",
+      "label": "4 z 8 pozměňovacích návrhů podáno v den konce podrobné rozpravy",
+      "points": 10
+    },
+    {
+      "key": "pn_large",
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem",
+      "points": 6
+    },
+    {
+      "key": "pn_many",
+      "label": "3 z 8 pozměňovacích návrhů je problematických",
+      "points": 0
+    }
+  ],
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-06-03",
+  "predkladatel": {
+    "typ": "Vládní návrh",
+    "jmeno": "Lubomír Metnar",
+    "funkce": "ministr vnitra",
+    "klub": "ANO",
+    "predlozeno": "2026-06-03",
+    "citace": {
+      "text": "Chci vás ujistit, že cílem není komplikovat život lidem, kteří dodržují pravidla, ale zajistit, aby stát dokázal účinně reagovat na jejich zneužívání, lépe chránit své bezpečnostní zájmy a efektivněji vymáhat platné právo.",
+      "datum": "2026-06-24",
+      "schuze": 24,
+      "cteni": "1. čtení",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/024schuz/s024087.htm#r8",
+      "klic": "10/24/87/8",
+      "autorizovano": false
+    }
+  },
+  "url": "https://cosepece.cz/tisk.php?ct=213",
+  "data_date": "2026-11-19"
+}

@@ -79,7 +79,9 @@ def _row(cur) -> Reel | None:
 
 def add(conn, *, video_path: str, video_sha256: str, caption: str,
         ct: int | None = None, format: str | None = None, source: str = "ukazka",
-        set_id: int | None = None, variant: int | None = None, template: str | None = None) -> int:
+        set_id: int | None = None, variant: int | None = None, template: str | None = None,
+        commit: bool = True) -> int:
+    """Vloží položku. commit=False nechá transakci otevřenou (volající commitne, při chybě rollback)."""
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -88,7 +90,8 @@ def add(conn, *, video_path: str, video_sha256: str, caption: str,
                 (source, ct, format, video_path, video_sha256, caption, set_id, variant, template),
             )
             new_id = cur.fetchone()[0]
-        conn.commit()
+        if commit:
+            conn.commit()
         return new_id
     except psycopg.errors.UniqueViolation as e:
         conn.rollback()

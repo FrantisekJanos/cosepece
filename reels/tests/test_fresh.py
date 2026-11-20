@@ -186,3 +186,55 @@ def test_retire_cast_sady_uz_vybrana(conn):
     conn.commit()
     assert fresh.retire(conn, NOW) == [(s, "withdrawn")]
     assert _statuses(conn, s) == ["withdrawn", "rejected"]
+
+
+def test_retire_prazdny_snimek_nestahuje(conn):
+    from hlidac_reels import fresh
+    _snapshot(conn, {}, NOW)
+    gone = _set(conn, source="fresh", ct=500, age=timedelta(days=1))
+    old = _set(conn, source="fresh", ct=501, age=timedelta(days=8))
+    assert fresh.retire(conn, NOW) == [(old, "expired")]
+    assert _statuses(conn, gone) == ["pending", "pending"]
+
+
+def test_poskozena_baseline_jako_prvni_beh(conn, caplog):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    queue.set_state(conn, "fresh_baseline", "{nejde to")
+    with caplog.at_level("WARNING", logger="hlidac_reels.fresh"):
+        assert fresh.detect(conn, NOW) == []
+    assert "fresh_baseline" in caplog.text
+    assert json.loads(queue.get_state(conn, "fresh_baseline")) == BASE_ITEMS
+    assert _fresh_jobs(conn) == []
+    # JSON jiného tvaru se bere stejně
+    queue.set_state(conn, "fresh_baseline", "[1, 2]")
+    assert fresh.detect(conn, NOW) == []
+    assert json.loads(queue.get_state(conn, "fresh_baseline")) == BASE_ITEMS
+
+
+def test_baseline_po_kazdem_tisku(conn, monkeypatch):
+    from hlidac_reels import fresh, jobs, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    items = dict(BASE_ITEMS, **{"400": ["sensitive"], "401": ["late_pn"]})
+    _snapshot(conn, items, NOW + timedelta(hours=1))
+    real_add = jobs.add
+    calls = []
+
+    def add(conn_, **kw):
+        calls.append(kw["ct"])
+        if len(calls) == 2:
+            raise RuntimeError("DB spadla")
+        return real_add(conn_, **kw)
+
+    monkeypatch.setattr(jobs, "add", add)
+    with pytest.raises(RuntimeError):
+        fresh.detect(conn, NOW + timedelta(hours=1))
+    base = json.loads(queue.get_state(conn, "fresh_baseline"))
+    assert base["400"] == ["sensitive"]
+    assert "401" not in base
+    assert [ct for ct, _ in _fresh_jobs(conn)] == [400]
+    # po opravě se založí jen zbylý tisk
+    monkeypatch.setattr(jobs, "add", real_add)
+    assert len(fresh.detect(conn, NOW + timedelta(hours=1))) == 1
+    assert sorted(ct for ct, _ in _fresh_jobs(conn)) == [400, 401]

@@ -6,9 +6,12 @@ Snímek zapisuje PHP synchronizace (app/ReelsSnapshot.php) do reel_state pod kl�
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 from . import jobs, queue
+
+log = logging.getLogger("hlidac_reels.fresh")
 
 SNAPSHOT_KEY = "top_findings"
 BASELINE_KEY = "fresh_baseline"
@@ -44,13 +47,14 @@ def detect(conn, now: datetime) -> list[int]:
     if items is None:
         return []
     raw = queue.get_state(conn, BASELINE_KEY)
-    if raw is None:
+    baseline = _load_baseline(raw)
+    if baseline is None:
+        if raw is not None:
+            log.warning("poškozená %s, ukládám znovu jako první běh", BASELINE_KEY)
         queue.set_state(conn, BASELINE_KEY, json.dumps(items, ensure_ascii=False))
         return []
-    baseline: dict[str, list[str]] = json.loads(raw)
 
     created: list[int] = []
-    changed = False
     for ct, keys in items.items():
         known = baseline.get(ct)
         new_keys = [k for k in keys if known is None or k not in known]
@@ -60,18 +64,30 @@ def detect(conn, now: datetime) -> list[int]:
             created.append(jobs.add(conn, source="fresh", ct=int(ct), reason_keys=keys))
         except jobs.ActiveJobExists:
             pass  # aktivní úloha pro tisk už je, změnu pokryje
+        # baseline hned po každém tisku: když další jobs.add spadne, už založené úlohy se nezaloží znovu
         baseline[ct] = (known or []) + new_keys
-        changed = True
-    if changed:
         queue.set_state(conn, BASELINE_KEY, json.dumps(baseline, ensure_ascii=False))
     return created
+
+
+def _load_baseline(raw: str | None) -> dict[str, list[str]] | None:
+    """Baseline ze stavu, nebo None, když chybí nebo je poškozená (pak se bere jako první běh)."""
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or not all(isinstance(v, list) for v in data.values()):
+        return None
+    return {str(ct): [str(k) for k in keys] for ct, keys in data.items()}
 
 
 def retire(conn, now: datetime) -> list[tuple[int, str]]:
     """Sady fresh/auto_pick bez výběru: starší než 7 dní → expired, tisk mimo nálezy → withdrawn.
 
-    Mění se všechny položky sady ve stavu queued/pending. Bez čerstvého snímku se nic nestahuje (stojící
-    synchronizace nesmí stáhnout všechno). Vrací (set_id, nový stav) jen pro sady, které se změnily.
+    Mění se všechny položky sady ve stavu queued/pending. Bez čerstvého snímku nebo s prázdným snímkem
+    (chyba skóre, obnovená prázdná DB) se nic nestahuje, aby nezmizely všechny sady najednou; vypršení platí dál. Vrací (set_id, nový stav) jen pro sady, které se změnily.
     """
     items = _snapshot(conn, now)
     with conn.cursor() as cur:
@@ -87,7 +103,7 @@ def retire(conn, now: datetime) -> list[tuple[int, str]]:
     for set_id, created_at, ct in sets:
         if now - created_at > SET_MAX_AGE:
             status = "expired"
-        elif items is not None and ct is not None and str(ct) not in items:
+        elif items and ct is not None and str(ct) not in items:
             status = "withdrawn"
         else:
             continue

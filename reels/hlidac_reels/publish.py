@@ -56,14 +56,21 @@ def _outcome(e: Exception) -> tuple[str, str]:
     return "unknown", f"neočekávaná chyba: {type(e).__name__}"
 
 
-def _public_copy(conn, reel: Reel, media_dir: str, public_base: str, network: str) -> tuple[str, Path]:
-    """Veřejná kopie videa pod novým tokenem; vrací (URL, soubor). Soubor maže volající ve finally."""
+def threads_source(reel: Reel) -> str:
+    """Video pro Threads: 16:9, když ho položka má, jinak stejné 9:16 jako IG a FB."""
+    return reel.video_landscape_path or reel.video_path
+
+
+def _public_copy(conn, reel: Reel, media_dir: str, public_base: str, network: str,
+                 source: str | None = None) -> tuple[str, Path]:
+    """Veřejná kopie videa (výchozí reel.video_path) pod novým tokenem; vrací (URL, soubor).
+    Soubor maže volající ve finally."""
     token = secrets.token_urlsafe(24)
     public_dir = Path(media_dir) / "public"
     public_file = public_dir / f"{token}.mp4"
     try:
         public_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(reel.video_path, public_file)
+        shutil.copyfile(source or reel.video_path, public_file)
     except OSError as e:
         public_file.unlink(missing_ok=True)
         raise _CopyError(f"kopie videa pro {network} selhala: {type(e).__name__}") from e
@@ -109,7 +116,8 @@ def find_threads(threads, reel: Reel, since: datetime) -> tuple[str, str] | None
 
 def publish_threads_only(conn, threads, reel: Reel, *, media_dir: str, public_base: str) -> None:
     """Zveřejní položku jen na Threads; veřejná kopie videa se smaže i po chybě. Stav se nemění."""
-    video_url, public_file = _public_copy(conn, reel, media_dir, public_base, "Threads")
+    video_url, public_file = _public_copy(conn, reel, media_dir, public_base, "Threads",
+                                          threads_source(reel))
     try:
         _publish_threads(conn, threads, reel, video_url)
     finally:
@@ -150,21 +158,29 @@ def run(conn, meta, reel_id: int, *, media_dir: str, public_base: str, threads=N
     errors: list[tuple[str, str]] = []
     try:
         public: tuple[str, Path] | None = None
+        public_th: tuple[str, Path] | None = None  # vlastní kopie 16:9 pro Threads
         try:
             if need_ig:
                 public = _public_copy(conn, reel, media_dir, public_base, "IG")
                 _publish_ig(conn, meta, reel, public[0])
             if need_threads:
                 try:
-                    if public is None:
-                        public = _public_copy(conn, reel, media_dir, public_base, "Threads")
-                    _publish_threads(conn, threads, reel, public[0])
+                    if reel.video_landscape_path:
+                        public_th = _public_copy(conn, reel, media_dir, public_base, "Threads",
+                                                 reel.video_landscape_path)
+                        th_url = public_th[0]
+                    else:
+                        if public is None:
+                            public = _public_copy(conn, reel, media_dir, public_base, "Threads")
+                        th_url = public[0]
+                    _publish_threads(conn, threads, reel, th_url)
                 except Exception as e:  # noqa: BLE001 – chyba Threads nezastaví FB
                     status, msg = _outcome(e)
                     errors.append((status, f"Threads: {msg}"))
         finally:
-            if public is not None:
-                public[1].unlink(missing_ok=True)
+            for p in (public, public_th):
+                if p is not None:
+                    p[1].unlink(missing_ok=True)
         if not reel.fb_video_id:
             _publish_fb(conn, meta, reel)
     except Exception as e:  # noqa: BLE001 – chyba IG nebo FB (klasifikace v _outcome)

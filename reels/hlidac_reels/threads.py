@@ -35,6 +35,10 @@ class ThreadsTimeout(ThreadsError):
     """Kontejner Threads nebyl hotový do vypršení času."""
 
 
+class ThreadsNoToken(ThreadsError):
+    """Token Threads chybí (provider vrátil prázdný); požadavek se vůbec neodeslal."""
+
+
 class Threads:
     def __init__(
         self,
@@ -57,8 +61,10 @@ class Threads:
 
     def _token(self) -> str:
         token = self._token_provider()
-        if token:
-            self._known.add(token)
+        if not token:
+            # bez tokenu by šel neautorizovaný požadavek; raději jasná chyba bez volání API
+            raise ThreadsNoToken("chybí token Threads (prázdný token, požadavek se neodeslal)")
+        self._known.add(token)
         return token
 
     def _clean(self, text: str) -> str:

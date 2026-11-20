@@ -213,3 +213,16 @@ def test_threads_refresh():
     with pytest.raises(ThreadsError) as e:
         _threads(lambda r: httpx.Response(200, json={"access_token": "NEWTOKEN"})).refresh_token("OLDTOKEN")
     assert "NEWTOKEN" not in str(e.value)
+
+
+def test_threads_prazdny_token_bez_pozadavku():
+    # prázdný token z provideru = jasná chyba, žádný neautorizovaný požadavek
+    from hlidac_reels.threads import ThreadsNoToken
+    calls: list = []
+    th = _threads(lambda req: httpx.Response(200, json={"id": "C1"}), calls, token_provider=lambda: "")
+    with pytest.raises(ThreadsNoToken) as e:
+        th.create_video("u", "x")
+    assert "token" in e.value.message.lower()
+    with pytest.raises(ThreadsNoToken):
+        th.find_recent("x", datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert calls == []

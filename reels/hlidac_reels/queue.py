@@ -38,6 +38,10 @@ class Reel:
     sent_at: datetime | None
     decided_at: datetime | None
     published_at: datetime | None
+    # Threads: sloupce přidané ALTER TABLE na konec tabulky (SELECT je stejně vybírá jménem)
+    threads_container_id: str | None
+    threads_media_id: str | None
+    threads_permalink: str | None
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))

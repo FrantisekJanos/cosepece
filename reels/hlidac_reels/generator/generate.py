@@ -68,7 +68,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats},
                                               ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
-    prepare_workdir(out)
+    prepare_workdir(out, ct)
     variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", formats[0]),
                 Variant(3, "template_v3", formats[1])]
 

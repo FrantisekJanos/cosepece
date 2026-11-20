@@ -1,8 +1,11 @@
 """Prompty generátoru a spuštění claude -p se zúženými nástroji (plán Task 3)."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 from hlidac_reels.generator.claude import (ALLOWED_TOOLS, DISALLOWED_TOOLS, build_prompt, claude_argv,
                                            prepare_workdir, run_claude)
@@ -33,10 +36,29 @@ def test_prompt_obsahuje_ct_formaty(tmp_path):
 
 
 def test_podklady_obsahuji_pravidla(tmp_path):
-    prepare_workdir(tmp_path)
-    for name in ("v2.md", "v3.md", "pravidla.md", "formaty.md", "lhuty.md", "card-1-v2.json", "v3-cesta-311.json"):
+    prepare_workdir(tmp_path, ct=311)
+    for name in ("v2.md", "v3.md", "pravidla.md", "formaty.md", "lhuty.md", "vzor-v2.json", "vzor-popisek.txt",
+                 "vzor-v3-cesta.json", "vzor-v3-pn.json", "vzor-v3-zmena.json", "vzor-v3-rozprava.json"):
         assert (tmp_path / "podklady" / name).is_file(), name
     assert "Hodnotíme postup, ne politický obsah." in (tmp_path / "podklady" / "pravidla.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("ct", [311, 221, 115, 174])
+def test_vzory_jsou_z_jineho_tisku(tmp_path, ct):
+    # model jinak vzor ze stejného tisku opíše (zkouška 311, 2026-11-20)
+    prepare_workdir(tmp_path, ct=ct)
+    pod = tmp_path / "podklady"
+    for fmt in ("cesta", "pn", "zmena"):
+        assert json.loads((pod / f"vzor-v3-{fmt}.json").read_text(encoding="utf-8"))["ct"] != ct, fmt
+    assert json.loads((pod / "vzor-v2.json").read_text(encoding="utf-8"))["ct"] != ct
+    assert (pod / "vzor-popisek.txt").read_text(encoding="utf-8") != ""
+    assert not list(pod.glob("v3-*.json")) and not list(pod.glob("card-v2-*.json"))
+
+
+def test_prompty_zakazuji_opisovat_vzor():
+    from hlidac_reels.generator.claude import HERE
+    for name in ("v2.md", "v3.md"):
+        assert "nekopíruj" in (HERE / "prompts" / name).read_text(encoding="utf-8")
 
 
 def test_prompt_oprava_jen_vadne_varianty(tmp_path):

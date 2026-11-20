@@ -1,0 +1,67 @@
+{
+  "ct": 221,
+  "nazev": "Novela z. o střetu zájmů",
+  "faze": "1. čtení",
+  "score": 82,
+  "title": "Lhůta pro vrácení zemědělských dotací se zkracuje z 10 na 4 roky – i zpětně",
+  "perex": "Zkrácení lhůty pro zahájení řízení o vrácení dotace se použije i na platby poskytnuté před účinností; v rozpočtových pravidlech je nově 4letá lhůta pro odvody.",
+  "quote": "Lhůta pro zahájení řízení o vrácení dotace se posuzuje podle zákona č. 256/2000 Sb., ve znění účinném ode dne nabytí účinnosti tohoto zákona, i tehdy, pokud byla neoprávněná platba dotace poskytnuta …",
+  "quote_source": "text návrhu",
+  "verified": true,
+  "reasons": [
+    {
+      "key": "ai_bill",
+      "label": "Rozbor textu návrhu: závažnost 9/10 – Lhůta, v níž stát může vymáhat neoprávněně vyplacené dotace, se zkracuje z 10 na 4 roky a podle přechodného ustanovení se použije i na platby poskytnuté před účinností, přičemž zkrácení lhůty pro odvody v rozpočtových pravidlech s deklarovanou tematikou střetu zájmů souvisí jen volně.",
+      "points": 27
+    },
+    {
+      "key": "mp_bill",
+      "label": "Poslanecký návrh – neprošel meziresortním připomínkovým řízením",
+      "points": 15
+    },
+    {
+      "key": "retro_deadline",
+      "label": "Text návrhu mění lhůtu pro vymáhání nebo kontrolu a výslovně ji použije i na případy z doby před účinností",
+      "points": 15
+    },
+    {
+      "key": "topic",
+      "label": "Citlivá oblast: střet zájmů",
+      "points": 15
+    },
+    {
+      "key": "watched",
+      "label": "Sledovaný zákon",
+      "points": 10
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=221",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-06-08",
+  "shift": {
+    "label": "Lhůta pro vrácení dotací",
+    "from": "10",
+    "to": "4",
+    "unit": "roky",
+    "note": "Použije se i zpětně."
+  },
+  "timeline": [
+    {
+      "date": "2026-06-08",
+      "label": "Předložen Sněmovně"
+    },
+    {
+      "date": "2026-06-30",
+      "label": "Vyjádření vlády"
+    },
+    {
+      "date": "2026-07-01",
+      "label": "Doporučen k 1. čtení"
+    }
+  ],
+  "pn": {
+    "count": 2,
+    "authors": 2
+  }
+}

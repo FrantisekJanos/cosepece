@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,14 +25,32 @@ class ClaudeRun:
     log_path: Path
 
 
-def prepare_workdir(workdir: Path) -> None:
-    """Zkopíruje návody, pravidla a vzory do `workdir/podklady/` (model čte jen pracovní složku)."""
-    dest = Path(workdir) / "podklady"
+def _ct_of(path: Path) -> int:
+    return int(re.search(r"-(\d+)(?:-[a-z]+)?\.(?:json|txt)$", path.name).group(1))
+
+
+def _pick(candidates: list[Path], ct: int) -> Path:
+    """Vzor z jiného tisku než zadání (vzor ze stejného tisku model opíše); jinak ten jediný."""
+    other = [c for c in sorted(candidates) if _ct_of(c) != ct]
+    return (other or sorted(candidates))[0]
+
+
+def prepare_workdir(workdir: Path, ct: int) -> None:
+    """Zkopíruje návody, pravidla a vzory do `workdir/podklady/` (model čte jen pracovní složku).
+
+    Vzory karet a popisku vybere z jiného tisku než `ct` a uloží pod obecnými jmény (vzor-v2.json,
+    vzor-v3-<formát>.json, vzor-popisek.txt).
+    """
+    src, dest = HERE / "examples", Path(workdir) / "podklady"
     dest.mkdir(parents=True, exist_ok=True)
-    for src in (HERE / "examples").iterdir():
-        shutil.copy2(src, dest / src.name)
+    for name in ("pravidla.md", "formaty.md", "lhuty.md"):
+        shutil.copy2(src / name, dest / name)
     for name in ("v2.md", "v3.md"):
         shutil.copy2(HERE / "prompts" / name, dest / name)
+    shutil.copy2(_pick(list(src.glob("card-v2-*.json")), ct), dest / "vzor-v2.json")
+    shutil.copy2(_pick(list(src.glob("caption-*.txt")), ct), dest / "vzor-popisek.txt")
+    for fmt in V3_FORMATS:
+        shutil.copy2(_pick(list(src.glob(f"v3-{fmt}-*.json")), ct), dest / f"vzor-v3-{fmt}.json")
 
 
 def _task_line(n: int, fmt: str | None) -> str:

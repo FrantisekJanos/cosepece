@@ -13,6 +13,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
+[project.scripts]
+reels-enqueue = "hlidac_reels.enqueue:main"
+reels-bot = "hlidac_reels.bot:main"
+
 [tool.setuptools.packages.find]
 include = ["hlidac_reels*"]
 

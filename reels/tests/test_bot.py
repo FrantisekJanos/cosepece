@@ -527,3 +527,121 @@ def test_main_spatne_chat_id(monkeypatch, capsys):
         botmod.main()
     assert ei.value.code not in (0, None)
     assert "REELS_TELEGRAM_CHAT_ID" in capsys.readouterr().err
+
+
+# --- oprava 1: položky uvízlé v approved, ztráta DB, /fronta s tlačítky ----
+
+@pg
+def test_po_restartu_approved_je_failed_s_tlacitkem(bot, conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir)
+    assert queue.transition(conn, rid, "queued", "pending")
+    assert queue.transition(conn, rid, "pending", "approved")
+    bot.start()
+    r = _get(conn, rid)
+    assert r.status == "failed" and r.error == "přerušeno před zveřejněním"
+    announce = [b for b in api.sent() if f"retry:{rid}" in _buttons(b)]
+    assert len(announce) == 1 and f"#{rid}" in announce[0]["text"]
+    assert sum(meta.calls.values()) == 0
+    # Zkusit znovu nejdřív dohledá, pak zveřejní
+    bot.handle(_cb(f"retry:{rid}"))
+    assert _get(conn, rid).status == "published"
+    assert meta.calls["fb_find_recent"] == 1 and meta.calls["ig_find_recent"] == 1
+
+
+@pg
+def test_ztrata_db_ukonci_bota(bot, conn, api):
+    import psycopg
+    conn.close()
+    with pytest.raises(SystemExit) as ei:
+        bot.loop(sleep=lambda s: pytest.fail("nemá čekat, má skončit"))
+    assert ei.value.code not in (0, None)
+
+    # chyba DB uvnitř zpracování zprávy taky ukončí bota (ne zalogovat a pokračovat)
+    from hlidac_reels import db
+    bot.conn = db.connect()
+    api.updates = [_msg("/fronta")]
+
+    def lost(update):
+        raise psycopg.OperationalError("server closed the connection unexpectedly")
+    bot.handle = lost
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=lambda s: pytest.fail("nemá čekat"))
+    bot.conn.close()
+
+
+@pg
+def test_chyba_cteni_udela_rollback(bot, conn, api, monkeypatch):
+    from hlidac_reels import queue
+    calls = []
+    real = conn.rollback
+    monkeypatch.setattr(conn, "rollback", lambda: (calls.append(1), real()))
+
+    def boom(update):
+        raise RuntimeError("rozbité")
+    monkeypatch.setattr(bot, "handle", boom)
+    api.updates = [_msg("/fronta")]
+    bot.poll_once()
+    assert calls
+    assert queue.get_state(conn, "tg_offset") is not None
+
+
+@pg
+def test_fronta_ukaze_failed_unknown_s_tlacitkem(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    f = _add(conn, media_dir, 1)
+    u = _add(conn, media_dir, 2)
+    _add(conn, media_dir, 3)
+    for rid in (f, u):
+        queue.transition(conn, rid, "queued", "pending")
+        queue.transition(conn, rid, "pending", "approved")
+        queue.transition(conn, rid, "approved", "publishing")
+    queue.transition(conn, f, "publishing", "failed", error="(#100) chybný parametr")
+    queue.transition(conn, u, "publishing", "unknown", error="síťová chyba")
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    msgs = api.sent()
+    assert "failed: 1" in msgs[0]["text"] and "unknown: 1" in msgs[0]["text"]
+    by_btn = {tuple(_buttons(b)): b["text"] for b in msgs[1:]}
+    assert ("retry:%d" % f,) in by_btn and ("retry:%d" % u,) in by_btn
+    assert "chybný parametr" in by_btn[("retry:%d" % f,)] and "tisk 221" in by_btn[("retry:%d" % f,)]
+    assert len(msgs) == 3
+
+
+@pg
+def test_callback_odpovi_i_pri_chybe_db(bot, conn, api, media_dir, monkeypatch):
+    import psycopg
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    api.calls.clear()
+
+    def broken(*a, **kw):
+        raise psycopg.errors.QueryCanceled("zrušeno")
+    monkeypatch.setattr(queue, "transition", broken)
+    with pytest.raises(psycopg.Error):
+        bot.handle(_cb(f"ok:{rid}"))
+    assert api.methods() == ["answerCallbackQuery"]
+
+
+@pg
+def test_start_se_opakuje_pri_vypadku_telegramu(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+
+    class Stop(Exception):
+        pass
+    rid = _add(conn, media_dir)
+    api.fail["sendVideo"] = httpx.ConnectError("down")
+    slept = []
+
+    def sleep(s):
+        slept.append(s)
+        if len(slept) == 1:
+            del api.fail["sendVideo"]
+            return
+        raise Stop
+    api.fail["getUpdates"] = httpx.ConnectError("down")
+    with pytest.raises(Stop):
+        bot.loop(sleep=sleep)
+    assert slept == [10, 10]
+    assert queue.get(conn, rid).status == "pending"

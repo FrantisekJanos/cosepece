@@ -114,6 +114,14 @@ def by_telegram_msg(conn, msg_id: int) -> Reel | None:
     return r
 
 
+def by_status(conn, statuses: tuple[str, ...]) -> list[Reel]:
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status = ANY(%s) ORDER BY id", (list(statuses),))
+        out = [Reel(*r) for r in cur.fetchall()]
+    conn.commit()
+    return out
+
+
 def pending_count(conn) -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM reel_queue WHERE status='pending'")

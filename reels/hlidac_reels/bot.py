@@ -16,19 +16,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+import psycopg
+
 from . import db, publish, queue
-from .caption import for_network
 from .enqueue import CAPTION_LIMIT
+from .messages import (approval_buttons, preview_parts, preview_text, result_text,  # noqa: F401
+                       retry_buttons, video_caption)
 from .meta import Meta
 from .queue import Reel
 from .telegram import Telegram
 
 log = logging.getLogger("hlidac_reels.bot")
 
-TEXT_LIMIT = 4096
-VIDEO_CAPTION_LIMIT = 1024
 ERROR_PAUSE = 10
-NO_LINK = "odkaz se nepodařilo načíst"
+DB_LOST_EXIT = 3
+INTERRUPTED = "přerušeno před zveřejněním"
 EDIT_HINT = "Uprav a pošli jako odpověď na tuto zprávu."
 HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.")
@@ -41,69 +43,6 @@ def _now() -> datetime:
 def _num(n: int) -> str:
     """Číslo s mezerou mezi tisíci (2 120)."""
     return f"{n:,}".replace(",", " ")
-
-
-# --- texty zpráv ------------------------------------------------------------
-
-def video_caption(reel: Reel) -> str:
-    parts = [f"#{reel.id}"]
-    if reel.ct is not None:
-        parts.append(f"tisk {reel.ct}")
-    if reel.format:
-        parts.append(reel.format)
-    return " · ".join(parts)[:VIDEO_CAPTION_LIMIT]
-
-
-def _fb_block(reel: Reel) -> str:
-    return f"Náhled #{reel.id}\n\nFacebook:\n{for_network(reel.caption, reel.ct, 'fb')}"
-
-
-def _ig_block(reel: Reel) -> str:
-    ig = for_network(reel.caption, reel.ct, "ig")
-    if ig.startswith(reel.caption):
-        ending = ig[len(reel.caption):].strip()
-        return f"Instagram: stejný text, jen místo odkazu končí:\n{ending}"
-    return f"Instagram:\n{ig}"
-
-
-def preview_text(reel: Reel) -> str:
-    """Přesně to, co půjde ven: celý text pro FB a pod ním konec, kterým se liší IG."""
-    return f"{_fb_block(reel)}\n\n{_ig_block(reel)}"
-
-
-def preview_parts(reel: Reel) -> list[str]:
-    """Náhled rozdělený na zprávy do 4 096 znaků (obvykle jedna, u dlouhého popisku FB a IG zvlášť)."""
-    text = preview_text(reel)
-    if len(text) <= TEXT_LIMIT:
-        return [text]
-    parts = []
-    for block in (_fb_block(reel), _ig_block(reel)):
-        # pojistka pro popisek delší než limit zprávy (enqueue ho nepustí, ale DB ano)
-        parts.extend(block[i:i + TEXT_LIMIT] for i in range(0, len(block), TEXT_LIMIT))
-    return parts
-
-
-def _approval_buttons(reel_id: int) -> list[tuple[str, str]]:
-    return [("Schválit", f"ok:{reel_id}"), ("Upravit popisek", f"edit:{reel_id}"),
-            ("Zamítnout", f"no:{reel_id}")]
-
-
-def _retry_buttons(reel_id: int) -> list[tuple[str, str]]:
-    return [("Zkusit znovu", f"retry:{reel_id}")]
-
-
-def result_text(reel: Reel) -> str:
-    if reel.status == "published":
-        return (f"#{reel.id} zveřejněno.\n"
-                f"Facebook: {reel.fb_permalink or NO_LINK}\n"
-                f"Instagram: {reel.ig_permalink or NO_LINK}")
-    if reel.status == "unknown":
-        head = f"#{reel.id}: výsledek zveřejnění je nejistý. Zkusit znovu nejdřív dohledá, co už na sítích je."
-    elif reel.status == "failed":
-        head = f"#{reel.id}: zveřejnění selhalo."
-    else:
-        head = f"#{reel.id}: stav {reel.status}."
-    return f"{head}\nChyba: {reel.error}" if reel.error else head
 
 
 # --- bot --------------------------------------------------------------------
@@ -167,9 +106,16 @@ class Bot:
         if handler is None:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
             return
-        handler(reel_id, cb_id, msg_id)
+        self._answered = False
+        try:
+            handler(reel_id, cb_id, msg_id)
+        finally:
+            # i při chybě (např. DB) se tlačítko nesmí dál točit
+            if not self._answered:
+                self._answer(cb_id)
 
     def _answer(self, cb_id, text: str = "") -> None:
+        self._answered = True
         self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, text)
 
     def _drop_buttons(self, msg_id: int | None) -> None:
@@ -199,7 +145,7 @@ class Bot:
     def _publish(self, reel_id: int, fn: Callable[..., Reel]) -> None:
         self._say("Zveřejňuji…")
         reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base)
-        buttons = _retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
+        buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
         self._say(result_text(reel), buttons)
         self.send_next()
 
@@ -232,13 +178,22 @@ class Bot:
             return
         command = (text or "").strip().split("@", 1)[0].split(" ", 1)[0]
         if command == "/fronta":
-            counts = queue.counts(self.conn)
-            lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
-            self._say("Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná.")
+            self._show_queue()
         elif command == "/dalsi":
             self.send_next(force=True)
         else:
             self._say(HELP)
+
+    def _show_queue(self) -> None:
+        """Počty podle stavů a ke každé neúspěšné položce znovu tlačítko Zkusit znovu."""
+        counts = queue.counts(self.conn)
+        lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
+        self._say("Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná.")
+        # tlačítko z oznámení se mohlo ztratit (výpadek Telegramu), /fronta ho vrátí
+        for reel in queue.by_status(self.conn, ("failed", "unknown", "approved")):
+            error = (reel.error or "")[:300]
+            text = f"{video_caption(reel)} · {reel.status}" + (f"\nChyba: {error}" if error else "")
+            self._say(text, retry_buttons(reel.id))
 
     def _reel_for_reply(self, target: int) -> Reel | None:
         mapped = queue.get_state(self.conn, f"edit_msg:{target}")
@@ -277,7 +232,7 @@ class Bot:
         msg_id = 0
         for i, part in enumerate(parts):
             last = i == len(parts) - 1
-            msg_id = self.tg.send_text(self.chat_id, part, _approval_buttons(reel.id) if last else None)
+            msg_id = self.tg.send_text(self.chat_id, part, approval_buttons(reel.id) if last else None)
             if not last:
                 # i na první část náhledu jde odpovědět novým popiskem
                 queue.set_state(self.conn, f"edit_msg:{msg_id}", str(reel.id))
@@ -316,7 +271,13 @@ class Bot:
         db.migrate(self.conn)
         for reel_id in queue.recover_after_restart(self.conn):
             self._say(f"#{reel_id}: publikaci přerušil restart, výsledek je nejistý. "
-                      "Zkusit znovu nejdřív dohledá, co už na sítích je.", _retry_buttons(reel_id))
+                      "Zkusit znovu nejdřív dohledá, co už na sítích je.", retry_buttons(reel_id))
+        # schválené, ale publikace nezačala (pád mezi schválením a publish.run): bez tlačítka by uvízly;
+        # failed + Zkusit znovu je bezpečné, retry nejdřív dohledá, co už na sítích je
+        for reel in queue.by_status(self.conn, ("approved",)):
+            if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
+                self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
+                          retry_buttons(reel.id))
         self._clean_public()
         self.send_next()
 
@@ -326,21 +287,38 @@ class Bot:
             try:
                 self.handle(update)
             except Exception as e:  # noqa: BLE001 – jedna rozbitá zpráva nesmí zastavit bota
+                if self._db_lost(e):
+                    raise
                 log.error("zpracování zprávy %s selhalo: %s", update.get("update_id"), self._safe(e))
+                self._rollback()
             # posunout i po chybě: restart nesmí znovu zpracovat tlačítko
             queue.set_state(self.conn, "tg_offset", str(int(update["update_id"]) + 1))
 
+    def _db_lost(self, exc: BaseException) -> bool:
+        return isinstance(exc, psycopg.OperationalError) or bool(getattr(self.conn, "closed", False))
+
+    def _rollback(self) -> None:
+        # nepovedené čtení nesmí nechat spojení v přerušené transakci
+        try:
+            self.conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     def loop(self, sleep: Callable[[float], None] = time.sleep) -> None:
-        self.start()
+        """Hlavní smyčka. Ztráta spojení s DB ukončí proces kódem 3 a Docker ho spustí znovu."""
+        started = False
         while True:
             try:
+                if not started:
+                    self.start()
+                    started = True
                 self.poll_once()
             except Exception as e:  # noqa: BLE001
-                log.error("chyba smyčky: %s", self._safe(e))
-                try:
-                    self.conn.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
+                if self._db_lost(e):
+                    log.error("spojení s databází ztraceno, končím: %s", self._safe(e))
+                    raise SystemExit(DB_LOST_EXIT) from None
+                log.error("chyba %s: %s", "smyčky" if started else "při startu", self._safe(e))
+                self._rollback()
                 sleep(ERROR_PAUSE)
 
 

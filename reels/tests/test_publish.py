@@ -157,8 +157,8 @@ def test_ig_ok_fb_chyba_retry_vola_jen_fb(conn, media_dir):
     assert meta.calls["fb_upload_reel"] == 2
     assert r.fb_video_id == "V1" and r.published_at is not None
     assert r.error is None
-    # failed se nedohledává (reconcile jen pro unknown)
-    assert meta.calls["ig_find_recent"] == 0 and meta.calls["fb_find_recent"] == 0
+    # před opakováním se dohledá jen chybějící síť (IG už má id)
+    assert meta.calls["ig_find_recent"] == 0 and meta.calls["fb_find_recent"] == 1
 
 
 @pytest.mark.parametrize("err", [
@@ -254,3 +254,37 @@ def test_neocekavana_chyba_je_unknown_bez_textu(conn, media_dir):
     r = _run(conn, meta, rid, media_dir)
     assert r.status == "unknown" and r.ig_media_id == "M1"
     assert "SECRET" not in r.error and "RuntimeError" in r.error
+
+
+def test_failed_dohledani_najde_obe_je_published_bez_run(conn, media_dir):
+    # HTTP 5xx po zveřejnění: stav failed, ale obsah na sítích je
+    from hlidac_reels import publish
+    rid = _approved(conn, media_dir)
+    meta = FakeMeta(media_dir)
+    meta.fail["ig_publish"] = MetaError("HTTP 500", status=500)
+    assert _run(conn, meta, rid, media_dir).status == "failed"
+    meta.ig_found = ("M9", "https://www.instagram.com/reel/M9/")
+    meta.fb_found = ("V9", "https://www.facebook.com/reel/V9")
+    r = publish.retry(conn, meta, rid, media_dir=str(media_dir), public_base=PUBLIC_BASE)
+    assert r.status == "published" and r.published_at is not None
+    assert (r.ig_media_id, r.fb_video_id) == ("M9", "V9")
+    assert meta.calls["ig_create"] == 1 and meta.calls["ig_publish"] == 1
+    assert meta.calls["fb_upload_reel"] == 0
+
+
+@pytest.mark.parametrize("start", ["failed", "unknown"])
+@pytest.mark.parametrize("err", [MetaError("síťová chyba: ConnectError"), RuntimeError("token=SECRET")])
+def test_dohledani_selze_bez_run_stav_zustane(conn, media_dir, start, err):
+    from hlidac_reels import publish
+    rid = _approved(conn, media_dir)
+    meta = FakeMeta(media_dir)
+    meta.fail["ig_wait"] = (MetaTimeout("timeout") if start == "unknown"
+                            else MetaError("HTTP 400", status=400))
+    assert _run(conn, meta, rid, media_dir).status == start
+    del meta.fail["ig_wait"]
+    meta.fail["ig_find_recent"] = err
+    r = publish.retry(conn, meta, rid, media_dir=str(media_dir), public_base=PUBLIC_BASE)
+    assert r.status == start
+    assert r.error.startswith("dohledání selhalo")
+    assert "SECRET" not in r.error
+    assert meta.calls["ig_create"] == 1 and meta.calls["fb_upload_reel"] == 0

@@ -89,13 +89,19 @@ def run(conn, meta, reel_id: int, *, media_dir: str, public_base: str) -> Reel:
 
 
 def reconcile(conn, meta, reel_id: int) -> Reel:
-    """Položka unknown: chybějící síť dohledá; obě nalezené → published, jinak failed.
+    """Dohledání chybějících sítí pro failed i unknown (viz _reconcile)."""
+    return _reconcile(conn, meta, reel_id)[0]
 
-    Když dohledání samo selže, položka zůstane unknown (s chybou) a dá se zkusit znovu.
+
+def _reconcile(conn, meta, reel_id: int) -> tuple[Reel, bool]:
+    """Před každým opakováním (failed i unknown) dohledá chybějící síť na profilu.
+
+    Vrací (položka, dohledání proběhlo). Obě sítě nalezené → published. Jinak unknown → failed (failed zůstane failed).
+    Když dohledání samo selže, stav se nemění, uloží se jen chyba a nic se nepublikuje.
     """
     reel = queue.get(conn, reel_id)
-    if reel is None or reel.status != "unknown":
-        return reel
+    if reel is None or reel.status not in ("unknown", "failed"):
+        return reel, False
     since = reel.sent_at or reel.created_at
     try:
         if not reel.ig_media_id:
@@ -110,19 +116,25 @@ def reconcile(conn, meta, reel_id: int) -> Reel:
                 queue.set_fields(conn, reel_id, fb_video_id=found[0], fb_permalink=found[1])
     except MetaError as e:
         queue.set_fields(conn, reel_id, error=f"dohledání selhalo: {e.message}")
-        return queue.get(conn, reel_id)
+        return queue.get(conn, reel_id), False
+    except Exception as e:  # noqa: BLE001 – text výjimky se neukládá (mohl by obsahovat tajemství)
+        queue.set_fields(conn, reel_id, error=f"dohledání selhalo: {type(e).__name__}")
+        return queue.get(conn, reel_id), False
     reel = queue.get(conn, reel_id)
     if reel.ig_media_id and reel.fb_video_id:
-        queue.transition(conn, reel_id, "unknown", "published", published_at=_now(), error=None)
+        queue.transition(conn, reel_id, ("unknown", "failed"), "published", published_at=_now(), error=None)
     else:
         queue.transition(conn, reel_id, "unknown", "failed")
-    return queue.get(conn, reel_id)
+    return queue.get(conn, reel_id), True
 
 
 def retry(conn, meta, reel_id: int, **kw) -> Reel:
-    """Zkusit znovu (failed nebo unknown): nejdřív dohledání, pak znovu run jen pro chybějící síť."""
-    reel = reconcile(conn, meta, reel_id)
-    if reel is None or reel.status != "failed":
+    """Zkusit znovu (failed nebo unknown): nejdřív dohledání, pak znovu run jen pro chybějící síť.
+
+    Když dohledání selže, run se nespustí (nesmí vzniknout duplicitní příspěvek).
+    """
+    reel, searched = _reconcile(conn, meta, reel_id)
+    if not searched or reel.status != "failed":
         return reel
     if not queue.transition(conn, reel_id, ("failed",), "approved"):
         return queue.get(conn, reel_id)

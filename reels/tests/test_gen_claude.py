@@ -63,3 +63,16 @@ def test_run_claude_chyba(tmp_path, monkeypatch):
     _fake(monkeypatch, "fail")
     r = run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
     assert not r.ok and r.returncode == 3 and "chyba modelu" in r.log_path.read_text(encoding="utf-8")
+
+
+def test_relativni_cesty_se_prevedou_na_absolutni(tmp_path, monkeypatch):
+    # claude běží s cwd=workdir; relativní --mcp-config by se hledal v pracovní složce
+    _fake(monkeypatch, "ok")
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg" / "mcp.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "wd").mkdir()
+    monkeypatch.chdir(tmp_path)
+    run_claude("x", workdir=Path("wd"), mcp_config=Path("cfg/mcp.json"), timeout_s=30)
+    args = (tmp_path / "wd" / "fake_args.txt").read_text(encoding="utf-8").splitlines()
+    assert str((tmp_path / "cfg" / "mcp.json").resolve()) in args
+    assert str((tmp_path / "wd").resolve()) in args

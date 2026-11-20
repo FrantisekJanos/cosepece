@@ -80,7 +80,8 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEFAULT_MODEL,
                timeout_s: int = 1200) -> ClaudeRun:
     """Spustí `claude -p` v `workdir`; výstup a chyby do `workdir/claude.log`. Po timeoutu proces ukončí."""
-    workdir = Path(workdir)
+    workdir = Path(workdir).resolve()  # claude běží s cwd=workdir, relativní cesty by se rozbily
+    mcp_config = Path(mcp_config).resolve()
     log_path = workdir / "claude.log"
     proc = subprocess.Popen(claude_argv(workdir=workdir, model=model, mcp_config=mcp_config), cwd=workdir,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -110,8 +110,10 @@ final class Db
             vyjimka INTEGER NOT NULL DEFAULT 0,
             znovu INTEGER NOT NULL DEFAULT 0
         )$suffix");
-        // připravované zákony u vlády, které ještě nejsou ve Sněmovně (otevřená data ODok, app/GovPrep.php)
-        $this->pdo->exec("CREATE TABLE IF NOT EXISTS pripravovane (
+        // připravované zákony u vlády, které ještě nejsou ve Sněmovně, a připravovaná nařízení vlády
+        // (otevřená data ODok, app/GovPrep.php); obě tabulky mají stejné sloupce
+        foreach (['pripravovane', 'pripravovana_narizeni'] as $prepTable) {
+            $this->pdo->exec("CREATE TABLE IF NOT EXISTS $prepTable (
             pid VARCHAR(20) PRIMARY KEY,
             nazev $text,
             resort VARCHAR(255),
@@ -130,6 +132,7 @@ final class Db
             vyjimka INTEGER NOT NULL DEFAULT 0,
             verzi INTEGER NOT NULL DEFAULT 1
         )$suffix");
+        }
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn (
             id_dokument INTEGER PRIMARY KEY,
             cislo INTEGER NOT NULL,
@@ -204,6 +207,7 @@ final class Db
         $this->addColumn('priprava', 'znovu', 'INTEGER NOT NULL DEFAULT 0');
         // PID všech verzí připravovaného materiálu (čárkami): upozornění se nesmí opakovat, když přibude nová verze
         $this->addColumn('pripravovane', 'pidy', $text);
+        $this->addColumn('pripravovana_narizeni', 'pidy', $text);
         // opakované běhy rychlého modelu u hraničních hodnocení (#7 bod 7): závažnosti jednotlivých běhů (JSON) a jejich počet
         foreach (['tisk_text', 'pn_text'] as $aiTable) {
             $this->addColumn($aiTable, 'ai_runs', 'VARCHAR(60)');

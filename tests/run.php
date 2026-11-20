@@ -983,6 +983,32 @@ ob_start();
 })(APP_ROOT . '/pripravovane.php');
 $upHtml = (string)ob_get_clean();
 [$apiCode, $apiBody] = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->handle(['pripravovane' => '1']);
+
+echo "Připravovaná nařízení vlády (#59)\n";
+$nvRows = [];
+foreach ((new Hlidac\Repo(db()))->upcoming('narizeni') as $u) {
+    $nvRows[$u['pid']] = $u;
+}
+check('nařízení v přípravě a čerstvě schválené, dávno schválené už ne', array_keys($nvRows), ['KORNNV000005', 'KORNNV000003', 'KORNNV000001']);
+check('krátké připomínky; název resortu podle zkratky z jiných záznamů', [$nvRows['KORNNV000001']['dni'] ?? null, $nvRows['KORNNV000001']['mist'] ?? null,
+    $nvRows['KORNNV000001']['faze'] ?? null, $nvRows['KORNNV000001']['resort'] ?? null], [7, 73, 'po_pripominkach', 'Ministerstvo X']);
+check('každoroční nařízení se stejným názvem se s loňským nespojí', [$nvRows['KORNNV000003']['verzi'] ?? null, $nvRows['KORNNV000003']['dni'] ?? null,
+    $nvRows['KORNNV000003']['faze'] ?? null, $nvRows['KORNNV000003']['pidy'] ?? null], [1, null, 'vlada', 'KORNNV000003']);
+check('schválené nařízení: fáze a délka připomínek', [$nvRows['KORNNV000005']['faze'] ?? null, $nvRows['KORNNV000005']['dni'] ?? null], ['schvaleno', 22]);
+check('nařízení nejsou mezi připravovanými zákony', array_intersect(array_keys($up), array_keys($nvRows)), []);
+$_GET = ['druh' => 'narizeni'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/pripravovane.php');
+$nvHtml = (string)ob_get_clean();
+$_GET = [];
+check('stránka nařízení vlády', [str_contains($nvHtml, '<h1>Připravovaná nařízení vlády</h1>'), str_contains($nvHtml, 'Připomínky 7 dní (obvykle 3 týdny)'),
+    str_contains($nvHtml, 'id="prep-KORNNV000001"'), str_contains($nvHtml, 'KORNUP000001'), str_contains($upHtml, 'pripravovane.php?druh=narizeni')],
+    [true, true, true, false, true]);
+[$nvCode, $nvBody] = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->handle(['pripravovane' => '1', 'druh' => 'narizeni']);
+check('API: nařízení jen s druh=narizeni, výchozí zůstávají zákony', [$nvCode, array_column($nvBody['pripravovane'], 'druh'), array_unique(array_column($apiBody['pripravovane'], 'druh'))],
+    [200, ['narizeni', 'narizeni', 'narizeni'], ['zakon']]);
 check('api.php?pripravovane=1', [$apiCode, count($apiBody['pripravovane']), $apiBody['pripravovane'][0]['pripominky']['dni'] ?? null], [200, 3, 7]);
 check('stránka připravovaných zákonů: fáze, štítky a odkaz do VeKLEP', str_contains($upHtml, 'Schváleno vládou') && str_contains($upHtml, 'Připomínky 7 dní (obvykle 4 týdny)')
     && str_contains($upHtml, 'Připomínkové řízení nedohledáno') && str_contains($upHtml, 'Mimo plán legislativních prací')
@@ -1204,7 +1230,7 @@ db()->run("DELETE FROM meta WHERE k = 'prep_alerts_bootstrapped'");
 (new Hlidac\AlertBuilder(db(), config()))->run();
 (new Hlidac\Scorer(db(), config()))->scoreAlerts();
 $prepAlerts = [];
-foreach (db()->all("SELECT alert_key, kind, ct, score, posted, title FROM alerts WHERE kind LIKE 'prep_%' AND alert_key NOT LIKE '%/%' ORDER BY alert_key") as $a) {
+foreach (db()->all("SELECT alert_key, kind, ct, score, posted, title FROM alerts WHERE kind LIKE 'prep_%' AND kind <> 'prep_narizeni' AND alert_key NOT LIKE '%/%' ORDER BY alert_key") as $a) {
     $prepAlerts[$a['alert_key']] = [$a['kind'], (int)$a['ct'], (int)$a['score'], (int)$a['posted']];
 }
 check('krátké připomínky (7 dní), mimo plán a schválení vládou; první běh se neposílá', $prepAlerts, [
@@ -1232,6 +1258,14 @@ $prepIds = function (string $law): array {
 };
 check('filtr podle zákona vrací i upozornění na připravované změny zákona', [$prepIds('300/2013'), $prepIds('159/2006')],
     [['prep_plan:KORNUP000003', 'prep_review:KORNUP000003', 'prep_vlada:KORNUP000003'], []]);
+$nvAlert = db()->one("SELECT * FROM alerts WHERE alert_key = 'prep_nv:KORNNV000001'") ?? [];
+check('upozornění na krátké připomínky k nařízení vlády (Pozor, první běh se neposílá)',
+    [$nvAlert['kind'] ?? null, (int)($nvAlert['score'] ?? -1), (int)($nvAlert['posted'] ?? -1), (int)($nvAlert['ct'] ?? -1),
+        str_starts_with((string)($nvAlert['title'] ?? ''), 'Připomínky k nařízení vlády jen 7 dní: Nařízení vlády, kterým se mění nařízení vlády č. 222/2010 Sb.')],
+    ['prep_narizeni', 30, 2, 0, true]);
+check('jen jedno upozornění na nařízení (delší připomínky a schválení se nehlásí)', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'prep_narizeni' AND alert_key NOT LIKE '%/%'"), 1);
+check('odkaz upozornění vede na přehled nařízení vlády', Hlidac\View::alertUrl($nvAlert), 'pripravovane.php?druh=narizeni#prep-KORNNV000001');
+check('filtr podle zákona nařízení nevrací (číslo nařízení není číslo zákona)', $prepIds('222/2010'), []);
 check('odkaz na připravovaný zákon, po odchodu do Sněmovny do VeKLEP', [Hlidac\View::alertUrl($pa),
     (function () use ($pa) { db()->run("DELETE FROM pripravovane WHERE pid = 'KORNUP000003'"); Hlidac\View::forgetUpcoming(); return Hlidac\View::alertUrl($pa); })()],
     ['pripravovane.php#prep-KORNUP000003', 'https://odok.gov.cz/portal/veklep/material/KORNUP000003/']);

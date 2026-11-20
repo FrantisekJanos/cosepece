@@ -24,7 +24,8 @@ final class Api
                 return $bill === null ? [404, ['error' => 'Tisk nenalezen']] : [200, $this->wrap(['tisk' => $bill])];
             }
             if (!empty($q['pripravovane'])) {
-                return [200, $this->wrap(['pripravovane' => $this->upcoming()])];
+                // ?druh=narizeni: připravovaná nařízení vlády (výchozí jsou návrhy zákonů)
+                return [200, $this->wrap(['pripravovane' => $this->upcoming(($q['druh'] ?? '') === 'narizeni' ? 'narizeni' : 'zakon')])];
             }
             $filters = self::filters($q);
             if (!empty($q['upozorneni'])) {
@@ -123,7 +124,10 @@ final class Api
             if ($laws !== null) {
                 // připravovaný zákon nemá číslo tisku: zákon se pozná z názvu materiálu (titulek upozornění
                 // ho nese zkrácený, aktuální název je v tabulce připravovaných)
-                if (str_starts_with((string)$a['kind'], 'prep_')) {
+                if ($a['kind'] === 'prep_narizeni') {
+                    // nařízení vlády není zákon; čísla nařízení a zákonů se překrývají
+                    $match = false;
+                } elseif (str_starts_with((string)$a['kind'], 'prep_')) {
                     $pid = (string)substr((string)$a['alert_key'], strpos((string)$a['alert_key'], ':') + 1);
                     $match = in_array($f['zakon'], Laws::numbersIn($a['title'] . ' ' . (View::upcomingIndex()[$pid]['nazev'] ?? '')), true);
                 } else {
@@ -141,16 +145,16 @@ final class Api
         return $out;
     }
 
-    public function upcoming(): array
+    public function upcoming(string $kind = 'zakon'): array
     {
-        // připravované zákony u vlády (otevřená data ODok), od nejpokročilejší fáze
+        // připravované zákony u vlády nebo nařízení vlády (otevřená data ODok), od nejpokročilejší fáze
         return array_map(fn(array $u) => [
-            'pid' => $u['pid'], 'nazev' => $u['nazev'], 'resort' => $u['resort'], 'faze' => $u['faze'], 'stav_odok' => $u['stav'],
+            'pid' => $u['pid'], 'druh' => $kind, 'nazev' => $u['nazev'], 'resort' => $u['resort'], 'faze' => $u['faze'], 'stav_odok' => $u['stav'],
             'zalozeno' => $u['zalozeno'], 'zmeneno' => $u['zmeneno'],
             'pripominky' => $u['dni'] !== null ? ['od' => $u['pripominky_od'], 'do' => $u['pripominky_do'], 'dni' => (int)$u['dni'], 'mist' => (int)$u['mist']] : null,
             'vlada_projednala' => $u['vlada'], 'mimo_plan' => (bool)$u['mimo_plan'], 'vyjimka' => (bool)$u['vyjimka'],
             'popis' => $u['popis'], 'duvod' => $u['duvod'], 'veklep_url' => GovPrep::url((string)$u['pid']),
-        ], $this->repo->upcoming());
+        ], $this->repo->upcoming($kind));
     }
 
     private function summary(array $t): array

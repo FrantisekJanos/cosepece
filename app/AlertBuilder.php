@@ -28,6 +28,7 @@ final class AlertBuilder
         $created += $this->fromSteps($tisky, $posted);
         $created += $this->fromAmendments($tisky, $bootstrap, $posted);
         $created += $this->fromUpcoming($posted);
+        $created += $this->fromRegulations($posted);
 
         if ($bootstrap) {
             $this->db->setMeta('bootstrapped', date('Y-m-d H:i:s'));
@@ -233,6 +234,7 @@ final class AlertBuilder
         'prep_kratke' => 30, // kratší než 3 týdny: Pozor
         'prep_plan' => 30,   // předloženo mimo plán legislativních prací vlády: Pozor
         'prep_vlada' => 0,   // vláda návrh schválila: běžná agenda
+        'prep_narizeni' => 30, // nařízení vlády s připomínkami kratšími než 10 dní: Pozor (na sítě nejde)
     ];
 
     private function fromUpcoming(int $posted): int
@@ -280,6 +282,36 @@ final class AlertBuilder
                     'Vláda schválila návrh: ' . $name,
                     (string)$u['resort'] . '. Návrh míří do Sněmovny, kde dostane číslo sněmovního tisku.', $posted);
             }
+        }
+        return $n;
+    }
+
+    private function fromRegulations(int $posted): int
+    {
+        // připravovaná nařízení vlády: jen připomínkové řízení kratší než 10 dní (obvyklé jsou 3 týdny);
+        // první běh jen zapíše dosavadní stav (posted = 2), bez dat se nepočítá (stejně jako u zákonů)
+        $rows = $this->db->all('SELECT * FROM pripravovana_narizeni');
+        if ($rows === []) {
+            return 0;
+        }
+        if ($this->db->getMeta('prep_nv_alerts_bootstrapped') === null) {
+            $posted = 2;
+            $this->db->setMeta('prep_nv_alerts_bootstrapped', date('Y-m-d H:i:s'));
+        }
+        $n = 0;
+        foreach ($rows as $u) {
+            if ($u['dni'] === null || (int)$u['dni'] >= 10) {
+                continue;
+            }
+            $days = (int)$u['dni'];
+            $pids = array_values(array_unique(array_filter(array_merge([(string)$u['pid']], explode(',', (string)($u['pidy'] ?? ''))))));
+            $from = (string)$u['pripominky_od'];
+            // nařízení není zákon: sledované zákony se podle čísel v názvu nepárují (čísla nařízení a zákonů se překrývají)
+            $n += $this->addUpcoming('prep_nv', $pids, 'prep_narizeni', ['ct' => 0, 'zakony' => ''],
+                (preg_match('~^\d{4}-\d{2}-\d{2}$~', $from) ? $from : date('Y-m-d')) . ' 00:00:00',
+                'Připomínky k nařízení vlády jen ' . $days . ' dní: ' . self::shortTitle((string)$u['nazev']),
+                'Připomínkové řízení ' . formatDate($u['pripominky_od']) . ' – ' . formatDate($u['pripominky_do']) . ' (' . $days . ' dní, '
+                . (int)$u['mist'] . ' připomínkových míst); u nařízení vlády obvykle trvá 3 týdny. ' . trim((string)$u['resort']), $posted);
         }
         return $n;
     }

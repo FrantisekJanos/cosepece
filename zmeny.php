@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-20', 'Připravovaná nařízení vlády',
+        'Vedle připravovaných zákonů nově sledujeme i návrhy nařízení vlády. Ta do Sněmovny nejdou, po připomínkovém řízení je schválí jen vláda, a přitom často ukládají nová práva a povinnosti. Na stránce Připravované je přepínač Zákony / Nařízení vlády: u každého nařízení je fáze, délka připomínkového řízení a datum schůze vlády, kratší připomínky jsou označené. Na připomínky kratší než 10 dní chodí upozornění (úroveň Pozor). Data jsou z otevřených dat Úřadu vlády; nelegislativní materiály v nich nejsou.',
+        [60], false],
     ['2026-11-20', 'Bezpečnější nasazování nových verzí',
         'Nová verze webu se před nasazením sama otestuje a po nasazení se ověří, že web odpovídá; když ne, vrátí se předchozí verze. Testy běží automaticky u každé navržené změny, nově i proti stejné databázi, jaká je v provozu. Krátký výpadek při výměně verze už nepřeruší odesílání rozborů AI.',
         [62], false],

@@ -132,6 +132,13 @@ jiný PID: `pripravovane.pidy` drží PID všech verzí, `addUpcoming()` nevydá
 z nich. `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP (tabulka PID `View::upcomingIndex()`,
 po změně tabulky `View::forgetUpcoming()`). Filtr `zakon=` v API a RSS páruje tato upozornění podle čísla zákona v názvu.
 
+Připravovaná nařízení vlády (#59): typ NNV z týchž dat ODok, vlastní tabulka `pripravovana_narizeni` se stejnými sloupci
+(`GovPrep::upcoming(..., 'narizeni')`). Verze se spojují jen v okně `REGULATION_VERSION_DAYS` (každoroční nařízení mají
+stejný název), schválené nařízení zmizí po `REGULATION_KEEP_DAYS` (vyhlášení ve Sbírce data neuvádějí), název resortu se
+doplní podle zkratky z jiných záznamů. Stránka `pripravovane.php?druh=narizeni`, API `api.php?pripravovane=1&druh=narizeni`,
+upozornění jen na připomínky < 10 dní (`prep_narizeni`, klíč `prep_nv:<pid>`, 30 bodů, meta `prep_nv_alerts_bootstrapped`).
+Nařízení se nepárují se zákony (čísla nařízení a zákonů se překrývají). Vyhlášky (NV) a nelegislativní materiály se neberou.
+
 Stránka zákona: `zakon.php?z=159/2006` (bez parametru přehled), `app/Laws.php` – slovník názvů z úplných názvů tisků
 a připravovaných (nejčastější varianta), tisky podle `tisky.zakony`, PN k jiným tiskům podle `pn_text.laws`,
 připravované podle čísla v názvu. Hledání (`SearchIndex`) bere názvy zákonů ze stejného slovníku.

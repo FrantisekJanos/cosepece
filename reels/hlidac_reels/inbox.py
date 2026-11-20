@@ -5,11 +5,13 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import media, queue
 from .enqueue import CAPTION_LIMIT
+from .generator.formats import FORMATS
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +106,12 @@ def _check_variant(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[lis
     errs: list[str] = []
     src = folder / f"variant-{v['n']}.mp4"
     caption = v["caption"].strip()
+    fmt = v.get("format")
+    if v["template"] == "template_v3":
+        if fmt not in FORMATS:
+            errs.append(f"formát {fmt!r} není z {', '.join(FORMATS)}")
+    elif fmt is not None:
+        errs.append("template_v2 nesmí mít formát")
     if not caption:
         errs.append("popisek je prázdný")
     elif len(caption) > CAPTION_LIMIT:
@@ -116,8 +124,8 @@ def _check_variant(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[lis
             errs.append(f"video má {size / 1024 / 1024:.1f} MB, limit je 30 MB")
         try:
             errs += media.validate(media.probe(src))
-        except RuntimeError as e:
-            errs.append(str(e))
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            errs.append(f"kontrola videa selhala: {e}")
     if errs:
         return errs, None
     digest = media.sha256(src)
@@ -150,7 +158,7 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
                 rows.append((v, target, digest))
             try:
                 for v, target, digest in rows:
-                    fmt = v.get("format") if v["template"] == "template_v3" else "v2"
+                    fmt = v["format"] if v["template"] == "template_v3" else "v2"
                     res.reel_ids.append(queue.add(
                         conn, video_path=str(target), video_sha256=digest, caption=v["caption"].strip(),
                         ct=m.get("ct"), format=fmt, source=m["source"], set_id=job_id,
@@ -192,6 +200,13 @@ def ingest_all(conn, inbox_dir: Path, media_dir: Path) -> list[IngestResult]:
             shutil.rmtree(folder, ignore_errors=True)
             continue
         job_id = m["job_id"]
+        if str(job_id) != folder.name:
+            log.warning("%s: job_id %s neodpovídá složce", folder.name, job_id)
+            if folder.name.isdigit():
+                _fail_job(conn, int(folder.name), f"neplatný manifest: job_id {job_id} neodpovídá složce")
+                results.append(IngestResult(int(folder.name)))
+            shutil.rmtree(folder, ignore_errors=True)
+            continue
         status = _job_status(conn, job_id)
         if status in ("queued", "claimed"):
             continue  # PHP možná ztratil nárok; další claim složku přepíše

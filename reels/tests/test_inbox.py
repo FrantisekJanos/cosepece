@@ -164,3 +164,81 @@ def test_obrovske_video_a_duplicita(conn, tmp_path, monkeypatch):
     res2 = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
     assert res2[0].ok is False and set(res2[0].rejected) == {1, 2}
     assert queue.set_items(conn, jid2) == []
+
+
+def _rewrite(folder, jid, mutate):
+    mp = folder / "manifest.json"
+    m = json.loads(mp.read_text())
+    mutate(m)
+    mp.write_text(json.dumps(m))
+
+
+def test_format_v3_povinny_a_platny(conn, tmp_path):
+    from hlidac_reels import inbox
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok", "ok", "ok"][:3])
+
+    def mut(m):
+        m["variants"][0]["format"] = None
+        m["variants"][1]["format"] = "neznamy"
+    _rewrite(folder, jid, mut)
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok is False and set(res[0].rejected) == {1, 2}
+
+
+def test_format_v2_musi_byt_null(conn, tmp_path):
+    from hlidac_reels import inbox
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok", "ok"], templates={1: "template_v2", 2: "template_v2"})
+    _rewrite(folder, jid, lambda m: m["variants"][0].update(format="pn"))
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and list(res[0].rejected) == [1]
+
+
+def test_job_id_musi_odpovidat_slozce(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    other = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"])
+    _rewrite(folder, jid, lambda m: m.update(job_id=other))
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].job_id == jid and res[0].ok is False
+    assert queue.set_items(conn, other) == [] and not folder.exists()
+    from hlidac_reels import jobs
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM reel_jobs WHERE id=%s", (other,))
+        assert cur.fetchone()[0] == "done"
+
+
+def test_probe_oserror_nezhrouti_ingest(conn, tmp_path, monkeypatch):
+    from hlidac_reels import inbox
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok", "ok"])
+
+    def boom(path):
+        raise FileNotFoundError("ffprobe")
+    monkeypatch.setattr(media, "probe", boom)
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok is False and set(res[0].rejected) == {1, 2}
+
+
+def test_selhani_uprostred_sady_uklidi(conn, tmp_path, monkeypatch):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok", "ok", "ok"])
+    real = queue.add
+    calls = []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 2:
+            raise queue.DuplicateVideo("x")
+        return real(*a, **k)
+    monkeypatch.setattr(queue, "add", flaky)
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok is False and res[0].reel_ids == []
+    assert queue.set_items(conn, jid) == []
+    assert not list((tmp_path / "media").rglob("*.mp4"))
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM reel_jobs WHERE id=%s", (jid,))
+        assert cur.fetchone()[0] == "failed"

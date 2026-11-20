@@ -132,6 +132,13 @@ jiný PID: `pripravovane.pidy` drží PID všech verzí, `addUpcoming()` nevydá
 z nich. `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP (tabulka PID `View::upcomingIndex()`,
 po změně tabulky `View::forgetUpcoming()`). Filtr `zakon=` v API a RSS páruje tato upozornění podle čísla zákona v názvu.
 
+Senát a kroky po něm (#6, bez skóre): `Analyzer::senate()` z historie tisku – výsledek je akce kroku, který následuje
+po stavu 12 „Senát“ (21/33 schválen, 24 vrácen, 27 zamítnut, 11/37/53 nezabýval se, 6 nečinný, 36 bez usnesení); po stavu
+14/63 akce 20 = Sněmovna setrvala (přehlasovala Senát), 15 = přijala znění Senátu; po stavu 8 akce 7 = veto, po stavu 13
+akce 20 = veto přehlasováno. `Analyzer::senateLines()` dává věty pro detail tisku (`tisk.php#senat`) a API (`tisk.senat`).
+Upozornění `senate:<ct>`, `override:<ct>`, `vetoover:<ct>` (druhy `senate` a `override`, bonus 0, meta
+`senate_alerts_bootstrapped`). Data kroků jsou den, kdy výsledek dorazil do Sněmovny; senat.cz se nenačítá (robots.txt).
+
 Připravovaná nařízení vlády (#59): typ NNV z týchž dat ODok, vlastní tabulka `pripravovana_narizeni` se stejnými sloupci
 (`GovPrep::upcoming(..., 'narizeni')`). Verze se spojují jen v okně `REGULATION_VERSION_DAYS` (každoroční nařízení mají
 stejný název), schválené nařízení zmizí po `REGULATION_KEEP_DAYS` (vyhlášení ve Sbírce data neuvádějí), název resortu se

@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-20', 'Senát a kroky po něm',
+        'U tisku nově ukazujeme, jak návrh dopadl v Senátu: schválen, vrácen s pozměňovacími návrhy, zamítnut, Senát se jím odmítl zabývat, nebo se ve lhůtě 30 dnů nevyjádřil. U návrhu, který v Senátu právě je, uvádíme konec lhůty. Ukazujeme také, zda Sněmovna Senát přehlasovala nebo přijala jeho znění a zda přehlasovala veto prezidenta. Na jiný výsledek než schválení a na přehlasování chodí upozornění. Do skóre to nevstupuje; data jsou z historie tisku na psp.cz.',
+        [61], false],
     ['2026-11-20', 'Připravovaná nařízení vlády',
         'Vedle připravovaných zákonů nově sledujeme i návrhy nařízení vlády. Ta do Sněmovny nejdou, po připomínkovém řízení je schválí jen vláda, a přitom často ukládají nová práva a povinnosti. Na stránce Připravované je přepínač Zákony / Nařízení vlády: u každého nařízení je fáze, délka připomínkového řízení a datum schůze vlády, kratší připomínky jsou označené. Na připomínky kratší než 10 dní chodí upozornění (úroveň Pozor). Data jsou z otevřených dat Úřadu vlády; nelegislativní materiály v nich nejsou.',
         [60], false],

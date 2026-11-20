@@ -85,6 +85,91 @@ final class Analyzer
         ];
     }
 
+    // Senát a kroky po něm (#6): výsledek je akce kroku, který následuje po stavu „Senát“
+    public const STAV_SENAT = 12;
+    public const STAV_PS_PO_SENATU = [14, 63];
+    public const STAV_PREZIDENT = 8;
+    public const STAV_PS_PO_VETU = 13;
+    public const AKCE_SENAT = [21 => 'schvalen', 33 => 'schvalen', 24 => 'vracen', 27 => 'zamitnut',
+        11 => 'nezabyval', 37 => 'nezabyval', 53 => 'nezabyval', 6 => 'necinny', 36 => 'bez_usneseni'];
+    public const AKCE_SETRVANO = 20;      // Sněmovna setrvala na původním znění (přehlasovala Senát nebo veto)
+    public const AKCE_PRIJATA_VERZE_SENATU = 15;
+    public const AKCE_NEPODEPSAL = 7;     // veto prezidenta
+    public const SENAT_LHUTA_DNI = 30;    // čl. 46 odst. 1 Ústavy
+
+    /**
+     * Průchod Senátem a kroky po něm z historie tisku. Jen popis postupu, do skóre nevstupuje.
+     * Data jsou podle záznamů Sněmovny (den, kdy výsledek dorazil), ne den hlasování v Senátu.
+     *
+     * @param array<int, array{typ_stavu:int, akce_id:int, datum:?string}> $kroky seřazené chronologicky
+     * @return array{doruceno: ?string, vysledek: ?string, rozhodnuto: ?string, lhuta_do: ?string, snemovna: ?string,
+     *     snemovna_datum: ?string, veto: ?string, veto_prehlasovano: ?string}
+     */
+    public static function senate(array $kroky): array
+    {
+        $out = ['doruceno' => null, 'vysledek' => null, 'rozhodnuto' => null, 'lhuta_do' => null, 'snemovna' => null,
+            'snemovna_datum' => null, 'veto' => null, 'veto_prehlasovano' => null];
+        $prev = 0;
+        foreach ($kroky as $krok) {
+            $typ = (int)$krok['typ_stavu'];
+            $akce = (int)$krok['akce_id'];
+            $date = !empty($krok['datum']) ? substr((string)$krok['datum'], 0, 10) : null;
+            if ($typ === self::STAV_SENAT && $prev !== self::STAV_SENAT) {
+                // (nové) doručení Senátu: dřívější výsledek už neplatí
+                $out = ['doruceno' => $date] + array_fill_keys(array_keys($out), null);
+            } elseif ($prev === self::STAV_SENAT && isset(self::AKCE_SENAT[$akce])) {
+                $out['vysledek'] = self::AKCE_SENAT[$akce];
+                $out['rozhodnuto'] = $date;
+            } elseif (in_array($prev, self::STAV_PS_PO_SENATU, true) && in_array($akce, [self::AKCE_SETRVANO, self::AKCE_PRIJATA_VERZE_SENATU], true)) {
+                $out['snemovna'] = $akce === self::AKCE_SETRVANO ? 'setrvala' : 'prijala';
+                $out['snemovna_datum'] = $date;
+            } elseif ($prev === self::STAV_PREZIDENT && $akce === self::AKCE_NEPODEPSAL) {
+                $out['veto'] = $date;
+            } elseif ($prev === self::STAV_PS_PO_VETU && $akce === self::AKCE_SETRVANO) {
+                $out['veto_prehlasovano'] = $date;
+            }
+            $prev = $typ;
+        }
+        if ($out['doruceno'] !== null && $out['vysledek'] === null) {
+            $out['lhuta_do'] = date('Y-m-d', strtotime($out['doruceno']) + 86400 * self::SENAT_LHUTA_DNI);
+        }
+        return $out;
+    }
+
+    /** Čitelný popis průchodu Senátem (věty pro detail tisku a upozornění). @return string[] */
+    public static function senateLines(array $s): array
+    {
+        if (($s['doruceno'] ?? null) === null) {
+            return [];
+        }
+        $d = fn(?string $date): string => $date !== null ? formatDate($date) : 'bez data';
+        $lines = [];
+        $lines[] = match ($s['vysledek']) {
+            null => 'Senát návrh dostal ' . $d($s['doruceno']) . '. Na projednání má ' . self::SENAT_LHUTA_DNI . ' dní, tedy do ' . $d($s['lhuta_do']) . '.',
+            'schvalen' => 'Senát návrh schválil (' . $d($s['rozhodnuto']) . ').',
+            'vracen' => 'Senát návrh vrátil Sněmovně s pozměňovacími návrhy (' . $d($s['rozhodnuto']) . ').',
+            'zamitnut' => 'Senát návrh zamítl (' . $d($s['rozhodnuto']) . ').',
+            'nezabyval' => 'Senát se usnesl, že se návrhem nebude zabývat (' . $d($s['rozhodnuto']) . '); tím je návrh přijat (čl. 48 Ústavy).',
+            'necinny' => 'Senát se ve lhůtě ' . self::SENAT_LHUTA_DNI . ' dnů nevyjádřil (' . $d($s['rozhodnuto']) . '); návrh tak platí za přijatý (čl. 46 odst. 3 Ústavy).',
+            default => 'Senát návrh projednal bez usnesení (' . $d($s['rozhodnuto']) . ').',
+        };
+        if ($s['snemovna'] !== null) {
+            $gap = $s['rozhodnuto'] !== null && $s['snemovna_datum'] !== null
+                ? (int)round((strtotime($s['snemovna_datum']) - strtotime($s['rozhodnuto'])) / 86400) : null;
+            $after = $gap !== null ? ', ' . ($gap === 0 ? 'týž den' : ($gap === 1 ? 'den' : $gap . ' ' . ($gap < 5 ? 'dny' : 'dní')) . ' poté') : '';
+            $lines[] = $s['snemovna'] === 'setrvala'
+                ? 'Sněmovna setrvala na původním znění a Senát přehlasovala (' . $d($s['snemovna_datum']) . $after . ').'
+                : 'Sněmovna přijala znění s pozměňovacími návrhy Senátu (' . $d($s['snemovna_datum']) . $after . ').';
+        }
+        if ($s['veto'] !== null) {
+            $lines[] = 'Prezident zákon nepodepsal a vrátil ho Sněmovně (' . $d($s['veto']) . ').';
+        }
+        if ($s['veto_prehlasovano'] !== null) {
+            $lines[] = 'Sněmovna na zákonu setrvala a veto prezidenta přehlasovala (' . $d($s['veto_prehlasovano']) . ').';
+        }
+        return $lines;
+    }
+
     public static function typNavrhu(int $druh, string $uplnyNazev, int $idNavrh = 0): string
     {
         // předkladatel podle číselníku typ_zakon (tisky.id_navrh): 1 vláda, 2–3 poslanci, 4 Senát,

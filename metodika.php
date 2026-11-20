@@ -157,6 +157,7 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
 <section class="card pad" aria-label="Omezení">
   <h2>Co skóre nevidí</h2>
   <ul>
+    <li><b>Senát a veto.</b> U tisku ukazujeme, jak návrh dopadl v Senátu (schválen, vrácen s pozměňovacími návrhy, zamítnut, Senát se jím odmítl zabývat nebo se ve lhůtě nevyjádřil), zda Sněmovna Senát nebo veto prezidenta přehlasovala, a posíláme na to upozornění. Do skóre to zatím nevstupuje: zamítnutí i přehlasování jsou běžné ústavní postupy a jejich váhu chceme nejdřív ověřit na datech.</li>
     <li>Politický obsah a dopady zákona. Velká, ale řádně připravená vládní změna může mít nízké skóre.</li>
     <li>Jak se hlasovalo a v kolik hodin.</li>
     <li>Kroky mimo Sněmovnu, např. změny jednacího řádu vlády nebo výběrová řízení.</li>

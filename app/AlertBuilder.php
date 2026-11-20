@@ -57,6 +57,41 @@ final class AlertBuilder
         return $n;
     }
 
+    private function fromSenate(array $tisky, int $posted): int
+    {
+        // Senát (#6): jiný výsledek než schválení a přehlasování Senátu nebo veta Sněmovnou.
+        // Jen popis postupu, bonus ke skóre je 0. První běh dosavadní stav jen zapíše (posted = 2).
+        $byCt = [];
+        foreach ($this->db->all('SELECT ct, typ_stavu, akce_id, datum FROM kroky ORDER BY id_hist') as $k) {
+            $byCt[(int)$k['ct']][] = $k;
+        }
+        if ($this->db->getMeta('senate_alerts_bootstrapped') === null) {
+            $posted = 2;
+            $this->db->setMeta('senate_alerts_bootstrapped', date('Y-m-d H:i:s'));
+        }
+        $titles = ['vracen' => 'Senát vrátil s pozměňovacími návrhy', 'zamitnut' => 'Senát zamítl', 'nezabyval' => 'Senát se odmítl zabývat',
+            'necinny' => 'Senát se ve lhůtě nevyjádřil', 'bez_usneseni' => 'Senát projednal bez usnesení'];
+        $n = 0;
+        foreach ($tisky as $ct => $t) {
+            $s = Analyzer::senate($byCt[$ct] ?? []);
+            $lines = Analyzer::senateLines($s);
+            if ($s['vysledek'] !== null && isset($titles[$s['vysledek']])) {
+                $n += $this->add("senate:$ct", 'senate', $t, ($s['rozhodnuto'] ?? date('Y-m-d')) . ' 00:00:00',
+                    $titles[$s['vysledek']] . ': ' . $t['nazev'], $lines[0], $posted);
+            }
+            if ($s['snemovna'] === 'setrvala') {
+                $n += $this->add("override:$ct", 'override', $t, ($s['snemovna_datum'] ?? date('Y-m-d')) . ' 00:00:00',
+                    'Sněmovna přehlasovala Senát: ' . $t['nazev'], $lines[0] . ' ' . $lines[1], $posted);
+            }
+            if ($s['veto_prehlasovano'] !== null) {
+                $n += $this->add("vetoover:$ct", 'override', $t, $s['veto_prehlasovano'] . ' 00:00:00',
+                    'Sněmovna přehlasovala veto prezidenta: ' . $t['nazev'],
+                    'Prezident zákon nepodepsal' . ($s['veto'] !== null ? ' (' . formatDate($s['veto']) . ')' : '') . ', Sněmovna na něm setrvala (' . formatDate($s['veto_prehlasovano']) . ').', $posted);
+            }
+        }
+        return $n;
+    }
+
     private function fromSteps(array $tisky, int $posted): int
     {
         $n = 0;
@@ -101,7 +136,7 @@ final class AlertBuilder
                     $posted);
             }
         }
-        return $n + $this->fromPublication($tisky, $posted);
+        return $n + $this->fromSenate($tisky, $posted) + $this->fromPublication($tisky, $posted);
     }
 
     private function fromPublication(array $tisky, int $posted): int

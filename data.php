@@ -94,6 +94,7 @@ $fields = [
         ['hlasovani', 'pole objektů', 'id, datum, vysledek (přijato / zamítnuto), pro, proti, zdrzel, kvorum, kluby (klub, pro, proti, zdrzel_nehlasoval, nepritomen), psp_url'],
         ['upozorneni', 'pole objektů', 'upozornění k tisku (pole jako níže)'],
         ['rozbor_textu', 'objekt', 'posouzeno / celkem: kolik textů (návrh a pozměňovací návrhy) už posoudil rozbor AI'],
+        ['senat', 'objekt nebo null', 'průchod Senátem: doruceno, vysledek (schvalen, vracen, zamitnut, nezabyval, necinny, bez_usneseni nebo null), rozhodnuto, lhuta_do (30 dní od doručení, dokud Senát nerozhodl), snemovna (setrvala = přehlasovala Senát, prijala = přijala jeho znění), snemovna_datum, veto, veto_prehlasovano, popis (věty česky); null = návrh do Senátu nedošel'],
     ],
     'Upozornění' => [
         ['id', 'text', 'jednoznačný klíč upozornění (vhodný k odstranění duplicit)'],
@@ -132,6 +133,8 @@ $alertKinds = [
     'surge' => 'nával pozměňovacích návrhů najednou',
     'passed' => 'schváleno Sněmovnou',
     'law' => 'vyhlášeno ve Sbírce zákonů',
+    'senate' => 'Senát návrh zamítl, vrátil s pozměňovacími návrhy, odmítl se jím zabývat nebo se nevyjádřil',
+    'override' => 'Sněmovna přehlasovala Senát nebo veto prezidenta',
     'prep_velmi' => 'připravovaný zákon: připomínkové řízení kratší než 10 dní',
     'prep_kratke' => 'připravovaný zákon: připomínkové řízení kratší než 3 týdny',
     'prep_plan' => 'připravovaný zákon: předloženo mimo plán legislativních prací vlády',

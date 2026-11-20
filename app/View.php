@@ -18,6 +18,8 @@ final class View
         'pn' => ['surge', 'Nové PN'],
         'passed' => ['mp', 'Schváleno Sněmovnou'],
         'law' => ['mp', 'Vyhlášeno'],
+        'senate' => ['surge', 'Senát'],
+        'override' => ['fast', 'Přehlasováno'],
         'prep_velmi' => ['cut', 'Připomínky < 10 dní'],
         'prep_kratke' => ['cut', 'Krátké připomínky'],
         'prep_plan' => ['surge', 'Mimo plán vlády'],

@@ -183,6 +183,17 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
 </section>
 <?php endif; ?>
 
+<?php $senateLines = Hlidac\Analyzer::senateLines(Hlidac\Analyzer::senate($steps)); ?>
+<?php if ($senateLines !== []): ?>
+<section class="card pad" id="senat" aria-label="Senát a kroky po něm">
+  <h2>Senát a kroky po něm</h2>
+  <?php foreach ($senateLines as $line): ?>
+    <p><?= e($line) ?></p>
+  <?php endforeach; ?>
+  <p class="muted small">Jen popis postupu, do skóre nevstupuje. Data jsou podle záznamů Sněmovny (den, kdy výsledek dorazil); den hlasování Senátu, jeho výbory a zpravodaje najdete na <a href="https://www.senat.cz/">senat.cz</a>.</p>
+</section>
+<?php endif; ?>
+
 <div class="split">
   <section class="card pad main-col" aria-label="Průběh projednávání">
     <h2>Průběh projednávání</h2>

@@ -962,6 +962,42 @@ $prepHtml = (string)ob_get_clean();
 check('detail tisku ukazuje přípravu u vlády', str_contains($prepHtml, 'Příprava návrhu u vlády') && str_contains($prepHtml, 'Připomínky 14 dní (obvykle 4 týdny)')
     && str_contains($prepHtml, 'odok.gov.cz/portal/veklep/material/KORNDQGFVQKI/'), true);
 
+echo "Senát a kroky po něm (#6)\n";
+$k = fn(int $typ, int $akce, string $date): array => ['typ_stavu' => $typ, 'akce_id' => $akce, 'datum' => $date . ' 00:00:00'];
+$sen = fn(array $kroky): array => Hlidac\Analyzer::senate($kroky);
+check('v Senátu: lhůta 30 dní od doručení', array_intersect_key($sen([$k(64, 22, '2026-11-02'), $k(12, 3, '2026-11-05')]), array_flip(['doruceno', 'vysledek', 'lhuta_do'])),
+    ['doruceno' => '2026-11-05', 'vysledek' => null, 'lhuta_do' => '2026-12-05']);
+check('Senát schválil', $sen([$k(12, 3, '2026-03-01'), $k(8, 21, '2026-03-20'), $k(8, 14, '2026-03-21')])['vysledek'], 'schvalen');
+$s163 = $sen([$k(64, 22, '2026-04-15'), $k(12, 3, '2026-04-15'), $k(14, 27, '2026-04-22'), $k(14, 19, '2026-04-22'), $k(8, 20, '2026-04-24'), $k(8, 14, '2026-04-24')]);
+check('Senát zamítl, Sněmovna přehlasovala (tisk 163)', [$s163['vysledek'], $s163['rozhodnuto'], $s163['snemovna'], $s163['snemovna_datum'], $s163['lhuta_do']],
+    ['zamitnut', '2026-04-22', 'setrvala', '2026-04-24', null]);
+check('popis přehlasování s odstupem', Hlidac\Analyzer::senateLines($s163),
+    ['Senát návrh zamítl (22. 4. 2026).', 'Sněmovna setrvala na původním znění a Senát přehlasovala (24. 4. 2026, 2 dny poté).']);
+check('Sněmovna přijala znění Senátu (tisk 57)', array_values(array_intersect_key($sen([$k(12, 3, '2026-04-07'), $k(14, 24, '2026-05-07'), $k(14, 19, '2026-05-07'), $k(8, 15, '2026-05-26')]),
+    array_flip(['vysledek', 'snemovna']))), ['vracen', 'prijala']);
+check('nezabýval se, nevyjádřil se', [$sen([$k(12, 3, '2026-07-21'), $k(8, 11, '2026-08-24')])['vysledek'], $sen([$k(12, 3, '2026-09-29'), $k(8, 6, '2026-10-22')])['vysledek']], ['nezabyval', 'necinny']);
+check('návrh, který do Senátu nedošel', [$sen([$k(1, 0, '2026-01-01'), $k(5, 0, '2026-02-01')])['doruceno'], Hlidac\Analyzer::senateLines($sen([]))], [null, []]);
+$s90 = $sen((new Hlidac\Repo(db()))->steps(90));
+check('tisk 90: vrácen, Sněmovna setrvala, veto, znovu setrvala', [$s90['doruceno'], $s90['vysledek'], $s90['snemovna'], $s90['veto'], $s90['veto_prehlasovano']],
+    ['2026-05-26', 'vracen', 'setrvala', '2026-07-22', '2026-08-26']);
+$senAlerts = [];
+foreach (db()->all("SELECT alert_key, kind, score, posted, title FROM alerts WHERE kind IN ('senate', 'override') AND ct = 90 AND alert_key NOT LIKE '%/%' ORDER BY alert_key") as $a) {
+    $senAlerts[$a['alert_key']] = [$a['kind'], (int)$a['posted'], $a['title']];
+}
+check('upozornění na Senát a přehlasování (první běh se neposílá)', $senAlerts, [
+    'override:90' => ['override', 2, 'Sněmovna přehlasovala Senát: ' . db()->value('SELECT nazev FROM tisky WHERE ct = 90')],
+    'senate:90' => ['senate', 2, 'Senát vrátil s pozměňovacími návrhy: ' . db()->value('SELECT nazev FROM tisky WHERE ct = 90')],
+    'vetoover:90' => ['override', 2, 'Sněmovna přehlasovala veto prezidenta: ' . db()->value('SELECT nazev FROM tisky WHERE ct = 90')],
+]);
+(new Hlidac\Scorer(db(), config()))->scoreAlerts();
+check('upozornění na Senát nepřidává body (skóre = skóre tisku)', (int)db()->value("SELECT COUNT(*) FROM alerts a JOIN tisky t ON t.ct = a.ct
+    WHERE a.kind IN ('senate', 'override') AND a.alert_key NOT LIKE '%/%' AND a.score <> t.score"), 0);
+$api90 = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->bill(90);
+$api221 = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->bill(221);
+check('API: průchod Senátem u tisku 90, null u tisku mimo Senát', [$api90['senat']['vysledek'] ?? null, count($api90['senat']['popis'] ?? []), $api221['senat']], ['vracen', 4, null]);
+check('detail tisku 90 ukazuje Senát', str_contains($prepHtml, 'Senát a kroky po něm') && str_contains($prepHtml, 'Senát návrh vrátil Sněmovně s pozměňovacími návrhy (22. 6. 2026).')
+    && str_contains($prepHtml, 'veto prezidenta přehlasovala (26. 8. 2026)'), true);
+
 echo "Připravované zákony (#29)\n";
 $up = [];
 foreach ((new Hlidac\Repo(db()))->upcoming() as $u) {

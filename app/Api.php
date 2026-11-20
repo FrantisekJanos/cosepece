@@ -93,6 +93,9 @@ final class Api
         $out['upozorneni'] = array_map([$this, 'alert'], $this->repo->alerts(100, 0, $ct));
         $status = $this->repo->reviewStatus($ct)[$ct] ?? ['total' => 0, 'done' => 0];
         $out['rozbor_textu'] = ['posouzeno' => (int)$status['done'], 'celkem' => (int)$status['total']];
+        // průchod Senátem a kroky po něm (null, dokud návrh do Senátu nedošel); jen popis postupu, do skóre nevstupuje
+        $senate = Analyzer::senate($this->repo->steps($ct));
+        $out['senat'] = $senate['doruceno'] !== null ? $senate + ['popis' => Analyzer::senateLines($senate)] : null;
         return $out;
     }
 

@@ -14,7 +14,8 @@ final class Scorer
     public const LEVEL_NORMAL = 'normal';
 
     // bonus k upozornění podle typu události
-    private const KIND_BONUS = ['p90' => 10, 'cut' => 10, 'passed' => 5, 'surge' => 5, 'law' => 0, 'newbill' => 0, 'pn' => 0]
+    private const KIND_BONUS = ['p90' => 10, 'cut' => 10, 'passed' => 5, 'surge' => 5, 'law' => 0, 'newbill' => 0, 'pn' => 0,
+        'senate' => 0, 'override' => 0] // Senát a přehlasování: jen popis postupu, bez bodů
         + AlertBuilder::UPCOMING_KINDS;
 
     /** @var array<int, array> příprava návrhu u vlády podle čísla tisku (jen pro popis důvodu) */

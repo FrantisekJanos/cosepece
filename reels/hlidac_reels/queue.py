@@ -101,6 +101,19 @@ def next_queued(conn) -> Reel | None:
     return r
 
 
+def by_telegram_msg(conn, msg_id: int) -> Reel | None:
+    """Položka, k níž patří zpráva v Telegramu (video nebo náhled s tlačítky)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_COLS} FROM reel_queue WHERE telegram_video_msg_id=%s OR telegram_msg_id=%s "
+            "ORDER BY id DESC LIMIT 1",
+            (msg_id, msg_id),
+        )
+        r = _row(cur)
+    conn.commit()
+    return r
+
+
 def pending_count(conn) -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM reel_queue WHERE status='pending'")

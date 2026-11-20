@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-20', 'Bezpečnější nasazování nových verzí',
+        'Nová verze webu se před nasazením sama otestuje a po nasazení se ověří, že web odpovídá; když ne, vrátí se předchozí verze. Testy běží automaticky u každé navržené změny, nově i proti stejné databázi, jaká je v provozu. Krátký výpadek při výměně verze už nepřeruší odesílání rozborů AI.',
+        [62], false],
     ['2026-11-19', 'Opravy po kontrole kódu',
         'Prošli jsme nově přidané části webu a opravili deset nedostatků. Hledání teď snese i chybějící nebo přebývající písmeno a překlep ve slově v jiném tvaru („rozpcet“, „energticky“). Upozornění na připravovaný zákon se neopakuje, když materiál dostane u vlády novou verzi, a odběr RSS nebo dat podle čísla zákona nově obsahuje i upozornění na připravované změny tohoto zákona. U opakovaných rozborů AI platí pojistky i po výpočtu mediánu, takže rozbor se stropem závažnosti strop nepřekročí. Dokumentace dat popisuje upozornění na připravované zákony.',
         [58], false],

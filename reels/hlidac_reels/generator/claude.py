@@ -112,7 +112,7 @@ def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEF
         timed_out = True
         _kill_tree(proc)
         out, err = proc.communicate()
-    log_path.write_text(f"{out or ''}\n--- stderr ---\n{err or ''}\n" + ("--- timeout ---\n" if timed_out else ""),
-                        encoding="utf-8")
+    with log_path.open("a", encoding="utf-8") as log:  # oprava variant běží podruhé, první log zůstane
+        log.write(f"=== běh ===\n{out or ''}\n--- stderr ---\n{err or ''}\n" + ("--- timeout ---\n" if timed_out else ""))
     rc = None if timed_out else proc.returncode
     return ClaudeRun(ok=not timed_out and rc == 0, returncode=rc, timed_out=timed_out, log_path=log_path)

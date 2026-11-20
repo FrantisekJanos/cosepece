@@ -98,3 +98,12 @@ def test_relativni_cesty_se_prevedou_na_absolutni(tmp_path, monkeypatch):
     args = (tmp_path / "wd" / "fake_args.txt").read_text(encoding="utf-8").splitlines()
     assert str((tmp_path / "cfg" / "mcp.json").resolve()) in args
     assert str((tmp_path / "wd").resolve()) in args
+
+
+def test_druhy_beh_log_neprepise(tmp_path, monkeypatch):
+    _fake(monkeypatch, "fail")
+    run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
+    _fake(monkeypatch, "ok")
+    r = run_claude("y", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
+    log = r.log_path.read_text(encoding="utf-8")
+    assert "chyba modelu" in log and '"result": "ok"' in log

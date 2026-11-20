@@ -1598,3 +1598,123 @@ def test_doplnena_sirka_chybi_soubor_ohlasi_jednou(conn, api, meta, media_dir):
         bot.maybe_send_next()
     assert len([t for t in api.texts() if "video na šířku nejde přečíst" in t]) == 1
     assert _get(conn, rid).telegram_landscape_msg_id is None
+
+
+# --- finální kontrola větve: otisk odeslané šířky ----------------------------
+
+@pg
+def test_sirka_vymenena_behem_send_next_neschvali_nevidenou(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.telegram import Telegram
+    th = FakeThreads(media_dir)
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    _add_landscape(conn, media_dir, rid, n=1)
+    second = media_dir / "videos" / "w2.mp4"
+    second.write_bytes(b"fake landscape 2")
+    count = [0]
+
+    def handler(request):
+        if request.url.path.endswith("/sendVideo"):
+            count[0] += 1
+            if count[0] == 2:
+                # reels-add-landscape vymění šířku, zatímco bot posílá tu původní
+                assert queue.set_landscape(conn, rid, str(second), "wsha2")
+        return api(request)
+
+    bot.tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    bot.send_next()
+    r = _get(conn, rid)
+    assert r.status == "pending" and r.telegram_landscape_sha256 == "wsha1"
+    assert r.video_landscape_sha256 == "wsha2"
+    bot.handle(_cb(f"ok:{rid}", msg_id=r.telegram_msg_id))
+    assert _get(conn, rid).status == "pending" and sum(meta.calls.values()) == 0
+    # další obrátka pošle novou šířku a nový náhled, pak schválení projde
+    now[0] += 60
+    bot.maybe_send_next()
+    assert count[0] == 3
+    r = _get(conn, rid)
+    assert r.telegram_landscape_sha256 == "wsha2" and r.telegram_msg_id > r.telegram_landscape_msg_id
+    now[0] += 60
+    bot.maybe_send_next()
+    assert count[0] == 3  # už nic
+    bot.handle(_cb(f"ok:{rid}", msg_id=r.telegram_msg_id))
+    assert _get(conn, rid).status == "published"
+
+
+@pg
+def test_send_next_ulozi_otisk_odeslane_sirky(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    _add_landscape(conn, media_dir, rid)
+    bot.send_next()
+    assert _get(conn, rid).telegram_landscape_sha256 == "wsha1"
+
+
+@pg
+def test_trvala_chyba_sirky_bez_otisku_ohlasi_jednou(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir)
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    land = media_dir / "videos" / "w9.mp4"
+    land.write_bytes(b"x")
+    assert queue.set_landscape(conn, rid, str(land), None)
+    count = _count_video_requests(bot, api, [True])
+    api.calls.clear()
+    for _ in range(3):
+        now[0] += 60
+        bot.maybe_send_next()
+    assert count[0] == 1
+    assert len([t for t in api.texts() if "video na šířku Telegram odmítl" in t]) == 1
+
+
+@pg
+def test_schvalit_po_odmitnute_sirce_rekne_proc(conn, api, meta, media_dir):
+    from hlidac_reels.bot import LANDSCAPE_REJECTED
+    bot = _make_bot(conn, api, meta, media_dir)
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    old = _get(conn, rid).telegram_msg_id
+    _add_landscape(conn, media_dir, rid)
+    _count_video_requests(bot, api, [True])
+    now[0] += 60
+    bot.maybe_send_next()
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{rid}", msg_id=old))
+    assert _get(conn, rid).status == "pending"
+    assert [b.get("text") for b in api.sent("answerCallbackQuery")] == [LANDSCAPE_REJECTED]
+    assert LANDSCAPE_REJECTED == ("Video na šířku Telegram odmítl. Vyměň ho přes reels-add-landscape, "
+                                  "nebo položku zamítni.")
+
+
+@pg
+def test_sirka_a_b_a_zkusi_a_znovu(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir)
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    a = _add_landscape(conn, media_dir, rid, n=1)
+    reject = [True]
+    count = _count_video_requests(bot, api, reject)
+    now[0] += 60
+    bot.maybe_send_next()  # A odmítnuto
+    assert count[0] == 1
+    reject[0] = False
+    _add_landscape(conn, media_dir, rid, n=2)  # B projde
+    now[0] += 60
+    bot.maybe_send_next()
+    assert count[0] == 2
+    assert queue.get_state(conn, f"landscape_failed:{rid}") is None
+    assert queue.set_landscape(conn, rid, str(a), "wsha1")  # zpět A (třeba už opravené)
+    now[0] += 60
+    bot.maybe_send_next()
+    assert count[0] == 3
+    assert _get(conn, rid).telegram_landscape_sha256 == "wsha1"

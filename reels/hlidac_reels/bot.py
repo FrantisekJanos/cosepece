@@ -48,6 +48,7 @@ THREADS_REFRESH_AGE = timedelta(days=7)
 THREADS_REFRESH_RETRY = timedelta(days=1)
 PREVIEW_THREADS_KEY = "preview_has_threads"
 LANDSCAPE_NOT_SENT = "Video na šířku ještě nebylo odesláno ke schválení."
+LANDSCAPE_REJECTED = "Video na šířku Telegram odmítl. Vyměň ho přes reels-add-landscape, nebo položku zamítni."
 LANDSCAPE_FAILED_KEY = "landscape_failed:{}"  # reel_state: sha256 šířky, kterou Telegram trvale odmítl
 HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.")
@@ -78,6 +79,11 @@ def seed_threads_token(conn, env_token: str | None, now: datetime) -> bool:
     queue.set_state(conn, THREADS_TOKEN_KEY, env_token)
     queue.set_state(conn, THREADS_REFRESHED_KEY, now.isoformat())
     return True
+
+
+def _failed_mark(reel: Reel) -> str:
+    """Hodnota landscape_failed:<id> pro aktuální šířku (bez otisku ""; zápis i porovnání stejně)."""
+    return reel.video_landscape_sha256 or ""
 
 
 def _num(n: int) -> str:
@@ -180,6 +186,10 @@ class Bot:
         if not queue.approve(self.conn, reel_id, _now()):
             reel = queue.get(self.conn, reel_id)
             if reel is not None and reel.status == "pending":
+                if queue.get_state(self.conn, LANDSCAPE_FAILED_KEY.format(reel_id)) == _failed_mark(reel):
+                    self._answer(cb_id, LANDSCAPE_REJECTED)
+                    self._say(f"#{reel_id}: {LANDSCAPE_REJECTED}")
+                    return
                 # doplněné video na šířku ještě vlastník neviděl (nebo k němu nepřišel nový náhled)
                 self._answer(cb_id, LANDSCAPE_NOT_SENT)
                 self._say(f"#{reel_id}: {LANDSCAPE_NOT_SENT} Schválit půjde z nového náhledu.")
@@ -376,8 +386,11 @@ class Bot:
                 self._give_up(reel, e, shape)
                 continue
             preview_id = self._send_preview(reel)
+            # otisk odeslané šířky: když ji reels-add-landscape mezitím vyměnil, schválení neprojde,
+            # dokud _send_landscape_updates nepošle novou (queue.approve)
             queue.transition(self.conn, reel.id, "queued", "pending", sent_at=_now(),
                              telegram_video_msg_id=video_id, telegram_landscape_msg_id=landscape_id,
+                             telegram_landscape_sha256=reel.video_landscape_sha256 if landscape_id else None,
                              telegram_msg_id=preview_id)
             return
 
@@ -395,9 +408,11 @@ class Bot:
         for reel in queue.by_status(self.conn, ("pending",)):
             if not reel.video_landscape_path:
                 continue
-            if reel.telegram_landscape_msg_id is None:
+            # odeslat, když šířka v Telegramu chybí, nebo tam je jiný soubor (výměna během send_next)
+            if (reel.telegram_landscape_msg_id is None
+                    or reel.telegram_landscape_sha256 != reel.video_landscape_sha256):
                 failed_key = LANDSCAPE_FAILED_KEY.format(reel.id)
-                if queue.get_state(self.conn, failed_key) == reel.video_landscape_sha256:
+                if queue.get_state(self.conn, failed_key) == _failed_mark(reel):
                     continue
                 try:
                     land_id = self.tg.send_video(self.chat_id, reel.video_landscape_path,
@@ -408,20 +423,20 @@ class Bot:
                         continue
                     reason = self._safe(e)[:300]
                     log.warning("video na šířku #%s odmítnuto: %s", reel.id, reason)
-                    queue.set_state(self.conn, failed_key, reel.video_landscape_sha256 or "")
+                    queue.set_state(self.conn, failed_key, _failed_mark(reel))
                     what = "Telegram odmítl" if isinstance(e, TelegramError) else "nejde přečíst"
                     self._say(f"#{reel.id}: video na šířku {what} ({reason}). "
                               "Vyměň ho přes reels-add-landscape, nebo položku zamítni.")
                     continue
                 if not land_id:
                     continue
-                current = queue.get(self.conn, reel.id)
-                # mezitím vyměněné video (reels-add-landscape) se pošle v další obrátce
-                if (current is None or current.video_landscape_path != reel.video_landscape_path
-                        or current.telegram_landscape_msg_id is not None):
+                # zápis jen pro tentýž soubor; mezitím vyměněný (reels-add-landscape) se pošle v další obrátce
+                if not queue.set_landscape_sent(self.conn, reel.id, land_id, reel.video_landscape_sha256):
                     continue
-                queue.set_fields(self.conn, reel.id, telegram_landscape_msg_id=land_id)
-                reel = dataclasses.replace(current, telegram_landscape_msg_id=land_id)
+                queue.delete_state(self.conn, failed_key)
+                reel = queue.get(self.conn, reel.id)
+                if reel is None or reel.status != "pending":
+                    continue
             if (reel.telegram_msg_id or 0) < reel.telegram_landscape_msg_id:
                 self._resend_preview(reel)
 

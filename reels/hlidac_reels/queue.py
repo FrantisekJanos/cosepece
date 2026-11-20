@@ -46,6 +46,7 @@ class Reel:
     video_landscape_path: str | None
     video_landscape_sha256: str | None
     telegram_landscape_msg_id: int | None
+    telegram_landscape_sha256: str | None  # otisk šířky odeslané do Telegramu
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -169,14 +170,16 @@ def transition(conn, id: int, from_status: str | tuple[str, ...], to_status: str
 def approve(conn, id: int, decided_at) -> bool:
     """Schválení: pending → approved, jen když vlastník viděl obě videa.
 
-    Video na šířku (dostane ho Threads) musí být odeslané do Telegramu a náhled s tlačítky novější
-    než ono (Telegram čísluje zprávy v chatu vzestupně). Jinak by Schválit ze starého náhledu
-    zveřejnilo šířku, kterou vlastník neviděl. Podmínka je v jednom UPDATE, takže je atomická.
+    Do Telegramu musí odejít právě ta šířka, která je v řádku (telegram_landscape_sha256 =
+    video_landscape_sha256, NULL = NULL; soubor vyměněný během odesílání neprojde), a náhled s tlačítky musí být
+    novější než ona (Telegram čísluje zprávy v chatu vzestupně). Jinak by Schválit ze starého
+    náhledu zveřejnilo šířku, kterou vlastník neviděl. Podmínka je v jednom UPDATE, takže je atomická.
     """
     with _tx(conn), conn.cursor() as cur:
         cur.execute(
             "UPDATE reel_queue SET status='approved', decided_at=%s WHERE id=%s AND status='pending' "
             "AND (video_landscape_path IS NULL OR (telegram_landscape_msg_id IS NOT NULL "
+            "AND telegram_landscape_sha256 IS NOT DISTINCT FROM video_landscape_sha256 "
             "AND telegram_msg_id > telegram_landscape_msg_id)) RETURNING id",
             (decided_at, id),
         )
@@ -197,8 +200,19 @@ def set_landscape(conn, id: int, path: str, sha256: str) -> bool:
     with _tx(conn), conn.cursor() as cur:
         cur.execute(
             "UPDATE reel_queue SET video_landscape_path=%s, video_landscape_sha256=%s, "
-            "telegram_landscape_msg_id=NULL WHERE id=%s AND status IN ('queued','pending') RETURNING id",
+            "telegram_landscape_msg_id=NULL, telegram_landscape_sha256=NULL WHERE id=%s AND status IN ('queued','pending') RETURNING id",
             (path, sha256, id),
+        )
+        return cur.fetchone() is not None
+
+
+def set_landscape_sent(conn, id: int, msg_id: int, sha256: str | None) -> bool:
+    """Zapíše odeslanou šířku, jen když je v řádku pořád tentýž soubor (podle otisku)."""
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reel_queue SET telegram_landscape_msg_id=%s, telegram_landscape_sha256=%s "
+            "WHERE id=%s AND video_landscape_sha256 IS NOT DISTINCT FROM %s RETURNING id",
+            (msg_id, sha256, id, sha256),
         )
         return cur.fetchone() is not None
 
@@ -238,3 +252,8 @@ def set_state(conn, key: str, value: str) -> None:
             "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (key, value),
         )
+
+
+def delete_state(conn, key: str) -> None:
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("DELETE FROM reel_state WHERE key=%s", (key,))

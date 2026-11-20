@@ -38,6 +38,8 @@ ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_permalink    text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS video_landscape_path      text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS video_landscape_sha256    text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS telegram_landscape_msg_id bigint;
+-- otisk šířky, která opravdu odešla do Telegramu (schválit jde jen ta, kterou vlastník viděl)
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS telegram_landscape_sha256 text;
 
 -- Drobný stav služby (např. offset Telegramu).
 CREATE TABLE IF NOT EXISTS reel_state (

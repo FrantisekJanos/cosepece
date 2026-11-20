@@ -1,6 +1,7 @@
 """Fronta reelů: stavový automat nad tabulkou reel_queue."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, fields as dc_fields
 from datetime import datetime
 
@@ -40,11 +41,23 @@ class Reel:
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
-_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id"}
+_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id", "status"}
+
+
+@contextmanager
+def _tx(conn):
+    """Zápis s commitem; při chybě DB rollback, aby spojení nezůstalo v přerušené transakci."""
+    try:
+        yield
+        conn.commit()
+    except psycopg.Error:
+        conn.rollback()
+        raise
 
 
 def _check(fields: dict) -> None:
-    # názvy sloupců se vkládají do SQL, proto jen ze seznamu polí Reel
+    # názvy sloupců se vkládají do SQL, proto jen ze seznamu polí Reel;
+    # status se mění jen přes transition (podmíněný přechod)
     bad = set(fields) - _ALLOWED
     if bad:
         raise ValueError(f"neznámá pole: {sorted(bad)}")
@@ -111,13 +124,12 @@ def transition(conn, id: int, from_status: str | tuple[str, ...], to_status: str
         raise ValueError(f"neznámý stav: {to_status}")
     froms = [from_status] if isinstance(from_status, str) else list(from_status)
     sets = ["status=%s", *(f"{k}=%s" for k in fields)]
-    with conn.cursor() as cur:
+    with _tx(conn), conn.cursor() as cur:
         cur.execute(
             f"UPDATE reel_queue SET {', '.join(sets)} WHERE id=%s AND status = ANY(%s) RETURNING id",
             (to_status, *fields.values(), id, froms),
         )
         done = cur.fetchone() is not None
-    conn.commit()
     return done
 
 
@@ -126,17 +138,15 @@ def set_fields(conn, id: int, **fields) -> None:
         return
     _check(fields)
     sets = ", ".join(f"{k}=%s" for k in fields)
-    with conn.cursor() as cur:
+    with _tx(conn), conn.cursor() as cur:
         cur.execute(f"UPDATE reel_queue SET {sets} WHERE id=%s", (*fields.values(), id))
-    conn.commit()
 
 
 def recover_after_restart(conn) -> list[int]:
     """Publikace přerušená restartem má nejistý výsledek: publishing -> unknown."""
-    with conn.cursor() as cur:
+    with _tx(conn), conn.cursor() as cur:
         cur.execute("UPDATE reel_queue SET status='unknown' WHERE status='publishing' RETURNING id")
         ids = sorted(r[0] for r in cur.fetchall())
-    conn.commit()
     return ids
 
 
@@ -149,10 +159,9 @@ def get_state(conn, key: str) -> str | None:
 
 
 def set_state(conn, key: str, value: str) -> None:
-    with conn.cursor() as cur:
+    with _tx(conn), conn.cursor() as cur:
         cur.execute(
             "INSERT INTO reel_state (key, value) VALUES (%s,%s) "
             "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (key, value),
         )
-    conn.commit()

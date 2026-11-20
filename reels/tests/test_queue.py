@@ -1,6 +1,8 @@
 """Testy fronty reel_queue (PostgreSQL, marker pg)."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
 pytestmark = pytest.mark.pg
@@ -8,6 +10,9 @@ pytestmark = pytest.mark.pg
 
 @pytest.fixture
 def conn():
+    # TRUNCATE nesmí zasáhnout produkční frontu: jen s výslovným souhlasem
+    if os.environ.get("REELS_TEST_DB") != "1":
+        pytest.skip("chybí REELS_TEST_DB=1 (testy mažou tabulky reel_queue a reel_state)")
     from hlidac_reels import db
     c = db.connect()
     db.migrate(c)
@@ -80,3 +85,28 @@ def test_counts_podle_stavu(conn):
     queue.set_fields(conn, a, error="x")
     assert queue.counts(conn) == {"queued": 1, "rejected": 1}
     assert queue.get(conn, a).error == "x"
+
+
+def test_status_a_neznama_pole_vyhodi_ValueError(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    with pytest.raises(ValueError):
+        queue.set_fields(conn, i, status="published")
+    with pytest.raises(ValueError):
+        queue.transition(conn, i, "queued", "pending", status="published")
+    with pytest.raises(ValueError):
+        queue.set_fields(conn, i, nesmysl="x")
+    assert queue.get(conn, i).status == "queued"
+
+
+def test_po_chybe_db_spojeni_dal_funguje(conn):
+    import psycopg
+    from hlidac_reels import queue
+    a, b = _add(conn, 1), _add(conn, 2)
+    queue.set_fields(conn, a, public_token="t")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        queue.set_fields(conn, b, public_token="t")
+    assert queue.get(conn, b).status == "queued"
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        queue.transition(conn, b, "queued", "pending", public_token="t")
+    assert queue.transition(conn, b, "queued", "pending")

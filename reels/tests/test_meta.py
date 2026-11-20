@@ -244,3 +244,48 @@ def test_find_recent_shoda_a_cas():
     assert m.fb_find_recent(prefix, since) == ("F1", "https://www.facebook.com/reel/F1/")
     # naivní since = UTC; pozdější čas nic nenajde
     assert m.fb_find_recent(prefix, datetime(2026, 11, 20, 10, 6)) is None
+
+
+def test_ig_publish_ok_permalink_selze_vrati_id():
+    def handler(req):
+        url = str(req.url)
+        if url.endswith("/media_publish"):
+            return httpx.Response(200, json={"id": "M1"})
+        return httpx.Response(500, json={"error": {"message": "chyba", "code": 1}})
+
+    assert _meta(handler).ig_publish("C1") == ("M1", "")
+
+
+def test_ig_publish_ok_permalink_sit_selze_vrati_id():
+    def handler(req):
+        if str(req.url).endswith("/media_publish"):
+            return httpx.Response(200, json={"id": "M1"})
+        raise httpx.ConnectError("spadlo", request=req)
+
+    assert _meta(handler).ig_publish("C1") == ("M1", "")
+
+
+def _fb_handler(permalink_response):
+    def handler(req):
+        url = str(req.url)
+        if url.startswith(f"{G}/PAGE1?"):
+            return httpx.Response(200, json={"access_token": PAGE_TOKEN})
+        if url.endswith("/video_reels"):
+            if _form(req)["upload_phase"] == "start":
+                return httpx.Response(200, json={"video_id": "V1"})
+            return httpx.Response(200, json={"success": True})
+        if url.startswith("https://rupload.facebook.com/"):
+            return httpx.Response(200, json={"success": True})
+        return permalink_response(req)
+    return handler
+
+
+@pytest.mark.parametrize("resp", [
+    lambda r: httpx.Response(500, json={"error": {"message": "chyba", "code": 1}}),
+    lambda r: httpx.Response(200, json={"id": "V1"}),
+])
+def test_fb_finish_ok_permalink_selze_vrati_fallback(tmp_path, resp):
+    video = tmp_path / "r.mp4"
+    video.write_bytes(b"x")
+    assert _meta(_fb_handler(resp)).fb_upload_reel(video, "x") == (
+        "V1", "https://www.facebook.com/reel/V1")

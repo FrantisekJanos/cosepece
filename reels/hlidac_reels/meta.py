@@ -107,6 +107,14 @@ class Meta:
             raise MetaError(f"odpověď bez pole {name}")
         return str(value)
 
+    def _try_link(self, object_id: str, token: str, field: str) -> str:
+        """Odkaz na už zveřejněný příspěvek; selhání dotazu nevadí (příspěvek existuje), vrátí ""."""
+        try:
+            info = self._graph("GET", object_id, token, params={"fields": field})
+        except MetaError:
+            return ""
+        return str(info.get(field) or "")
+
     @staticmethod
     def _fb_url(link: str) -> str:
         """Relativní permalink FB doplní na celou adresu."""
@@ -153,7 +161,11 @@ class Meta:
         return self._page_token
 
     def fb_upload_reel(self, path: str | Path, description: str) -> tuple[str, str]:
-        """Nahraje a zveřejní Reel na stránce (start → rupload → finish) a vrátí (video_id, permalink)."""
+        """Nahraje a zveřejní Reel na stránce (start → rupload → finish) a vrátí (video_id, permalink).
+
+        Po úspěšném finish je Reel zveřejněný a vrácené video_id to znamená: chyba při dotazu
+        na odkaz už nevyhodí výjimku, odkaz se nahradí https://www.facebook.com/reel/<video_id>.
+        """
         data = Path(path).read_bytes()
         token = self.page_token()
         start = self._graph("POST", f"{self.page_id}/video_reels", token, data={"upload_phase": "start"})
@@ -173,8 +185,8 @@ class Meta:
         })
         if not fin.get("success"):
             raise MetaError(self._clean(f"zveřejnění videa {video_id} selhalo: {str(fin)[:300]}"))
-        info = self._graph("GET", video_id, token, params={"fields": "permalink_url"})
-        return video_id, self._fb_url(self._field(info, "permalink_url"))
+        link = self._try_link(video_id, token, "permalink_url")
+        return video_id, self._fb_url(link) if link else f"{FB_WEB}/reel/{video_id}"
 
     def fb_find_recent(self, caption_prefix: str, since: datetime) -> tuple[str, str] | None:
         """Hledá už zveřejněný Reel stránky (po výpadku uprostřed publikace)."""
@@ -218,12 +230,15 @@ class Meta:
             waited += interval
 
     def ig_publish(self, container_id: str) -> tuple[str, str]:
-        """Zveřejní hotový kontejner a vrátí (media_id, permalink)."""
+        """Zveřejní hotový kontejner a vrátí (media_id, permalink).
+
+        Po úspěšném media_publish je Reel zveřejněný a vrácené media_id to znamená: chyba při dotazu
+        na odkaz už nevyhodí výjimku, permalink je pak "".
+        """
         body = self._graph("POST", f"{self.ig_user_id}/media_publish", self._token,
                            data={"creation_id": container_id})
         media_id = self._field(body, "id")
-        info = self._graph("GET", media_id, self._token, params={"fields": "permalink"})
-        return media_id, self._field(info, "permalink")
+        return media_id, self._try_link(media_id, self._token, "permalink")
 
     def ig_find_recent(self, caption_prefix: str, since: datetime) -> tuple[str, str] | None:
         """Hledá už zveřejněný Reel na IG (po výpadku uprostřed publikace)."""

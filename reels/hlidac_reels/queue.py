@@ -42,6 +42,10 @@ class Reel:
     threads_container_id: str | None
     threads_media_id: str | None
     threads_permalink: str | None
+    # video na šířku 16:9 (volitelné)
+    video_landscape_path: str | None
+    video_landscape_sha256: str | None
+    telegram_landscape_msg_id: int | None
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -73,13 +77,17 @@ def _row(cur) -> Reel | None:
 
 
 def add(conn, *, video_path: str, video_sha256: str, caption: str,
-        ct: int | None = None, format: str | None = None, source: str = "ukazka") -> int:
+        ct: int | None = None, format: str | None = None, source: str = "ukazka",
+        video_landscape_path: str | None = None,
+        video_landscape_sha256: str | None = None) -> int:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption) "
-                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                (source, ct, format, video_path, video_sha256, caption),
+                "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, "
+                "video_landscape_path, video_landscape_sha256) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (source, ct, format, video_path, video_sha256, caption,
+                 video_landscape_path, video_landscape_sha256),
             )
             new_id = cur.fetchone()[0]
         conn.commit()
@@ -110,8 +118,8 @@ def by_telegram_msg(conn, msg_id: int) -> Reel | None:
     with conn.cursor() as cur:
         cur.execute(
             f"SELECT {_COLS} FROM reel_queue WHERE telegram_video_msg_id=%s OR telegram_msg_id=%s "
-            "ORDER BY id DESC LIMIT 1",
-            (msg_id, msg_id),
+            "OR telegram_landscape_msg_id=%s ORDER BY id DESC LIMIT 1",
+            (msg_id, msg_id, msg_id),
         )
         r = _row(cur)
     conn.commit()

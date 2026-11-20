@@ -110,3 +110,19 @@ def test_po_chybe_db_spojeni_dal_funguje(conn):
     with pytest.raises(psycopg.errors.UniqueViolation):
         queue.transition(conn, b, "queued", "pending", public_token="t")
     assert queue.transition(conn, b, "queued", "pending")
+
+
+def test_add_se_sirkou(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1, video_landscape_path="/m/l.mp4", video_landscape_sha256="L")
+    r = queue.get(conn, i)
+    assert r.video_landscape_path == "/m/l.mp4"
+    assert r.video_landscape_sha256 == "L"
+    assert r.telegram_landscape_msg_id is None
+
+
+def test_by_telegram_msg_najde_video_na_sirku(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, telegram_landscape_msg_id=77)
+    assert queue.by_telegram_msg(conn, 77).id == i

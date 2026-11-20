@@ -57,6 +57,7 @@ THREADS_TRIED_KEY = "threads_token_refresh_tried_at"
 THREADS_REFRESH_AGE = timedelta(days=7)
 THREADS_REFRESH_RETRY = timedelta(days=1)
 PREVIEW_THREADS_KEY = "preview_has_threads"
+MAX_CT = 999_999  # nejvyšší číslo tisku, které /video přijme
 VIDEO_USAGE = "Použití: /video <číslo tisku> [cesta|pn|zmena|rozprava]"
 WORKER_SEEN_KEY = "worker_seen_at"
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
@@ -363,7 +364,8 @@ class Bot:
             ct = int(args[0]) if args else 0
         except ValueError:
             ct = 0
-        if ct <= 0 or len(args) > 2:
+        # horní mez: větší číslo by v PostgreSQL přeteklo integer a bot by neodpověděl
+        if not 1 <= ct <= MAX_CT or len(args) > 2:
             self._say(VIDEO_USAGE)
             return
         hint = args[1].lower() if len(args) == 2 else None

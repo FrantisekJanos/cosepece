@@ -214,6 +214,12 @@ def ingest_all(conn, inbox_dir: Path, media_dir: Path) -> list[IngestResult]:
             log.info("%s: úloha %s je %s, složka se maže", folder.name, job_id, status)
             shutil.rmtree(folder, ignore_errors=True)
             continue
+        if queue.set_items(conn, job_id):
+            # sada už je ve frontě (pád mezi commitem a smazáním složky): jen úklid, jinak by duplicity
+            # shodily hotovou úlohu na failed a bot by hlásil falešnou chybu
+            log.info("%s: sada %s už je převzatá, složka se maže", folder.name, job_id)
+            shutil.rmtree(folder, ignore_errors=True)
+            continue
         results.append(_ingest_one(conn, folder, media_dir, m))
         shutil.rmtree(folder, ignore_errors=True)
     return results

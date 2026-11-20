@@ -1772,6 +1772,17 @@ def test_video_neznamy_tisk(bot, conn, api):
 
 
 @pg
+def test_video_cislo_mimo_rozsah(bot, conn, api):
+    from hlidac_reels import jobs
+    for text in ("/video 99999999999", "/video 1000000", "/video -5", "/video 0"):
+        bot.handle(_msg(text))
+        assert api.texts()[-1].startswith("Použití: /video"), text
+    assert jobs.pending(conn) == []
+    bot.handle(_msg("/video 999999"))
+    assert api.texts()[-1] == "Tisk 999999 neznám."
+
+
+@pg
 def test_video_spatny_format(bot, conn, api):
     from hlidac_reels import jobs
     _tisk(conn, 221)

@@ -110,6 +110,34 @@ def test_process_malo_variant(tmp_path):
     assert str(tmp_path) not in error and "<root>" in error
 
 
+def _oversize(gen, n: int):
+    """Obal falešného generate(): video varianty n bude větší než limit."""
+    def wrapped(**kw):
+        res = gen(**kw)
+        for v in res.variants:
+            if v.n == n and v.video:
+                v.video.write_bytes(b"\0\0\0\x18ftypmp42" + b"x" * 200)
+        return res
+    return wrapped
+
+
+def test_process_velke_video_vypadne(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "MAX_VIDEO_BYTES", 100)
+    api = FakeApi()
+    assert _process(api, tmp_path, _oversize(fake_generate({1, 2, 3}), 2)) is True
+    assert api.names() == ["upload_video", "upload_video", "result"]
+    assert [c[3] for c in api.calls[:2]] == [1, 3]
+    assert [v["n"] for v in api.calls[-1][3]] == [1, 3]
+
+
+def test_process_velke_video_malo_variant(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "MAX_VIDEO_BYTES", 100)
+    api = FakeApi()
+    assert _process(api, tmp_path, _oversize(fake_generate({1, 2}), 2)) is False
+    assert api.names() == ["fail"]
+    assert "30 MB" in api.calls[0][3]
+
+
 def test_process_vyjimka(tmp_path):
     def boom(**kw):
         raise RuntimeError(f"claude nejede v {Path.home() / 'tajne'}")

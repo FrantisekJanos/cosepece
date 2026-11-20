@@ -204,7 +204,6 @@ def test_job_id_musi_odpovidat_slozce(conn, tmp_path):
     res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
     assert res[0].job_id == jid and res[0].ok is False
     assert queue.set_items(conn, other) == [] and not folder.exists()
-    from hlidac_reels import jobs
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM reel_jobs WHERE id=%s", (other,))
         assert cur.fetchone()[0] == "done"
@@ -242,3 +241,22 @@ def test_selhani_uprostred_sady_uklidi(conn, tmp_path, monkeypatch):
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM reel_jobs WHERE id=%s", (jid,))
         assert cur.fetchone()[0] == "failed"
+
+
+def test_uz_prevzata_sada_jen_smaze_slozku(conn, tmp_path):
+    """Pád mezi commitem sady a smazáním složky: další průchod složku jen smaže, úloha zůstane done."""
+    import shutil
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"])
+    backup = tmp_path / "zaloha"
+    shutil.copytree(folder, backup)
+    assert inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")[0].ok
+    shutil.copytree(backup, folder)  # složka „přežila“ pád
+    assert inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media") == []
+    assert not folder.exists()
+    assert [r.variant for r in queue.set_items(conn, jid)] == [1, 2]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, error FROM reel_jobs WHERE id=%s", (jid,))
+        assert cur.fetchone() == ("done", None)
+    conn.commit()

@@ -1593,6 +1593,20 @@ check('heartbeat → ok', $api->handle('POST', 'heartbeat', [], '', $raH()), [20
 $raMissing = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $tmp . '/neni-inbox']] + $raCfg);
 [$raSt, $raRes] = $raMissing->handle('PUT', 'video', ['job_id' => '1', 'n' => '1'], $raMp4(), $raH('x'));
 check('chybějící mezisložka → 500 s hláškou', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir')], [500, true]);
+// bez mezisložky se úloha nevydá (jinak by visela 60 min a generátor běžel zbytečně), fail ale projde
+$rjReset();
+$raJob3 = $rjAdd('manual', 221);
+[$raSt, $raRes] = $raMissing->handle('GET', 'claim', [], '', $raH());
+check('claim bez mezisložky → 500, úloha zůstane queued', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir'), $rjStatus($raJob3)['status']], [500, true, 'queued']);
+$raClaim3 = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+[$raSt, $raRes] = $raMissing->handle('POST', 'fail', [], $raJson(['job_id' => $raJob3, 'error' => 'disk']), $raH($raClaim3));
+check('fail bez mezisložky → 200 a úloha zpět ve frontě', [$raSt, $raRes, $rjStatus($raJob3)['status']], [200, ['status' => 'queued'], 'queued']);
+$raRo = $tmp . '/reels-inbox-ro';
+mkdir($raRo, 0555, true);
+if (!is_writable($raRo)) { // root (Docker) zapisuje i do 0555, tam se kontrola přeskočí
+    $raRoApi = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $raRo]] + $raCfg);
+    check('claim do nezapisovatelné mezisložky → 500', $raRoApi->handle('GET', 'claim', [], '', $raH())[0], 500);
+}
 
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
 db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([

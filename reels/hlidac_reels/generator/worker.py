@@ -24,6 +24,7 @@ IDLE_S = 300
 FAIL_PAUSE_S = 60  # pauza po nezdařené úloze, ať vadná úloha nespálí tři drahé běhy claude za sebou
 ERROR_LIMIT = 500
 TIMEOUT_S = 1200  # s na jeden běh claude -p
+MAX_VIDEO_BYTES = 30 * 1024 * 1024  # limit reels_api.php i ingesteru bota
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -91,7 +92,17 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
         res = generate(ct=int(job["ct"]), card_v2=job["card_v2"], reason_keys=list(job.get("reason_keys") or []),
                        has_amendments=bool(job.get("has_amendments")), out=workdir, mcp_config=Path(mcp_config),
                        model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S)
-        good = [v for v in res.variants if v.ok and v.video]
+        good = []
+        for v in res.variants:
+            if not (v.ok and v.video):
+                continue
+            size = Path(v.video).stat().st_size
+            if size > MAX_VIDEO_BYTES:
+                # server by video odmítl (413) a celá sada by padla: varianta vypadne jako nepovedená
+                v.errors = [*v.errors, f"video má {size / 1024 / 1024:.1f} MB, limit je 30 MB"]
+                log.warning("úloha %s: video %s je větší než 30 MB, vynechávám", job_id, v.n)
+                continue
+            good.append(v)
         if not res.ok or len(good) < MIN_OK:
             detail = "; ".join(f"{v.n}: {', '.join(v.errors) or 'bez videa'}" for v in res.variants
                                if v not in good)

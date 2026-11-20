@@ -130,11 +130,13 @@ def test_stary_snimek(conn):
     assert queue.get_state(conn, "fresh_baseline") is None
 
 
-def _set(conn, *, source: str, ct: int, age: timedelta, status: str = "pending", variants: int = 2) -> int:
+def _set(conn, *, source: str, ct: int, age: timedelta, status: str = "pending", variants: int = 2,
+         job_age: timedelta | None = None) -> int:
     from hlidac_reels import jobs
     set_id = jobs.add(conn, source=source, ct=ct)
     with conn.cursor() as cur:
-        cur.execute("UPDATE reel_jobs SET status='done', set_id=id WHERE id=%s", (set_id,))
+        cur.execute("UPDATE reel_jobs SET status='done', set_id=id, created_at=%s WHERE id=%s",
+                    (NOW - (age if job_age is None else job_age), set_id))
         for v in range(1, variants + 1):
             cur.execute(
                 "INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status, set_id, variant, created_at) "
@@ -252,3 +254,91 @@ def test_retire_vybrana_sada_nevyprsi_ani_nestahne(conn):
     queue.mark_picked(conn, s, 1)
     assert fresh.retire(conn, NOW) == []
     assert _statuses(conn, s) == ["pending", "rejected"]
+
+
+def _age_all_fresh(conn, at: datetime) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET created_at=%s WHERE source='fresh'", (at,))
+    conn.commit()
+
+
+def test_denni_limit_fresh(conn):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    # změna skóre: čtyři nové tisky najednou (pořadí snímku = pořadí podle skóre)
+    items = dict(BASE_ITEMS, **{"401": ["a"], "402": ["b"], "403": ["c"], "404": ["d"]})
+    t1 = NOW + timedelta(hours=1)
+    _snapshot(conn, items, t1)
+    assert len(fresh.detect(conn, t1)) == 2
+    _age_all_fresh(conn, t1)
+    assert [ct for ct, _ in _fresh_jobs(conn)] == [401, 402]
+    base = json.loads(queue.get_state(conn, "fresh_baseline"))
+    assert "401" in base and "402" in base
+    assert "403" not in base and "404" not in base
+    # týž den už nic
+    t2 = NOW + timedelta(hours=2)
+    _snapshot(conn, items, t2)
+    assert fresh.detect(conn, t2) == []
+    # další den (Europe/Prague) zbylí kandidáti
+    t3 = NOW + timedelta(days=1)
+    _snapshot(conn, items, t3)
+    assert len(fresh.detect(conn, t3)) == 2
+    assert sorted(ct for ct, _ in _fresh_jobs(conn)) == [401, 402, 403, 404]
+
+
+def test_denni_limit_podle_prazskeho_dne(conn):
+    from hlidac_reels import fresh
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    # dvě úlohy fresh 20. 11. ve 23:30 UTC = 21. 11. 0:30 v Praze
+    late = datetime(2026, 11, 20, 23, 30, tzinfo=timezone.utc)
+    items = dict(BASE_ITEMS, **{"401": ["a"], "402": ["b"], "403": ["c"]})
+    _snapshot(conn, items, late)
+    assert len(fresh.detect(conn, late)) == 2
+    _age_all_fresh(conn, late)
+    # 21. 11. 10:00 UTC je v Praze týž den → limit vyčerpaný
+    t = datetime(2026, 11, 21, 10, 0, tzinfo=timezone.utc)
+    _snapshot(conn, items, t)
+    assert fresh.detect(conn, t) == []
+    # 20. 11. 22:30 UTC (= 23:30 v Praze 20. 11.) je jiný den → jeden zbylý kandidát
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET created_at=%s WHERE source='fresh'",
+                    (datetime(2026, 11, 20, 22, 30, tzinfo=timezone.utc),))
+    conn.commit()
+    assert len(fresh.detect(conn, t)) == 1
+
+
+def test_prazdny_snimek_jako_chybejici(conn):
+    from hlidac_reels import fresh, queue
+    # bez baseline: prázdný snímek baseline neuloží
+    _snapshot(conn, {}, NOW)
+    assert fresh.detect(conn, NOW) == []
+    assert queue.get_state(conn, "fresh_baseline") is None
+    # s baseline: prázdný snímek ji nepřepíše
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    _snapshot(conn, {}, NOW + timedelta(hours=1))
+    assert fresh.detect(conn, NOW + timedelta(hours=1)) == []
+    assert json.loads(queue.get_state(conn, "fresh_baseline")) == BASE_ITEMS
+
+
+def test_prazdna_baseline_jako_prvni_beh(conn):
+    from hlidac_reels import fresh, queue
+    queue.set_state(conn, "fresh_baseline", "{}")
+    _snapshot(conn, BASE_ITEMS, NOW)
+    assert fresh.detect(conn, NOW) == []
+    assert _fresh_jobs(conn) == []
+    assert json.loads(queue.get_state(conn, "fresh_baseline")) == BASE_ITEMS
+
+
+def test_retire_fresh_stari_od_zalozeni_ulohy(conn):
+    from hlidac_reels import fresh
+    _snapshot(conn, BASE_ITEMS, NOW)
+    # úloha založená před 8 dny, video dorazilo až včera
+    f = _set(conn, source="fresh", ct=221, age=timedelta(days=1), job_age=timedelta(days=8))
+    # auto_pick se měří od zařazení do fronty
+    a = _set(conn, source="auto_pick", ct=90, age=timedelta(days=1), job_age=timedelta(days=8))
+    assert fresh.retire(conn, NOW) == [(f, "expired")]
+    assert _statuses(conn, f) == ["expired", "expired"]
+    assert _statuses(conn, a) == ["pending", "pending"]

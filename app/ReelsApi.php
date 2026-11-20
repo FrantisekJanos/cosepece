@@ -62,23 +62,28 @@ final class ReelsApi
         if (!isset($methods[$action]) || $methods[$action] !== $method) {
             return [400, ['error' => 'Neznámá akce']];
         }
-        if ($action === 'claim') {
-            $job = $this->jobs->claim();
-            // zbytky předchozího pokusu (vypršel bez fail) by se jinak mohly dostat do nové sady
-            $inbox = $this->inboxDir();
-            if ($job !== null && $inbox !== null) {
-                self::removeDir($inbox . '/' . (int)$job['job_id']);
-            }
-            return [200, ['job' => $job]];
-        }
         if ($action === 'heartbeat') {
             $this->jobs->heartbeat();
             return [200, ['ok' => true]];
         }
 
         $inbox = $this->inboxDir();
-        if ($inbox === null) {
-            return [500, ['error' => 'Mezisložka reels.inbox_dir neexistuje nebo do ní nejde zapisovat']];
+        $noInbox = [500, ['error' => 'Mezisložka reels.inbox_dir neexistuje nebo do ní nejde zapisovat']];
+        if ($action === 'claim') {
+            // bez mezisložky by vydaná úloha nešla dokončit (video i result vrátí 500) a visela by 60 min
+            if ($inbox === null) {
+                return $noInbox;
+            }
+            $job = $this->jobs->claim();
+            // zbytky předchozího pokusu (vypršel bez fail) by se jinak mohly dostat do nové sady
+            if ($job !== null) {
+                self::removeDir($inbox . '/' . (int)$job['job_id']);
+            }
+            return [200, ['job' => $job]];
+        }
+        // fail musí projít i bez mezisložky (úloha se vrátí do fronty), video a result ji potřebují
+        if ($inbox === null && $action !== 'fail') {
+            return $noInbox;
         }
         $claim = (string)($headers['x-claim-token'] ?? '');
 
@@ -115,17 +120,18 @@ final class ReelsApi
         if (!$this->jobs->checkClaim($jobId, $claim)) {
             return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
         }
-        $jobDir = $inbox . '/' . $jobId;
-
         if ($action === 'fail') {
             $error = is_string($data['error'] ?? null) && $data['error'] !== '' ? $data['error'] : 'Neznámá chyba';
             $status = $this->jobs->fail($jobId, $claim, $error);
             if ($status === 'conflict') {
                 return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
             }
-            self::removeDir($jobDir);
+            if ($inbox !== null) {
+                self::removeDir($inbox . '/' . $jobId);
+            }
             return [200, ['status' => $status]];
         }
+        $jobDir = $inbox . '/' . $jobId;
 
         // result
         $variants = $this->validVariants($data['variants'] ?? null, $jobDir);

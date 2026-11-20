@@ -171,6 +171,9 @@ def run(conn, meta, reel_id: int, *, media_dir: str, public_base: str, threads=N
         errors.append(_outcome(e))
     if errors:
         status = "unknown" if any(s == "unknown" for s, _ in errors) else "failed"
+        # chyba Threads vždy poslední: messages.result_text bere za důvod Threads celý zbytek textu
+        # (zpráva Threads tak smí obsahovat i "; ")
+        errors.sort(key=lambda e: e[1].startswith("Threads: "))
         return _finish(conn, reel_id, status, reel.attempts, "; ".join(m for _, m in errors))
     queue.transition(conn, reel_id, "publishing", "published", published_at=_now(), error=None)
     return queue.get(conn, reel_id)

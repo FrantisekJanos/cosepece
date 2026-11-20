@@ -17,10 +17,29 @@ from .messages import NO_LINK
 from .threads import Threads, ThreadsError
 
 DEFAULT_PUBLIC_BASE = "https://cosepece.cz/reels-media"
+LOCK_CLASS = 7301  # první klíč pg_advisory_lock pro reels-threads-backfill (druhý = id položky)
 
 
 class BackfillError(Exception):
     """Položku nelze doplnit (jiný stav, už je na Threads, chyba Threads)."""
+
+
+def _lock(conn, reel_id: int) -> bool:
+    """Zámek položky na dobu běhu (dvě souběžná spuštění by zveřejnila video na Threads dvakrát)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s, %s)", (LOCK_CLASS, reel_id))
+        ok = bool(cur.fetchone()[0])
+    conn.commit()
+    return ok
+
+
+def _unlock(conn, reel_id: int) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_CLASS, reel_id))
+        conn.commit()
+    except Exception:  # noqa: BLE001 – zámek zanikne i se spojením
+        pass
 
 
 def _fail(msg: str) -> int:
@@ -66,11 +85,15 @@ def main(argv=None) -> int:
         if not token:
             return _fail("chybí token Threads (reel_state ani THREADS_TOKEN)")
         threads = Threads(user_id, lambda: token, version=env.get("THREADS_GRAPH_VERSION") or "v1.0")
+        if not _lock(conn, args.id):
+            return _fail(f"backfill už běží (#{args.id})")
         try:
             reel = backfill(conn, threads, args.id, media_dir=env.get("REELS_MEDIA_DIR") or "/media",
                             public_base=env.get("REELS_PUBLIC_BASE") or DEFAULT_PUBLIC_BASE)
         except (BackfillError, ThreadsError) as e:
             return _fail(str(e).replace(token, "***"))
+        finally:
+            _unlock(conn, args.id)
     finally:
         conn.close()
     print(f"#{reel.id} na Threads: {reel.threads_permalink or NO_LINK}")

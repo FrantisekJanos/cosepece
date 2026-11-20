@@ -1208,3 +1208,125 @@ def test_backfill_chyba_threads_kod_1_a_uklid(conn, media_dir, monkeypatch, caps
     assert r.status == "published" and r.threads_media_id is None and r.threads_container_id == "TC1"
     assert _public_files(media_dir) == []
     assert "ERROR" in capsys.readouterr().err
+
+
+# --- opravy po review větve ---------------------------------------------------
+
+def _dropped(api) -> list[int]:
+    return [b["message_id"] for m, b in api.calls if m == "editMessageReplyMarkup"]
+
+
+@pg
+def test_fronta_novy_nahled_vezme_staremu_tlacitka(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    old = _get(conn, rid).telegram_msg_id
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    new = _get(conn, rid).telegram_msg_id
+    assert new not in (None, old)
+    assert _dropped(api) == [old]
+    # když se nový náhled nepošle, starý si tlačítka nechá
+    api.calls.clear()
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.handle(_msg("/fronta"))
+    assert _get(conn, rid).telegram_msg_id == new and _dropped(api) == []
+
+
+@pg
+def test_start_po_zapnuti_threads_obnovi_nahledy(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.caption import for_network
+    # náhled poslaný ještě bez Threads
+    old_bot = _make_bot(conn, api, meta, media_dir)
+    rid = _add(conn, media_dir)
+    old_bot.send_next()
+    old = _get(conn, rid).telegram_msg_id
+    assert "Threads" not in api.sent()[-1]["text"]
+    api.calls.clear()
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads())
+    bot.start()
+    r = _get(conn, rid)
+    assert r.telegram_msg_id not in (None, old)
+    preview = [b for b in api.sent() if _buttons(b) == [f"ok:{rid}", f"edit:{rid}", f"no:{rid}"]]
+    assert len(preview) == 1
+    assert "Threads:\n" + for_network(r.caption, 221, "threads") in preview[0]["text"]
+    assert _dropped(api) == [old]
+    assert queue.get_state(conn, "preview_has_threads") == "1"
+    # další start už nic znovu neposílá
+    api.calls.clear()
+    _make_bot(conn, api, meta, media_dir, threads=FakeThreads()).start()
+    assert api.sent() == [] and _dropped(api) == []
+
+
+@pg
+def test_start_bez_threads_nahledy_neobnovuje(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir)
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    old = _get(conn, rid).telegram_msg_id
+    api.calls.clear()
+    _make_bot(conn, api, meta, media_dir).start()
+    assert _get(conn, rid).telegram_msg_id == old and api.sent() == []
+    assert queue.get_state(conn, "preview_has_threads") is None
+
+
+@pg
+def test_start_obnova_nahledu_selze_zkusi_znovu(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    _add(conn, media_dir)
+    _make_bot(conn, api, meta, media_dir).send_next()
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    _make_bot(conn, api, meta, media_dir, threads=FakeThreads()).start()
+    assert queue.get_state(conn, "preview_has_threads") is None
+    del api.fail["sendMessage"]
+    _make_bot(conn, api, meta, media_dir, threads=FakeThreads()).start()
+    assert queue.get_state(conn, "preview_has_threads") == "1"
+
+
+@pg
+def test_backfill_zamek(conn, media_dir, monkeypatch, capsys):
+    from hlidac_reels import backfill, db
+    rid = _published(conn, media_dir)
+    other = db.connect()
+    try:
+        with other.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s, %s)", (backfill.LOCK_CLASS, rid))
+        other.commit()
+        th = FakeThreads(media_dir)
+        code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+        assert code == 1 and "backfill už běží" in capsys.readouterr().err
+        assert sum(th.calls.values()) == 0
+    finally:
+        other.close()
+    # po uvolnění zámku projde a zámek po sobě uvolní
+    code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+    assert code == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s, %s)", (backfill.LOCK_CLASS, rid))
+        assert cur.fetchone()[0] is True
+        cur.execute("SELECT pg_advisory_unlock(%s, %s)", (backfill.LOCK_CLASS, rid))
+    conn.commit()
+
+
+def test_duvod_threads_se_strednikem():
+    import dataclasses
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import result_text
+    from hlidac_reels.queue import Reel
+    base = Reel(*([None] * len(dataclasses.fields(Reel))))
+    reel = dataclasses.replace(
+        base, id=7, status="failed", caption="x", attempts=1, created_at=datetime.now(timezone.utc),
+        fb_video_id="V1", fb_permalink="https://www.facebook.com/reel/V1",
+        ig_media_id="M1", ig_permalink="https://www.instagram.com/reel/M1/",
+        error="Threads: Invalid parameter; video_url nelze stáhnout")
+    lines = result_text(reel, threads=True).splitlines()
+    assert "Threads: nepublikováno – Invalid parameter; video_url nelze stáhnout" in lines
+    assert not any(line.startswith("Chyba:") for line in lines)
+    # i s jinou chybou před ní (publish.run dává Threads na konec)
+    reel = dataclasses.replace(reel, fb_video_id=None,
+                               error="(#100) FB chyba; detail; Threads: a; b")
+    lines = result_text(reel, threads=True).splitlines()
+    assert "Threads: nepublikováno – a; b" in lines
+    assert "Chyba: (#100) FB chyba; detail" in lines

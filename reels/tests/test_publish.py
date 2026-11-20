@@ -551,3 +551,14 @@ def test_migrace_stare_tabulky(conn):
     assert queue.by_status(conn, ("published",))[0].id == 1
     queue.set_fields(conn, 1, threads_media_id="T1")
     assert queue.get(conn, 1).threads_media_id == "T1"
+
+
+def test_chyba_threads_az_za_chybou_fb(conn, media_dir):
+    """Chyba Threads (nastane před FB) je v reel.error poslední; bot z ní bere důvod do konce textu."""
+    rid = _approved(conn, media_dir)
+    meta, th = FakeMeta(media_dir), FakeThreads(media_dir)
+    th.fail["publish"] = ThreadsError("Invalid parameter; video_url", status=400)
+    meta.fail["fb_upload_reel"] = MetaError("(#100) chybný parametr", status=400, code=100)
+    r = _run_th(conn, meta, th, rid, media_dir)
+    assert r.status == "failed"
+    assert r.error == "(#100) chybný parametr; Threads: Invalid parameter; video_url"

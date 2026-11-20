@@ -74,14 +74,19 @@ def retry_buttons(reel_id: int) -> list[tuple[str, str]]:
 
 
 def _split_error(error: str | None) -> tuple[list[str], list[str]]:
-    """Chyba z publish.run ("Threads: …; …") rozdělená na důvody Threads a ostatní chyby."""
-    threads_reasons, other = [], []
-    for part in (error or "").split("; "):
-        if part.startswith(THREADS_PREFIX):
-            threads_reasons.append(part[len(THREADS_PREFIX):])
-        elif part:
-            other.append(part)
-    return threads_reasons, other
+    """Chyba z publish.run rozdělená na důvod Threads a ostatní chyby.
+
+    publish.run dává chybu Threads vždy na konec ("<IG/FB>; Threads: …"), takže důvod Threads je
+    celý zbytek textu od prefixu a smí obsahovat i "; ".
+    """
+    error = error or ""
+    if error.startswith(THREADS_PREFIX):
+        return [error[len(THREADS_PREFIX):]], []
+    sep = "; " + THREADS_PREFIX
+    i = error.find(sep)
+    if i >= 0:
+        return [error[i + len(sep):]], [error[:i]]
+    return [], [error] if error else []
 
 
 def _threads_line(reel: Reel, reasons: list[str]) -> str:

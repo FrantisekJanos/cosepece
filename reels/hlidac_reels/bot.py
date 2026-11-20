@@ -46,6 +46,7 @@ THREADS_REFRESHED_KEY = "threads_token_refreshed_at"
 THREADS_TRIED_KEY = "threads_token_refresh_tried_at"
 THREADS_REFRESH_AGE = timedelta(days=7)
 THREADS_REFRESH_RETRY = timedelta(days=1)
+PREVIEW_THREADS_KEY = "preview_has_threads"
 HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.")
 
@@ -247,9 +248,7 @@ class Bot:
         for reel in queue.by_status(self.conn, ("pending", "failed", "unknown", "approved", "publishing")):
             head = f"{video_caption(reel)} · {reel.status}"
             if reel.status == "pending":
-                preview_id = self._try("náhled", self._send_preview, reel)
-                if preview_id:
-                    queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+                self._resend_preview(reel)
             elif reel.status == "approved":
                 self._say(f"{head} · čeká na restart bota")
             elif reel.status == "publishing":
@@ -259,6 +258,34 @@ class Bot:
             else:
                 error = (reel.error or "")[:300]
                 self._say(head + (f"\nChyba: {error}" if error else ""), retry_buttons(reel.id))
+
+    def _resend_preview(self, reel: Reel) -> bool:
+        """Nový náhled čekající položky s tlačítky; starý náhled přijde o tlačítka (ukazoval jiný text).
+
+        Když se nový náhled nepošle, nic se nemění a starý si tlačítka nechá.
+        """
+        preview_id = self._try("náhled", self._send_preview, reel)
+        if not preview_id:
+            return False
+        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+        if reel.telegram_msg_id and reel.telegram_msg_id != preview_id:
+            self._drop_buttons(reel.telegram_msg_id)
+        return True
+
+    def _refresh_previews_for_threads(self) -> None:
+        """Po zapnutí Threads: čekající položky dostanou nový náhled i s textem pro Threads.
+
+        Starý náhled (bez Threads) přijde o tlačítka, aby Schválit nezveřejnil text, který vlastník
+        neviděl. Proběhne jednou (reel_state preview_has_threads); když se některý náhled nepošle,
+        zkusí se to při dalším startu znovu.
+        """
+        if self.threads is None or queue.get_state(self.conn, PREVIEW_THREADS_KEY) == "1":
+            return
+        ok = True
+        for reel in queue.by_status(self.conn, ("pending",)):
+            ok = self._resend_preview(reel) and ok
+        if ok:
+            queue.set_state(self.conn, PREVIEW_THREADS_KEY, "1")
 
     def _reel_for_reply(self, target: int) -> Reel | None:
         mapped = queue.get_state(self.conn, f"edit_msg:{target}")
@@ -423,6 +450,7 @@ class Bot:
             if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
                 self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
                           retry_buttons(reel.id))
+        self._refresh_previews_for_threads()
         self._clean_public()
         self._safe_send_next()
 

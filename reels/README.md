@@ -86,6 +86,9 @@ vyřadí (stav rejected) a ohlásí. Zprávy z jiných chatů bot ignoruje.
 Threads je volitelné: bez `THREADS_USER_ID` bot publikuje jen na FB a IG a o Threads nepíše. S ním ukáže náhled
 i blok „Threads:“ s přesným textem a po zveřejnění řádek Threads. Když Threads selže (třeba chybí nebo neplatí token),
 položka skončí `failed` s FB a IG venku, výsledek napíše „Threads: nepublikováno – důvod“ a nabídne Zkusit znovu.
+Po prvním startu se zapnutým Threads pošle bot čekajícím položkám nový náhled (i s textem pro Threads) a starému
+vezme tlačítka, aby Schválit nezveřejnil text, který vlastník neviděl (`reel_state.preview_has_threads`). Totéž
+(nový náhled, starý bez tlačítek) dělá `/fronta`.
 
 **Text pro Threads** (limit 500 znaků): první odstavec popisku (do prázdného řádku), zkrácený na celou větu do 440 znaků
 (když věta nestačí, na slovo a „…“), za ním `Celý rozbor: https://cosepece.cz/tisk.php?ct=N` (bez čísla tisku jen
@@ -112,7 +115,8 @@ docker compose -f docker/docker-compose.yml exec reels reels-threads-backfill --
 
 Příkaz nejdřív dohledá, zda příspěvek na Threads už není (prvních 80 znaků textu, od času zveřejnění), a když je,
 jen uloží jeho id. Jinak video zveřejní jen na Threads přes dočasnou veřejnou kopii a vypíše odkaz. FB a IG se nedotkne
-a stav položky nemění. Jiný stav, položka už na Threads nebo chybějící `THREADS_USER_ID` či token = chyba s kódem 1.
+a stav položky nemění. Jiný stav, položka už na Threads nebo chybějící `THREADS_USER_ID` či token = chyba s kódem 1. Dvě souběžná spuštění pro stejnou položku
+nehrozí: příkaz drží zámek v PostgreSQL (`pg_try_advisory_lock`), druhé skončí „backfill už běží“.
 
 ## Testy
 

@@ -45,12 +45,7 @@ final class ReelJobs
         $now = ($this->now)();
         $stampNow = $this->stamp($now);
 
-        // 1. fresh starší 7 dní se už nevydá
-        $this->db->run(
-            "UPDATE reel_jobs SET status = 'expired', finished_at = ? WHERE source = 'fresh' AND status = 'queued' AND created_at < ?",
-            [$stampNow, $this->stamp($now - self::FRESH_MAX_DAYS * 86400)]
-        );
-        // 2. vydaná úloha bez výsledku po 60 min: po 3 pokusech failed, jinak zpět do fronty
+        // 1. vydaná úloha bez výsledku po 60 min: po 3 pokusech failed, jinak zpět do fronty
         $staleBefore = $this->stamp($now - self::CLAIM_TIMEOUT_MIN * 60);
         $this->db->run(
             "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL
@@ -61,6 +56,11 @@ final class ReelJobs
             "UPDATE reel_jobs SET status = 'queued', claim_token = NULL, claimed_at = NULL
               WHERE status = 'claimed' AND claimed_at < ? AND attempts < ?",
             [$staleBefore, self::MAX_ATTEMPTS]
+        );
+        // 2. fresh starší 7 dní se už nevydá; až po kroku 1, aby se nevydala ani prošlá úloha vrácená do fronty
+        $this->db->run(
+            "UPDATE reel_jobs SET status = 'expired', finished_at = ? WHERE source = 'fresh' AND status = 'queued' AND created_at < ?",
+            [$stampNow, $this->stamp($now - self::FRESH_MAX_DAYS * 86400)]
         );
 
         // 3.–4. první úloha ve frontě; při souběhu nebo nepoužitelné úloze se zkusí další
@@ -75,17 +75,18 @@ final class ReelJobs
                     $this->markFailed($id, 'úloha nemá číslo tisku');
                     continue;
                 }
-                $ct = $this->pickFinding();
-                if ($ct === null) {
+                // souběžný požadavek může stejný nález přiřadit jiné úloze; pak se vybere znovu (ten už je obsazený)
+                $assigned = 'conflict';
+                for ($try = 0; $try < 3 && $assigned === 'conflict'; $try++) {
+                    $ct = $this->pickFinding();
+                    $assigned = $ct === null ? 'none' : $this->assignCt($id, $ct);
+                }
+                if ($assigned === 'none') {
                     $this->markFailed($id, 'není nález bez videa');
                     continue;
                 }
-                $set = $this->db->run(
-                    "UPDATE reel_jobs SET ct = ? WHERE id = ? AND status = 'queued' AND ct IS NULL",
-                    [$ct, $id]
-                );
-                if ($set->rowCount() === 0) {
-                    continue; // úlohu mezitím vzal jiný požadavek
+                if ($assigned !== 'ok') {
+                    continue; // úlohu mezitím vzal jiný požadavek, nebo se nález nepodařilo přiřadit
                 }
             }
             $card = $this->cardV2($ct);
@@ -271,6 +272,27 @@ final class ReelJobs
             }
         }
         return null;
+    }
+
+    /**
+     * Přiřadí auto_pick úloze tisk: 'ok', 'taken' (úloha už není queued bez ct) nebo 'conflict', když tisk
+     * mezitím dostala jiná aktivní úloha (v PostgreSQL unikátní index reel_jobs_active_ct vyhodí výjimku).
+     */
+    private function assignCt(int $id, int $ct): string
+    {
+        try {
+            $set = $this->db->run(
+                "UPDATE reel_jobs SET ct = ? WHERE id = ? AND status = 'queued' AND ct IS NULL",
+                [$ct, $id]
+            );
+        } catch (\PDOException $e) {
+            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL)
+            if (in_array((string)$e->getCode(), ['23505', '23000'], true)) {
+                return 'conflict';
+            }
+            throw $e;
+        }
+        return $set->rowCount() > 0 ? 'ok' : 'taken';
     }
 
     /** Úloha ve frontě, kterou nejde vydat, skončí jako failed (jen pokud je pořád queued). */

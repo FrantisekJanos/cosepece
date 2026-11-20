@@ -1360,6 +1360,10 @@ $rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
 db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
     set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs)");
+// pro jeden tisk nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
+if (db()->driver !== 'mysql') {
+    db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
+}
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
     video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', created_at $rjTs)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
@@ -1405,6 +1409,10 @@ $rjReset();
 $rjOld = $rjAdd('fresh', 221, ['age' => 8 * 86400]);
 check('fresh starší 7 dní se nevydá', $jobs->claim(), null);
 check('fresh starší 7 dní → expired', $rjStatus($rjOld)['status'], 'expired');
+$rjReset();
+$rjOldClaimed = $rjAdd('fresh', 221, ['age' => 8 * 86400, 'status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('d', 32)]);
+check('prošlá fresh vrácená z claimed se nevydá', $jobs->claim(), null);
+check('prošlá fresh vrácená z claimed → expired', $rjStatus($rjOldClaimed)['status'], 'expired');
 
 $rjReset();
 $rjStale = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('a', 32)]);
@@ -1437,6 +1445,18 @@ $rjC = $jobs->claim();
 check('auto_pick vybere nález bez videa', [$rjC['ct'] ?? null, (int)db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjAuto])], [$rjOrder[1] ?? -1, $rjOrder[1] ?? -1]);
 foreach (array_slice($rjOrder, 2) as $rjCt) {
     $rjVideo($rjCt);
+}
+// souběh: tisk mezitím dostala jiná aktivní úloha → unikátní index; přiřazení vrátí 'conflict', ne výjimku
+if (db()->driver !== 'mysql') {
+    $rjRace = $rjAdd('auto_pick', null);
+    $rjAssign = new ReflectionMethod($jobs, 'assignCt');
+    try {
+        $rjRes = $rjAssign->invoke($jobs, $rjRace, $rjOrder[1] ?? -1);
+    } catch (Throwable $ex) {
+        $rjRes = get_class($ex) . ': ' . $ex->getMessage();
+    }
+    check('souběžné přiřazení obsazeného tisku → conflict bez výjimky', [$rjRes, db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjRace])], ['conflict', null]);
+    db()->run('DELETE FROM reel_jobs WHERE id = ?', [$rjRace]);
 }
 $rjAuto2 = $rjAdd('auto_pick', null);
 check('auto_pick bez volného nálezu se nevydá', $jobs->claim(), null);

@@ -151,3 +151,27 @@ def test_sha_in_use(conn):
     assert queue.sha_in_use(conn, "sha1") is True   # jako video na výšku
     assert queue.sha_in_use(conn, "L") is True      # jako video na šířku
     assert queue.sha_in_use(conn, "jine") is False
+
+
+def test_approve_jen_kdyz_vlastnik_videl_sirku(conn):
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    now = datetime.now(timezone.utc)
+    # bez šířky: běžné schválení z pending
+    a = _add(conn, 1)
+    assert queue.approve(conn, a, now) is False  # queued
+    assert queue.transition(conn, a, "queued", "pending", telegram_msg_id=10)
+    assert queue.approve(conn, a, now) is True
+    assert queue.get(conn, a).status == "approved" and queue.get(conn, a).decided_at is not None
+    # šířka doplněná, ještě neodeslaná
+    b = _add(conn, 2)
+    assert queue.transition(conn, b, "queued", "pending", telegram_msg_id=20)
+    assert queue.set_landscape(conn, b, "/m/w.mp4", "W")
+    assert queue.approve(conn, b, now) is False
+    # odeslaná, ale náhled je starší než video
+    queue.set_fields(conn, b, telegram_landscape_msg_id=21)
+    assert queue.approve(conn, b, now) is False
+    assert queue.get(conn, b).status == "pending"
+    # nový náhled po videu
+    queue.set_fields(conn, b, telegram_msg_id=22)
+    assert queue.approve(conn, b, now) is True

@@ -166,6 +166,23 @@ def transition(conn, id: int, from_status: str | tuple[str, ...], to_status: str
     return done
 
 
+def approve(conn, id: int, decided_at) -> bool:
+    """Schválení: pending → approved, jen když vlastník viděl obě videa.
+
+    Video na šířku (dostane ho Threads) musí být odeslané do Telegramu a náhled s tlačítky novější
+    než ono (Telegram čísluje zprávy v chatu vzestupně). Jinak by Schválit ze starého náhledu
+    zveřejnilo šířku, kterou vlastník neviděl. Podmínka je v jednom UPDATE, takže je atomická.
+    """
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reel_queue SET status='approved', decided_at=%s WHERE id=%s AND status='pending' "
+            "AND (video_landscape_path IS NULL OR (telegram_landscape_msg_id IS NOT NULL "
+            "AND telegram_msg_id > telegram_landscape_msg_id)) RETURNING id",
+            (decided_at, id),
+        )
+        return cur.fetchone() is not None
+
+
 def set_fields(conn, id: int, **fields) -> None:
     if not fields:
         return

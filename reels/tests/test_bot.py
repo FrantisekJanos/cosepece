@@ -625,6 +625,7 @@ def test_callback_odpovi_i_pri_chybe_db(bot, conn, api, media_dir, monkeypatch):
     def broken(*a, **kw):
         raise psycopg.errors.QueryCanceled("zrušeno")
     monkeypatch.setattr(queue, "transition", broken)
+    monkeypatch.setattr(queue, "approve", broken)  # Schválit jde přes queue.approve
     with pytest.raises(psycopg.Error):
         bot.handle(_cb(f"ok:{rid}"))
     assert api.methods() == ["answerCallbackQuery"]
@@ -669,7 +670,7 @@ def test_neodeslatelne_video_vyrazeno_a_pokracuje(bot, conn, api, media_dir):
     bot.send_next()
     r = _get(conn, bad)
     assert r.status == "rejected" and r.error.startswith("nelze poslat do Telegramu")
-    assert any(f"#{bad}" in t and "nelze poslat" in t for t in api.texts())
+    assert any(f"#{bad} vyřazeno, video na výšku nelze poslat" in t for t in api.texts())
     assert _get(conn, good).status == "pending"
     assert queue.counts(conn) == {"rejected": 1, "pending": 1}
 
@@ -1380,6 +1381,7 @@ def test_send_next_sirka_odmitnuta_vyradi_polozku(bot, conn, api, media_dir):
     bot.send_next()
     r = _get(conn, rid)
     assert r.status == "rejected" and r.error.startswith("nelze poslat do Telegramu")
+    assert any(f"#{rid} vyřazeno, video na šířku nelze poslat" in t for t in api.texts())
     assert _get(conn, good).status == "pending"
 
 
@@ -1503,3 +1505,96 @@ def test_odpoved_na_video_na_sirku_meni_popisek(bot, conn, api, media_dir):
     land_id = _get(conn, rid).telegram_landscape_msg_id
     bot.handle(_msg("Nový popisek", reply_to=land_id))
     assert _get(conn, rid).caption == "Nový popisek"
+
+
+@pg
+def test_schvalit_stary_nahled_po_doplneni_sirky_nepublikuje(conn, api, meta, media_dir):
+    from hlidac_reels.bot import LANDSCAPE_NOT_SENT
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads(media_dir))
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    old = _get(conn, rid).telegram_msg_id
+    _add_landscape(conn, media_dir, rid)
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{rid}", msg_id=old))
+    assert _get(conn, rid).status == "pending"
+    assert sum(meta.calls.values()) == 0
+    answers = [b.get("text") for b in api.sent("answerCallbackQuery")]
+    assert answers == [LANDSCAPE_NOT_SENT]
+    assert any(LANDSCAPE_NOT_SENT in t for t in api.texts())
+    # náhled se nepošle: Schválit ze starého náhledu dál nic nezveřejní
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    now[0] += 60
+    bot.maybe_send_next()
+    assert _get(conn, rid).telegram_landscape_msg_id is not None
+    bot.handle(_cb(f"ok:{rid}", msg_id=old))
+    assert _get(conn, rid).status == "pending" and sum(meta.calls.values()) == 0
+    # po novém náhledu schválení projde
+    del api.fail["sendMessage"]
+    now[0] += 60
+    bot.maybe_send_next()
+    new = _get(conn, rid).telegram_msg_id
+    bot.handle(_cb(f"ok:{rid}", msg_id=new))
+    assert _get(conn, rid).status == "published"
+
+
+def _count_video_requests(bot, api, reject: list[bool]):
+    """Telegram, který počítá sendVideo a dokud reject[0], odpoví 400 (trvalé odmítnutí)."""
+    from hlidac_reels.telegram import Telegram
+    count = [0]
+
+    def handler(request):
+        if request.url.path.endswith("/sendVideo"):
+            count[0] += 1
+            if reject[0]:
+                return httpx.Response(400, json={"ok": False, "description": "Bad Request: wrong file"})
+        return api(request)
+
+    bot.tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return count
+
+
+@pg
+def test_doplnena_sirka_odmitnuta_ohlasi_jednou(conn, api, meta, media_dir):
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads())
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    _add_landscape(conn, media_dir, rid)
+    reject = [True]
+    count = _count_video_requests(bot, api, reject)
+    api.calls.clear()
+    for _ in range(3):
+        now[0] += 60
+        bot.maybe_send_next()
+    assert count[0] == 1
+    msgs = [t for t in api.texts() if "video na šířku Telegram odmítl" in t]
+    assert len(msgs) == 1 and f"#{rid}" in msgs[0] and "wrong file" in msgs[0]
+    assert "reels-add-landscape" in msgs[0]
+    assert _get(conn, rid).status == "pending"
+    # nový soubor se zkusí znovu
+    reject[0] = False
+    _add_landscape(conn, media_dir, rid, n=2)
+    now[0] += 60
+    bot.maybe_send_next()
+    assert count[0] == 2
+    assert _get(conn, rid).telegram_landscape_msg_id is not None
+
+
+@pg
+def test_doplnena_sirka_chybi_soubor_ohlasi_jednou(conn, api, meta, media_dir):
+    bot = _make_bot(conn, api, meta, media_dir)
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    rid = _add(conn, media_dir)
+    bot.maybe_send_next()
+    _add_landscape(conn, media_dir, rid).unlink()
+    api.calls.clear()
+    for _ in range(3):
+        now[0] += 60
+        bot.maybe_send_next()
+    assert len([t for t in api.texts() if "video na šířku nejde přečíst" in t]) == 1
+    assert _get(conn, rid).telegram_landscape_msg_id is None

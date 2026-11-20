@@ -47,6 +47,8 @@ THREADS_TRIED_KEY = "threads_token_refresh_tried_at"
 THREADS_REFRESH_AGE = timedelta(days=7)
 THREADS_REFRESH_RETRY = timedelta(days=1)
 PREVIEW_THREADS_KEY = "preview_has_threads"
+LANDSCAPE_NOT_SENT = "Video na šířku ještě nebylo odesláno ke schválení."
+LANDSCAPE_FAILED_KEY = "landscape_failed:{}"  # reel_state: sha256 šířky, kterou Telegram trvale odmítl
 HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.")
 
@@ -175,8 +177,14 @@ class Bot:
 
     def _approve(self, reel_id: int, cb_id, msg_id) -> None:
         # jediné místo, odkud se položka dostane k publikaci: přechod jen z pending
-        if not queue.transition(self.conn, reel_id, "pending", "approved", decided_at=_now()):
-            self._answer(cb_id, "Položka už nečeká na schválení.")
+        if not queue.approve(self.conn, reel_id, _now()):
+            reel = queue.get(self.conn, reel_id)
+            if reel is not None and reel.status == "pending":
+                # doplněné video na šířku ještě vlastník neviděl (nebo k němu nepřišel nový náhled)
+                self._answer(cb_id, LANDSCAPE_NOT_SENT)
+                self._say(f"#{reel_id}: {LANDSCAPE_NOT_SENT} Schválit půjde z nového náhledu.")
+            else:
+                self._answer(cb_id, "Položka už nečeká na schválení.")
             return
         self._answer(cb_id, "Schváleno")
         self._drop_buttons(msg_id)
@@ -351,19 +359,21 @@ class Bot:
                 if force and attempt == 0:
                     self._say("Fronta je prázdná.")
                 return
+            shape = "na výšku"
             try:
                 video_id = self.tg.send_video(self.chat_id, reel.video_path, video_caption(reel))
                 landscape_id = None
                 if reel.video_landscape_path:
+                    shape = "na šířku"
                     landscape_id = self.tg.send_video(self.chat_id, reel.video_landscape_path,
                                                       video_caption(reel, landscape=True))
             except TelegramError as e:
                 if not e.rejected:
                     raise
-                self._give_up(reel, e)
+                self._give_up(reel, e, shape)
                 continue
             except OSError as e:
-                self._give_up(reel, e)
+                self._give_up(reel, e, shape)
                 continue
             preview_id = self._send_preview(reel)
             queue.transition(self.conn, reel.id, "queued", "pending", sent_at=_now(),
@@ -377,14 +387,32 @@ class Bot:
         Id videa se uloží hned po odeslání, aby se video neposílalo v každé obrátce znovu. Náhled,
         který se nepošle, se dožene v další obrátce: Telegram čísluje zprávy v chatu vzestupně, takže
         náhled starší než video na šířku má menší message_id (telegram_msg_id < telegram_landscape_msg_id).
-        Do té doby si starý náhled nechá tlačítka. Chyby Telegramu se jen zalogují a zkusí se znovu.
+        Do té doby Schválit nepublikuje (queue.approve). Výpadek Telegramu (síť, 5xx, 429) se jen
+        zaloguje a zkusí se znovu. Trvalou chybu (Telegram video odmítl, soubor nejde přečíst) bot
+        ohlásí jednou a tutéž šířku (podle sha256) už nezkouší; nový soubor přes reels-add-landscape
+        se zkusí znovu.
         """
         for reel in queue.by_status(self.conn, ("pending",)):
             if not reel.video_landscape_path:
                 continue
             if reel.telegram_landscape_msg_id is None:
-                land_id = self._try("video na šířku", self.tg.send_video, self.chat_id,
-                                    reel.video_landscape_path, video_caption(reel, landscape=True))
+                failed_key = LANDSCAPE_FAILED_KEY.format(reel.id)
+                if queue.get_state(self.conn, failed_key) == reel.video_landscape_sha256:
+                    continue
+                try:
+                    land_id = self.tg.send_video(self.chat_id, reel.video_landscape_path,
+                                                 video_caption(reel, landscape=True))
+                except (TelegramError, OSError) as e:
+                    if isinstance(e, TelegramError) and not e.rejected:
+                        log.warning("video na šířku #%s se nepodařilo poslat: %s", reel.id, self._safe(e))
+                        continue
+                    reason = self._safe(e)[:300]
+                    log.warning("video na šířku #%s odmítnuto: %s", reel.id, reason)
+                    queue.set_state(self.conn, failed_key, reel.video_landscape_sha256 or "")
+                    what = "Telegram odmítl" if isinstance(e, TelegramError) else "nejde přečíst"
+                    self._say(f"#{reel.id}: video na šířku {what} ({reason}). "
+                              "Vyměň ho přes reels-add-landscape, nebo položku zamítni.")
+                    continue
                 if not land_id:
                     continue
                 current = queue.get(self.conn, reel.id)
@@ -397,11 +425,12 @@ class Bot:
             if (reel.telegram_msg_id or 0) < reel.telegram_landscape_msg_id:
                 self._resend_preview(reel)
 
-    def _give_up(self, reel: Reel, exc: Exception) -> None:
+    def _give_up(self, reel: Reel, exc: Exception, shape: str = "na výšku") -> None:
+        """Vyřadí položku, jejíž video nejde poslat; shape říká, které (na výšku / na šířku)."""
         error = f"nelze poslat do Telegramu: {self._safe(exc)}"[:500]
-        log.warning("#%s vyřazeno: %s", reel.id, error)
+        log.warning("#%s vyřazeno (video %s): %s", reel.id, shape, error)
         if queue.transition(self.conn, reel.id, "queued", "rejected", error=error):
-            self._say(f"#{reel.id} vyřazeno, video {error}. Oprav video a zařaď ho znovu.")
+            self._say(f"#{reel.id} vyřazeno, video {shape} {error}. Oprav video a zařaď ho znovu.")
 
     def _safe_send_next(self) -> None:
         """send_next, jehož selhání (mimo ztrátu DB) se jen zaloguje; položka počká na další pokus."""

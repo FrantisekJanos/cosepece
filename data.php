@@ -61,7 +61,7 @@ $endpoints = [
         [], ['tisk' => (string)$exampleCt]],
     'upozorneni' => ['Upozornění', 'api.php?upozorneni=1', 'Upozornění na kroky v projednávání (nové pozměňovací návrhy, § 90/2, zkrácené lhůty, schválení, vyhlášení) a na připravované zákony u vlády (krátké připomínky, mimo plán), od nejnovějších. Bez min_score jen od úrovně „Pozor“ (' . (int)$w['level_watch'] . ' bodů).',
         ['since', 'min_score', 'zakon', 'ct', 'limit'], ['upozorneni' => '1', 'limit' => '3']],
-    'pripravovane' => ['Připravované zákony', 'api.php?pripravovane=1', 'Návrhy zákonů, které připravuje vláda a Sněmovna je ještě nedostala, od nejpokročilejší fáze. Bez filtrů.',
+    'pripravovane' => ['Připravované zákony', 'api.php?pripravovane=1', 'Návrhy zákonů, které připravuje vláda a Sněmovna je ještě nedostala, od nejpokročilejší fáze. S parametrem druh=narizeni připravovaná nařízení vlády (ta do Sněmovny nejdou). Jiné filtry nemá.',
         [], ['pripravovane' => '1']],
 ];
 $filters = [
@@ -108,6 +108,7 @@ $fields = [
     ],
     'Připravovaný zákon' => [
         ['pid', 'text', 'identifikátor materiálu v eKLEP/VeKLEP'],
+        ['druh', 'text', 'zakon (návrh zákona) nebo narizeni (návrh nařízení vlády, s parametrem druh=narizeni)'],
         ['nazev', 'text', 'název materiálu'],
         ['resort', 'text', 'ministerstvo nebo úřad, který návrh připravuje'],
         ['faze', 'text', 'pripominky, po_pripominkach, vlada, schvaleno'],
@@ -135,6 +136,7 @@ $alertKinds = [
     'prep_kratke' => 'připravovaný zákon: připomínkové řízení kratší než 3 týdny',
     'prep_plan' => 'připravovaný zákon: předloženo mimo plán legislativních prací vlády',
     'prep_vlada' => 'připravovaný zákon: vláda návrh schválila',
+    'prep_narizeni' => 'připravované nařízení vlády: připomínkové řízení kratší než 10 dní',
 ];
 $phases = ['Podáno', 'Organizační výbor', 'U vlády', 'Stanovisko vlády', '1. čtení', '2. čtení', '3. čtení', 'Schváleno Sněmovnou',
     'V Senátu', 'Sněmovna po Senátu', 'U prezidenta', 'Sněmovna po vetu', 'Vyhlášeno', 'Vzat zpět', 'Zamítnuto', 'Vráceno předkladateli'];

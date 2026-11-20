@@ -323,11 +323,11 @@ final class Repo
         return $this->db->one('SELECT * FROM priprava WHERE ct = ?', [$ct]);
     }
 
-    public function upcoming(): array
+    public function upcoming(string $kind = 'zakon'): array
     {
-        // připravované zákony u vlády: od nejpokročilejší fáze, v ní od poslední změny
+        // připravované zákony u vlády (nebo nařízení vlády: $kind 'narizeni'): od nejpokročilejší fáze, v ní od poslední změny
         $order = array_flip(GovPrep::PHASES);
-        $rows = $this->db->all('SELECT * FROM pripravovane');
+        $rows = $this->db->all('SELECT * FROM ' . ($kind === 'narizeni' ? 'pripravovana_narizeni' : 'pripravovane'));
         usort($rows, fn(array $a, array $b) => [($order[$a['faze']] ?? 9), (string)$b['zmeneno']] <=> [($order[$b['faze']] ?? 9), (string)$a['zmeneno']]);
         return $rows;
     }

@@ -17,7 +17,7 @@ dev = ["pytest"]
 include = ["hlidac_reels*"]
 
 [tool.setuptools.package-data]
-hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*"]
+hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "schema_reels.sql"]
 
 [build-system]
 requires = ["setuptools>=68"]

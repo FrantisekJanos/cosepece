@@ -7,7 +7,8 @@ from datetime import datetime
 
 import psycopg
 
-STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown")
+STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
+            "expired", "withdrawn")
 
 
 class DuplicateVideo(Exception):
@@ -42,6 +43,10 @@ class Reel:
     threads_container_id: str | None
     threads_media_id: str | None
     threads_permalink: str | None
+    # sada variant z generátoru (reel_jobs.id)
+    set_id: int | None
+    variant: int | None
+    template: str | None
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -73,13 +78,14 @@ def _row(cur) -> Reel | None:
 
 
 def add(conn, *, video_path: str, video_sha256: str, caption: str,
-        ct: int | None = None, format: str | None = None, source: str = "ukazka") -> int:
+        ct: int | None = None, format: str | None = None, source: str = "ukazka",
+        set_id: int | None = None, variant: int | None = None, template: str | None = None) -> int:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption) "
-                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                (source, ct, format, video_path, video_sha256, caption),
+                "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, set_id, variant, template) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (source, ct, format, video_path, video_sha256, caption, set_id, variant, template),
             )
             new_id = cur.fetchone()[0]
         conn.commit()
@@ -121,6 +127,15 @@ def by_telegram_msg(conn, msg_id: int) -> Reel | None:
 def by_status(conn, statuses: tuple[str, ...]) -> list[Reel]:
     with conn.cursor() as cur:
         cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status = ANY(%s) ORDER BY id", (list(statuses),))
+        out = [Reel(*r) for r in cur.fetchall()]
+    conn.commit()
+    return out
+
+
+def set_items(conn, set_id: int) -> list[Reel]:
+    """Položky jedné sady podle čísla varianty."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE set_id=%s ORDER BY variant, id", (set_id,))
         out = [Reel(*r) for r in cur.fetchall()]
     conn.commit()
     return out

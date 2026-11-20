@@ -110,3 +110,27 @@ def test_po_chybe_db_spojeni_dal_funguje(conn):
     with pytest.raises(psycopg.errors.UniqueViolation):
         queue.transition(conn, b, "queued", "pending", public_token="t")
     assert queue.transition(conn, b, "queued", "pending")
+
+
+def test_add_se_sadou(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1, set_id=7, variant=2, template="template_v3")
+    r = queue.get(conn, i)
+    assert (r.set_id, r.variant, r.template) == (7, 2, "template_v3")
+
+
+def test_set_items_podle_varianty(conn):
+    from hlidac_reels import queue
+    _add(conn, 1, set_id=9, variant=3)
+    _add(conn, 2, set_id=9, variant=1)
+    _add(conn, 3, set_id=10, variant=1)
+    assert [r.variant for r in queue.set_items(conn, 9)] == [1, 3]
+
+
+def test_migrace_dvakrat(conn):
+    from hlidac_reels import db, queue
+    db.migrate(conn)
+    db.migrate(conn)
+    i = _add(conn, 1)
+    assert queue.transition(conn, i, "queued", "withdrawn")
+    assert queue.transition(conn, i, "withdrawn", "expired")

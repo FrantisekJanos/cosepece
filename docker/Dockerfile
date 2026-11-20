@@ -35,6 +35,13 @@ RUN { echo 'Alias /reels-media /srv/reels-media/public'; \
       echo '</Directory>'; } \
       > /etc/apache2/conf-enabled/reels-media.conf
 
+# Rozhraní workeru Reels (reels_api.php): PUT s videem až 30 MB (+ rezerva); jinde platí výchozí limit Apache.
+# Mezisložka /srv/reels-inbox (volume reelsinbox) je mimo kořen webu: web do ní zapisuje (www-data), bot reels
+# (jiný uživatel) z ní čte a maže, proto zápis pro všechny. Nový volume převezme vlastníka a práva z obrazu.
+RUN { echo '<Location /reels_api.php>'; echo '  LimitRequestBody 41943040'; echo '</Location>'; } \
+      > /etc/apache2/conf-enabled/reels-api.conf \
+ && mkdir -p /srv/reels-inbox && chown www-data:www-data /srv/reels-inbox && chmod 0777 /srv/reels-inbox
+
 COPY . /var/www/html/
 RUN rm -rf /var/www/html/docker /var/www/html/.git \
  && mkdir -p /var/www/html/data && chown -R www-data:www-data /var/www/html/data

@@ -100,10 +100,15 @@ if (PHP_SAPI !== 'cli') {
     // chyby jen do logu, nikdy do stránky (vypsaná cesta a kód pomáhají útočníkovi)
     ini_set('display_errors', '0');
     ini_set('log_errors', '1');
-    // jen čtení: GET a HEAD; POST přijímá jen formulář tokenů (mcp.php) a rozhraní AI (ai_api.php)
+    // jen čtení: GET a HEAD; POST přijímá jen formulář tokenů (mcp.php) a rozhraní AI (ai_api.php),
+    // PUT (nahrání videa) a POST jen rozhraní workeru Reels (reels_api.php)
     $script = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
     $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    $allowed = in_array($script, ['mcp.php', 'ai_api.php'], true) ? ['GET', 'HEAD', 'POST'] : ['GET', 'HEAD'];
+    $allowed = match (true) {
+        $script === 'reels_api.php' => ['GET', 'HEAD', 'POST', 'PUT'],
+        in_array($script, ['mcp.php', 'ai_api.php'], true) => ['GET', 'HEAD', 'POST'],
+        default => ['GET', 'HEAD'],
+    };
     if (!in_array($method, $allowed, true)) {
         http_response_code($method === 'OPTIONS' ? 204 : 405);
         header('Allow: ' . implode(', ', $allowed));
@@ -121,7 +126,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 // limit dotazů z jedné IP na všechny veřejné stránky (přísnější limity mají api.php, rss.php a og.php);
-// cron.php a ai_api.php chrání token a fronta AI posílá výsledky v rychlém sledu
-if (PHP_SAPI !== 'cli' && !in_array(basename((string)($_SERVER['SCRIPT_NAME'] ?? '')), ['cron.php', 'ai_api.php'], true)) {
+// cron.php, ai_api.php a reels_api.php chrání token a fronta AI posílá výsledky v rychlém sledu
+if (PHP_SAPI !== 'cli' && !in_array(basename((string)($_SERVER['SCRIPT_NAME'] ?? '')), ['cron.php', 'ai_api.php', 'reels_api.php'], true)) {
     \Hlidac\RateLimit::guard('web', 240, false);
 }

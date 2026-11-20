@@ -1505,6 +1505,84 @@ $jobs->heartbeat();
 check('heartbeat uloží čas workeru', [(int)db()->value('SELECT COUNT(*) FROM reel_state'),
     strtotime((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_seen_at'"))], [1, $rjClock]);
 
+echo "Reels: rozhraní pro worker na PC (ReelsApi)\n";
+$raInbox = $tmp . '/reels-inbox';
+mkdir($raInbox, 0775, true);
+$raToken = 'worker-' . bin2hex(random_bytes(8));
+$raCfg = config();
+$raCfg['reels'] = ['worker_token' => $raToken, 'inbox_dir' => $raInbox];
+$api = new Hlidac\ReelsApi(db(), $raCfg, function () use (&$rjClock): int { return $rjClock; });
+$raH = fn(string $claim = '', array $extra = []): array => ['X-Hlidac-Token' => $raToken, 'X-Claim-Token' => $claim] + $extra;
+$raMp4 = fn(int $len = 4096): string => "\x00\x00\x00\x18ftypisom" . str_repeat("\x01", max(0, $len - 12));
+$raJson = fn(array $data): string => json_encode($data, JSON_UNESCAPED_UNICODE);
+$raVariant = fn(int $n): array => ['n' => $n, 'template' => 'v2', 'format' => 'zkratka', 'caption' => "Popisek $n", 'card' => ['ct' => 221]];
+
+$rjReset();
+check('bez tokenu → 403', $api->handle('GET', 'claim', [], '', [])[0], 403);
+check('špatný token → 403', $api->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => 'x'])[0], 403);
+$raZ = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => 'ZMENTE_TOKEN', 'inbox_dir' => $raInbox]] + $raCfg);
+check('token ZMENTE v konfiguraci → 403', $raZ->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => 'ZMENTE_TOKEN'])[0], 403);
+$raE = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => '', 'inbox_dir' => $raInbox]] + $raCfg);
+check('prázdný token v konfiguraci → 403', $raE->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => ''])[0], 403);
+check('hlavičky bez ohledu na velikost písmen', $api->handle('GET', 'claim', [], '', ['x-hlidac-token' => $raToken]), [200, ['job' => null]]);
+
+$raJob = $rjAdd('manual', 221);
+[$raSt, $raRes] = $api->handle('GET', 'claim', [], '', $raH());
+$raClaim = (string)($raRes['job']['claim_token'] ?? '');
+check('claim → 200 a claim_token 32 hex', [$raSt, (bool)preg_match('~^[0-9a-f]{32}$~', $raClaim), $raRes['job']['job_id'] ?? null], [200, true, $raJob]);
+
+$raDir = $raInbox . '/' . $raJob;
+check('video se špatným claim tokenem → 409', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(), $raH(str_repeat('0', 32)))[0], 409);
+check('video se špatným claim tokenem: soubor nevznikl', is_file($raDir . '/variant-1.mp4'), false);
+check('video bez ftyp → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], str_repeat('x', 100), $raH($raClaim))[0], 400);
+check('video > 30 MB podle Content-Length → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(),
+    $raH($raClaim, ['Content-Length' => (string)(30 * 1024 * 1024 + 1)]))[0], 413);
+check('video > 30 MB podle délky těla → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(30 * 1024 * 1024 + 1), $raH($raClaim))[0], 413);
+check('video n mimo 1–3 → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '4'], $raMp4(), $raH($raClaim))[0], 400);
+check('po odmítnutých videích žádný soubor', glob($raDir . '/*') ?: [], []);
+check('video 1 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(), $raH($raClaim))[0], 200);
+check('video 2 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2'], $raMp4(5000), $raH($raClaim))[0], 200);
+check('videa uložena bez .part', [is_file($raDir . '/variant-1.mp4'), filesize($raDir . '/variant-2.mp4'), glob($raDir . '/*.part') ?: []], [true, 5000, []]);
+
+check('result s 1 variantou → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1)]]), $raH($raClaim))[0], 400);
+check('result s 1 variantou: manifest nevznikl', is_file($raDir . '/manifest.json'), false);
+check('result s variantou bez videa → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(3)]]), $raH($raClaim))[0], 400);
+$raLong = $raVariant(2);
+$raLong['caption'] = str_repeat('ž', 2121);
+check('result s popiskem > 2120 znaků → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raLong]]), $raH($raClaim))[0], 400);
+check('result se špatným claim tokenem → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH(str_repeat('0', 32)))[0], 409);
+check('GET ?action=result → 400', $api->handle('GET', 'result', [], '', $raH($raClaim))[0], 400);
+check('neznámá akce → 400', $api->handle('POST', 'smaz', [], '', $raH($raClaim))[0], 400);
+[$raSt, $raRes] = $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH($raClaim));
+$raManifest = json_decode((string)@file_get_contents($raDir . '/manifest.json'), true);
+check('result se 2 variantami → 200, úloha done', [$raSt, $rjStatus($raJob)['status']], [200, 'done']);
+check('manifest: úloha, tisk, zdroj a varianty', [$raManifest['job_id'] ?? null, $raManifest['ct'] ?? null, $raManifest['source'] ?? null,
+    array_column($raManifest['variants'] ?? [], 'n'), $raManifest['variants'][1]['caption'] ?? null, $raManifest['variants'][0]['card'] ?? null, glob($raDir . '/*.part') ?: []],
+    [$raJob, 221, 'manual', [1, 2], 'Popisek 2', ['ct' => 221], []]);
+
+// výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
+$rjReset();
+$raJob2 = $rjAdd('manual', 221);
+$raOld = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '1'], $raMp4(), $raH($raOld));
+$api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '2'], $raMp4(), $raH($raOld));
+$rjClock += 61 * 60;
+$raNew = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+check('nový claim po vypršení', [$raNew !== '' && $raNew !== $raOld, $rjStatus($raJob2)['status']], [true, 'claimed']);
+check('nový claim smaže videa předchozího pokusu', is_file($raInbox . '/' . $raJob2 . '/variant-1.mp4'), false);
+check('result se starým tokenem po vypršení → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob2, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH($raOld))[0], 409);
+check('result se starým tokenem: manifest nevznikl', is_file($raInbox . '/' . $raJob2 . '/manifest.json'), false);
+check('fail se starým tokenem → 409', $api->handle('POST', 'fail', [], $raJson(['job_id' => $raJob2, 'error' => 'x']), $raH($raOld))[0], 409);
+
+// fail: úloha zpět do fronty, složka úlohy smazaná
+[$raSt, $raRes] = $api->handle('POST', 'fail', [], $raJson(['job_id' => $raJob2, 'error' => 'render spadl']), $raH($raNew));
+check('fail → queued a složka smazaná', [$raSt, $raRes, $rjStatus($raJob2)['status'], is_dir($raInbox . '/' . $raJob2)], [200, ['status' => 'queued'], 'queued', false]);
+
+check('heartbeat → ok', $api->handle('POST', 'heartbeat', [], '', $raH()), [200, ['ok' => true]]);
+$raMissing = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $tmp . '/neni-inbox']] + $raCfg);
+[$raSt, $raRes] = $raMissing->handle('PUT', 'video', ['job_id' => '1', 'n' => '1'], $raMp4(), $raH('x'));
+check('chybějící mezisložka → 500 s hláškou', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir')], [500, true]);
+
 // úklid
 $rjReset();
 db()->run('DELETE FROM reel_state');

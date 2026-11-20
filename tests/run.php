@@ -1515,7 +1515,9 @@ $api = new Hlidac\ReelsApi(db(), $raCfg, function () use (&$rjClock): int { retu
 $raH = fn(string $claim = '', array $extra = []): array => ['X-Hlidac-Token' => $raToken, 'X-Claim-Token' => $claim] + $extra;
 $raMp4 = fn(int $len = 4096): string => "\x00\x00\x00\x18ftypisom" . str_repeat("\x01", max(0, $len - 12));
 $raJson = fn(array $data): string => json_encode($data, JSON_UNESCAPED_UNICODE);
-$raVariant = fn(int $n): array => ['n' => $n, 'template' => 'v2', 'format' => 'zkratka', 'caption' => "Popisek $n", 'card' => ['ct' => 221]];
+// varianta 1 = šablona v2 (bez formátu), ostatní v3 s formátem; stejné hodnoty posílá worker a čte bot (inbox.py)
+$raVariant = fn(int $n, array $over = []): array => $over + ['n' => $n, 'template' => $n === 1 ? 'template_v2' : 'template_v3',
+    'format' => $n === 1 ? null : 'zmena', 'caption' => "Popisek $n", 'card' => ['ct' => 221]];
 
 $rjReset();
 check('bez tokenu → 403', $api->handle('GET', 'claim', [], '', [])[0], 403);
@@ -1550,6 +1552,12 @@ check('result s variantou bez videa → 400', $api->handle('POST', 'result', [],
 $raLong = $raVariant(2);
 $raLong['caption'] = str_repeat('ž', 2121);
 check('result s popiskem > 2120 znaků → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raLong]]), $raH($raClaim))[0], 400);
+$raBad = fn(array $v2): int => $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $v2]]), $raH($raClaim))[0];
+check('result: v2 s formátem → 400', $raBad($raVariant(2, ['template' => 'template_v2', 'format' => 'zmena'])), 400);
+check('result: v3 bez formátu → 400', $raBad($raVariant(2, ['format' => null])), 400);
+check('result: neznámá šablona → 400', $raBad($raVariant(2, ['template' => 'v2'])), 400);
+check('result: v3 s neznámým formátem → 400', $raBad($raVariant(2, ['format' => 'zkratka'])), 400);
+check('result: odmítnuté šablony nezapíšou manifest', is_file($raDir . '/manifest.json'), false);
 check('result se špatným claim tokenem → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH(str_repeat('0', 32)))[0], 409);
 check('GET ?action=result → 400', $api->handle('GET', 'result', [], '', $raH($raClaim))[0], 400);
 check('neznámá akce → 400', $api->handle('POST', 'smaz', [], '', $raH($raClaim))[0], 400);
@@ -1559,6 +1567,9 @@ check('result se 2 variantami → 200, úloha done', [$raSt, $rjStatus($raJob)['
 check('manifest: úloha, tisk, zdroj a varianty', [$raManifest['job_id'] ?? null, $raManifest['ct'] ?? null, $raManifest['source'] ?? null,
     array_column($raManifest['variants'] ?? [], 'n'), $raManifest['variants'][1]['caption'] ?? null, $raManifest['variants'][0]['card'] ?? null, glob($raDir . '/*.part') ?: []],
     [$raJob, 221, 'manual', [1, 2], 'Popisek 2', ['ct' => 221], []]);
+check('manifest: v2 s format null (přijato), v3 s formátem', [array_key_exists('format', $raManifest['variants'][0] ?? []), $raManifest['variants'][0]['template'] ?? null,
+    $raManifest['variants'][0]['format'] ?? null, $raManifest['variants'][1]['template'] ?? null, $raManifest['variants'][1]['format'] ?? null],
+    [true, 'template_v2', null, 'template_v3', 'zmena']);
 
 // výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
 $rjReset();

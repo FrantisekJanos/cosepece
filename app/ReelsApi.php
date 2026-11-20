@@ -22,6 +22,9 @@ final class ReelsApi
     public const MAX_JSON_BYTES = 1_000_000;
     /** nejdelší popisek (limit Instagramu 2200 znaků s rezervou na odkaz) */
     public const CAPTION_LIMIT = 2120;
+    /** šablony videa a formáty šablony v3 (reels/hlidac_reels/generator/formats.py FORMATS) */
+    public const TEMPLATES = ['template_v2', 'template_v3'];
+    public const FORMATS = ['cesta', 'pn', 'zmena', 'rozprava'];
     private const CHUNK = 1024 * 1024;
 
     private ReelJobs $jobs;
@@ -217,8 +220,8 @@ final class ReelsApi
     }
 
     /**
-     * Kontrola variant výsledku: 2–3 různá n 1–3, každé s videem na disku, šablonou, formátem, popiskem
-     * do CAPTION_LIMIT a kartou. Vrací pročištěné varianty (seřazené podle n), nebo text chyby.
+     * Kontrola variant výsledku: 2–3 různá n 1–3, každé s videem na disku, šablonou (v2 bez formátu,
+     * v3 s formátem z FORMATS), popiskem do CAPTION_LIMIT a kartou. Vrací pročištěné varianty (seřazené podle n), nebo text chyby.
      */
     private function validVariants(mixed $variants, string $jobDir): array|string
     {
@@ -231,10 +234,17 @@ final class ReelsApi
             if ($n === null || $n > 3 || isset($out[$n])) {
                 return 'Varianta musí mít jedinečné n 1–3';
             }
-            foreach (['template', 'format'] as $key) {
-                if (!is_string($v[$key] ?? null) || $v[$key] === '' || mb_strlen($v[$key]) > 100) {
-                    return "Varianta $n: chybí $key";
-                }
+            // stejná smlouva jako ingester bota (reels/hlidac_reels/inbox.py): v2 bez formátu, v3 s formátem z FORMATS
+            $template = $v['template'] ?? null;
+            $format = $v['format'] ?? null;
+            if (!in_array($template, self::TEMPLATES, true)) {
+                return "Varianta $n: šablona musí být " . implode(' nebo ', self::TEMPLATES);
+            }
+            if ($template === 'template_v2' && $format !== null) {
+                return "Varianta $n: template_v2 nesmí mít formát";
+            }
+            if ($template === 'template_v3' && !in_array($format, self::FORMATS, true)) {
+                return "Varianta $n: template_v3 potřebuje formát " . implode(', ', self::FORMATS);
             }
             $caption = $v['caption'] ?? null;
             if (!is_string($caption) || trim($caption) === '' || mb_strlen($caption) > self::CAPTION_LIMIT) {
@@ -246,7 +256,7 @@ final class ReelsApi
             if (!is_file($jobDir . '/variant-' . $n . '.mp4')) {
                 return "Varianta $n: chybí nahrané video";
             }
-            $out[$n] = ['n' => $n, 'template' => $v['template'], 'format' => $v['format'], 'caption' => $caption, 'card' => $v['card']];
+            $out[$n] = ['n' => $n, 'template' => $template, 'format' => $format, 'caption' => $caption, 'card' => $v['card']];
         }
         ksort($out);
         return array_values($out);

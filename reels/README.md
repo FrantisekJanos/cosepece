@@ -118,6 +118,59 @@ jen uloží jeho id. Jinak video zveřejní jen na Threads přes dočasnou veře
 a stav položky nemění. Jiný stav, položka už na Threads nebo chybějící `THREADS_USER_ID` či token = chyba s kódem 1. Dvě souběžná spuštění pro stejnou položku
 nehrozí: příkaz drží zámek v PostgreSQL (`pg_try_advisory_lock`), druhé skončí „backfill už běží“.
 
+## Generátor Reels (worker na PC)
+
+Sady variant k tiskům generuje `reels-worker` na počítači s přihlášeným Claude Code (předplatné, žádný API klíč).
+Server mu jen vydává úlohy a přebírá výsledky, sám nic negeneruje.
+
+Postup jedné úlohy: heartbeat → `claim` (úloha s kartou tisku) → `generate()` (`claude -p` napíše 3 varianty, render
+v2/v3, kontrola videa) → nahrání platných videí (`PUT`, každé nejvýš 30 MB; větší varianta vypadne) → `result`.
+Se 2 nebo 3 platnými variantami server sadu přijme, s méně worker nahlásí `fail`. Bez úlohy nebo po chybě sítě čeká
+5 minut. Worker zpracuje vždy jen jednu úlohu a druhá instance (třeba naplánovaná úloha plus ruční spuštění) hned
+skončí se zprávou (zámek `worker.lock` v pracovní složce).
+
+```bash
+pip install -e ".[render]"
+reels-worker --env <soubor .env> --root <pracovní složka> --mcp-config <mcp.json> [--once]
+```
+
+| Volba | Význam |
+|---|---|
+| `--env` | soubor `KEY=VALUE` mimo repo: `REELS_API_URL` (adresa `reels_api.php`, jen https), `REELS_WORKER_TOKEN`, volitelně `REELS_MODEL` (jinak výchozí model generátoru) |
+| `--root` | pracovní složka: podsložka na úlohu, `worker.lock`, `worker.log` |
+| `--mcp-config` | JSON s MCP serverem cosepece pro `claude -p` (mimo repo) |
+| `--once` | jeden průchod bez čekání, na zkoušku |
+
+**Web (`reels_api.php`, `app/ReelsApi.php`):** v `config.php` klíč `reels`:
+
+- `worker_token`: stejný token jako `REELS_WORKER_TOKEN` workeru (hlavička `X-Hlidac-Token`). Prázdný nebo `ZMENTE…`
+  = rozhraní vypnuté (403). Token umí jen `claim`, `video`, `result`, `fail` a `heartbeat`.
+- `inbox_dir`: mezisložka, kam web ukládá videa a `manifest.json` (v kontejneru `/srv/reels-inbox`). Když chybí nebo
+  do ní nejde zapisovat, `claim` úlohu nevydá a vrátí 500.
+
+Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čte (`REELS_INBOX_DIR`, v kontejneru
+`/inbox`) a po převzetí sady složku úlohy maže. Bot bere jen složky s `manifest.json`, který web zapíše jako poslední.
+
+**Příkazy bota:**
+
+- `/video <číslo tisku> [cesta|pn|zmena|rozprava]`: ruční zadání (formát je jen nápověda pro generátor),
+- `/vyber`: tisk vybere automatika z hlavních nálezů (nikdy formát `rozprava`),
+- `/fronta`: kromě položek ke schválení i zadání ve frontě a kdy bylo PC naposledy vidět.
+
+Ze sady pošle bot všechny varianty a vlastník jednu vybere tlačítkem Vybrat; teprve vybraná jde ke schválení.
+
+**Limity:**
+
+- výdej úloh: nejdřív `manual`, pak `auto_pick`, pak `fresh` (čerstvé nálezy), uvnitř podle stáří; pro jeden tisk
+  nejvýš jedna aktivní úloha,
+- úloha `fresh` vzniká, když se mezi hlavními nálezy objeví nový tisk nebo nový důvod skóre; nejvýš 2 nové úlohy
+  `fresh` za den (Europe/Prague), zbylé nálezy přijdou na řadu další dny; první běh detektoru jen uloží výchozí stav,
+- vydaná úloha bez výsledku se po 60 minutách vrátí do fronty, po 3 pokusech skončí `failed`; `fresh` starší než
+  7 dní se už nevydá (`expired`),
+- do Telegramu jdou nejvýš 2 sady denně (Europe/Prague) a najednou nejvýš 1 nevyřízená; `/dalsi` limit obchází,
+- sada `fresh` nebo `auto_pick` bez výběru vyprší po 7 dnech (`fresh` se počítá od založení úlohy), sada, jejíž tisk
+  vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+
 ## Testy
 
 ```bash

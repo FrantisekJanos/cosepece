@@ -255,11 +255,8 @@ final class ReelJobs
     {
         $repo = new Repo($this->db);
         $level = (int)Scorer::weights($this->config)['level_major'];
-        foreach ($repo->topFindings($level, 60) as $t) {
+        foreach (ReelsSnapshot::findings($repo, $level) as $t) {
             $ct = (int)$t['ct'];
-            if ($repo->headline($ct) === null) {
-                continue;
-            }
             if ($this->db->value('SELECT 1 FROM reel_queue WHERE ct = ?', [$ct]) !== null) {
                 continue;
             }

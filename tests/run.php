@@ -1583,6 +1583,24 @@ $raMissing = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 
 [$raSt, $raRes] = $raMissing->handle('PUT', 'video', ['job_id' => '1', 'n' => '1'], $raMp4(), $raH('x'));
 check('chybějící mezisložka → 500 s hláškou', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir')], [500, true]);
 
+echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
+db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([
+    ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],
+    ['key' => 'deadline_cut', 'label' => 'Zkrácená lhůta pro výbory: 30 dní místo 60', 'points' => 15],
+    ['key' => 'ai_bill', 'label' => 'Rozbor textu návrhu', 'points' => 24],
+], JSON_UNESCAPED_UNICODE)]);
+$rsLevel = (int)Hlidac\Scorer::weights(config())['level_major'];
+$rsCount = Hlidac\ReelsSnapshot::write(db(), new Hlidac\Repo(db()), $rsLevel);
+$rsSnap = json_decode((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'top_findings'"), true);
+check('snímek: tisk 221 s klíči důvodů podle bodů', $rsSnap['items']['221'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
+check('snímek: počet tisků a čas s pásmem', [$rsCount > 0, $rsCount === count($rsSnap['items'] ?? []), (bool)preg_match('~^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$~', (string)($rsSnap['at'] ?? ''))],
+    [true, true, true]);
+$rsNoHeadline = array_filter(array_keys($rsSnap['items'] ?? []), fn($c) => (new Hlidac\Repo(db()))->headline((int)$c) === null);
+check('snímek: jen tisky s titulkem', $rsNoHeadline, []);
+// druhý zápis přepíše řádek (bez ON CONFLICT)
+Hlidac\ReelsSnapshot::write(db(), new Hlidac\Repo(db()), $rsLevel);
+check('snímek: druhý zápis bez duplicity', (int)db()->value("SELECT COUNT(*) FROM reel_state WHERE $rjKey = 'top_findings'"), 1);
+
 // úklid
 $rjReset();
 db()->run('DELETE FROM reel_state');

@@ -175,6 +175,29 @@ def set_fields(conn, id: int, **fields) -> None:
         cur.execute(f"UPDATE reel_queue SET {sets} WHERE id=%s", (*fields.values(), id))
 
 
+def set_landscape(conn, id: int, path: str, sha256: str) -> bool:
+    """Doplní nebo vymění video na šířku; jen u queued a pending. Vrací, zda se řádek změnil."""
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reel_queue SET video_landscape_path=%s, video_landscape_sha256=%s, "
+            "telegram_landscape_msg_id=NULL WHERE id=%s AND status IN ('queued','pending') RETURNING id",
+            (path, sha256, id),
+        )
+        return cur.fetchone() is not None
+
+
+def sha_in_use(conn, sha: str) -> bool:
+    """Patří otisk některému řádku fronty (jako video na výšku nebo na šířku)?"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM reel_queue WHERE video_sha256=%s OR video_landscape_sha256=%s LIMIT 1",
+            (sha, sha),
+        )
+        found = cur.fetchone() is not None
+    conn.commit()
+    return found
+
+
 def recover_after_restart(conn) -> list[int]:
     """Publikace přerušená restartem má nejistý výsledek: publishing -> unknown."""
     with _tx(conn), conn.cursor() as cur:

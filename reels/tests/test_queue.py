@@ -126,3 +126,28 @@ def test_by_telegram_msg_najde_video_na_sirku(conn):
     i = _add(conn, 1)
     queue.set_fields(conn, i, telegram_landscape_msg_id=77)
     assert queue.by_telegram_msg(conn, 77).id == i
+
+
+def test_set_landscape_jen_queued_pending(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, telegram_landscape_msg_id=5)
+    assert queue.set_landscape(conn, i, "/m/l.mp4", "L1") is True
+    r = queue.get(conn, i)
+    assert (r.video_landscape_path, r.video_landscape_sha256) == ("/m/l.mp4", "L1")
+    assert r.telegram_landscape_msg_id is None
+    assert queue.transition(conn, i, "queued", "pending")
+    queue.set_fields(conn, i, telegram_landscape_msg_id=6)
+    assert queue.set_landscape(conn, i, "/m/l2.mp4", "L2") is True
+    assert queue.get(conn, i).telegram_landscape_msg_id is None
+    assert queue.transition(conn, i, "pending", "published")
+    assert queue.set_landscape(conn, i, "/m/l3.mp4", "L3") is False
+    assert queue.get(conn, i).video_landscape_sha256 == "L2"
+
+
+def test_sha_in_use(conn):
+    from hlidac_reels import queue
+    _add(conn, 1, video_landscape_path="/m/l.mp4", video_landscape_sha256="L")
+    assert queue.sha_in_use(conn, "sha1") is True   # jako video na výšku
+    assert queue.sha_in_use(conn, "L") is True      # jako video na šířku
+    assert queue.sha_in_use(conn, "jine") is False

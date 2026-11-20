@@ -21,6 +21,7 @@ from .generate import MIN_OK, generate
 log = logging.getLogger("hlidac_reels.worker")
 
 IDLE_S = 300
+FAIL_PAUSE_S = 60  # pauza po nezdařené úloze, ať vadná úloha nespálí tři drahé běhy claude za sebou
 ERROR_LIMIT = 500
 TIMEOUT_S = 1200  # s na jeden běh claude -p
 
@@ -75,8 +76,15 @@ def _report_fail(api, job_id: int, claim_token: str, error: str, root: Path) -> 
 def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate) -> bool:
     """Zpracuje jednu vydanou úlohu; True, když server sadu přijal."""
     root = Path(root)
-    job_id = int(job["job_id"])
-    claim = str(job["claim_token"])
+    try:
+        job_id = int(job["job_id"])
+        claim = str(job["claim_token"])
+        if not claim:
+            raise ValueError("prázdný claim_token")
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        # bez job_id a claim_token nejde chybu nahlásit, úloha po 60 min sama vyprší
+        log.error("neplatná úloha od serveru (%s: %s), přeskakuji", type(e).__name__, e)
+        return False
     workdir = root / str(job_id)
     log.info("úloha %s: tisk %s (%s), generuji", job_id, job.get("ct"), job.get("source"))
     try:
@@ -118,17 +126,17 @@ def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once
         try:
             api.heartbeat()
             job = api.claim()
+            if job is None:
+                log.debug("žádná úloha")
+                sleep(IDLE_S)
+            elif not process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate):
+                sleep(FAIL_PAUSE_S)
         except (ApiError, OSError) as e:  # URLError a timeout jsou OSError
             log.error("API nedostupné: %s", e)
             sleep(IDLE_S)
-            if once:
-                return
-            continue
-        if job is None:
-            log.debug("žádná úloha")
+        except Exception as e:  # noqa: BLE001 — jedna vadná iterace nesmí ukončit worker do příštího přihlášení
+            log.exception("neočekávaná chyba ve smyčce: %s: %s", type(e).__name__, e)
             sleep(IDLE_S)
-        else:
-            process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate)
         if once:
             return
 
@@ -198,12 +206,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     lock = acquire_lock(args.root)
-    if lock is None:
+    if lock is None:  # druhá instance nesmí ani sestavit klienta API, natož vyzvednout úlohu
         print("worker už běží")
         return 0
-    handlers = _setup_logging(args.root)
     try:
         api = ReelsApi(url, token)
+    except ValueError as e:
+        release_lock(lock)
+        print(f"chybné REELS_API_URL: {e}", file=sys.stderr)
+        return 1
+    handlers = _setup_logging(args.root)
+    try:
         model = env.get("REELS_MODEL") or DEFAULT_MODEL
         log.info("worker start: API %s, model %s", getattr(api, "host", "?"), model)
         run(api, root=args.root, mcp_config=args.mcp_config, model=model,

@@ -13,6 +13,14 @@ import urllib.request
 from pathlib import Path
 
 SNIPPET = 200
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Přesměrování se nesleduje: urllib by z POST udělal GET a poslal token na cílovou adresu."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # urllib pak vyhodí HTTPError s 3xx → ApiError
 
 
 class ApiError(Exception):
@@ -27,6 +35,11 @@ class ReelsApi:
         url = base_url.rstrip("/")
         # stačí adresa webu, cesta k reels_api.php se doplní
         self.url = url if url.endswith(".php") else url + "/reels_api.php"
+        parts = urllib.parse.urlsplit(self.url)
+        if not parts.hostname or (parts.scheme != "https"
+                                  and not (parts.scheme == "http" and parts.hostname in _LOCAL_HOSTS)):
+            raise ValueError("adresa API musí být https:// (http:// jen pro localhost)")
+        self._opener = urllib.request.build_opener(_NoRedirect)
         self._token = token
         self.timeout_s = timeout_s
 
@@ -57,7 +70,7 @@ class ReelsApi:
             data = b""
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            with self._opener.open(req, timeout=self.timeout_s) as resp:
                 status, body = resp.status, resp.read()
         except urllib.error.HTTPError as e:
             status, body = e.code, e.read() if e.fp is not None else b""

@@ -1,6 +1,7 @@
 """Worker na PC: zpracování úlohy, smyčka, HTTP klient reels_api.php a zámek proti druhé instanci."""
 from __future__ import annotations
 
+import http.client
 import json
 import subprocess
 import sys
@@ -173,6 +174,50 @@ def test_run_s_ulohou(tmp_path, monkeypatch):
     assert sleeps == []
 
 
+def test_process_neplatna_uloha(tmp_path):
+    api = FakeApi()
+    for bad in ({"job_id": 7}, {"claim_token": "x"}, {"job_id": "abc", "claim_token": "x"}, {"job_id": 7, "claim_token": ""}):
+        assert worker.process(api, bad, root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                              generate=fake_generate({1, 2, 3})) is False
+    assert api.calls == []
+    # job_id a claim_token v pořádku, zbytek vadný → chyba se nahlásí
+    job = {"job_id": 7, "claim_token": "c"}
+    assert worker.process(api, job, root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=fake_generate({1, 2, 3})) is False
+    assert api.names() == ["fail"] and api.calls[0][3].startswith("KeyError")
+
+
+def test_run_prezije_jakoukoli_chybu(tmp_path):
+    class Api(FakeApi):
+        def claim(self):
+            raise http.client.IncompleteRead(b"")
+    sleeps: list[float] = []
+    worker.run(Api(), root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleeps.append, once=True)
+    assert sleeps == [300]
+    # vadná úloha od serveru smyčku neukončí
+    api = FakeApi(job={"nic": 1})
+    sleeps = []
+    worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleeps.append, once=True)
+    assert sleeps == [60] and "fail" not in api.names()
+
+
+def test_run_ctrl_c_skonci(tmp_path):
+    class Api(FakeApi):
+        def claim(self):
+            raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        worker.run(Api(), root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=lambda s: None)
+
+
+def test_run_po_chybe_pauza(tmp_path, monkeypatch):
+    api = FakeApi(job=dict(JOB))
+    sleeps: list[float] = []
+    monkeypatch.setattr(worker, "generate", fake_generate({1}))
+    worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleeps.append, once=True)
+    assert api.names() == ["heartbeat", "claim", "fail"]
+    assert sleeps == [60]
+
+
 # --- HTTP klient nad lokálním serverem ---
 
 class _Handler(BaseHTTPRequestHandler):
@@ -184,9 +229,11 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         srv.requests.append({"method": self.command, "path": self.path, "headers": dict(self.headers), "body": body})
-        status, ctype, payload = srv.response
+        status, ctype, payload, *extra = srv.response
         self.send_response(status)
         self.send_header("Content-Type", ctype)
+        for k, v in (extra[0] if extra else {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -266,6 +313,22 @@ def test_api_pozadavky(server, tmp_path):
     assert "X-Claim-Token" not in reqs[5]["headers"]
 
 
+def test_api_nesleduje_presmerovani(server):
+    server.response = (302, "text/html", b"<a>jinam</a>", {"Location": "/jinam.php"})
+    with pytest.raises(ApiError) as ei:
+        _api(server).heartbeat()
+    assert ei.value.status == 302
+    assert [r["path"] for r in server.requests] == ["/reels_api.php?action=heartbeat"]
+
+
+def test_api_jen_https():
+    for url in ("http://example.org", "ftp://example.org/reels_api.php", "http://10.0.0.1/reels_api.php", "nic"):
+        with pytest.raises(ValueError):
+            ReelsApi(url, "t")
+    for url in ("http://localhost:8100", "http://127.0.0.1/reels_api.php", "https://example.org"):
+        ReelsApi(url, "t")
+
+
 def test_api_url_bez_php():
     assert ReelsApi("https://example.org", "t").url == "https://example.org/reels_api.php"
     assert ReelsApi("https://example.org/reels_api.php", "t").url == "https://example.org/reels_api.php"
@@ -315,6 +378,12 @@ def test_main_chybi_token(tmp_path, monkeypatch):
     assert worker.main(args) == 1
 
 
+def test_main_odmitne_http(tmp_path):
+    args = _main_args(tmp_path)
+    (tmp_path / "secrets.env").write_text("REELS_API_URL=http://example.org\nREELS_WORKER_TOKEN=t\n", encoding="utf-8")
+    assert worker.main(args) == 1
+
+
 def test_druha_instance(tmp_path, monkeypatch, capsys):
     """Zámek drží jiný proces (jako naplánovaná úloha) → main skončí s 0 a nezavolá claim."""
     args = _main_args(tmp_path)
@@ -331,7 +400,7 @@ def test_druha_instance(tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(worker, "ReelsApi", _RecordingApi)
         assert worker.main(args) == 0
         assert "worker už běží" in capsys.readouterr().out
-        assert _RecordingApi.instances == [] or "claim" not in _RecordingApi.instances[0].names()
+        assert _RecordingApi.instances == []
     finally:
         holder.stdin.close()
         holder.wait(timeout=10)

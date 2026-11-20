@@ -31,6 +31,7 @@ RUN { echo 'Alias /reels-media /srv/reels-media/public'; \
       echo '  <IfModule php_module>'; echo '    php_admin_flag engine off'; echo '  </IfModule>'; \
       echo '  Header always set X-Content-Type-Options "nosniff"'; \
       echo '  Header always set X-Robots-Tag "noindex"'; \
+      echo '  Header always set Cache-Control "no-store, private"'; \
       echo '</Directory>'; } \
       > /etc/apache2/conf-enabled/reels-media.conf
 

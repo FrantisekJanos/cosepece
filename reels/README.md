@@ -15,7 +15,13 @@ Data jsou ve volume `reelsmedia`, v kontejneru `/media`:
 - `videos/`: videa ve frontě (název = sha256 obsahu),
 - `public/`: dočasná veřejná kopie pod náhodným tokenem, jen po dobu publikace na Instagram. Instagram si video
   stahuje sám z veřejné adresy, proto web připojuje stejný volume jen pro čtení a vydává
-  `https://cosepece.cz/reels-media/<token>.mp4` (jen soubory `*.mp4`, bez výpisu složky). Po publikaci se kopie smaže.
+  `https://cosepece.cz/reels-media/<token>.mp4` (jen soubory `*.mp4`, bez výpisu složky). Po publikaci se kopie smaže;
+  `Cache-Control: no-store` brání tomu, aby ji CDN vydávala i potom.
+
+Volume `reelsmedia` musí vytvořit compose prázdný: Docker do něj při prvním připojení zkopíruje `/media` z obrazu
+i s vlastníkem (uid 10001). Předem vytvořený nebo rootem naplněný volume zápis bota rozbije.
+Před prvním `docker/redeploy.sh` s touto službou musí být proměnné `META_*` a `REELS_*` v `docker/.env`,
+jinak kontejner `reels` skončí chybou a stále se restartuje.
 
 ## Proměnné prostředí
 

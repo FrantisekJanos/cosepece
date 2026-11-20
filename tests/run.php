@@ -1352,6 +1352,150 @@ if (Hlidac\OgCard::available()) {
     echo "  (GD s FreeType není k dispozici, kreslení obrázku se netestuje)\n";
 }
 check('záložní obrázek existuje', is_file(APP_ROOT . '/assets/og-default.png'), true);
+echo "Reels: fronta úloh generátoru (ReelJobs)\n";
+// tabulky vlastní Python (reels/hlidac_reels/schema_reels.sql); test si vytvoří přenositelné kopie
+$rjId = match (db()->driver) { 'pgsql' => 'SERIAL PRIMARY KEY', 'mysql' => 'INTEGER PRIMARY KEY AUTO_INCREMENT', default => 'INTEGER PRIMARY KEY' };
+$rjTs = db()->driver === 'pgsql' ? 'TIMESTAMPTZ' : 'VARCHAR(40)';
+$rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
+db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
+    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs)");
+db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
+    video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', created_at $rjTs)");
+db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
+
+// tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí
+$rjTextBak = db()->all('SELECT * FROM tisk_text WHERE ct IN (90, 221, 311)');
+$rjTiskBak = db()->all('SELECT ct, score, reasons, lhuta FROM tisky WHERE ct IN (90, 221, 311)');
+db()->run('DELETE FROM tisk_text WHERE ct IN (90, 221, 311)');
+foreach ([221 => 'Čl. I: V § 44a odst. 1 se slova „10 let“ Nahrazuje se slovy „4 let“.', 311 => 'V § 21 se doplňuje odstavec 3.', 90 => 'Text návrhu.'] as $rjCt => $rjText) {
+    db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, ai_model, fetched_at, ai_at) VALUES (?, ?, ?, '{}', 8, ?, 'claude-haiku-5-5', ?, ?)",
+        [$rjCt, $rjText, mb_strlen($rjText), json_encode(['titulek' => "Nález $rjCt", 'perex' => "Perex $rjCt", 'citace' => ["citace $rjCt"]]), date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+}
+db()->run('UPDATE tisky SET score = 99, lhuta = 30, reasons = ? WHERE ct = 221', [json_encode([
+    ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],
+    ['key' => 'deadline_cut', 'label' => 'Zkrácená lhůta pro výbory: 30 dní místo 60', 'points' => 15],
+    ['key' => 'ai_bill', 'label' => 'Rozbor textu návrhu', 'points' => 24],
+], JSON_UNESCAPED_UNICODE)]);
+db()->run('UPDATE tisky SET score = 98 WHERE ct = 311');
+
+$rjClock = strtotime('2026-11-20 12:00:00');
+$jobs = new Hlidac\ReelJobs(db(), config(), function () use (&$rjClock): int { return $rjClock; });
+$rjAdd = function (string $source, ?int $ct, array $extra = []) use ($jobs, &$rjClock): int {
+    db()->run('INSERT INTO reel_jobs (source, ct, status, attempts, claimed_at, claim_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+        $source, $ct, $extra['status'] ?? 'queued', $extra['attempts'] ?? 0,
+        isset($extra['claimed_ago']) ? $jobs->stamp($rjClock - $extra['claimed_ago']) : null, $extra['token'] ?? null,
+        $jobs->stamp($rjClock - ($extra['age'] ?? 60)),
+    ]);
+    return (int)db()->value('SELECT MAX(id) FROM reel_jobs');
+};
+$rjStatus = fn(int $id) => db()->one('SELECT status, attempts, error FROM reel_jobs WHERE id = ?', [$id]);
+$rjReset = function (): void { db()->run('DELETE FROM reel_jobs'); db()->run('DELETE FROM reel_queue'); };
+
+$rjReset();
+check('prázdná fronta → null', $jobs->claim(), null);
+
+$rjAdd('fresh', 221, ['age' => 3600]);
+$rjAdd('manual', 90, ['age' => 60]);
+$rjC = $jobs->claim();
+check('ruční úloha má přednost před fresh', [$rjC['ct'] ?? null, $rjC['source'] ?? null], [90, 'manual']);
+check('claim_token má 32 hex znaků', (bool)preg_match('~^[0-9a-f]{32}$~', (string)($rjC['claim_token'] ?? '')), true);
+
+$rjReset();
+$rjOld = $rjAdd('fresh', 221, ['age' => 8 * 86400]);
+check('fresh starší 7 dní se nevydá', $jobs->claim(), null);
+check('fresh starší 7 dní → expired', $rjStatus($rjOld)['status'], 'expired');
+
+$rjReset();
+$rjStale = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('a', 32)]);
+$rjC = $jobs->claim();
+check('claimed bez výsledku po 61 min se vydá znovu', [$rjC['job_id'] ?? null, (int)$rjStatus($rjStale)['attempts']], [$rjStale, 2]);
+check('starý token po novém claimu neplatí', $jobs->checkClaim($rjStale, str_repeat('a', 32)), false);
+check('finish se starým tokenem → false', $jobs->finish($rjStale, str_repeat('a', 32)), false);
+check('checkClaim s novým tokenem', $jobs->checkClaim($rjStale, (string)($rjC['claim_token'] ?? '')), true);
+check('finish s novým tokenem', [$jobs->finish($rjStale, (string)($rjC['claim_token'] ?? '')), db()->value('SELECT status FROM reel_jobs WHERE id = ?', [$rjStale]),
+    (int)db()->value('SELECT set_id FROM reel_jobs WHERE id = ?', [$rjStale])], [true, 'done', $rjStale]);
+check('hotová úloha: token už neplatí', $jobs->checkClaim($rjStale, (string)($rjC['claim_token'] ?? '')), false);
+
+$rjReset();
+$rjDead = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 3, 'claimed_ago' => 61 * 60, 'token' => str_repeat('b', 32)]);
+check('po 3 pokusech se nevydá', $jobs->claim(), null);
+check('po 3 pokusech → failed', [$rjStatus($rjDead)['status'], $rjStatus($rjDead)['error']], ['failed', 'PC nedokončilo úlohu 3×']);
+$rjFresh = $rjAdd('manual', 311, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 59 * 60, 'token' => str_repeat('c', 32)]);
+check('claimed před 59 min zůstává vydaná', [$jobs->claim(), $rjStatus($rjFresh)['status']], [null, 'claimed']);
+
+// auto_pick: první nález bez videa; tisk s řádkem v reel_queue se přeskočí
+$rjReset();
+$rjRepo = new Hlidac\Repo(db());
+$rjOrder = array_values(array_map(fn($t) => (int)$t['ct'], array_filter(
+    $rjRepo->topFindings((int)Hlidac\Scorer::weights(config())['level_major'], 60), fn($t) => $rjRepo->headline((int)$t['ct']) !== null)));
+check('test auto_pick má aspoň dva nálezy s titulkem', count($rjOrder) >= 2 && in_array(221, $rjOrder, true) && in_array(311, $rjOrder, true), true);
+$rjVideo = fn(int $ct) => db()->run("INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status) VALUES ('ukazka', ?, 'x.mp4', ?, 'popisek', 'published')", [$ct, sha1((string)$ct)]);
+$rjVideo($rjOrder[0] ?? 0);
+$rjAuto = $rjAdd('auto_pick', null);
+$rjC = $jobs->claim();
+check('auto_pick vybere nález bez videa', [$rjC['ct'] ?? null, (int)db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjAuto])], [$rjOrder[1] ?? -1, $rjOrder[1] ?? -1]);
+foreach (array_slice($rjOrder, 2) as $rjCt) {
+    $rjVideo($rjCt);
+}
+$rjAuto2 = $rjAdd('auto_pick', null);
+check('auto_pick bez volného nálezu se nevydá', $jobs->claim(), null);
+check('auto_pick bez volného nálezu → failed', [$rjStatus($rjAuto2)['status'], $rjStatus($rjAuto2)['error']], ['failed', 'není nález bez videa']);
+
+// fail: zpět do fronty při attempts < 3, jinak failed
+$rjReset();
+$rjF = $rjAdd('manual', 221);
+$rjC = $jobs->claim();
+check('fail při 1. pokusu → queued', $jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'render spadl'), 'queued');
+check('fail uloží chybu', $rjStatus($rjF)['error'], 'render spadl');
+$rjC = $jobs->claim();
+$jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'znovu');
+$rjC = $jobs->claim();
+check('3. pokus vydán', (int)$rjStatus($rjF)['attempts'], 3);
+check('fail při 3. pokusu → failed', $jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'potřetí'), 'failed');
+check('fail se starým tokenem nic nezmění', [$jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'x'), $rjStatus($rjF)['error']], ['conflict', 'potřetí']);
+
+// karta v2 a údaje claimu
+$rjReset();
+$rjAdd('manual', 221);
+$rjC = $jobs->claim();
+$card = $jobs->cardV2(221);
+$rjKeys = ['ct', 'nazev', 'faze', 'score', 'title', 'perex', 'quote', 'quote_source', 'verified', 'reasons', 'url', 'data_date'];
+check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_keys($card ?? []))), []);
+check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
+    [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
+check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
+check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk.php?ct=221', '2026-11-20']);
+check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
+check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
+check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
+check('claim: karta v2 přiložena', $rjC['card_v2']['ct'] ?? null, 221);
+check('claim: has_amendments při „Nahrazuje se“', $rjC['has_amendments'] ?? null, true);
+$rjReset();
+$rjAdd('manual', 311);
+check('has_amendments bez „nahrazuje se“', $jobs->claim()['has_amendments'] ?? null, false);
+check('karta v2 bez titulku → null', $jobs->cardV2(78), null);
+$rjNo = $rjAdd('manual', 78);
+check('úloha k tisku bez titulku se nevydá → failed', [$jobs->claim(), $rjStatus($rjNo)['status']], [null, 'failed']);
+
+// heartbeat: vložení i přepsání bez ON CONFLICT
+$jobs->heartbeat();
+$rjClock += 300;
+$jobs->heartbeat();
+check('heartbeat uloží čas workeru', [(int)db()->value('SELECT COUNT(*) FROM reel_state'),
+    strtotime((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_seen_at'"))], [1, $rjClock]);
+
+// úklid
+$rjReset();
+db()->run('DELETE FROM reel_state');
+db()->run('DELETE FROM tisk_text WHERE ct IN (90, 221, 311)');
+foreach ($rjTextBak as $rjRow) {
+    db()->insertMany('tisk_text', array_keys($rjRow), [$rjRow]);
+}
+foreach ($rjTiskBak as $rjRow) {
+    db()->run('UPDATE tisky SET score = ?, reasons = ?, lhuta = ? WHERE ct = ?', [$rjRow['score'], $rjRow['reasons'], $rjRow['lhuta'], $rjRow['ct']]);
+}
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

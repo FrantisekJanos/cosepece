@@ -497,7 +497,7 @@ def test_telegram_api_chyba_je_telegram_error(api):
 
 @pytest.mark.parametrize("missing", ["META_SYSTEM_TOKEN", "REELS_TELEGRAM_TOKEN", "REELS_TELEGRAM_CHAT_ID",
                                      "REELS_PUBLIC_BASE", "META_PAGE_ID", "META_IG_USER_ID"])
-def test_main_chybi_promenna(monkeypatch, capsys, missing):
+def test_main_bez_promennych_konci_chybou(monkeypatch, capsys, missing):
     from hlidac_reels import bot as botmod
     env = {
         "META_SYSTEM_TOKEN": "meta-secret", "META_PAGE_ID": "1", "META_IG_USER_ID": "2",

@@ -14,7 +14,7 @@ DirectoryIndex index.php
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteRule ^(app|bin|data|deploy|docker|rag|tests|podnety)(/|$) - [F,L]
+  RewriteRule ^(app|bin|data|deploy|docker|rag|reels|tests|podnety)(/|$) - [F,L]
   # soubory a adresáře začínající tečkou (.github, .dockerignore, .gitattributes…), kromě .well-known
   RewriteRule (^|/)\.(?!well-known/) - [F,L]
 </IfModule>

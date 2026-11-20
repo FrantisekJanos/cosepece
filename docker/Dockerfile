@@ -21,6 +21,19 @@ RUN a2enmod rewrite headers remoteip \
       > /etc/apache2/conf-enabled/remoteip.conf \
  && echo 'ServerTokens Prod' > /etc/apache2/conf-enabled/tokens.conf
 
+# Veřejné kopie videí pro Instagram (služba reels, volume reelsmedia připojený jen pro čtení mimo kořen webu):
+# /reels-media/<token>.mp4, nic jiného (výpis složky, jiné přípony, PHP) se nevydá.
+RUN { echo 'Alias /reels-media /srv/reels-media/public'; \
+      echo '<Directory /srv/reels-media/public>'; \
+      echo '  Options -Indexes'; echo '  AllowOverride None'; echo '  Require all denied'; \
+      echo '  <FilesMatch "^[A-Za-z0-9_-]+\.mp4$">'; echo '    Require all granted'; \
+      echo '    ForceType video/mp4'; echo '  </FilesMatch>'; \
+      echo '  <IfModule php_module>'; echo '    php_admin_flag engine off'; echo '  </IfModule>'; \
+      echo '  Header always set X-Content-Type-Options "nosniff"'; \
+      echo '  Header always set X-Robots-Tag "noindex"'; \
+      echo '</Directory>'; } \
+      > /etc/apache2/conf-enabled/reels-media.conf
+
 COPY . /var/www/html/
 RUN rm -rf /var/www/html/docker /var/www/html/.git \
  && mkdir -p /var/www/html/data && chown -R www-data:www-data /var/www/html/data

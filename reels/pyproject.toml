@@ -3,14 +3,14 @@ name = "hlidac-reels"
 version = "0.1.0"
 description = "Reels z hlavních nálezů Hlídače zákonů: render videa, fronta a Telegram bot"
 requires-python = ">=3.12"
+# kontejner (bot, reels-enqueue) potřebuje jen tyto; render videa běží lokálně: pip install -e ".[render,dev]"
 dependencies = [
-  "playwright==1.49.1",
   "psycopg[binary]==3.3.9",
   "httpx==0.28.1",
-  "numpy>=2.0",
 ]
 
 [project.optional-dependencies]
+render = ["playwright==1.49.1", "numpy>=2.0"]
 dev = ["pytest"]
 
 [project.scripts]

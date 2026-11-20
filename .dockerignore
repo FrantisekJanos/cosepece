@@ -15,3 +15,5 @@ secrets*
 tests/fixtures/
 .DS_Store
 rag/
+# služba reels má vlastní obraz (kontext ../reels); do obrazu webu nepatří
+reels/

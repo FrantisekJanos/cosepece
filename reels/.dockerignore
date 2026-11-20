@@ -1,0 +1,9 @@
+# do obrazu jen pyproject.toml a hlidac_reels/ (Dockerfile je kopíruje jmenovitě); zbytek nemusí do kontextu buildu
+.venv/
+.pytest_cache/
+**/__pycache__/
+*.egg-info/
+tests/
+*.mp4
+*.env
+.env

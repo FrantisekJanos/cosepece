@@ -13,14 +13,18 @@ VIDEO_CAPTION_LIMIT = 1024
 NO_LINK = "odkaz se nepodařilo načíst"
 THREADS_PREFIX = "Threads: "  # publish.run tak označí chybu Threads v reel.error
 REASON_LIMIT = 300
+LANDSCAPE_NOTE = "na šířku (Threads)"
 
 
-def video_caption(reel: Reel) -> str:
+def video_caption(reel: Reel, landscape: bool = False) -> str:
+    """Popisek videa v Telegramu; landscape=True u videa na šířku (dostane ho jen Threads)."""
     parts = [f"#{reel.id}"]
     if reel.ct is not None:
         parts.append(f"tisk {reel.ct}")
     if reel.format:
         parts.append(reel.format)
+    if landscape:
+        parts.append(LANDSCAPE_NOTE)
     return " · ".join(parts)[:VIDEO_CAPTION_LIMIT]
 
 
@@ -37,7 +41,9 @@ def _ig_block(reel: Reel) -> str:
 
 
 def _threads_block(reel: Reel) -> str:
-    return f"Threads:\n{for_network(reel.caption, reel.ct, 'threads')}"
+    # vlastník vidí, které video Threads dostane (šířku, když je, jinak 9:16)
+    shape = "na šířku" if reel.video_landscape_path else "na výšku"
+    return f"Threads (video {shape}):\n{for_network(reel.caption, reel.ct, 'threads')}"
 
 
 def _blocks(reel: Reel, threads: bool) -> list[str]:

@@ -34,6 +34,13 @@ ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_container_id text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_media_id     text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_permalink    text;
 
+-- Video na šířku 16:9 (2026-11-20): volitelné, pro Threads; FB a IG dostanou 9:16.
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS video_landscape_path      text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS video_landscape_sha256    text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS telegram_landscape_msg_id bigint;
+-- otisk šířky, která opravdu odešla do Telegramu (schválit jde jen ta, kterou vlastník viděl)
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS telegram_landscape_sha256 text;
+
 -- Drobný stav služby (např. offset Telegramu).
 CREATE TABLE IF NOT EXISTS reel_state (
     key   text PRIMARY KEY,

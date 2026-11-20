@@ -61,6 +61,10 @@ docker compose -f docker/docker-compose.yml exec reels \
 nezařadí dvakrát. `docker compose cp` ukládá soubory jako root, uživatel `app` je musí umět číst (práva aspoň 0644).
 Po zařazení je smaž: `docker compose -f docker/docker-compose.yml exec -u root reels rm /tmp/reel.mp4 /tmp/popisek.txt`.
 
+Volitelné video na šířku (16:9, H.264 + AAC, 3–90 s, do 50 MB) pro Threads: `reels-enqueue ... --video-landscape /tmp/reel-sirka.mp4`.
+Doplnit nebo vyměnit ho u položky, která je ještě `queued` nebo `pending`, jde příkazem
+`reels-add-landscape --id N --video /tmp/reel-sirka.mp4` (video na šířku, které už ve frontě je, se odmítne).
+
 ## Telegram
 
 Bot posílá do nastaveného chatu video ke schválení s popiskem a tlačítky:

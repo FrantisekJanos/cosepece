@@ -305,11 +305,15 @@ class FakeThreads:
         self.urls: list[str] = []
         self.texts: list[str] = []
         self.public_seen: list[tuple[str, bool]] = []
+        self.create_bytes: list[bytes | None] = []  # obsah souboru za URL při create_video
         self.found: tuple[str, str] | None = None
         self.find_args: list[tuple[str, datetime]] = []
 
     def _seen(self, step: str) -> None:
         name = self.urls[-1].rsplit("/", 1)[1]
+        if step == "create":
+            f = self.media_dir / "public" / name
+            self.create_bytes.append(f.read_bytes() if f.exists() else None)
         self.public_seen.append((step, (self.media_dir / "public" / name).exists()))
 
     def _call(self, name: str) -> None:
@@ -562,3 +566,58 @@ def test_chyba_threads_az_za_chybou_fb(conn, media_dir):
     r = _run_th(conn, meta, th, rid, media_dir)
     assert r.status == "failed"
     assert r.error == "(#100) chybný parametr; Threads: Invalid parameter; video_url"
+
+
+# --- video na šířku: Threads dostane vlastní kopii 16:9 ---
+
+def _approved_landscape(conn, media_dir: Path, missing: bool = False) -> int:
+    from hlidac_reels import queue
+    video = media_dir / "videos" / "v.mp4"
+    video.write_bytes(b"svisle")
+    wide = media_dir / "videos" / "w.mp4"
+    if not missing:
+        wide.write_bytes(b"naplocho")
+    rid = queue.add(conn, video_path=str(video), video_sha256="v1", caption="Popisek sirka", ct=5,
+                    video_landscape_path=str(wide), video_landscape_sha256="w1")
+    for a, b in [("queued", "pending"), ("pending", "approved")]:
+        assert queue.transition(conn, rid, a, b)
+    return rid
+
+
+def test_threads_dostane_sirku(conn, media_dir):
+    rid = _approved_landscape(conn, media_dir)
+    meta, th = FakeMeta(media_dir), FakeThreads(media_dir)
+    r = _run_th(conn, meta, th, rid, media_dir)
+    assert r.status == "published"
+    assert th.urls != meta.ig_urls and len(th.urls) == 1 and len(meta.ig_urls) == 1
+    assert th.create_bytes == [b"naplocho"]
+    assert list((media_dir / "public").iterdir()) == []
+
+
+def test_threads_bez_sirky_sdili_kopii(conn, media_dir):
+    rid = _approved(conn, media_dir)
+    meta, th = FakeMeta(media_dir), FakeThreads(media_dir)
+    _run_th(conn, meta, th, rid, media_dir)
+    assert th.urls == meta.ig_urls and len(th.urls) == 1
+    assert th.create_bytes == [b"fake mp4"]
+
+
+def test_chybejici_soubor_sirky_nezastavi_fb(conn, media_dir):
+    rid = _approved_landscape(conn, media_dir, missing=True)
+    meta, th = FakeMeta(media_dir), FakeThreads(media_dir)
+    r = _run_th(conn, meta, th, rid, media_dir)
+    assert r.fb_video_id == "V1" and r.ig_media_id == "M1"
+    assert r.status == "failed"
+    assert r.error.startswith("Threads: kopie videa pro Threads selhala")
+    assert th.calls["create_video"] == 0
+    assert list((media_dir / "public").iterdir()) == []
+
+
+def test_backfill_bere_sirku(conn, media_dir):
+    from hlidac_reels import publish, queue
+    rid = _approved_landscape(conn, media_dir)
+    th = FakeThreads(media_dir)
+    publish.publish_threads_only(conn, th, queue.get(conn, rid), media_dir=str(media_dir),
+                                 public_base=PUBLIC_BASE)
+    assert th.create_bytes == [b"naplocho"]
+    assert list((media_dir / "public").iterdir()) == []

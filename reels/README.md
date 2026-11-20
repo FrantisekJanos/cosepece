@@ -1,10 +1,11 @@
 # Reels (hlidac_reels)
 
-Krátká videa z hlavních nálezů Hlídače zákonů na Facebook a Instagram. Video se vyrenderuje lokálně,
+Krátká videa z hlavních nálezů Hlídače zákonů na Facebook, Instagram a Threads. Video se vyrenderuje lokálně,
 na serveru se zařadí do fronty a člověk ho v Telegramu schválí. Teprve potom ho bot zveřejní.
 
 - `reels-enqueue`: zkontroluje video (ffprobe), zkopíruje ho do `/media/videos/` a zařadí do fronty (tabulka v PostgreSQL webu).
-- `reels-bot`: pošle čekající video do Telegramu ke schválení, po schválení ho zveřejní na FB a IG a výsledek ohlásí.
+- `reels-bot`: pošle čekající video do Telegramu ke schválení, po schválení ho zveřejní na FB, IG a Threads (když je nastavené) a výsledek ohlásí.
+- `reels-threads-backfill --id N`: doplní na Threads položku, která už vyšla jen na FB a IG (viz Threads níže).
 - Render (`render.py`, Playwright a numpy) do kontejneru nepatří, běží lokálně: `pip install -e ".[render,dev]"`.
 
 ## Kontejner
@@ -13,7 +14,7 @@ Služba `reels` v `docker/docker-compose.yml` (obraz z `reels/Dockerfile`, vých
 Data jsou ve volume `reelsmedia`, v kontejneru `/media`:
 
 - `videos/`: videa ve frontě (název = sha256 obsahu),
-- `public/`: dočasná veřejná kopie pod náhodným tokenem, jen po dobu publikace na Instagram. Instagram si video
+- `public/`: dočasná veřejná kopie pod náhodným tokenem, jen po dobu publikace na Instagram a Threads. Obě sítě si video
   stahuje sám z veřejné adresy, proto web připojuje stejný volume jen pro čtení a vydává
   `https://cosepece.cz/reels-media/<token>.mp4` (jen soubory `*.mp4`, bez výpisu složky). Po publikaci se kopie smaže;
   `Cache-Control: no-store` brání tomu, aby ji CDN vydávala i potom.
@@ -37,6 +38,9 @@ Hodnoty patří jen do `docker/.env` na serveru (vzor `docker/.env.example`), ni
 | `REELS_TELEGRAM_CHAT_ID` | id soukromého chatu vlastníka s botem (číslo); skupina ne, tam by Schválit mohl zmáčknout kdokoli z členů |
 | `REELS_PUBLIC_BASE` | veřejná adresa složky s kopiemi, výchozí `https://cosepece.cz/reels-media` |
 | `REELS_MEDIA_DIR` | složka s daty, v kontejneru `/media` |
+| `THREADS_USER_ID` | id účtu Threads; prázdné = Threads vypnuté, bot publikuje jen na FB a IG |
+| `THREADS_TOKEN` | počáteční dlouhodobý token Threads, bot si ho při prvním startu uloží do databáze |
+| `THREADS_GRAPH_VERSION` | verze Threads API, výchozí `v1.0` |
 | `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | databáze webu (nastaví compose), lokálně stačí `DATABASE_URL` |
 
 Bez povinných proměnných bot skončí s chybou a vypíše, které chybí (hodnoty nevypisuje).
@@ -61,11 +65,12 @@ Po zařazení je smaž: `docker compose -f docker/docker-compose.yml exec -u roo
 
 Bot posílá do nastaveného chatu video ke schválení s popiskem a tlačítky:
 
-- **Schválit**: zveřejní video na FB i IG a pošle odkazy,
+- **Schválit**: zveřejní video na FB, IG a Threads a pošle odkazy (řádek za každou síť),
 - **Upravit popisek**: nový text se pošle jako odpověď na zprávu (funguje i odpověď přímo na video nebo náhled),
 - **Zamítnout**: video se nezveřejní,
 - **Zkusit znovu**: u položky, jejíž publikace selhala nebo skončila nejistě (nejdřív dohledá, co už na sítích je).
   Dohledání porovná prvních 80 znaků popisku a čas od odeslání ke schválení.
+  Když selže jen Threads, FB a IG zůstanou zveřejněné a Zkusit znovu zkusí jen Threads.
 
 Příkazy:
 
@@ -75,6 +80,39 @@ Příkazy:
 
 Nově zařazené video bot pošle sám do minuty. Video, které Telegram odmítne (např. přes 50 MB) nebo jehož soubor chybí,
 vyřadí (stav rejected) a ohlásí. Zprávy z jiných chatů bot ignoruje.
+
+## Threads
+
+Threads je volitelné: bez `THREADS_USER_ID` bot publikuje jen na FB a IG a o Threads nepíše. S ním ukáže náhled
+i blok „Threads:“ s přesným textem a po zveřejnění řádek Threads. Když Threads selže (třeba chybí nebo neplatí token),
+položka skončí `failed` s FB a IG venku, výsledek napíše „Threads: nepublikováno – důvod“ a nabídne Zkusit znovu.
+
+**Text pro Threads** (limit 500 znaků): první odstavec popisku (do prázdného řádku), zkrácený na celou větu do 440 znaků
+(když věta nestačí, na slovo a „…“), za ním `Celý rozbor: https://cosepece.cz/tisk.php?ct=N` (bez čísla tisku jen
+`https://cosepece.cz`). FB a IG dostávají celý popisek beze změny. Úprava popisku změní i text pro Threads.
+
+**Token:** dlouhodobý uživatelský token účtu Threads (60 dní) z jednorázového přihlášení OAuth. Do `docker/.env` patří
+`THREADS_USER_ID` a `THREADS_TOKEN`; bot si token při prvním startu uloží do tabulky `reel_state` (`threads_token`)
+a dál používá jen ten. Jednou denně zkontroluje stáří a token starší než 7 dní prodlouží (`th_refresh_token`).
+Když prodloužení selže, platí dosavadní token, bot pošle do Telegramu jednu zprávu a zkusí to další den.
+Token se nevypisuje do logu ani do zpráv. Nový token (třeba po vypršení) se nasadí smazáním uloženého
+a restartem bota s novým `THREADS_TOKEN`:
+
+```bash
+docker compose -f docker/docker-compose.yml exec db \
+  psql -U hlidac -d hlidac -c "DELETE FROM reel_state WHERE key LIKE 'threads_token%'"
+docker compose -f docker/docker-compose.yml up -d reels
+```
+
+**Doplnění starších videí:** položku, která vyšla jen na FB a IG (stav `published` bez Threads), doplní
+
+```bash
+docker compose -f docker/docker-compose.yml exec reels reels-threads-backfill --id N
+```
+
+Příkaz nejdřív dohledá, zda příspěvek na Threads už není (prvních 80 znaků textu, od času zveřejnění), a když je,
+jen uloží jeho id. Jinak video zveřejní jen na Threads přes dočasnou veřejnou kopii a vypíše odkaz. FB a IG se nedotkne
+a stav položky nemění. Jiný stav, položka už na Threads nebo chybějící `THREADS_USER_ID` či token = chyba s kódem 1.
 
 ## Testy
 

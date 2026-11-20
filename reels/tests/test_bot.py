@@ -780,3 +780,431 @@ def test_upravit_selhani_odeslani_nevyhodi(bot, conn, api, media_dir):
     api.fail["sendMessage"] = httpx.ConnectError("down")
     bot.handle(_cb(f"edit:{rid}"))  # nevyhodí
     assert "answerCallbackQuery" in api.methods()
+
+
+# --- Threads (náhled, výsledek, token, doplnění) -----------------------------
+
+TH_LINK = "https://www.threads.net/@cosepece/post/T1"
+
+
+class FakeThreads:
+    """Falešný klient Threads pro bota a doplnění (bez sítě)."""
+
+    def __init__(self, media_dir: Path | None = None):
+        self.calls: Counter[str] = Counter()
+        self.fail: dict[str, Exception] = {}
+        self.media_dir = media_dir
+        self.texts: list[str] = []
+        self.public_existed: list[bool] = []
+        self.found: tuple[str, str] | None = None
+        self.find_args: list = []
+        self.link = TH_LINK
+        self.refresh_result = ("novy-token-threads", 5_184_000)
+        self.refreshed: list[str] = []
+        self._known: set[str] = set()
+
+    def _call(self, name):
+        self.calls[name] += 1
+        if name in self.fail:
+            raise self.fail[name]
+
+    def create_video(self, video_url, text):
+        self.texts.append(text)
+        if self.media_dir is not None:
+            name = video_url.rsplit("/", 1)[1]
+            self.public_existed.append((self.media_dir / "public" / name).exists())
+        self._call("create_video")
+        return "TC1"
+
+    def wait(self, container_id, timeout=600, interval=10):
+        self._call("wait")
+
+    def publish(self, container_id):
+        self._call("publish")
+        return "T1", self.link
+
+    def find_recent(self, text_prefix, since):
+        self.find_args.append((text_prefix, since))
+        self._call("find_recent")
+        return self.found
+
+    def refresh_token(self, token):
+        self.refreshed.append(token)
+        self._call("refresh_token")
+        return self.refresh_result
+
+
+def _make_bot(conn, api, meta, media_dir, threads=None, env_token=None):
+    from hlidac_reels.bot import Bot
+    from hlidac_reels.telegram import Telegram
+    tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
+    return Bot(conn, tg, meta, CHAT, str(media_dir), PUBLIC_BASE, threads=threads,
+               threads_env_token=env_token)
+
+
+def _published(conn, media_dir, n=1):
+    """Položka zveřejněná jen na FB a IG (jako videa 1–3 před Threads)."""
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir, n)
+    now = datetime.now(timezone.utc)
+    assert queue.transition(conn, rid, "queued", "published", sent_at=now, published_at=now,
+                            ig_media_id="M1", ig_permalink="https://www.instagram.com/reel/M1/",
+                            fb_video_id="V1", fb_permalink="https://www.facebook.com/reel/V1")
+    return rid
+
+
+def _get_pending(conn):
+    from hlidac_reels import queue
+    return queue.by_status(conn, ("pending",))[0].id
+
+
+@pg
+def test_nahled_obsahuje_threads(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.caption import for_network
+    caption = "Sněmovna zkrátila lhůtu na 4 roky. Platí i zpětně.\n\nDruhý odstavec jen pro FB a IG."
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads())
+    rid = _add(conn, media_dir, caption=caption)
+    bot.send_next()
+    text = api.sent()[-1]["text"]
+    assert "Threads:\n" + for_network(caption, 221, "threads") in text
+    assert text.index("Instagram") < text.index("Threads:")
+    assert _buttons(api.sent()[-1]) == [f"ok:{rid}", f"edit:{rid}", f"no:{rid}"]
+    # úprava popisku změní i text pro Threads
+    bot.handle(_msg("Nový text.", reply_to=queue.get(conn, rid).telegram_msg_id))
+    assert "Threads:\n" + for_network("Nový text.", 221, "threads") in api.sent()[-1]["text"]
+
+
+@pg
+def test_vysledek_tri_odkazy(conn, api, meta, media_dir):
+    import dataclasses
+    from hlidac_reels.messages import result_text
+    th = FakeThreads(media_dir)
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    bot.handle(_cb(f"ok:{rid}"))
+    r = _get(conn, rid)
+    assert r.status == "published" and r.threads_media_id == "T1"
+    last = api.sent()[-1]
+    lines = last["text"].splitlines()
+    assert "Facebook: https://www.facebook.com/reel/V1" in lines
+    assert "Instagram: https://www.instagram.com/reel/M1/" in lines
+    assert f"Threads: {TH_LINK}" in lines
+    assert not _buttons(last)
+    assert th.calls["create_video"] == 1
+    # prázdný odkaz Threads
+    text = result_text(dataclasses.replace(r, threads_permalink=""), threads=True)
+    assert "Threads: odkaz se nepodařilo načíst" in text.splitlines()
+
+
+@pg
+def test_vysledek_threads_chyba_s_tlacitkem(conn, api, meta, media_dir):
+    from hlidac_reels.threads import ThreadsError
+    th = FakeThreads(media_dir)
+    th.fail["create_video"] = ThreadsError("Invalid parameter (video_url)", status=400)
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    bot.handle(_cb(f"ok:{rid}"))
+    r = _get(conn, rid)
+    assert r.status == "failed" and r.fb_video_id == "V1" and r.ig_media_id == "M1"
+    last = api.sent()[-1]
+    lines = last["text"].splitlines()
+    assert "Facebook: https://www.facebook.com/reel/V1" in lines
+    assert "Instagram: https://www.instagram.com/reel/M1/" in lines
+    assert "Threads: nepublikováno – Invalid parameter (video_url)" in lines
+    assert _buttons(last) == [f"retry:{rid}"]
+    # Zkusit znovu: nejdřív dohledá, pak publikuje jen Threads
+    del th.fail["create_video"]
+    bot.handle(_cb(f"retry:{rid}"))
+    r = _get(conn, rid)
+    assert r.status == "published" and r.threads_media_id == "T1"
+    assert th.calls["find_recent"] == 1 and th.calls["create_video"] == 2
+    assert meta.calls["fb_upload_reel"] == 1 and meta.calls["ig_create"] == 1
+    assert f"Threads: {TH_LINK}" in api.sent()[-1]["text"].splitlines()
+
+
+@pg
+def test_threads_bez_tokenu_selze_viditelne(conn, api, meta, media_dir):
+    """THREADS_USER_ID je, token chybí: FB a IG vyjdou, Threads failed s tlačítkem, API se nevolá."""
+    from hlidac_reels import bot as botmod
+    from hlidac_reels.threads import Threads
+
+    def no_network(request):
+        pytest.fail("bez tokenu se Threads API nesmí volat")
+    th = Threads("TH_USER", lambda: botmod.threads_token(conn),
+                 client=httpx.Client(transport=httpx.MockTransport(no_network)))
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    _add(conn, media_dir)
+    bot.start()
+    rid = _get_pending(conn)
+    bot.handle(_cb(f"ok:{rid}"))
+    r = _get(conn, rid)
+    assert r.status == "failed" and r.fb_video_id == "V1" and r.ig_media_id == "M1"
+    last = api.sent()[-1]
+    assert any(line.startswith("Threads: nepublikováno – chybí token Threads")
+               for line in last["text"].splitlines())
+    assert _buttons(last) == [f"retry:{rid}"]
+
+
+@pg
+def test_threads_neni_nastavene_bot_bezi(conn, api, meta, media_dir, monkeypatch):
+    from hlidac_reels import publish, queue
+    seen = []
+    real_run = publish.run
+
+    def spy(*a, **kw):
+        seen.append(kw.get("threads", "chybí"))
+        return real_run(*a, **kw)
+    monkeypatch.setattr(publish, "run", spy)
+    bot = _make_bot(conn, api, meta, media_dir, threads=None, env_token="tok-bez-uzivatele")
+    rid = _add(conn, media_dir)
+    bot.start()
+    assert "Threads" not in api.sent()[-1]["text"]
+    bot.handle(_cb(f"ok:{rid}"))
+    assert seen == [None]
+    assert _get(conn, rid).status == "published"
+    assert "Threads" not in api.sent()[-1]["text"]
+    # bez THREADS_USER_ID se token neukládá ani neprodlužuje
+    bot.maybe_refresh_threads_token()
+    assert queue.get_state(conn, "threads_token") is None
+
+
+def _main_env(monkeypatch, **extra):
+    env = {"META_SYSTEM_TOKEN": "m", "META_PAGE_ID": "1", "META_IG_USER_ID": "2",
+           "REELS_TELEGRAM_TOKEN": TOKEN, "REELS_TELEGRAM_CHAT_ID": "4242",
+           "REELS_PUBLIC_BASE": PUBLIC_BASE}
+    for k in ("THREADS_USER_ID", "THREADS_TOKEN", "THREADS_GRAPH_VERSION"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in {**env, **extra}.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_main_threads_jen_s_user_id(monkeypatch):
+    from hlidac_reels import bot as botmod
+    from hlidac_reels.threads import Threads
+    made = []
+    monkeypatch.setattr(botmod.db, "connect", lambda: object())
+    monkeypatch.setattr(botmod.Bot, "loop", lambda self: made.append(self))
+    _main_env(monkeypatch)
+    botmod.main()
+    assert made[-1].threads is None
+    _main_env(monkeypatch, THREADS_USER_ID="TH_USER", THREADS_TOKEN="env-token-threads")
+    botmod.main()
+    b = made[-1]
+    assert isinstance(b.threads, Threads) and b.threads.version == "v1.0"
+    assert b.threads_env_token == "env-token-threads"
+    assert "env-token-threads" in b._secrets
+    _main_env(monkeypatch, THREADS_USER_ID="TH_USER", THREADS_GRAPH_VERSION="v2.0")
+    botmod.main()
+    assert made[-1].threads.version == "v2.0" and made[-1].threads_env_token is None
+
+
+@pg
+def test_token_z_env_do_state(conn, api, meta, media_dir):
+    from datetime import datetime
+    from hlidac_reels import bot as botmod
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads(), env_token="env-tok")
+    assert botmod.threads_token(conn) == ""
+    bot.start()
+    assert queue.get_state(conn, "threads_token") == "env-tok"
+    assert botmod.threads_token(conn) == "env-tok"
+    stamp = datetime.fromisoformat(queue.get_state(conn, "threads_token_refreshed_at"))
+    assert stamp.tzinfo is not None
+    # uložený (třeba prodloužený) token env nepřepíše
+    queue.set_state(conn, "threads_token", "prodlouzeny")
+    bot2 = _make_bot(conn, api, meta, media_dir, threads=FakeThreads(), env_token="env-tok")
+    bot2.start()
+    assert botmod.threads_token(conn) == "prodlouzeny"
+    assert "env-tok" not in " ".join(api.texts()) and "prodlouzeny" not in " ".join(api.texts())
+
+
+def _set_token(conn, token, age_days, now):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    queue.set_state(conn, "threads_token", token)
+    queue.set_state(conn, "threads_token_refreshed_at", (now - timedelta(days=age_days)).isoformat())
+
+
+@pg
+def test_refresh_tokenu_jednou_denne(conn, api, meta, media_dir, caplog):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    th = FakeThreads()
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    now = [datetime(2026, 11, 20, 8, 0, tzinfo=timezone.utc)]
+    bot.now = lambda: now[0]
+    # mladší než 7 dní: nic
+    _set_token(conn, "stary-token-threads", 6, now[0])
+    bot.maybe_refresh_threads_token()
+    assert th.calls["refresh_token"] == 0
+    # starší než 7 dní: prodlouží jednou
+    caplog.set_level(logging.DEBUG)
+    _set_token(conn, "stary-token-threads", 8, now[0])
+    bot.maybe_refresh_threads_token()
+    bot.maybe_refresh_threads_token()
+    assert th.refreshed == ["stary-token-threads"]
+    assert queue.get_state(conn, "threads_token") == "novy-token-threads"
+    assert datetime.fromisoformat(queue.get_state(conn, "threads_token_refreshed_at")) == now[0]
+    # za den je token pořád mladý: nic
+    now[0] += timedelta(days=1, minutes=1)
+    bot.maybe_refresh_threads_token()
+    assert th.calls["refresh_token"] == 1
+    assert "novy-token-threads" not in caplog.text and "stary-token-threads" not in caplog.text
+    assert api.texts() == []  # úspěch je tichý
+
+
+@pg
+def test_refresh_chyba_upozorni_jednou(conn, api, meta, media_dir, caplog):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    from hlidac_reels.threads import ThreadsError
+    th = FakeThreads()
+    th.fail["refresh_token"] = ThreadsError(
+        "Error validating access token stary-token-threads", status=400)
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    now = [datetime(2026, 11, 20, 8, 0, tzinfo=timezone.utc)]
+    bot.now = lambda: now[0]
+    _set_token(conn, "stary-token-threads", 10, now[0])
+    caplog.set_level(logging.DEBUG)
+    for _ in range(3):
+        bot.maybe_refresh_threads_token()
+        now[0] += timedelta(hours=2)
+    assert th.calls["refresh_token"] == 1
+    warn = [t for t in api.texts() if "Threads" in t]
+    assert len(warn) == 1 and "prodloužení" in warn[0].lower()
+    assert "stary-token-threads" not in warn[0] and "stary-token-threads" not in caplog.text
+    assert queue.get_state(conn, "threads_token") == "stary-token-threads"
+    # další den nový pokus a nejvýš jedna další zpráva
+    now[0] += timedelta(days=1)
+    bot.maybe_refresh_threads_token()
+    bot.maybe_refresh_threads_token()
+    assert th.calls["refresh_token"] == 2
+    assert len([t for t in api.texts() if "Threads" in t]) == 2
+
+
+@pg
+def test_refresh_bezi_ve_smycce(conn, api, meta, media_dir):
+    from datetime import datetime, timezone
+    th = FakeThreads()
+    bot = _make_bot(conn, api, meta, media_dir, threads=th)
+    now = datetime(2026, 11, 20, 8, 0, tzinfo=timezone.utc)
+    bot.now = lambda: now
+    _set_token(conn, "stary-token-threads", 30, now)
+
+    class Stop(Exception):
+        pass
+    api.fail["getUpdates"] = httpx.ConnectError("down")
+
+    def sleep(s):
+        raise Stop
+    with pytest.raises(Stop):
+        bot.loop(sleep=sleep)
+    assert th.calls["refresh_token"] == 1
+
+
+# --- reels-threads-backfill --------------------------------------------------
+
+def _backfill(monkeypatch, media_dir, th, argv, token="tok-threads-env", user="TH_USER"):
+    from hlidac_reels import backfill
+    for k in ("THREADS_USER_ID", "THREADS_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    if user:
+        monkeypatch.setenv("THREADS_USER_ID", user)
+    if token:
+        monkeypatch.setenv("THREADS_TOKEN", token)
+    monkeypatch.setenv("REELS_MEDIA_DIR", str(media_dir))
+    monkeypatch.setenv("REELS_PUBLIC_BASE", PUBLIC_BASE)
+    made = []
+
+    def factory(user_id, token_provider, version="v1.0", **kw):
+        made.append((user_id, token_provider(), version))
+        return th
+    monkeypatch.setattr(backfill, "Threads", factory)
+    return backfill.main(argv), made
+
+
+def _public_files(media_dir):
+    public = media_dir / "public"
+    return list(public.iterdir()) if public.is_dir() else []
+
+
+@pg
+def test_backfill_publikuje_jen_threads(conn, media_dir, monkeypatch, capsys):
+    from hlidac_reels.caption import for_network
+    rid = _published(conn, media_dir)
+    th = FakeThreads(media_dir)
+    code, made = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+    assert code == 0
+    assert made == [("TH_USER", "tok-threads-env", "v1.0")]
+    r = _get(conn, rid)
+    assert r.status == "published" and r.threads_media_id == "T1" and r.threads_permalink == TH_LINK
+    assert r.fb_video_id == "V1" and r.ig_media_id == "M1"
+    assert th.calls["find_recent"] == 1 and th.calls["create_video"] == 1 and th.calls["publish"] == 1
+    assert th.texts == [for_network(r.caption, 221, "threads")]
+    assert th.find_args[0] == (th.texts[0][:80], r.published_at)
+    # veřejná kopie existovala při vytvoření kontejneru a pak zmizela
+    assert th.public_existed == [True]
+    assert _public_files(media_dir) == []
+    out = capsys.readouterr()
+    assert TH_LINK in out.out and "tok-threads-env" not in out.out + out.err
+    # druhé spuštění nic nezveřejní
+    code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+    assert code == 1 and th.calls["create_video"] == 1
+
+
+@pg
+def test_backfill_najde_existujici(conn, media_dir, monkeypatch, capsys):
+    from hlidac_reels import queue
+    rid = _published(conn, media_dir)
+    queue.set_state(conn, "threads_token", "tok-ze-state")
+    th = FakeThreads(media_dir)
+    th.found = ("T9", "https://www.threads.net/@cosepece/post/T9")
+    code, made = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)], token="tok-env")
+    assert code == 0
+    assert made[0][1] == "tok-ze-state"  # token z reel_state má přednost (může být prodloužený)
+    r = _get(conn, rid)
+    assert r.status == "published" and r.threads_media_id == "T9"
+    assert th.calls["create_video"] == 0
+    assert _public_files(media_dir) == []
+    assert "post/T9" in capsys.readouterr().out
+
+
+@pg
+def test_backfill_odmitne_neschvalene(conn, media_dir, monkeypatch, capsys):
+    from hlidac_reels import queue
+    th = FakeThreads(media_dir)
+    pending = _add(conn, media_dir, 1)
+    queue.transition(conn, pending, "queued", "pending")
+    failed = _add(conn, media_dir, 2)
+    queue.transition(conn, failed, "queued", "failed", fb_video_id="V2")
+    for rid in (pending, failed, 999):
+        code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+        assert code == 1
+    assert sum(th.calls.values()) == 0
+    assert _get(conn, pending).status == "pending" and _get(conn, failed).status == "failed"
+    assert "published" in capsys.readouterr().err
+    # chybí konfigurace Threads
+    rid = _published(conn, media_dir, 3)
+    code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)], user=None)
+    assert code == 1 and "THREADS_USER_ID" in capsys.readouterr().err
+    code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)], token=None)
+    assert code == 1 and "token" in capsys.readouterr().err.lower()
+    assert sum(th.calls.values()) == 0
+
+
+@pg
+def test_backfill_chyba_threads_kod_1_a_uklid(conn, media_dir, monkeypatch, capsys):
+    from hlidac_reels.threads import ThreadsError
+    rid = _published(conn, media_dir)
+    th = FakeThreads(media_dir)
+    th.fail["wait"] = ThreadsError("kontejner Threads TC1 skončil ve stavu ERROR", status=400)
+    code, _ = _backfill(monkeypatch, media_dir, th, ["--id", str(rid)])
+    assert code == 1
+    r = _get(conn, rid)
+    assert r.status == "published" and r.threads_media_id is None and r.threads_container_id == "TC1"
+    assert _public_files(media_dir) == []
+    assert "ERROR" in capsys.readouterr().err

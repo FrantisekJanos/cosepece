@@ -66,7 +66,7 @@ services:
       - "${MCP_BIND:-127.0.0.1:8102}:8000"
     depends_on: [db]
 
-  # Reels: Telegram bot pro schválení a publikaci na FB a IG; video do fronty dá reels-enqueue (viz reels/README.md)
+  # Reels: Telegram bot pro schválení a publikaci na FB, IG a Threads; video do fronty dá reels-enqueue (viz reels/README.md)
   reels:
     build:
       context: ../reels
@@ -85,6 +85,10 @@ services:
       REELS_TELEGRAM_CHAT_ID: ${REELS_TELEGRAM_CHAT_ID:-}
       REELS_PUBLIC_BASE: ${REELS_PUBLIC_BASE:-https://cosepece.cz/reels-media}
       REELS_MEDIA_DIR: /media
+      # Threads (volitelné): bez THREADS_USER_ID bot publikuje jen na FB a IG
+      THREADS_USER_ID: ${THREADS_USER_ID:-}
+      THREADS_TOKEN: ${THREADS_TOKEN:-}
+      THREADS_GRAPH_VERSION: ${THREADS_GRAPH_VERSION:-v1.0}
     volumes:
       - reelsmedia:/media
     mem_limit: 256m

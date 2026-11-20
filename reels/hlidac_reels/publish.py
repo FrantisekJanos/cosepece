@@ -100,6 +100,27 @@ def _publish_threads(conn, threads, reel: Reel, video_url: str) -> None:
     queue.set_fields(conn, reel.id, threads_media_id=media_id, threads_permalink=permalink)
 
 
+# --- jen Threads (reels-threads-backfill: doplnění k položce už zveřejněné na FB a IG) ---
+
+def find_threads(threads, reel: Reel, since: datetime) -> tuple[str, str] | None:
+    """Dohledá příspěvek položky na Threads (stejný prefix textu jako dohledání před opakováním)."""
+    return threads.find_recent(_threads_text(reel)[:PREFIX_LEN], since)
+
+
+def publish_threads_only(conn, threads, reel: Reel, *, media_dir: str, public_base: str) -> None:
+    """Zveřejní položku jen na Threads; veřejná kopie videa se smaže i po chybě. Stav se nemění."""
+    video_url, public_file = _public_copy(conn, reel, media_dir, public_base, "Threads")
+    try:
+        _publish_threads(conn, threads, reel, video_url)
+    finally:
+        public_file.unlink(missing_ok=True)
+
+
+def error_text(e: Exception) -> str:
+    """Text chyby kroku publikace bez tajemství (u neznámé výjimky jen její typ)."""
+    return _outcome(e)[1]
+
+
 def _publish_fb(conn, meta, reel: Reel) -> None:
     video_id, permalink = meta.fb_upload_reel(reel.video_path, for_network(reel.caption, reel.ct, "fb"))
     queue.set_fields(conn, reel.id, fb_video_id=video_id, fb_permalink=permalink)

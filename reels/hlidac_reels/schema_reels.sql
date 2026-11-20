@@ -1,4 +1,4 @@
--- Fronta reelů k publikaci (Telegram schválení, Instagram a Facebook).
+-- Fronta reelů k publikaci (Telegram schválení, Instagram, Facebook a Threads).
 CREATE TABLE IF NOT EXISTS reel_queue (
     id                     bigserial PRIMARY KEY,
     source                 text NOT NULL DEFAULT 'ukazka',
@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS reel_queue (
     UNIQUE (public_token)
 );
 CREATE INDEX IF NOT EXISTS reel_queue_status_idx ON reel_queue (status, id);
+
+-- Threads (2026-11-20): v produkci už tabulka existuje, sloupce se doplní na konec.
+-- Pořadí sloupců nevadí, queue.py vybírá sloupce jménem (stejné pořadí jako pole Reel).
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_container_id text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_media_id     text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS threads_permalink    text;
 
 -- Drobný stav služby (např. offset Telegramu).
 CREATE TABLE IF NOT EXISTS reel_state (

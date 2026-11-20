@@ -4,6 +4,10 @@ Zásady: obsluhuje se jen chat REELS_TELEGRAM_CHAT_ID (cokoli jiného se zahodí
 nic se nezveřejní bez tlačítka Schválit, ke schválení čeká nejvýš jedna položka (kromě /dalsi),
 offset Telegramu se ukládá po každé zpracované zprávě, takže restart žádné tlačítko nezopakuje.
 Tokeny se nikam nevypisují.
+
+Threads je volitelné: bez THREADS_USER_ID je threads=None a bot o Threads nepíše. Token Threads
+drží reel_state (threads_token); při startu se naplní z THREADS_TOKEN, když tam ještě není,
+a smyčka ho prodlužuje (nejvýš jeden pokus denně, když je starší než 7 dní).
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ from .messages import (approval_buttons, preview_parts, preview_text, result_tex
 from .meta import Meta
 from .queue import Reel
 from .telegram import Telegram, TelegramError
+from .threads import Threads
 
 log = logging.getLogger("hlidac_reels.bot")
 
@@ -36,12 +41,41 @@ STALE_PUBLISHING = timedelta(minutes=15)
 DB_LOST_EXIT = 3
 INTERRUPTED = "přerušeno před zveřejněním"
 EDIT_HINT = "Uprav a pošli jako odpověď na tuto zprávu."
+THREADS_TOKEN_KEY = "threads_token"
+THREADS_REFRESHED_KEY = "threads_token_refreshed_at"
+THREADS_TRIED_KEY = "threads_token_refresh_tried_at"
+THREADS_REFRESH_AGE = timedelta(days=7)
+THREADS_REFRESH_RETRY = timedelta(days=1)
+PREVIEW_THREADS_KEY = "preview_has_threads"
 HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.")
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _parse_time(value: str | None) -> datetime | None:
+    """Čas z reel_state; neplatný = None, bez časové zóny = UTC (ručně zapsaná hodnota)."""
+    try:
+        t = datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+    return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
+
+
+def threads_token(conn) -> str:
+    """Aktuální token Threads z reel_state ("" = chybí); token_provider pro Threads."""
+    return queue.get_state(conn, THREADS_TOKEN_KEY) or ""
+
+
+def seed_threads_token(conn, env_token: str | None, now: datetime) -> bool:
+    """Počáteční token z THREADS_TOKEN do reel_state, jen když tam žádný není (prodloužený se nepřepíše)."""
+    if not env_token or threads_token(conn):
+        return False
+    queue.set_state(conn, THREADS_TOKEN_KEY, env_token)
+    queue.set_state(conn, THREADS_REFRESHED_KEY, now.isoformat())
+    return True
 
 
 def _num(n: int) -> str:
@@ -53,7 +87,8 @@ def _num(n: int) -> str:
 
 class Bot:
     def __init__(self, conn, tg: Telegram, meta: Meta, chat_id: int, media_dir: str, public_base: str,
-                 secrets: tuple[str, ...] = ()):
+                 secrets: tuple[str, ...] = (), threads: Threads | None = None,
+                 threads_env_token: str | None = None):
         self.conn = conn
         self.tg = tg
         self.meta = meta
@@ -62,12 +97,20 @@ class Bot:
         self.public_base = public_base
         self._secrets = tuple(s for s in (*secrets, getattr(tg, "_token", None)) if s)
         self.clock: Callable[[], float] = time.monotonic
+        self.now: Callable[[], datetime] = _now
         self._next_send_check = float("-inf")
+        # None = Threads není nastavené (bez THREADS_USER_ID)
+        self.threads = threads
+        self.threads_env_token = threads_env_token or None
 
     def _safe(self, exc: BaseException) -> str:
         """Popis výjimky pro log a zprávy bez tokenů."""
-        text = f"{type(exc).__name__}: {exc}"
-        for s in self._secrets:
+        return self._scrub(f"{type(exc).__name__}: {exc}")
+
+    def _scrub(self, text: str, *extra: str) -> str:
+        """Text bez známých tokenů (env, Telegram, Meta a tokeny, které viděl klient Threads)."""
+        known = (*self._secrets, *extra, *getattr(self.threads, "_known", ()))
+        for s in sorted({s for s in known if s}, key=len, reverse=True):
             text = text.replace(s, "***")
         return text
 
@@ -150,9 +193,10 @@ class Bot:
 
     def _publish(self, reel_id: int, fn: Callable[..., Reel]) -> None:
         self._say("Zveřejňuji…")
-        reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base)
+        reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base,
+                  threads=self.threads)
         buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
-        self._say(result_text(reel), buttons)
+        self._say(self._scrub(result_text(reel, threads=self.threads is not None)), buttons)
         self._safe_send_next()
 
     def _reject(self, reel_id: int, cb_id, msg_id) -> None:
@@ -204,9 +248,7 @@ class Bot:
         for reel in queue.by_status(self.conn, ("pending", "failed", "unknown", "approved", "publishing")):
             head = f"{video_caption(reel)} · {reel.status}"
             if reel.status == "pending":
-                preview_id = self._try("náhled", self._send_preview, reel)
-                if preview_id:
-                    queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+                self._resend_preview(reel)
             elif reel.status == "approved":
                 self._say(f"{head} · čeká na restart bota")
             elif reel.status == "publishing":
@@ -216,6 +258,34 @@ class Bot:
             else:
                 error = (reel.error or "")[:300]
                 self._say(head + (f"\nChyba: {error}" if error else ""), retry_buttons(reel.id))
+
+    def _resend_preview(self, reel: Reel) -> bool:
+        """Nový náhled čekající položky s tlačítky; starý náhled přijde o tlačítka (ukazoval jiný text).
+
+        Když se nový náhled nepošle, nic se nemění a starý si tlačítka nechá.
+        """
+        preview_id = self._try("náhled", self._send_preview, reel)
+        if not preview_id:
+            return False
+        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+        if reel.telegram_msg_id and reel.telegram_msg_id != preview_id:
+            self._drop_buttons(reel.telegram_msg_id)
+        return True
+
+    def _refresh_previews_for_threads(self) -> None:
+        """Po zapnutí Threads: čekající položky dostanou nový náhled i s textem pro Threads.
+
+        Starý náhled (bez Threads) přijde o tlačítka, aby Schválit nezveřejnil text, který vlastník
+        neviděl. Proběhne jednou (reel_state preview_has_threads); když se některý náhled nepošle,
+        zkusí se to při dalším startu znovu.
+        """
+        if self.threads is None or queue.get_state(self.conn, PREVIEW_THREADS_KEY) == "1":
+            return
+        ok = True
+        for reel in queue.by_status(self.conn, ("pending",)):
+            ok = self._resend_preview(reel) and ok
+        if ok:
+            queue.set_state(self.conn, PREVIEW_THREADS_KEY, "1")
 
     def _reel_for_reply(self, target: int) -> Reel | None:
         mapped = queue.get_state(self.conn, f"edit_msg:{target}")
@@ -254,7 +324,7 @@ class Bot:
 
     def _send_preview(self, reel: Reel) -> int:
         """Pošle náhled popisku, tlačítka u poslední zprávy; vrací id zprávy s tlačítky."""
-        parts = preview_parts(reel)
+        parts = preview_parts(reel, threads=self.threads is not None)
         msg_id = 0
         for i, part in enumerate(parts):
             last = i == len(parts) - 1
@@ -333,8 +403,44 @@ class Bot:
                 except OSError as e:
                     log.warning("nelze smazat %s: %s", f.name, type(e).__name__)
 
+    # --- token Threads ---------------------------------------------------
+
+    def maybe_refresh_threads_token(self) -> None:
+        """Prodloužení tokenu Threads: když je starší než 7 dní, nejvýš jeden pokus za den.
+
+        Čas pokusu se uloží před voláním API, takže selhání (i opakované restarty) znamená nejvýš
+        jeden pokus a jednu zprávu v Telegramu denně. Při chybě zůstává dosavadní token.
+        """
+        if self.threads is None:
+            return
+        token = threads_token(self.conn)
+        if not token:
+            return
+        now = self.now()
+        refreshed = _parse_time(queue.get_state(self.conn, THREADS_REFRESHED_KEY))
+        if refreshed is not None and now - refreshed < THREADS_REFRESH_AGE:
+            return
+        tried = _parse_time(queue.get_state(self.conn, THREADS_TRIED_KEY))
+        if tried is not None and now - tried < THREADS_REFRESH_RETRY:
+            return
+        queue.set_state(self.conn, THREADS_TRIED_KEY, now.isoformat())
+        try:
+            new_token, expires_in = self.threads.refresh_token(token)
+        except Exception as e:  # noqa: BLE001 – chyba prodloužení nesmí zastavit bota
+            reason = self._scrub(getattr(e, "message", None) or type(e).__name__, token)[:300]
+            log.warning("prodloužení tokenu Threads selhalo: %s", reason)
+            self._say(f"Prodloužení tokenu Threads selhalo: {reason}\n"
+                      "Platí dosavadní token, další pokus zítra. Když token vyprší, na Threads se přestane "
+                      "zveřejňovat (FB a IG poběží dál).")
+            return
+        queue.set_state(self.conn, THREADS_TOKEN_KEY, new_token)
+        queue.set_state(self.conn, THREADS_REFRESHED_KEY, now.isoformat())
+        log.info("token Threads prodloužen, platnost %d dní", expires_in // 86400)
+
     def start(self) -> None:
         db.migrate(self.conn)
+        if self.threads is not None and seed_threads_token(self.conn, self.threads_env_token, self.now()):
+            log.info("token Threads převzat z THREADS_TOKEN")
         for reel_id in queue.recover_after_restart(self.conn):
             self._say(f"#{reel_id}: publikaci přerušil restart, výsledek je nejistý. "
                       "Zkusit znovu nejdřív dohledá, co už na sítích je.", retry_buttons(reel_id))
@@ -344,6 +450,7 @@ class Bot:
             if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
                 self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
                           retry_buttons(reel.id))
+        self._refresh_previews_for_threads()
         self._clean_public()
         self._safe_send_next()
 
@@ -379,6 +486,7 @@ class Bot:
                     self.start()
                     started = True
                 self.maybe_send_next()
+                self.maybe_refresh_threads_token()
                 self.poll_once()
             except Exception as e:  # noqa: BLE001
                 if self._db_lost(e):
@@ -415,10 +523,18 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     meta_token, tg_token = env["META_SYSTEM_TOKEN"], env["REELS_TELEGRAM_TOKEN"]
+    threads_env_token = env.get("THREADS_TOKEN") or ""
     meta = Meta(meta_token, env["META_PAGE_ID"], env["META_IG_USER_ID"],
                 version=env.get("META_GRAPH_VERSION") or "v23.0")
-    bot = Bot(db.connect(), Telegram(tg_token), meta, chat_id,
+    conn = db.connect()
+    threads = None
+    if env.get("THREADS_USER_ID"):
+        # i bez platného tokenu: Threads pak viditelně selže (failed + Zkusit znovu), FB a IG vyjdou
+        threads = Threads(env["THREADS_USER_ID"], lambda: threads_token(conn),
+                          version=env.get("THREADS_GRAPH_VERSION") or "v1.0")
+    bot = Bot(conn, Telegram(tg_token), meta, chat_id,
               env.get("REELS_MEDIA_DIR") or "/media", env["REELS_PUBLIC_BASE"],
-              secrets=(meta_token, tg_token))
-    log.info("bot běží, chat %s", chat_id)
+              secrets=(meta_token, tg_token, threads_env_token), threads=threads,
+              threads_env_token=threads_env_token)
+    log.info("bot běží, chat %s, Threads %s", chat_id, "zapnuté" if threads else "vypnuté")
     bot.loop()

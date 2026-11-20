@@ -15,7 +15,16 @@ API = "https://api.telegram.org"
 
 
 class TelegramError(Exception):
-    """Chyba Bot API nebo spojení; text neobsahuje token ani URL."""
+    """Chyba Bot API nebo spojení; text neobsahuje token ani URL. status = HTTP kód, None = bez odpovědi."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def rejected(self) -> bool:
+        """Telegram požadavek odmítl (4xx kromě 429): opakování nepomůže."""
+        return self.status is not None and 400 <= self.status < 500 and self.status != 429
 
 
 def _markup(buttons: list[tuple[str, str]] | None) -> dict[str, Any]:
@@ -52,7 +61,8 @@ class Telegram:
             body = None
         if not isinstance(body, dict) or not body.get("ok"):
             desc = body.get("description") if isinstance(body, dict) else None
-            raise TelegramError(self._clean(f"{method}: HTTP {resp.status_code}: {desc or 'neznámá chyba'}"))
+            raise TelegramError(self._clean(f"{method}: HTTP {resp.status_code}: {desc or 'neznámá chyba'}"),
+                                status=resp.status_code)
         return body.get("result")
 
     def get_updates(self, offset: int, timeout: int = 50) -> list[dict]:

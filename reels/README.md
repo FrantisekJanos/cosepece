@@ -34,7 +34,7 @@ Hodnoty patří jen do `docker/.env` na serveru (vzor `docker/.env.example`), ni
 | `META_IG_USER_ID` | id účtu Instagram |
 | `META_GRAPH_VERSION` | verze Graph API, výchozí `v23.0` |
 | `REELS_TELEGRAM_TOKEN` | token Telegram bota |
-| `REELS_TELEGRAM_CHAT_ID` | id chatu pro schvalování (číslo) |
+| `REELS_TELEGRAM_CHAT_ID` | id soukromého chatu vlastníka s botem (číslo); skupina ne, tam by Schválit mohl zmáčknout kdokoli z členů |
 | `REELS_PUBLIC_BASE` | veřejná adresa složky s kopiemi, výchozí `https://cosepece.cz/reels-media` |
 | `REELS_MEDIA_DIR` | složka s daty, v kontejneru `/media` |
 | `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | databáze webu (nastaví compose), lokálně stačí `DATABASE_URL` |
@@ -65,13 +65,16 @@ Bot posílá do nastaveného chatu video ke schválení s popiskem a tlačítky:
 - **Upravit popisek**: nový text se pošle jako odpověď na zprávu (funguje i odpověď přímo na video nebo náhled),
 - **Zamítnout**: video se nezveřejní,
 - **Zkusit znovu**: u položky, jejíž publikace selhala nebo skončila nejistě (nejdřív dohledá, co už na sítích je).
+  Dohledání porovná prvních 80 znaků popisku a čas od odeslání ke schválení.
 
 Příkazy:
 
-- `/fronta`: počty položek podle stavů a k neúspěšným položkám znovu tlačítko Zkusit znovu,
+- `/fronta`: počty položek podle stavů, k čekajícím znovu náhled s tlačítky, k neúspěšným tlačítko Zkusit znovu,
+  schválené čekající na restart a zveřejňování starší 15 minut jen vypíše,
 - `/dalsi`: pošle další video ze fronty ke schválení.
 
-Zprávy z jiných chatů bot ignoruje.
+Nově zařazené video bot pošle sám do minuty. Video, které Telegram odmítne (např. přes 50 MB) nebo jehož soubor chybí,
+vyřadí (stav rejected) a ohlásí. Zprávy z jiných chatů bot ignoruje.
 
 ## Testy
 

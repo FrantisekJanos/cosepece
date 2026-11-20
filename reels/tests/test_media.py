@@ -59,3 +59,38 @@ def test_probe_skutecne_video(tmp_path):
     assert (info.codec_v, info.codec_a, info.width, info.height) == ("h264", "aac", 360, 640)
     assert 3.5 < info.duration < 4.5
     assert media.validate(info) == []
+
+
+def test_validate_velikost():
+    assert media.validate(_info(size=50 * 1024 * 1024)) == []
+    errs = media.validate(_info(size=50 * 1024 * 1024 + 1))
+    assert any("50 MB" in e for e in errs)
+
+
+def _fake_ffprobe(monkeypatch, fmt, stream):
+    import json as _json
+    out = _json.dumps({"format": fmt, "streams": [{"codec_type": "video", "codec_name": "h264", **stream}]})
+    monkeypatch.setattr(media.subprocess, "run",
+                        lambda *a, **kw: subprocess.CompletedProcess(a, 0, stdout=out, stderr=""))
+
+
+@pytest.mark.parametrize("fmt,stream,needle", [
+    ({"duration": "N/A"}, {"width": 1080, "height": 1920}, "délk"),
+    ({}, {"width": 1080, "height": 1920}, "délk"),
+    ({"duration": "30.0"}, {"height": 1920}, "rozměr"),
+    ({"duration": "30.0"}, {"width": "N/A", "height": 1920}, "rozměr"),
+])
+def test_probe_chybejici_udaje(monkeypatch, tmp_path, fmt, stream, needle):
+    p = tmp_path / "v.mp4"
+    p.write_bytes(b"x")
+    _fake_ffprobe(monkeypatch, fmt, stream)
+    with pytest.raises(RuntimeError) as ei:
+        media.probe(p)
+    assert needle in str(ei.value)
+
+
+def test_probe_vrati_velikost(monkeypatch, tmp_path):
+    p = tmp_path / "v.mp4"
+    p.write_bytes(b"x" * 1234)
+    _fake_ffprobe(monkeypatch, {"duration": "30.0"}, {"width": 1080, "height": 1920})
+    assert media.probe(p).size == 1234

@@ -33,7 +33,10 @@ class FakeTelegramApi:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         method = request.url.path.rsplit("/", 1)[1]
         if method in self.fail:
-            raise self.fail[method]
+            f = self.fail[method]
+            if isinstance(f, httpx.Response):
+                return f
+            raise f
         ctype = request.headers.get("content-type", "")
         if ctype.startswith("application/json"):
             body = json.loads(request.content)
@@ -405,8 +408,11 @@ def test_dalsi_posle_i_kdyz_ceka(bot, conn, api, media_dir):
     assert queue.counts(conn) == {"pending": 2}
     bot.handle(_msg("/dalsi"))
     assert "Fronta je prázdná." in api.texts()[-1]
+    api.calls.clear()
     bot.handle(_msg("/fronta"))
-    assert "pending: 2" in api.texts()[-1]
+    assert "pending: 2" in api.texts()[0]
+    # ke každé čekající položce znovu náhled s tlačítky
+    assert len([b for b in api.sent() if _buttons(b)]) == 2
 
 
 @pg
@@ -626,12 +632,16 @@ def test_callback_odpovi_i_pri_chybe_db(bot, conn, api, media_dir, monkeypatch):
 
 @pg
 def test_start_se_opakuje_pri_vypadku_telegramu(bot, conn, api, media_dir):
+    """Výpadek Telegramu při startu neblokuje polling; video se pošle samo, až Telegram ožije."""
     from hlidac_reels import queue
 
     class Stop(Exception):
         pass
     rid = _add(conn, media_dir)
     api.fail["sendVideo"] = httpx.ConnectError("down")
+    api.fail["getUpdates"] = httpx.ConnectError("down")
+    t = iter(range(0, 10_000, 100))
+    bot.clock = lambda: next(t)
     slept = []
 
     def sleep(s):
@@ -640,8 +650,133 @@ def test_start_se_opakuje_pri_vypadku_telegramu(bot, conn, api, media_dir):
             del api.fail["sendVideo"]
             return
         raise Stop
-    api.fail["getUpdates"] = httpx.ConnectError("down")
     with pytest.raises(Stop):
         bot.loop(sleep=sleep)
     assert slept == [10, 10]
-    assert queue.get(conn, rid).status == "pending"
+    r = queue.get(conn, rid)
+    # síťová chyba položku nevyřadí, další pokus ji pošle
+    assert r.status == "pending" and r.error is None
+
+
+# --- finální vlna oprav ------------------------------------------------------
+
+@pg
+def test_neodeslatelne_video_vyrazeno_a_pokracuje(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    bad = _add(conn, media_dir, 1)
+    Path(_get(conn, bad).video_path).unlink()
+    good = _add(conn, media_dir, 2)
+    bot.send_next()
+    r = _get(conn, bad)
+    assert r.status == "rejected" and r.error.startswith("nelze poslat do Telegramu")
+    assert any(f"#{bad}" in t and "nelze poslat" in t for t in api.texts())
+    assert _get(conn, good).status == "pending"
+    assert queue.counts(conn) == {"rejected": 1, "pending": 1}
+
+
+@pg
+def test_telegram_odmitne_video_omezeny_pocet_pokusu(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    ids = [_add(conn, media_dir, n) for n in range(1, 5)]
+    api.fail["sendVideo"] = httpx.Response(413, json={"ok": False, "description": "Request Entity Too Large"})
+    bot.send_next()
+    assert [_get(conn, i).status for i in ids] == ["rejected", "rejected", "rejected", "queued"]
+    assert "Request Entity Too Large" in _get(conn, ids[0]).error
+    assert queue.pending_count(conn) == 0
+
+
+@pg
+def test_vypadek_site_video_nevyradi(bot, conn, api, media_dir):
+    from hlidac_reels.telegram import TelegramError
+    rid = _add(conn, media_dir)
+    api.fail["sendVideo"] = httpx.ConnectError("down")
+    with pytest.raises(TelegramError):
+        bot.send_next()
+    assert _get(conn, rid).status == "queued"
+    api.fail["sendVideo"] = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    with pytest.raises(TelegramError):
+        bot.send_next()
+    assert _get(conn, rid).status == "queued"
+    # start() chybu jen zaloguje
+    bot.start()
+    assert _get(conn, rid).status == "queued"
+
+
+@pg
+def test_nove_video_dorazi_samo(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    bot.start()  # prázdná fronta
+    rid = _add(conn, media_dir, 1)
+    bot.maybe_send_next()
+    assert _get(conn, rid).status == "pending"
+    # nejvýš jednou za 50 s
+    queue.transition(conn, rid, "pending", "rejected")
+    r2 = _add(conn, media_dir, 2)
+    now[0] += 10
+    bot.maybe_send_next()
+    assert _get(conn, r2).status == "queued"
+    now[0] += 50
+    bot.maybe_send_next()
+    assert _get(conn, r2).status == "pending"
+
+
+@pg
+def test_reply_selhani_nahledu_nic_nezmeni(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    r = _get(conn, rid)
+    api.calls.clear()
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.handle(_msg("Nový", reply_to=r.telegram_msg_id))
+    r2 = _get(conn, rid)
+    assert r2.caption == r.caption and r2.telegram_msg_id == r.telegram_msg_id
+    assert "editMessageReplyMarkup" not in api.methods()
+
+
+@pg
+def test_reply_tlacitka_stareho_nahledu_az_po_novem(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    old = _get(conn, rid).telegram_msg_id
+    api.calls.clear()
+    bot.handle(_msg("Nový", reply_to=old))
+    methods = api.methods()
+    assert methods.index("sendMessage") < methods.index("editMessageReplyMarkup")
+
+
+@pg
+def test_fronta_znovu_posle_nahled_a_vypise_ostatni(bot, conn, api, media_dir):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    p = _add(conn, media_dir, 1)
+    bot.send_next()
+    old_preview = _get(conn, p).telegram_msg_id
+    a = _add(conn, media_dir, 2)
+    queue.transition(conn, a, "queued", "approved")
+    pub = _add(conn, media_dir, 3)
+    queue.transition(conn, pub, "queued", "publishing",
+                     decided_at=datetime.now(timezone.utc) - timedelta(minutes=20))
+    fresh = _add(conn, media_dir, 4)
+    queue.transition(conn, fresh, "queued", "publishing", decided_at=datetime.now(timezone.utc))
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    msgs = api.sent()
+    pend = [b for b in msgs if _buttons(b) == [f"ok:{p}", f"edit:{p}", f"no:{p}"]]
+    assert len(pend) == 1
+    assert _get(conn, p).telegram_msg_id not in (None, old_preview)
+    appr = [b for b in msgs if f"#{a} " in b["text"]]
+    assert len(appr) == 1 and "čeká na restart" in appr[0]["text"] and not _buttons(appr[0])
+    pubm = [b for b in msgs if f"#{pub} " in b["text"]]
+    assert len(pubm) == 1 and "možná přerušeno" in pubm[0]["text"] and not _buttons(pubm[0])
+    assert not [b for b in msgs if f"#{fresh} " in b["text"]]
+
+
+@pg
+def test_upravit_selhani_odeslani_nevyhodi(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.handle(_cb(f"edit:{rid}"))  # nevyhodí
+    assert "answerCallbackQuery" in api.methods()

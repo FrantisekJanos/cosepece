@@ -11,6 +11,7 @@ MIN_DURATION = 3.0
 MAX_DURATION = 90.0
 ASPECT = 9 / 16
 ASPECT_TOLERANCE = 0.01  # 1 %
+MAX_SIZE = 50 * 1024 * 1024  # limit nahrání videa botem do Telegramu
 
 
 @dataclass
@@ -20,6 +21,7 @@ class VideoInfo:
     width: int
     height: int
     duration: float
+    size: int = 0  # bajty; 0 = neznámá
 
 
 def probe(path) -> VideoInfo:
@@ -39,9 +41,16 @@ def probe(path) -> VideoInfo:
     a = next((s for s in streams if s.get("codec_type") == "audio"), None)
     if v is None:
         raise RuntimeError("soubor neobsahuje video stopu")
-    dur = data.get("format", {}).get("duration") or v.get("duration") or 0
+    try:
+        width, height = int(v["width"]), int(v["height"])
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError("ffprobe nevrátil rozměry videa") from None
+    try:
+        dur = float(data.get("format", {}).get("duration") or v.get("duration"))
+    except (TypeError, ValueError):
+        raise RuntimeError("ffprobe nevrátil délku videa") from None
     return VideoInfo(v.get("codec_name"), a.get("codec_name") if a else None,
-                     int(v.get("width", 0)), int(v.get("height", 0)), float(dur))
+                     width, height, dur, Path(path).stat().st_size)
 
 
 def validate(info: VideoInfo) -> list[str]:
@@ -57,6 +66,8 @@ def validate(info: VideoInfo) -> list[str]:
         errs.append(f"poměr stran musí být 9:16, je {info.width}×{info.height}")
     if not MIN_DURATION <= info.duration <= MAX_DURATION:
         errs.append(f"délka musí být {MIN_DURATION:.0f}–{MAX_DURATION:.0f} s, je {info.duration:.1f} s")
+    if info.size > MAX_SIZE:
+        errs.append(f"video má {info.size / 1024 / 1024:.1f} MB, limit je {MAX_SIZE // 1024 // 1024} MB")
     return errs
 
 

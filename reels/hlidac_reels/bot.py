@@ -7,12 +7,13 @@ Tokeny se nikam nevypisují.
 """
 from __future__ import annotations
 
+import dataclasses
 import html
 import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -24,11 +25,14 @@ from .messages import (approval_buttons, preview_parts, preview_text, result_tex
                        retry_buttons, video_caption)
 from .meta import Meta
 from .queue import Reel
-from .telegram import Telegram
+from .telegram import Telegram, TelegramError
 
 log = logging.getLogger("hlidac_reels.bot")
 
 ERROR_PAUSE = 10
+SEND_ATTEMPTS = 3  # kolik neposlatelných videí se vyřadí v jednom send_next
+SEND_INTERVAL = 50  # s, jak často smyčka sama zkusí poslat další položku
+STALE_PUBLISHING = timedelta(minutes=15)
 DB_LOST_EXIT = 3
 INTERRUPTED = "přerušeno před zveřejněním"
 EDIT_HINT = "Uprav a pošli jako odpověď na tuto zprávu."
@@ -57,6 +61,8 @@ class Bot:
         self.media_dir = media_dir
         self.public_base = public_base
         self._secrets = tuple(s for s in (*secrets, getattr(tg, "_token", None)) if s)
+        self.clock: Callable[[], float] = time.monotonic
+        self._next_send_check = float("-inf")
 
     def _safe(self, exc: BaseException) -> str:
         """Popis výjimky pro log a zprávy bez tokenů."""
@@ -147,7 +153,7 @@ class Bot:
         reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base)
         buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
         self._say(result_text(reel), buttons)
-        self.send_next()
+        self._safe_send_next()
 
     def _reject(self, reel_id: int, cb_id, msg_id) -> None:
         if not queue.transition(self.conn, reel_id, "pending", "rejected", decided_at=_now()):
@@ -156,7 +162,7 @@ class Bot:
         self._answer(cb_id, "Zamítnuto")
         self._drop_buttons(msg_id)
         self._say(f"#{reel_id} zamítnuto.")
-        self.send_next()
+        self._safe_send_next()
 
     def _edit(self, reel_id: int, cb_id, msg_id) -> None:
         reel = queue.get(self.conn, reel_id)
@@ -165,8 +171,9 @@ class Bot:
             return
         self._answer(cb_id)
         text = f"<pre>{html.escape(reel.caption, quote=False)}</pre>\n\n{EDIT_HINT}"
-        new_id = self.tg.send_text(self.chat_id, text, parse_mode="HTML")
-        queue.set_state(self.conn, f"edit_msg:{new_id}", str(reel_id))
+        new_id = self._say(text, parse_mode="HTML")
+        if new_id:
+            queue.set_state(self.conn, f"edit_msg:{new_id}", str(reel_id))
 
     # --- zprávy ----------------------------------------------------------
 
@@ -185,15 +192,30 @@ class Bot:
             self._say(HELP)
 
     def _show_queue(self) -> None:
-        """Počty podle stavů a ke každé neúspěšné položce znovu tlačítko Zkusit znovu."""
+        """Počty podle stavů; tlačítka, která se mohla ztratit (výpadek Telegramu, smazané zprávy), znovu.
+
+        pending → nový náhled s tlačítky schválení; failed/unknown → Zkusit znovu; approved a dlouho
+        běžící publishing jen textem (vyřeší je restart bota).
+        """
         counts = queue.counts(self.conn)
         lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
         self._say("Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná.")
-        # tlačítko z oznámení se mohlo ztratit (výpadek Telegramu), /fronta ho vrátí
-        for reel in queue.by_status(self.conn, ("failed", "unknown", "approved")):
-            error = (reel.error or "")[:300]
-            text = f"{video_caption(reel)} · {reel.status}" + (f"\nChyba: {error}" if error else "")
-            self._say(text, retry_buttons(reel.id))
+        stale_before = _now() - STALE_PUBLISHING
+        for reel in queue.by_status(self.conn, ("pending", "failed", "unknown", "approved", "publishing")):
+            head = f"{video_caption(reel)} · {reel.status}"
+            if reel.status == "pending":
+                preview_id = self._try("náhled", self._send_preview, reel)
+                if preview_id:
+                    queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+            elif reel.status == "approved":
+                self._say(f"{head} · čeká na restart bota")
+            elif reel.status == "publishing":
+                started = reel.decided_at or reel.sent_at or reel.created_at
+                if started < stale_before:
+                    self._say(f"{head} · zveřejňování možná přerušeno — restart bota je převede na nejisté")
+            else:
+                error = (reel.error or "")[:300]
+                self._say(head + (f"\nChyba: {error}" if error else ""), retry_buttons(reel.id))
 
     def _reel_for_reply(self, target: int) -> Reel | None:
         mapped = queue.get_state(self.conn, f"edit_msg:{target}")
@@ -217,12 +239,16 @@ class Bot:
             self._say(f"Popisek má {_num(len(caption))} znaků, limit je {_num(CAPTION_LIMIT)}. "
                       "Popisek se nezměnil.")
             return
-        queue.set_fields(self.conn, reel.id, caption=caption)
-        # starý náhled přijde o tlačítka, aby se neschválil podle starého textu
+        # nejdřív nový náhled; když se nepošle, nic se nemění a starý náhled si nechá tlačítka
+        try:
+            preview_id = self._send_preview(dataclasses.replace(reel, caption=caption))
+        except TelegramError as e:
+            log.warning("náhled #%s se nepodařilo poslat: %s", reel.id, self._safe(e))
+            self._say(f"Náhled #{reel.id} se nepodařilo poslat, popisek se nezměnil. Zkus to znovu.")
+            return
+        queue.set_fields(self.conn, reel.id, caption=caption, telegram_msg_id=preview_id)
+        # starý náhled přijde o tlačítka až teď (ukazoval starý text)
         self._drop_buttons(reel.telegram_msg_id)
-        reel = queue.get(self.conn, reel.id)
-        preview_id = self._send_preview(reel)
-        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
 
     # --- odeslání ke schválení -------------------------------------------
 
@@ -239,18 +265,58 @@ class Bot:
         return msg_id
 
     def send_next(self, force: bool = False) -> None:
-        """Pošle další položku fronty ke schválení (když nic nečeká, nebo s force)."""
+        """Pošle další položku fronty ke schválení (když nic nečeká, nebo s force).
+
+        Video, které Telegram odmítne (4xx) nebo jehož soubor nejde přečíst, se vyřadí (rejected,
+        bez tlačítka, nikdy se z toho stavu nezveřejní) a zkusí se další, nejvýš SEND_ATTEMPTS za volání.
+        Výpadek sítě nebo 5xx/429 položku nevyřadí: výjimka jde dál, položka zůstane queued.
+        """
         if not force and queue.pending_count(self.conn) > 0:
             return
-        reel = queue.next_queued(self.conn)
-        if reel is None:
-            if force:
-                self._say("Fronta je prázdná.")
+        for attempt in range(SEND_ATTEMPTS):
+            reel = queue.next_queued(self.conn)
+            if reel is None:
+                if force and attempt == 0:
+                    self._say("Fronta je prázdná.")
+                return
+            try:
+                video_id = self.tg.send_video(self.chat_id, reel.video_path, video_caption(reel))
+            except TelegramError as e:
+                if not e.rejected:
+                    raise
+                self._give_up(reel, e)
+                continue
+            except OSError as e:
+                self._give_up(reel, e)
+                continue
+            preview_id = self._send_preview(reel)
+            queue.transition(self.conn, reel.id, "queued", "pending", sent_at=_now(),
+                             telegram_video_msg_id=video_id, telegram_msg_id=preview_id)
             return
-        video_id = self.tg.send_video(self.chat_id, reel.video_path, video_caption(reel))
-        preview_id = self._send_preview(reel)
-        queue.transition(self.conn, reel.id, "queued", "pending", sent_at=_now(),
-                         telegram_video_msg_id=video_id, telegram_msg_id=preview_id)
+
+    def _give_up(self, reel: Reel, exc: Exception) -> None:
+        error = f"nelze poslat do Telegramu: {self._safe(exc)}"[:500]
+        log.warning("#%s vyřazeno: %s", reel.id, error)
+        if queue.transition(self.conn, reel.id, "queued", "rejected", error=error):
+            self._say(f"#{reel.id} vyřazeno, video {error}. Oprav video a zařaď ho znovu.")
+
+    def _safe_send_next(self) -> None:
+        """send_next, jehož selhání (mimo ztrátu DB) se jen zaloguje; položka počká na další pokus."""
+        try:
+            self.send_next()
+        except Exception as e:  # noqa: BLE001
+            if self._db_lost(e):
+                raise
+            log.warning("odeslání další položky selhalo: %s", self._safe(e))
+            self._rollback()
+
+    def maybe_send_next(self) -> None:
+        """Nově zařazené video dorazí samo: send_next nejvýš jednou za SEND_INTERVAL s."""
+        now = self.clock()
+        if now < self._next_send_check:
+            return
+        self._next_send_check = now + SEND_INTERVAL
+        self._safe_send_next()
 
     # --- smyčka ----------------------------------------------------------
 
@@ -279,7 +345,7 @@ class Bot:
                 self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
                           retry_buttons(reel.id))
         self._clean_public()
-        self.send_next()
+        self._safe_send_next()
 
     def poll_once(self) -> None:
         offset = int(queue.get_state(self.conn, "tg_offset") or 0)
@@ -312,6 +378,7 @@ class Bot:
                 if not started:
                     self.start()
                     started = True
+                self.maybe_send_next()
                 self.poll_once()
             except Exception as e:  # noqa: BLE001
                 if self._db_lost(e):

@@ -18,12 +18,14 @@ KEYS = [r["key"] for r in load_fixture("v3-cesta-311.json")["reasons"]]
 
 @pytest.fixture
 def fake(monkeypatch):
-    state = {"calls": [], "renders": [], "active": 0, "prepare": None, "timed_out": False}
+    state = {"calls": [], "renders": [], "active": 0, "prepare": None, "timed_out": False, "skip": set()}
 
     def run_claude(prompt, *, workdir, mcp_config, model, timeout_s=1200):
         state["calls"].append(prompt)
         if len(state["calls"]) == 1:
-            shutil.copytree(GEN, workdir, dirs_exist_ok=True)
+            for d in GEN.iterdir():
+                if d.name not in state["skip"]:
+                    shutil.copytree(d, Path(workdir) / d.name, dirs_exist_ok=True)
             if state["prepare"]:
                 state["prepare"](Path(workdir))
         log = Path(workdir) / "claude.log"
@@ -136,3 +138,32 @@ def test_main_bez_mcp_konfigurace(tmp_path, fake):
     card.write_text(json.dumps(load_fixture("card-1-v2.json"), ensure_ascii=False), encoding="utf-8")
     assert gen.main(["--ct", "311", "--card-v2", str(card), "--mcp-config", str(tmp_path / "neni.json"),
                      "--out", str(tmp_path / "o")]) == 1
+
+
+def test_vadna_struktura_vyradi_jen_variantu(tmp_path, fake):
+    # pád uvnitř validace (reasons není seznam) nesmí shodit celou sadu
+    def bad(wd):
+        card = json.loads((wd / "variant-2" / "card.json").read_text(encoding="utf-8"))
+        card["reasons"] = 5
+        (wd / "variant-2" / "card.json").write_text(json.dumps(card), encoding="utf-8")
+    fake["prepare"] = bad
+    r = _run(tmp_path)
+    assert r.ok and not r.variants[1].ok and r.variants[1].errors
+    assert (tmp_path / "out" / "vysledek.json").exists()
+
+
+def test_stare_varianty_se_smazou(tmp_path, fake):
+    # varianta z minulého běhu ve stejné složce se nesmí vydávat za novou
+    shutil.copytree(GEN / "variant-3", tmp_path / "out" / "variant-3")
+    fake["skip"] = {"variant-3"}
+    r = _run(tmp_path)
+    assert not r.variants[2].ok
+
+
+def test_timeout_je_v_chybe_varianty(tmp_path, fake):
+    fake["timed_out"] = True
+    fake["skip"] = {"variant-3"}
+    r = _run(tmp_path)
+    assert any("timeout" in e for e in r.variants[2].errors)
+    data = json.loads((tmp_path / "out" / "vysledek.json").read_text(encoding="utf-8"))
+    assert data["runs"][0]["timed_out"] is True

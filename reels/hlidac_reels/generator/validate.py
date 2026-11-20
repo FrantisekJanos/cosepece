@@ -7,6 +7,8 @@ from ..enqueue import CAPTION_LIMIT
 CLOSING = "Hodnotíme postup, ne politický obsah."
 V2_REQUIRED = ("ct", "nazev", "faze", "score", "title", "perex", "quote", "quote_source", "reasons")
 V3_REQUIRED = V2_REQUIRED[:6] + ("reasons", "format", "hook", "zdroje")
+# pole, která Card.from_json vyžaduje; smí být prázdná (v3 citaci nemusí mít)
+PRESENT = ("verified", "quote", "quote_source")
 # bezpečné zóny na výšku (Instagram): 150 px nahoře, 340 px dole, 60 px po stranách
 SAFE = {"top": 150, "bottom": 1920 - 340, "left": 60, "right": 1020}
 
@@ -47,6 +49,9 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
     is_v3 = template == "template_v3"
     for key in V3_REQUIRED if is_v3 else V2_REQUIRED:
         if key not in card or (key != "reasons" and _empty(card[key])):
+            errs.append(f"chybí pole {key}")
+    for key in PRESENT:
+        if key not in card:
             errs.append(f"chybí pole {key}")
     if card.get("ct") != ct:
         errs.append(f"karta má ct {card.get('ct')!r}, zadání ct {ct}")

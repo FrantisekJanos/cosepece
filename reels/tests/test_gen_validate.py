@@ -101,3 +101,11 @@ def test_layout_preteceni_neprojde(monkeypatch):
     monkeypatch.setattr(render, "measure_blocks", lambda card, template: boxes)
     errs = check_layout(load_fixture("card-1-v2.json"), "template_v2")
     assert any("přetéká" in e for e in errs) and any("zón" in e for e in errs)
+
+
+@pytest.mark.parametrize("key", ["verified", "quote", "quote_source"])
+def test_v3_bez_poli_karty(key):
+    # Card.from_json je vyžaduje; bez nich by render spadl
+    card = load_fixture("v3-cesta-311.json")
+    del card[key]
+    assert any(key in e for e in _check(card))

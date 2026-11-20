@@ -102,6 +102,9 @@ def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEF
     workdir = Path(workdir).resolve()  # claude běží s cwd=workdir, relativní cesty by se rozbily
     mcp_config = Path(mcp_config).resolve()
     log_path = workdir / "claude.log"
+    # model smí do workdir zapisovat; projektová nastavení ani CLAUDE.md z minulého běhu nesmí platit
+    shutil.rmtree(workdir / ".claude", ignore_errors=True)
+    (workdir / "CLAUDE.md").unlink(missing_ok=True)
     proc = subprocess.Popen(claude_argv(workdir=workdir, model=model, mcp_config=mcp_config), cwd=workdir,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             encoding="utf-8", errors="replace")

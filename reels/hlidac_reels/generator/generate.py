@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -35,6 +36,7 @@ class GenResult:
     formats: list[str]
     variants: list[Variant]
     ok: bool
+    runs: list[dict] = field(default_factory=list)  # stav běhů claude -p (timeout, návratový kód)
 
 
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool) -> dict | None:
@@ -53,9 +55,13 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
     if not isinstance(card, dict):
         v.errors = ["card.json není objekt"]
         return None
-    v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys, fmt=v.format)
-    if not v.errors and layout:
-        v.errors = check_layout(card, v.template)
+    try:  # pád kontroly (nečekaný tvar karty, chybějící Chromium) vyřadí jen tuto variantu
+        v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
+                                    fmt=v.format)
+        if not v.errors and layout:
+            v.errors = check_layout(card, v.template)
+    except Exception as e:  # noqa: BLE001
+        v.errors = [f"kontrola selhala: {type(e).__name__}: {e}"]
     return None if v.errors else card
 
 
@@ -64,6 +70,9 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
              timeout_s: int = 1200) -> GenResult:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
+        shutil.rmtree(old, ignore_errors=True)
+    (out / "vysledek.json").unlink(missing_ok=True)
     formats = pick_formats(reason_keys, has_amendments, hint)
     (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats},
                                               ensure_ascii=False, indent=1), encoding="utf-8")
@@ -72,16 +81,28 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", formats[0]),
                 Variant(3, "template_v3", formats[1])]
 
-    run_claude(build_prompt(ct=ct, formats=formats, workdir=out), workdir=out, mcp_config=mcp_config,
-               model=model, timeout_s=timeout_s)
+    runs: list[dict] = []
+
+    def note_run(r) -> None:
+        runs.append({"ok": r.ok, "returncode": r.returncode, "timed_out": r.timed_out})
+
+    def with_timeout(v: Variant) -> None:
+        if runs[-1]["timed_out"] and v.errors:
+            v.errors.insert(0, "běh claude -p vypršel (timeout)")
+
+    note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out), workdir=out, mcp_config=mcp_config,
+                        model=model, timeout_s=timeout_s))
     cards = {v.n: _check(v, out, ct, reason_keys, render) for v in variants}
+    for v in variants:
+        with_timeout(v)
     broken = {v.n: v.errors for v in variants if cards[v.n] is None}
     if broken:  # jedna oprava jen vadných variant, pak vypadnou
-        run_claude(build_prompt(ct=ct, formats=formats, workdir=out, repair=broken), workdir=out,
-                   mcp_config=mcp_config, model=model, timeout_s=timeout_s)
+        note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out, repair=broken), workdir=out,
+                            mcp_config=mcp_config, model=model, timeout_s=timeout_s))
         for v in variants:
             if v.n in broken:
                 cards[v.n] = _check(v, out, ct, reason_keys, render)
+                with_timeout(v)
 
     for v in variants:  # render vždy jen jeden najednou
         card = cards[v.n]
@@ -101,7 +122,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
         v.ok = True
 
     result = GenResult(ct=ct, formats=formats, variants=variants,
-                       ok=sum(v.ok for v in variants) >= MIN_OK)
+                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs)
     data = asdict(result)
     for item in data["variants"]:
         item["video"] = str(item["video"]) if item["video"] else None

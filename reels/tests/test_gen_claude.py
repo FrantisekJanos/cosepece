@@ -107,3 +107,13 @@ def test_druhy_beh_log_neprepise(tmp_path, monkeypatch):
     r = run_claude("y", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
     log = r.log_path.read_text(encoding="utf-8")
     assert "chyba modelu" in log and '"result": "ok"' in log
+
+
+def test_run_claude_smaze_projektova_nastaveni(tmp_path, monkeypatch):
+    # model smí zapisovat do workdir; .claude/ ani CLAUDE.md z minulého běhu nesmí ovlivnit další běh
+    _fake(monkeypatch, "ok")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("x", encoding="utf-8")
+    run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
+    assert not (tmp_path / ".claude").exists() and not (tmp_path / "CLAUDE.md").exists()

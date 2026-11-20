@@ -117,9 +117,20 @@ def conn():
     c = db.connect()
     db.migrate(c)
     with c.cursor() as cur:
-        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state")
+        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; "
+                    "TRUNCATE reel_jobs RESTART IDENTITY")
+        cur.execute("SELECT to_regclass('tisky') IS NOT NULL")
+        had_tisky = cur.fetchone()[0]
+        if not had_tisky:
+            cur.execute("CREATE TABLE tisky (ct integer)")
     c.commit()
     yield c
+    if not had_tisky and not c.closed:
+        # minimální tabulka jen pro testy (v produkci ji vlastní PHP)
+        c.rollback()
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS tisky")
+        c.commit()
     c.close()
 
 
@@ -1728,3 +1739,102 @@ def test_sada_vypadek_site_u_druheho_videa(bot, conn, api, media_dir):
         bot.send_next()
     assert len(api.sent("sendVideo")) == 1
     assert [_get(conn, i).status for i in ids] == ["queued"] * 3
+
+
+# --- příkazy generátoru (Task 7) -----------------------------------------
+
+def _tisk(conn, ct: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO tisky (ct) VALUES (%s)", (ct,))
+    conn.commit()
+
+
+@pg
+def test_video_zalozi_ulohu(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221 pn"))
+    (job,) = jobs.pending(conn)
+    assert (job.source, job.ct, job.format_hint) == ("manual", 221, "pn")
+    assert api.texts()[-1] == f"Zadání #{job.id} (tisk 221) je 1. ve frontě."
+
+
+@pg
+def test_video_neznamy_tisk(bot, conn, api):
+    from hlidac_reels import jobs
+    bot.handle(_msg("/video 99999"))
+    assert api.texts()[-1] == "Tisk 99999 neznám."
+    assert jobs.pending(conn) == []
+    bot.handle(_msg("/video"))
+    assert api.texts()[-1].startswith("Použití: /video")
+    bot.handle(_msg("/video abc"))
+    assert api.texts()[-1].startswith("Použití: /video")
+
+
+@pg
+def test_video_spatny_format(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221 xyz"))
+    assert "cesta, pn, zmena, rozprava" in api.texts()[-1]
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_video_duplicitni(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221"))
+    bot.handle(_msg("/video 221"))
+    assert api.texts()[-1] == "Tisk 221 už ve frontě je."
+    assert len(jobs.pending(conn)) == 1
+
+
+@pg
+def test_vyber(bot, conn, api):
+    from hlidac_reels import jobs
+    bot.handle(_msg("/vyber"))
+    (job,) = jobs.pending(conn)
+    assert job.source == "auto_pick" and job.ct is None
+    assert api.texts()[-1] == f"Zadání #{job.id} (automatický výběr) je 1. ve frontě."
+
+
+@pg
+def test_fronta_ukaze_ulohy_a_pc(bot, conn, api):
+    from hlidac_reels import jobs, queue
+    _tisk(conn, 221)
+    bot.handle(_msg("/fronta"))
+    assert "PC zatím nebylo vidět" in api.texts()[-1]
+    a = jobs.add(conn, source="manual", ct=221)
+    queue.set_state(conn, "worker_seen_at", "2026-11-20T14:05:00+01:00")
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[-1]
+    assert f"#{a} manual 221 queued" in text
+    assert "PC naposledy: 20. 11. 14:05" in text
+
+
+@pg
+def test_hlaseni_chyby_jednou(bot, conn, api):
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', error=%s, finished_at=now() WHERE id=%s",
+                    ("x" * 400, j))
+    conn.commit()
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    bot.maybe_notify_failed()
+    msgs = [x for x in api.texts() if "se nepodařilo" in x]
+    assert msgs == [f"Zadání #{j} (tisk 221) se nepodařilo: " + "x" * 300]
+    t[0] += 61
+    bot.maybe_notify_failed()
+    assert len([x for x in api.texts() if "se nepodařilo" in x]) == 1
+
+
+@pg
+def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221", chat=OTHER_CHAT))
+    bot.handle(_msg("/vyber", chat=OTHER_CHAT))
+    assert api.calls == [] and jobs.pending(conn) == []

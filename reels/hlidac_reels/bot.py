@@ -29,8 +29,9 @@ from typing import Callable
 
 import psycopg
 
-from . import db, fresh, inbox, publish, queue
+from . import db, fresh, inbox, jobs, publish, queue
 from .enqueue import CAPTION_LIMIT
+from .generator.formats import FORMATS
 from .messages import (approval_buttons, preview_parts, preview_text, result_text,  # noqa: F401
                        retry_buttons, set_buttons, set_text, set_video_caption, video_caption)
 from .meta import Meta
@@ -56,7 +57,10 @@ THREADS_TRIED_KEY = "threads_token_refresh_tried_at"
 THREADS_REFRESH_AGE = timedelta(days=7)
 THREADS_REFRESH_RETRY = timedelta(days=1)
 PREVIEW_THREADS_KEY = "preview_has_threads"
-HELP = ("Příkazy: /fronta (počty podle stavů), /dalsi (poslat další video ke schválení).\n"
+VIDEO_USAGE = "Použití: /video <číslo tisku> [cesta|pn|zmena|rozprava]"
+WORKER_SEEN_KEY = "worker_seen_at"
+HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
+        "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant nejdřív vyber jednu tlačítkem Vybrat.")
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
@@ -117,6 +121,7 @@ class Bot:
         self.inbox_dir = inbox_dir
         self._next_ingest = float("-inf")
         self._next_fresh = float("-inf")
+        self._next_notify = float("-inf")
         # None = Threads není nastavené (bez THREADS_USER_ID)
         self.threads = threads
         self.threads_env_token = threads_env_token or None
@@ -345,8 +350,70 @@ class Bot:
             self._show_queue()
         elif command == "/dalsi":
             self.send_next(force=True)
+        elif command == "/video":
+            self._cmd_video((text or "").split()[1:])
+        elif command == "/vyber":
+            self._add_job("auto_pick", None, None)
         else:
             self._say(HELP)
+
+    def _cmd_video(self, args: list[str]) -> None:
+        """/video <ct> [formát]: ruční zadání generátoru."""
+        try:
+            ct = int(args[0]) if args else 0
+        except ValueError:
+            ct = 0
+        if ct <= 0 or len(args) > 2:
+            self._say(VIDEO_USAGE)
+            return
+        hint = args[1].lower() if len(args) == 2 else None
+        if hint is not None and hint not in FORMATS:
+            self._say("Neznámý formát. Povolené: " + ", ".join(FORMATS) + ".")
+            return
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM tisky WHERE ct = %s LIMIT 1", (ct,))
+            known = cur.fetchone() is not None
+        self.conn.commit()
+        if not known:
+            self._say(f"Tisk {ct} neznám.")
+            return
+        self._add_job("manual", ct, hint)
+
+    def _add_job(self, source: str, ct: int | None, hint: str | None) -> None:
+        what = f"tisk {ct}" if ct is not None else "automatický výběr"
+        try:
+            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint)
+        except jobs.ActiveJobExists:
+            self._say(f"Tisk {ct} už ve frontě je.")
+            return
+        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.")
+
+    def _worker_seen(self) -> str:
+        seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
+        if seen is None:
+            return "PC zatím nebylo vidět"
+        # čas v Europe/Prague přes PostgreSQL (obraz nepotřebuje tzdata)
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMDD. FMMM. FMHH24:MI')",
+                        (seen,))
+            text = cur.fetchone()[0]
+        self.conn.commit()
+        return f"PC naposledy: {text}"
+
+    def maybe_notify_failed(self) -> None:
+        """Neúspěšná zadání generátoru se oznámí jednou, nejvýš za INGEST_INTERVAL s."""
+        now = self.clock()
+        if now < self._next_notify:
+            return
+        self._next_notify = now + INGEST_INTERVAL
+        self._guard("hlášení neúspěšných zadání", self._notify_failed)
+
+    def _notify_failed(self) -> None:
+        for job in jobs.failed_unnotified(self.conn):
+            error = self._scrub(job.error or "")[:300]
+            what = f"tisk {job.ct}" if job.ct is not None else "automatický výběr"
+            if self._say(f"Zadání #{job.id} ({what}) se nepodařilo: {error}"):
+                jobs.mark_notified(self.conn, job.id)
 
     def _show_queue(self) -> None:
         """Počty podle stavů; tlačítka, která se mohla ztratit (výpadek Telegramu, smazané zprávy), znovu.
@@ -356,7 +423,12 @@ class Bot:
         """
         counts = queue.counts(self.conn)
         lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
-        self._say("Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná.")
+        head = "Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná."
+        job_lines = [f"#{j.id} {j.source} {j.ct if j.ct is not None else '-'} {j.status}"
+                     for j in jobs.pending(self.conn)]
+        if job_lines:
+            head += "\n\nZadání:\n" + "\n".join(job_lines)
+        self._say(head + "\n" + self._worker_seen())
         stale_before = _now() - STALE_PUBLISHING
         offered: set[int] = set()
         for reel in queue.by_status(self.conn, ("pending", "failed", "unknown", "approved", "publishing")):
@@ -666,6 +738,7 @@ class Bot:
                     started = True
                 self.maybe_send_next()
                 self.maybe_ingest()
+                self.maybe_notify_failed()
                 self.maybe_fresh()
                 self.maybe_refresh_threads_token()
                 self.poll_once()

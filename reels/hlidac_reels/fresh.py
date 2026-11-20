@@ -94,7 +94,10 @@ def retire(conn, now: datetime) -> list[tuple[int, str]]:
         cur.execute(
             "SELECT set_id, min(created_at), max(ct) FROM reel_queue "
             "WHERE set_id IS NOT NULL AND status IN ('queued','pending') AND source <> 'manual' "
-            "GROUP BY set_id ORDER BY set_id"
+            # sada s vybranou variantou už není „bez výběru“: nevyprší ani se nestáhne
+            "AND NOT EXISTS (SELECT 1 FROM reel_state s WHERE s.key = concat(%s::text, reel_queue.set_id)) "
+            "GROUP BY set_id ORDER BY set_id",
+            (queue.PICKED_KEY,),
         )
         sets = cur.fetchall()
     conn.commit()

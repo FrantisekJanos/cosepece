@@ -29,7 +29,8 @@ def conn():
     db.migrate(c)
     with c.cursor() as cur:
         cur.execute("TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_queue RESTART IDENTITY")
-        cur.execute("DELETE FROM reel_state WHERE key IN ('top_findings', 'fresh_baseline')")
+        cur.execute("DELETE FROM reel_state WHERE key IN ('top_findings', 'fresh_baseline') "
+                    "OR key LIKE 'set\\_picked:%'")
     c.commit()
     yield c
     c.close()
@@ -238,3 +239,16 @@ def test_baseline_po_kazdem_tisku(conn, monkeypatch):
     monkeypatch.setattr(jobs, "add", real_add)
     assert len(fresh.detect(conn, NOW + timedelta(hours=1))) == 1
     assert sorted(ct for ct, _ in _fresh_jobs(conn)) == [400, 401]
+
+
+def test_retire_vybrana_sada_nevyprsi_ani_nestahne(conn):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    # starší než 7 dní a tisk mimo nálezy, ale varianta už je vybraná
+    s = _set(conn, source="fresh", ct=500, age=timedelta(days=8))
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET status='rejected' WHERE set_id=%s AND variant=2", (s,))
+    conn.commit()
+    queue.mark_picked(conn, s, 1)
+    assert fresh.retire(conn, NOW) == []
+    assert _statuses(conn, s) == ["pending", "rejected"]

@@ -7,6 +7,9 @@ from datetime import date, datetime
 
 import psycopg
 
+# reel_state set_picked:<set_id> = id vybrané varianty; sada s výběrem nevyprší ani se nestáhne
+PICKED_KEY = "set_picked:"
+
 STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
             "expired", "withdrawn")
 
@@ -216,6 +219,16 @@ def recover_after_restart(conn) -> list[int]:
         cur.execute("UPDATE reel_queue SET status='unknown' WHERE status='publishing' RETURNING id")
         ids = sorted(r[0] for r in cur.fetchall())
     return ids
+
+
+def picked(conn, set_id: int) -> int | None:
+    """Id varianty vybrané ze sady, None = ještě bez výběru."""
+    v = get_state(conn, f"{PICKED_KEY}{set_id}")
+    return int(v) if v else None
+
+
+def mark_picked(conn, set_id: int, reel_id: int) -> None:
+    set_state(conn, f"{PICKED_KEY}{set_id}", str(reel_id))
 
 
 def get_state(conn, key: str) -> str | None:

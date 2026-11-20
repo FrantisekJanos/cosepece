@@ -46,7 +46,6 @@ SEND_INTERVAL = 50  # s, jak často smyčka sama zkusí poslat další položku
 INGEST_INTERVAL = 60  # s, jak často smyčka převezme hotové sady z mezisložky
 FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuje staré sady
 SETS_PER_DAY = 2  # sad odeslaných ke schválení za den (Europe/Prague), /dalsi limit obchází
-PICKED_KEY = "set_picked:"  # reel_state set_picked:<set_id> = id vybrané varianty
 STALE_PUBLISHING = timedelta(minutes=15)
 DB_LOST_EXIT = 3
 INTERRUPTED = "přerušeno před zveřejněním"
@@ -194,6 +193,11 @@ class Bot:
     # --- tlačítka --------------------------------------------------------
 
     def _approve(self, reel_id: int, cb_id, msg_id) -> None:
+        # varianta sady bez dokončeného výběru se schválit nesmí (i po pádu uprostřed výběru)
+        reel = queue.get(self.conn, reel_id)
+        if reel is not None and self._unpicked(reel):
+            self._answer(cb_id, "Nejdřív vyber variantu.")
+            return
         # jediné místo, odkud se položka dostane k publikaci: přechod jen z pending
         if not queue.transition(self.conn, reel_id, "pending", "approved", decided_at=_now()):
             self._answer(cb_id, "Položka už nečeká na schválení.")
@@ -244,7 +248,7 @@ class Bot:
     def _unpicked(self, reel: Reel) -> bool:
         """Čekající položka sady, z níž ještě nebyla vybraná varianta."""
         return (reel.set_id is not None and reel.status == "pending"
-                and queue.get_state(self.conn, f"{PICKED_KEY}{reel.set_id}") is None)
+                and queue.picked(self.conn, reel.set_id) is None)
 
     def _pick(self, reel_id: int, cb_id, msg_id) -> None:
         reel = queue.get(self.conn, reel_id)
@@ -260,11 +264,12 @@ class Bot:
             log.warning("náhled #%s se nepodařilo poslat: %s", reel.id, self._safe(e))
             self._say(f"Náhled varianty {reel.variant} se nepodařilo poslat, výběr neproběhl. Zkus to znovu.")
             return
-        queue.set_state(self.conn, f"{PICKED_KEY}{reel.set_id}", str(reel.id))
-        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+        # nejdřív zamítnout ostatní, výběr zapsat až potom: pád mezi kroky nenechá schválitelné jiné varianty
         for other in queue.set_items(self.conn, reel.set_id):
             if other.id != reel.id:
                 queue.transition(self.conn, other.id, "pending", "rejected", decided_at=_now())
+        queue.mark_picked(self.conn, reel.set_id, reel.id)
+        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
         self._drop_buttons(msg_id)
 
     def _reject_set(self, set_id: int, cb_id, msg_id) -> None:
@@ -546,6 +551,10 @@ class Bot:
     def _retire(self) -> None:
         for set_id, status in fresh.retire(self.conn, self.now()):
             items = [r for r in queue.set_items(self.conn, set_id) if r.status == status]
+            if not any(r.sent_at for r in items):
+                # sada ještě nebyla v Telegramu: změna stavu bez zprávy
+                log.info("sada %s ještě neodeslaná, nyní %s", set_id, status)
+                continue
             for msg_id in {r.telegram_msg_id for r in items if r.telegram_msg_id}:
                 self._drop_buttons(msg_id)
             self._say(RETIRED.get(status, "#{} " + status).format(set_id))

@@ -1611,6 +1611,7 @@ def test_cerstve_stazeni_a_vyprseni_sady(bot, conn, api, media_dir, monkeypatch)
     a = _add_set(conn, media_dir, 1)
     b = _add_set(conn, media_dir, 2)
     bot.send_next()
+    bot.send_next(force=True)  # obě sady v Telegramu
     set_msg = _set_msg_id(conn, a[0])
 
     def retire(c, now):
@@ -1684,3 +1685,46 @@ def test_texty_sady():
     assert set_buttons(items) == [("Vybrat 1", "pick:11"), ("Vybrat 2", "pick:12"), ("Zamítnout vše", "noset:5")]
     text = set_text(items)
     assert len(text) <= 4096 and "a\nb" in text and "\nc" not in text
+
+
+@pg
+def test_schvalit_nevybranou_variantu_nejde(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert {_get(conn, i).status for i in ids} == {"pending"}
+    assert sum(meta.calls.values()) == 0
+
+
+@pg
+def test_stazeni_neodeslane_sady_bez_zpravy(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import fresh
+    a = _add_set(conn, media_dir, 1)
+
+    def retire(c, now):
+        for i in a:
+            _to(c, i, "withdrawn")
+        return [(1, "withdrawn")]
+    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
+    monkeypatch.setattr(fresh, "retire", retire)
+    bot.maybe_fresh()
+    assert api.calls == []
+    assert {_get(conn, i).status for i in a} == {"withdrawn"}
+
+
+@pg
+def test_sada_vypadek_site_u_druheho_videa(bot, conn, api, media_dir):
+    """1. video sady odešlo, u 2. výpadek: výjimka jde dál, celá sada zůstane queued (1. video půjde znovu)."""
+    from hlidac_reels.telegram import TelegramError
+    ids = _add_set(conn, media_dir, 7)
+    orig = api.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendVideo") and len(api.sent("sendVideo")) >= 1:
+            raise httpx.ConnectError("down")
+        return orig(request)
+    bot.tg._client = httpx.Client(transport=httpx.MockTransport(flaky))
+    with pytest.raises(TelegramError):
+        bot.send_next()
+    assert len(api.sent("sendVideo")) == 1
+    assert [_get(conn, i).status for i in ids] == ["queued"] * 3

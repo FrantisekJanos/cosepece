@@ -1,0 +1,126 @@
+{
+  "ct": 311,
+  "nazev": "Novela zákona o daních z příjmů",
+  "faze": "2. čtení",
+  "score": 85,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai",
+      "points": 21,
+      "label": "Rozbor PN č. 2315 (Marian Jurečka): závažnost 7/10 – Jde o zásadní nový režim zvýhodnění vymezené skupiny zemědělských poplatníků, včetně nových institutů a výjimek, vložený pozměňovacím návrhem do novely zákona o daních z příjmů, která takový režim neobsahuje.; 8 z 30 PN se závažností ≥ 6"
+    },
+    {
+      "key": "ai_bill",
+      "points": 18,
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Nová daňová povinnost se zpětně použije na zdaňovací období započaté v roce 2026, tedy před dnem nabytí účinnosti, a tíží úzce vymezený okruh poplatníků, přičemž přechodné ustanovení č. 1 a č. 2 si v tomto ohledu odporují."
+    },
+    {
+      "key": "deadline_cut",
+      "points": 15,
+      "label": "Zkrácená lhůta pro výbory: 30 dní místo 60"
+    },
+    {
+      "key": "late_pn",
+      "points": 10,
+      "label": "26 z 30 pozměňovacích návrhů podáno v den konce podrobné rozpravy"
+    },
+    {
+      "key": "watched",
+      "points": 10,
+      "label": "Sledovaný zákon"
+    },
+    {
+      "key": "pn_large",
+      "points": 6,
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    },
+    {
+      "key": "pn_many",
+      "points": 0,
+      "label": "9 z 30 pozměňovacích návrhů je problematických"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=311",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-22",
+  "kdo": "předkládá ministryně financí",
+  "format": "cesta",
+  "title": "Daň pro rafinerie: výbory měly 30 dní místo 60",
+  "perex": "Vláda navrhuje mimořádnou daň 50 % pro zpracovatele ropy. Použít se má už za rok 2026.",
+  "hook": {
+    "big": 30,
+    "unit": "dní",
+    "sub": "na projednání ve výborech. Běžná lhůta je 60."
+  },
+  "cesta": {
+    "kroky": [
+      {
+        "date": "2026-09-22",
+        "label": "Vláda návrh předložila Sněmovně"
+      },
+      {
+        "date": "2026-10-13",
+        "label": "1. čtení, přikázáno výborům se lhůtou 30 dní",
+        "hot": true
+      },
+      {
+        "date": "2026-11-13",
+        "label": "2. čtení: obecná i podrobná rozprava"
+      },
+      {
+        "date": "2026-11-13",
+        "label": "Změna lhůty u pozměňovacích návrhů",
+        "hot": true
+      },
+      {
+        "date": "2026-11-13",
+        "label": "Rozesláno garančnímu výboru"
+      }
+    ],
+    "dni": 52,
+    "dni_popis": "od předložení po konec 2. čtení",
+    "normalne": [
+      {
+        "label": "Čas pro výbory",
+        "par": "§ 91 jednacího řádu",
+        "normal": 60,
+        "actual": 30,
+        "unit": "dní"
+      }
+    ],
+    "ferove": "Zkrátit lhůtu až o 30 dní jednací řád Sněmovně dovoluje (§ 91 odst. 2)."
+  },
+  "pn_dny": {
+    "dny": [
+      {
+        "date": "2026-10-15",
+        "count": 1
+      },
+      {
+        "date": "2026-10-19",
+        "count": 1
+      },
+      {
+        "date": "2026-11-11",
+        "count": 2
+      },
+      {
+        "date": "2026-11-13",
+        "count": 26,
+        "late": true
+      }
+    ],
+    "note": "26 z 30 návrhů přišlo 13. 11., v den konce podrobné rozpravy.",
+    "sub": "30 pozměňovacích návrhů od 9 poslanců"
+  },
+  "zdroje": "Zdroj: psp.cz, historie tisku 311 a sněmovní dokumenty"
+}

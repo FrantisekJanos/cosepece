@@ -51,6 +51,7 @@ final class Sync
             $ai = (new AiReviewer(db(), $config))->run();
             $scorer->scoreBills();
             $scorer->scoreAlerts();
+            $reels = self::reelsSnapshot($config);
             // úklid: prošlé záznamy limitů dotazů a nepoužívané tokeny MCP vydané na webu
             RateLimit::cleanup();
             try {
@@ -76,6 +77,7 @@ final class Sync
                 'search_index' => $searchItems,
                 'mcp_tokens_revoked' => $revoked,
                 'posts' => $posts,
+                'reels_snapshot' => $reels,
                 'seconds' => round(microtime(true) - $started, 1),
             ];
             db()->setMeta('last_result', json_encode($result, JSON_UNESCAPED_UNICODE));
@@ -83,6 +85,24 @@ final class Sync
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
+        }
+    }
+
+    /**
+     * Snímek hlavních nálezů pro generátor Reels (reel_state.top_findings). Jen v PostgreSQL a když tabulku
+     * reel_state založila služba reels/; chyba se zapíše do Sentry a synchronizace pokračuje.
+     */
+    private static function reelsSnapshot(array $config): int|array|null
+    {
+        try {
+            if (db()->driver !== 'pgsql' || db()->value("SELECT to_regclass('reel_state')::text") === null) {
+                return null;
+            }
+            $level = (int)Scorer::weights($config)['level_major'];
+            return ReelsSnapshot::write(db(), new Repo(db()), $level);
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/ReelsSnapshot']);
+            return ['error' => Http::redact($ex->getMessage())];
         }
     }
 }

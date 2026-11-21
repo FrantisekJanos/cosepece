@@ -117,9 +117,20 @@ def conn():
     c = db.connect()
     db.migrate(c)
     with c.cursor() as cur:
-        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state")
+        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; "
+                    "TRUNCATE reel_jobs RESTART IDENTITY")
+        cur.execute("SELECT to_regclass('tisky') IS NOT NULL")
+        had_tisky = cur.fetchone()[0]
+        if not had_tisky:
+            cur.execute("CREATE TABLE tisky (ct integer)")
     c.commit()
     yield c
+    if not had_tisky and not c.closed:
+        # minimální tabulka jen pro testy (v produkci ji vlastní PHP)
+        c.rollback()
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS tisky")
+        c.commit()
     c.close()
 
 
@@ -1333,6 +1344,664 @@ def test_duvod_threads_se_strednikem():
     assert "Chyba: (#100) FB chyba; detail" in lines
 
 
+# --- sady variant z generátoru (část 2) ---------------------------------------
+
+_set_seq = iter(range(1, 10_000))
+
+
+def _add_set(conn, media_dir: Path, set_id: int, n: int = 3, ct: int = 221, source: str = "fresh") -> list[int]:
+    """Sada n variant: 1 a 3 template_v3, 2 template_v2."""
+    from hlidac_reels import queue
+    ids = []
+    for v in range(1, n + 1):
+        k = next(_set_seq)
+        video = media_dir / "videos" / f"s{set_id}-{v}-{k}.mp4"
+        video.write_bytes(b"fake set mp4 " + str(k).encode())
+        v3 = v != 2
+        ids.append(queue.add(conn, video_path=str(video), video_sha256=f"set{set_id}-{v}-{k}",
+                             caption=f"Varianta {v} řádek 1\nřádek 2 varianty {v}\nřádek 3 se nevypíše",
+                             ct=ct, format="vysledek" if v3 else "v2", source=source, set_id=set_id,
+                             variant=v, template="template_v3" if v3 else "template_v2"))
+    return ids
+
+
+def _set_msg(api) -> dict:
+    """Poslední zpráva s tlačítky pick:."""
+    return [b for b in api.sent() if any(d.startswith("pick:") for d in _buttons(b))][-1]
+
+
+def _set_msg_id(conn, rid) -> int:
+    return _get(conn, rid).telegram_msg_id
+
+
+@pg
+def test_sada_se_posle_najednou(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    videos = api.sent("sendVideo")
+    assert len(videos) == 3
+    assert "#7 · varianta 1 · v3 vysledek" in videos[0]["_multipart"]
+    assert "#7 · varianta 2 · v2" in videos[1]["_multipart"]
+    msgs = [b for b in api.sent() if _buttons(b)]
+    assert len(msgs) == 1
+    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["doneset:7"]
+    text = msgs[0]["text"]
+    assert "tisk 221" in text and "Varianta 2 řádek 1\nřádek 2 varianty 2" in text
+    assert "řádek 3 se nevypíše" not in text
+    reels = [_get(conn, i) for i in ids]
+    assert {r.status for r in reels} == {"pending"}
+    assert len({r.telegram_msg_id for r in reels}) == 1 and reels[0].telegram_msg_id
+    assert len({r.telegram_video_msg_id for r in reels}) == 3
+    assert all(r.sent_at is not None for r in reels)
+
+
+def _edits(api) -> list[tuple[int, list[str]]]:
+    """Úpravy tlačítek: (message_id, callback_data); prázdný seznam = tlačítka odebrána."""
+    return [(b["message_id"], _buttons(b)) for m, b in api.calls if m == "editMessageReplyMarkup"]
+
+
+def _previews(api) -> list[dict]:
+    return [b for b in api.sent() if any(d.startswith("ok:") for d in _buttons(b))]
+
+
+@pg
+def test_vybrat_vice_variant(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    # ostatní varianty dál čekají, zpráva sady přijde jen o tlačítko vybrané
+    assert [_get(conn, i).status for i in ids] == ["pending"] * 3
+    assert _edits(api) == [(set_msg, [f"pick:{ids[1]}", f"pick:{ids[2]}", "doneset:7"])]
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[0]}"]
+    assert _get(conn, ids[0]).telegram_msg_id != set_msg
+    assert {_get(conn, i).telegram_msg_id for i in ids[1:]} == {set_msg}
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    assert _edits(api) == [(set_msg, [f"pick:{ids[1]}", "doneset:7"])]
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[2]}"]
+    # znovu Vybrat u už vybrané varianty nic nepošle
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    assert _previews(api) == [] and _edits(api) == []
+    # Hotovo zamítne zbylou nevybranou, vybrané čekají na schválení
+    bot.handle(_cb("doneset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "pending"]
+    assert (set_msg, []) in _edits(api)
+    assert "Sada #7: zbylé varianty zamítnuty." in api.texts()
+
+
+@pg
+def test_vybrat_posledni_variantu_odebere_tlacitka(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7, n=2)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    assert _edits(api) == [(set_msg, [])]
+    assert [_get(conn, i).status for i in ids] == ["pending", "pending"]
+    # Hotovo už nemá co zamítnout
+    bot.handle(_cb("doneset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["pending", "pending"]
+
+
+@pg
+def test_vybrane_jde_schvalit_nevybrane_ne(bot, conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "pending"
+    assert sum(meta.calls.values()) == 0
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert _get(conn, ids[0]).status == "published"
+    # sada má dál nevyřízené varianty: počítá se jako jedna jednotka
+    assert queue.pending_count(conn) == 1
+    bot.handle(_cb(f"ok:{ids[2]}"))
+    assert _get(conn, ids[2]).status == "published"
+    assert _get(conn, ids[1]).status == "pending"
+
+
+@pg
+def test_odpoved_po_vyberu(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    # odpověď na zprávu sady needituje žádnou variantu, odpověď na náhled vybrané ano
+    bot.handle(_msg("Nový popisek", reply_to=set_msg))
+    assert all(_get(conn, i).caption.startswith("Varianta") for i in ids)
+    assert "Nejdřív vyber variantu" in api.texts()[-1]
+    # odpověď na video nevybrané varianty taky ne
+    bot.handle(_msg("Nový popisek", reply_to=_get(conn, ids[0]).telegram_video_msg_id))
+    assert _get(conn, ids[0]).caption.startswith("Varianta")
+    bot.handle(_msg("Nový popisek", reply_to=_get(conn, ids[1]).telegram_msg_id))
+    assert _get(conn, ids[1]).caption == "Nový popisek"
+    assert _get(conn, ids[0]).caption.startswith("Varianta")
+
+
+@pg
+def test_stare_noset_funguje_i_po_vyberu(bot, conn, api, media_dir):
+    """Zpráva sady odeslaná před nasazením má noset:<set_id>; zamítne zbylé nevybrané varianty."""
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    bot.handle(_cb("noset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["rejected", "pending", "rejected"]
+
+
+@pg
+def test_stary_vyber_jednim_cislem(bot, conn, api, meta, media_dir):
+    """Hodnota set_picked:<set_id> z dřívějška je jedno id; čte se stejně jako seznam."""
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    queue.set_state(conn, "set_picked:7", str(ids[1]))
+    assert queue.picked(conn, 7) == {ids[1]}
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert _get(conn, ids[0]).status == "pending"
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "published"
+    # další výběr se ke starému přidá
+    queue.mark_picked(conn, 7, ids[2])
+    assert queue.picked(conn, 7) == {ids[1], ids[2]}
+    assert queue.get_state(conn, "set_picked:7") == f"{ids[1]},{ids[2]}"
+
+
+@pg
+def test_fronta_po_vyberu_nabidne_zbyle_varianty(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    msgs = [_buttons(b) for b in api.sent() if _buttons(b)]
+    assert [f"pick:{ids[0]}", f"pick:{ids[2]}", "doneset:7"] in msgs
+    assert [f"ok:{ids[1]}", f"edit:{ids[1]}", f"no:{ids[1]}"] in msgs
+    assert len(msgs) == 2
+    new_set = _set_msg_id(conn, ids[0])
+    assert new_set != set_msg and _set_msg_id(conn, ids[2]) == new_set
+    assert set_msg in _dropped(api)
+    # nová zpráva sady: text jen se zbylými variantami, výběr platí jen z ní
+    text = [b["text"] for b in api.sent() if "doneset:7" in _buttons(b)][0]
+    assert "Varianta 1 řádek 1" in text and "Varianta 2 řádek 1" not in text
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    assert _get(conn, ids[2]).telegram_msg_id == new_set
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=new_set))
+    assert _get(conn, ids[2]).telegram_msg_id != new_set
+
+
+@pg
+def test_vybrana_varianta_jde_schvalit(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=_set_msg_id(conn, ids[0])))
+    bot.handle(_cb(f"ok:{ids[2]}"))
+    assert _get(conn, ids[2]).status == "published"
+
+
+@pg
+def test_odpoved_pred_vyberem_needituje(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    bot.handle(_msg("Nový popisek", reply_to=_set_msg_id(conn, ids[0])))
+    bot.handle(_msg("Nový popisek", reply_to=_get(conn, ids[1]).telegram_video_msg_id))
+    assert all(_get(conn, i).caption.startswith("Varianta") for i in ids)
+    assert "Nejdřív vyber variantu" in api.texts()[-1]
+
+
+@pg
+@pytest.mark.parametrize("action", ["doneset", "noset"])
+def test_zamitnout_vse(bot, conn, api, media_dir, action):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"{action}:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["rejected"] * 3
+    assert set_msg in _dropped(api)
+    assert "Sada #7 zamítnuta." in api.texts()
+
+
+@pg
+def test_denni_limit(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    a = _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2)
+    c = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    bot.handle(_cb("noset:1", msg_id=_set_msg_id(conn, a[0])))
+    # po zamítnutí šla sama další sada
+    assert _get(conn, b[0]).status == "pending"
+    bot.handle(_cb("noset:2", msg_id=_set_msg_id(conn, b[0])))
+    assert queue.sets_sent_on(conn, queue.local_date(conn, bot.now())) == 2
+    bot.send_next()
+    assert _get(conn, c[0]).status == "queued"
+    # samostatné video limit nemá
+    solo = _add(conn, media_dir, 1)
+    bot.send_next()
+    assert _get(conn, solo).status == "pending"
+    bot.handle(_cb(f"no:{solo}"))
+    assert _get(conn, c[0]).status == "queued"
+    bot.handle(_msg("/dalsi"))
+    assert [_get(conn, i).status for i in c] == ["pending"] * 3
+
+
+@pg
+def test_denni_limit_podle_prazskeho_dne(conn, media_dir):
+    from datetime import date, datetime, timezone
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 1)
+    _add_set(conn, media_dir, 2)  # neodeslaná sada se nepočítá
+    # 23:30 UTC 20. 11. je v Praze už 21. 11.
+    t = datetime(2026, 11, 20, 23, 30, tzinfo=timezone.utc)
+    for i in ids:
+        queue.transition(conn, i, "queued", "rejected", sent_at=t)
+    assert queue.local_date(conn, t) == date(2026, 11, 21)
+    assert queue.sets_sent_on(conn, date(2026, 11, 21)) == 1
+    assert queue.sets_sent_on(conn, date(2026, 11, 20)) == 0
+
+
+@pg
+def test_jedna_nevyrizena_sada(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2)
+    bot.send_next()
+    bot.send_next()
+    assert _get(conn, b[0]).status == "queued"
+    assert queue.pending_count(conn) == 1
+    assert len(api.sent("sendVideo")) == 3
+
+
+@pg
+def test_fronta_obnovi_tlacitka_sady(bot, conn, api, media_dir):
+    """Review Focus 5: videa sady odešla, zpráva s tlačítky ne (výpadek, restart)."""
+    ids = _add_set(conn, media_dir, 7)
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.send_next()
+    assert [_get(conn, i).status for i in ids] == ["pending"] * 3
+    del api.fail["sendMessage"]
+    bot.send_next()  # čeká sada, nic dalšího se nepošle
+    assert len(api.sent("sendVideo")) == 3
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    msgs = [b for b in api.sent() if _buttons(b)]
+    # jen zpráva sady, žádné náhledy se Schválit
+    assert len(msgs) == 1
+    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["doneset:7"]
+    new_id = _get(conn, ids[0]).telegram_msg_id
+    assert new_id and {_get(conn, i).telegram_msg_id for i in ids} == {new_id}
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=new_id))
+    bot.handle(_cb("doneset:7", msg_id=new_id))
+    assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "rejected"]
+    # po výběru a Hotovo /fronta ukáže jen náhled vybrané varianty
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    assert [_buttons(b) for b in api.sent() if _buttons(b)] == [
+        [f"ok:{ids[0]}", f"edit:{ids[0]}", f"no:{ids[0]}"]]
+
+
+@pg
+def test_fronta_znovu_nabidne_sadu_a_stara_zprava_neplati(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    old = _set_msg_id(conn, ids[0])
+    bot.handle(_msg("/fronta"))
+    new = _set_msg_id(conn, ids[0])
+    assert new != old and old in _dropped(api)
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=old))
+    assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_samostatne_video_beze_zmeny(bot, conn, api, media_dir):
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    r = _get(conn, rid)
+    assert r.status == "pending"
+    assert len(api.sent("sendVideo")) == 1
+    assert _buttons(api.sent()[-1]) == [f"ok:{rid}", f"edit:{rid}", f"no:{rid}"]
+    assert r.telegram_msg_id != r.telegram_video_msg_id
+
+
+@pg
+def test_sada_odmitnute_video_vyradi_jen_variantu(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    Path(_get(conn, ids[1]).video_path).unlink()
+    bot.send_next()
+    assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "pending"]
+    assert _buttons(_set_msg(api)) == [f"pick:{ids[0]}", f"pick:{ids[2]}", "doneset:7"]
+
+
+@pg
+def test_sada_bez_poslatelneho_videa_vyrazena(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7, n=2)
+    api.fail["sendVideo"] = httpx.Response(413, json={"ok": False, "description": "Request Entity Too Large"})
+    bot.send_next()
+    assert [_get(conn, i).status for i in ids] == ["rejected", "rejected"]
+    assert any(t.startswith("Sada #7 vyřazena") for t in api.texts())
+
+
+@pg
+def test_sada_vypadek_site_necha_queued(bot, conn, api, media_dir):
+    from hlidac_reels.telegram import TelegramError
+    ids = _add_set(conn, media_dir, 7)
+    api.fail["sendVideo"] = httpx.ConnectError("down")
+    with pytest.raises(TelegramError):
+        bot.send_next()
+    assert [_get(conn, i).status for i in ids] == ["queued"] * 3
+
+
+@pg
+def test_smycka_inbox_a_cerstve(conn, api, meta, media_dir, tmp_path, monkeypatch):
+    from hlidac_reels import fresh, inbox
+    from hlidac_reels.bot import Bot
+    from hlidac_reels.telegram import Telegram
+    tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
+    bot = Bot(conn, tg, meta, CHAT, str(media_dir), PUBLIC_BASE, inbox_dir=str(tmp_path / "inbox"))
+    calls = []
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m: calls.append(("ingest", i, m)) or [])
+    monkeypatch.setattr(fresh, "detect", lambda c, now: calls.append(("detect",)) or [])
+    monkeypatch.setattr(fresh, "retire", lambda c, now: calls.append(("retire",)) or [])
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+
+    class Stop(Exception):
+        pass
+    api.fail["getUpdates"] = httpx.ConnectError("down")
+    n = [0]
+
+    def sleep(s):
+        n[0] += 1
+        t[0] += 61
+        if n[0] >= 3:
+            raise Stop
+    with pytest.raises(Stop):
+        bot.loop(sleep=sleep)
+    names = [c[0] for c in calls]
+    assert names.count("ingest") == 3
+    assert names.count("detect") == 1 and names.count("retire") == 1
+    assert calls[0][1] == tmp_path / "inbox" and calls[0][2] == media_dir
+
+
+def _to(conn, rid, status):
+    from hlidac_reels import queue
+    return queue.transition(conn, rid, ("queued", "pending"), status)
+
+
+@pg
+def test_cerstve_stazeni_a_vyprseni_sady(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import fresh
+    a = _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2)
+    bot.send_next()
+    bot.send_next(force=True)  # obě sady v Telegramu
+    set_msg = _set_msg_id(conn, a[0])
+
+    def retire(c, now):
+        for i in a:
+            _to(c, i, "withdrawn")
+        for i in b:
+            _to(c, i, "expired")
+        return [(1, "withdrawn"), (2, "expired")]
+    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
+    monkeypatch.setattr(fresh, "retire", retire)
+    bot.maybe_fresh()
+    texts = api.texts()
+    assert "#1 staženo: nález už není mezi hlavními" in texts
+    assert "#2 vypršelo (7 dní bez výběru)" in texts
+    assert set_msg in _dropped(api)
+
+
+@pg
+def test_vyprseni_zbylych_variant_po_vyberu(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import fresh
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    preview = _get(conn, ids[0]).telegram_msg_id
+
+    def retire(c, now):
+        for i in ids[1:]:
+            _to(c, i, "expired")
+        return [(7, "expired")]
+    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
+    monkeypatch.setattr(fresh, "retire", retire)
+    api.calls.clear()
+    bot.maybe_fresh()
+    assert "#7 zbylé varianty vypršely" in api.texts()
+    assert _dropped(api) == [set_msg] and preview not in _dropped(api)
+    assert _get(conn, ids[0]).status == "pending"
+
+
+@pg
+def test_chyba_inboxu_jen_zaloguje(bot, conn, api, media_dir, monkeypatch, caplog):
+    from hlidac_reels import inbox
+
+    def boom(*a):
+        raise RuntimeError("disk")
+    monkeypatch.setattr(inbox, "ingest_all", boom)
+    bot.inbox_dir = str(media_dir / "inbox")
+    with caplog.at_level(logging.WARNING):
+        bot.maybe_ingest()
+    assert "disk" in caplog.text
+
+
+@pg
+def test_inbox_nova_sada_se_hned_posle(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import inbox
+    ids = []
+
+    def ingest(c, i, m):
+        ids.extend(_add_set(c, media_dir, 9))
+        return [inbox.IngestResult(9, list(ids), {}, True)]
+    monkeypatch.setattr(inbox, "ingest_all", ingest)
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot.maybe_ingest()
+    assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_pending_count_po_sadach(conn, media_dir):
+    from hlidac_reels import queue
+    a = _add_set(conn, media_dir, 1)
+    solo = _add(conn, media_dir, 1)
+    for i in [*a, solo]:
+        queue.transition(conn, i, "queued", "pending")
+    assert queue.pending_count(conn) == 2
+    # sada s vybranými i nevybranými variantami zůstává jedna jednotka
+    queue.mark_picked(conn, 1, a[0])
+    queue.mark_picked(conn, 1, a[1])
+    assert queue.pending_count(conn) == 2
+    queue.transition(conn, a[2], "pending", "rejected")
+    assert queue.pending_count(conn) == 2
+
+
+def test_texty_sady():
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import set_buttons, set_text, set_video_caption
+    from hlidac_reels.queue import Reel
+    now = datetime.now(timezone.utc)
+
+    def reel(i, v, tpl, fmt, caption):
+        return Reel(id=i, source="fresh", ct=221, format=fmt, video_path="x", video_sha256=str(i),
+                    caption=caption, status="pending", telegram_video_msg_id=None, telegram_msg_id=None,
+                    ig_container_id=None, ig_media_id=None, ig_permalink=None, fb_video_id=None,
+                    fb_permalink=None, public_token=None, error=None, attempts=0, created_at=now,
+                    sent_at=None, decided_at=None, published_at=None, threads_container_id=None,
+                    threads_media_id=None, threads_permalink=None, video_landscape_path=None,
+                    video_landscape_sha256=None, telegram_landscape_msg_id=None,
+                    telegram_landscape_sha256=None, set_id=5, variant=v, template=tpl)
+    items = [reel(11, 1, "template_v2", "v2", "a\nb\nc"), reel(12, 2, "template_v3", "dopad", "x" * 5000)]
+    assert set_video_caption(items[0]) == "#5 · varianta 1 · v2"
+    assert set_video_caption(items[1]) == "#5 · varianta 2 · v3 dopad"
+    assert set_buttons(items) == [("Vybrat 1", "pick:11"), ("Vybrat 2", "pick:12"),
+                                  ("Hotovo, zbytek zamítnout", "doneset:5")]
+    text = set_text(items)
+    assert len(text) <= 4096 and "a\nb" in text and "\nc" not in text
+
+
+@pg
+def test_schvalit_nevybranou_variantu_nejde(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert {_get(conn, i).status for i in ids} == {"pending"}
+    assert sum(meta.calls.values()) == 0
+
+
+@pg
+def test_stazeni_neodeslane_sady_bez_zpravy(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import fresh
+    a = _add_set(conn, media_dir, 1)
+
+    def retire(c, now):
+        for i in a:
+            _to(c, i, "withdrawn")
+        return [(1, "withdrawn")]
+    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
+    monkeypatch.setattr(fresh, "retire", retire)
+    bot.maybe_fresh()
+    assert api.calls == []
+    assert {_get(conn, i).status for i in a} == {"withdrawn"}
+
+
+@pg
+def test_sada_vypadek_site_u_druheho_videa(bot, conn, api, media_dir):
+    """1. video sady odešlo, u 2. výpadek: výjimka jde dál, celá sada zůstane queued (1. video půjde znovu)."""
+    from hlidac_reels.telegram import TelegramError
+    ids = _add_set(conn, media_dir, 7)
+    orig = api.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendVideo") and len(api.sent("sendVideo")) >= 1:
+            raise httpx.ConnectError("down")
+        return orig(request)
+    bot.tg._client = httpx.Client(transport=httpx.MockTransport(flaky))
+    with pytest.raises(TelegramError):
+        bot.send_next()
+    assert len(api.sent("sendVideo")) == 1
+    assert [_get(conn, i).status for i in ids] == ["queued"] * 3
+
+
+# --- příkazy generátoru (Task 7) -----------------------------------------
+
+def _tisk(conn, ct: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO tisky (ct) VALUES (%s)", (ct,))
+    conn.commit()
+
+
+@pg
+def test_video_zalozi_ulohu(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221 pn"))
+    (job,) = jobs.pending(conn)
+    assert (job.source, job.ct, job.format_hint) == ("manual", 221, "pn")
+    assert api.texts()[-1] == f"Zadání #{job.id} (tisk 221) je 1. ve frontě."
+
+
+@pg
+def test_video_neznamy_tisk(bot, conn, api):
+    from hlidac_reels import jobs
+    bot.handle(_msg("/video 99999"))
+    assert api.texts()[-1] == "Tisk 99999 neznám."
+    assert jobs.pending(conn) == []
+    bot.handle(_msg("/video"))
+    assert api.texts()[-1].startswith("Použití: /video")
+    bot.handle(_msg("/video abc"))
+    assert api.texts()[-1].startswith("Použití: /video")
+
+
+@pg
+def test_video_cislo_mimo_rozsah(bot, conn, api):
+    from hlidac_reels import jobs
+    for text in ("/video 99999999999", "/video 1000000", "/video -5", "/video 0"):
+        bot.handle(_msg(text))
+        assert api.texts()[-1].startswith("Použití: /video"), text
+    assert jobs.pending(conn) == []
+    bot.handle(_msg("/video 999999"))
+    assert api.texts()[-1] == "Tisk 999999 neznám."
+
+
+@pg
+def test_video_spatny_format(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221 xyz"))
+    assert "cesta, pn, zmena, rozprava" in api.texts()[-1]
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_video_duplicitni(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221"))
+    bot.handle(_msg("/video 221"))
+    assert api.texts()[-1] == "Tisk 221 už ve frontě je."
+    assert len(jobs.pending(conn)) == 1
+
+
+@pg
+def test_vyber(bot, conn, api):
+    from hlidac_reels import jobs
+    bot.handle(_msg("/vyber"))
+    (job,) = jobs.pending(conn)
+    assert job.source == "auto_pick" and job.ct is None
+    assert api.texts()[-1] == f"Zadání #{job.id} (automatický výběr) je 1. ve frontě."
+
+
+@pg
+def test_fronta_ukaze_ulohy_a_pc(bot, conn, api):
+    from hlidac_reels import jobs, queue
+    _tisk(conn, 221)
+    bot.handle(_msg("/fronta"))
+    assert "PC zatím nebylo vidět" in api.texts()[-1]
+    a = jobs.add(conn, source="manual", ct=221)
+    queue.set_state(conn, "worker_seen_at", "2026-11-20T14:05:00+01:00")
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[-1]
+    assert f"#{a} manual 221 queued" in text
+    assert "PC naposledy: 20. 11. 14:05" in text
+
+
+@pg
+def test_hlaseni_chyby_jednou(bot, conn, api):
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', error=%s, finished_at=now() WHERE id=%s",
+                    ("x" * 400, j))
+    conn.commit()
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    bot.maybe_notify_failed()
+    msgs = [x for x in api.texts() if "se nepodařilo" in x]
+    assert msgs == [f"Zadání #{j} (tisk 221) se nepodařilo: " + "x" * 300]
+    t[0] += 61
+    bot.maybe_notify_failed()
+    assert len([x for x in api.texts() if "se nepodařilo" in x]) == 1
+
+
+@pg
+def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221", chat=OTHER_CHAT))
+    bot.handle(_msg("/vyber", chat=OTHER_CHAT))
+    assert api.calls == [] and jobs.pending(conn) == []
+
+
 # --- video na šířku (16:9) ---------------------------------------------------
 
 def _add_landscape(conn, media_dir: Path, rid: int, n: int = 1) -> Path:
@@ -1718,3 +2387,44 @@ def test_sirka_a_b_a_zkusi_a_znovu(conn, api, meta, media_dir):
     bot.maybe_send_next()
     assert count[0] == 3
     assert _get(conn, rid).telegram_landscape_sha256 == "wsha1"
+
+
+# --- sada variant a video na šířku --------------------------------------------
+
+@pg
+def test_sada_bez_sirky_posle_jen_videa_na_vysku(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    caps = _video_captions(api)
+    assert len(caps) == 3 and not any("na šířku" in c for c in caps)
+    assert all(_get(conn, i).telegram_landscape_msg_id is None for i in ids)
+
+
+@pg
+def test_sirka_u_varianty_sady_az_po_vyberu(conn, api, meta, media_dir):
+    bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads(media_dir))
+    now = [1000.0]
+    bot.clock = lambda: now[0]
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    _add_landscape(conn, media_dir, ids[1])
+    api.calls.clear()
+    now[0] += 60
+    bot.maybe_send_next()
+    # před výběrem se šířka neposílá a zpráva sady zůstane platná
+    assert _video_captions(api) == []
+    assert _set_msg_id(conn, ids[1]) == set_msg
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    picked_preview = _get(conn, ids[1]).telegram_msg_id
+    # vybraná varianta se šířkou, kterou vlastník ještě neviděl, se neschválí
+    bot.handle(_cb(f"ok:{ids[1]}", msg_id=picked_preview))
+    assert _get(conn, ids[1]).status == "pending"
+    now[0] += 60
+    bot.maybe_send_next()
+    caps = _video_captions(api)
+    assert len(caps) == 1 and "na šířku (Threads)" in caps[0]
+    r = _get(conn, ids[1])
+    assert r.telegram_msg_id > r.telegram_landscape_msg_id
+    bot.handle(_cb(f"ok:{ids[1]}", msg_id=r.telegram_msg_id))
+    assert _get(conn, ids[1]).status == "published"

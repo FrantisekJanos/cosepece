@@ -1,0 +1,145 @@
+{
+  "ct": 311,
+  "nazev": "Novela zákona o daních z příjmů",
+  "faze": "2. čtení",
+  "score": 85,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai",
+      "points": 21,
+      "label": "Rozbor PN č. 2315 (Marian Jurečka): závažnost 7/10 – Jde o zásadní nový režim zvýhodnění vymezené skupiny zemědělských poplatníků, včetně nových institutů a výjimek, vložený pozměňovacím návrhem do novely zákona o daních z příjmů, která takový režim neobsahuje.; 8 z 30 PN se závažností ≥ 6"
+    },
+    {
+      "key": "ai_bill",
+      "points": 18,
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Nová daňová povinnost se zpětně použije na zdaňovací období započaté v roce 2026, tedy před dnem nabytí účinnosti, a tíží úzce vymezený okruh poplatníků, přičemž přechodné ustanovení č. 1 a č. 2 si v tomto ohledu odporují."
+    },
+    {
+      "key": "deadline_cut",
+      "points": 15,
+      "label": "Zkrácená lhůta pro výbory: 30 dní místo 60"
+    },
+    {
+      "key": "late_pn",
+      "points": 10,
+      "label": "26 z 30 pozměňovacích návrhů podáno v den konce podrobné rozpravy"
+    },
+    {
+      "key": "watched",
+      "points": 10,
+      "label": "Sledovaný zákon"
+    },
+    {
+      "key": "pn_large",
+      "points": 6,
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    },
+    {
+      "key": "pn_many",
+      "points": 0,
+      "label": "9 z 30 pozměňovacích návrhů je problematických"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=311",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-22",
+  "kdo": "předkládá ministryně financí",
+  "format": "pn",
+  "title": "30 pozměňovacích návrhů k dani pro rafinerie. 26 z nich v jediný den",
+  "perex": "Vláda navrhuje mimořádnou daň pro zpracovatele ropy. Poslanci k novele zákona o daních z příjmů podali 30 pozměňovacích návrhů.",
+  "hook": {
+    "big": 26,
+    "unit": "z 30",
+    "sub": "návrhů přišlo v den konce podrobné rozpravy"
+  },
+  "pn": {
+    "count": 30,
+    "authors": 9,
+    "late_count": 26,
+    "autori": [
+      {
+        "jmeno": "Marian Jurečka",
+        "klub": "KDU-ČSL",
+        "count": 9
+      },
+      {
+        "jmeno": "Lucie Sedmihradská",
+        "klub": "STAN",
+        "count": 5
+      },
+      {
+        "jmeno": "Benjamin Činčila",
+        "klub": "KDU-ČSL",
+        "count": 4
+      },
+      {
+        "jmeno": "Jan Papajanovský",
+        "klub": "STAN",
+        "count": 4
+      },
+      {
+        "jmeno": "Jan Jakob",
+        "klub": "TOP09",
+        "count": 3
+      }
+    ],
+    "pozn": "O pozměňovacích návrzích se hlasuje až ve 3. čtení.",
+    "top": [
+      {
+        "cislo": 2315,
+        "autor": "Marian Jurečka",
+        "klub": "KDU-ČSL",
+        "titulek": "Nová zemědělská daňová zvýhodnění: zvláštní odpisy, rezervy a odpočty od roku 2028",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2315&o=10"
+      },
+      {
+        "cislo": 2329,
+        "autor": "Gabriela Svárovská",
+        "klub": "Piráti",
+        "titulek": "Nová daň z nadměrných zisků velkých skupin se sazbou 33 % a 60 % od roku 2028",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2329&o=10"
+      },
+      {
+        "cislo": 2015,
+        "autor": "Jan Jakob",
+        "klub": "TOP09",
+        "titulek": "Sazba podle § 21aa odst. 1 se snižuje z 50 na 39,5",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2015&o=10"
+      }
+    ],
+    "top_pozn": "výběr ze 30 návrhů · celé znění: cosepece.cz"
+  },
+  "pn_dny": {
+    "dny": [
+      {
+        "date": "2026-10-15",
+        "count": 1
+      },
+      {
+        "date": "2026-10-19",
+        "count": 1
+      },
+      {
+        "date": "2026-11-11",
+        "count": 2
+      },
+      {
+        "date": "2026-11-13",
+        "count": 26,
+        "late": true
+      }
+    ],
+    "note": "26 z 30 návrhů přišlo 13. 11., v den konce podrobné rozpravy.",
+    "sub": "30 pozměňovacích návrhů od 9 poslanců"
+  },
+  "zdroje": "Zdroj: psp.cz, sněmovní dokumenty k tisku 311"
+}

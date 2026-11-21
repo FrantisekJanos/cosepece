@@ -1352,6 +1352,299 @@ if (Hlidac\OgCard::available()) {
     echo "  (GD s FreeType není k dispozici, kreslení obrázku se netestuje)\n";
 }
 check('záložní obrázek existuje', is_file(APP_ROOT . '/assets/og-default.png'), true);
+echo "Reels: fronta úloh generátoru (ReelJobs)\n";
+// tabulky vlastní Python (reels/hlidac_reels/schema_reels.sql); test si vytvoří přenositelné kopie
+$rjId = match (db()->driver) { 'pgsql' => 'SERIAL PRIMARY KEY', 'mysql' => 'INTEGER PRIMARY KEY AUTO_INCREMENT', default => 'INTEGER PRIMARY KEY' };
+$rjTs = db()->driver === 'pgsql' ? 'TIMESTAMPTZ' : 'VARCHAR(40)';
+$rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
+db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
+    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs)");
+// pro jeden tisk nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
+if (db()->driver !== 'mysql') {
+    db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
+}
+db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
+    video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', created_at $rjTs)");
+db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
+
+// tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí
+$rjTextBak = db()->all('SELECT * FROM tisk_text WHERE ct IN (90, 221, 311)');
+$rjTiskBak = db()->all('SELECT ct, score, reasons, lhuta FROM tisky WHERE ct IN (90, 221, 311)');
+db()->run('DELETE FROM tisk_text WHERE ct IN (90, 221, 311)');
+foreach ([221 => 'Čl. I: V § 44a odst. 1 se slova „10 let“ Nahrazuje se slovy „4 let“.', 311 => 'V § 21 se doplňuje odstavec 3.', 90 => 'Text návrhu.'] as $rjCt => $rjText) {
+    db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, ai_model, fetched_at, ai_at) VALUES (?, ?, ?, '{}', 8, ?, 'claude-haiku-5-5', ?, ?)",
+        [$rjCt, $rjText, mb_strlen($rjText), json_encode(['titulek' => "Nález $rjCt", 'perex' => "Perex $rjCt", 'citace' => ["citace $rjCt"]]), date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+}
+db()->run('UPDATE tisky SET score = 99, lhuta = 30, reasons = ? WHERE ct = 221', [json_encode([
+    ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],
+    ['key' => 'deadline_cut', 'label' => 'Zkrácená lhůta pro výbory: 30 dní místo 60', 'points' => 15],
+    ['key' => 'ai_bill', 'label' => 'Rozbor textu návrhu', 'points' => 24],
+], JSON_UNESCAPED_UNICODE)]);
+db()->run('UPDATE tisky SET score = 98 WHERE ct = 311');
+
+$rjClock = strtotime('2026-11-20 12:00:00');
+$jobs = new Hlidac\ReelJobs(db(), config(), function () use (&$rjClock): int { return $rjClock; });
+$rjAdd = function (string $source, ?int $ct, array $extra = []) use ($jobs, &$rjClock): int {
+    db()->run('INSERT INTO reel_jobs (source, ct, status, attempts, claimed_at, claim_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+        $source, $ct, $extra['status'] ?? 'queued', $extra['attempts'] ?? 0,
+        isset($extra['claimed_ago']) ? $jobs->stamp($rjClock - $extra['claimed_ago']) : null, $extra['token'] ?? null,
+        $jobs->stamp($rjClock - ($extra['age'] ?? 60)),
+    ]);
+    return (int)db()->value('SELECT MAX(id) FROM reel_jobs');
+};
+$rjStatus = fn(int $id) => db()->one('SELECT status, attempts, error FROM reel_jobs WHERE id = ?', [$id]);
+$rjReset = function (): void { db()->run('DELETE FROM reel_jobs'); db()->run('DELETE FROM reel_queue'); };
+
+$rjReset();
+check('prázdná fronta → null', $jobs->claim(), null);
+
+$rjAdd('fresh', 221, ['age' => 3600]);
+$rjAdd('manual', 90, ['age' => 60]);
+$rjC = $jobs->claim();
+check('ruční úloha má přednost před fresh', [$rjC['ct'] ?? null, $rjC['source'] ?? null], [90, 'manual']);
+check('claim_token má 32 hex znaků', (bool)preg_match('~^[0-9a-f]{32}$~', (string)($rjC['claim_token'] ?? '')), true);
+
+$rjReset();
+$rjOld = $rjAdd('fresh', 221, ['age' => 8 * 86400]);
+check('fresh starší 7 dní se nevydá', $jobs->claim(), null);
+check('fresh starší 7 dní → expired', $rjStatus($rjOld)['status'], 'expired');
+$rjReset();
+$rjOldClaimed = $rjAdd('fresh', 221, ['age' => 8 * 86400, 'status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('d', 32)]);
+check('prošlá fresh vrácená z claimed se nevydá', $jobs->claim(), null);
+check('prošlá fresh vrácená z claimed → expired', $rjStatus($rjOldClaimed)['status'], 'expired');
+
+$rjReset();
+$rjStale = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('a', 32)]);
+$rjC = $jobs->claim();
+check('claimed bez výsledku po 61 min se vydá znovu', [$rjC['job_id'] ?? null, (int)$rjStatus($rjStale)['attempts']], [$rjStale, 2]);
+check('starý token po novém claimu neplatí', $jobs->checkClaim($rjStale, str_repeat('a', 32)), false);
+check('finish se starým tokenem → false', $jobs->finish($rjStale, str_repeat('a', 32)), false);
+check('checkClaim s novým tokenem', $jobs->checkClaim($rjStale, (string)($rjC['claim_token'] ?? '')), true);
+check('finish s novým tokenem', [$jobs->finish($rjStale, (string)($rjC['claim_token'] ?? '')), db()->value('SELECT status FROM reel_jobs WHERE id = ?', [$rjStale]),
+    (int)db()->value('SELECT set_id FROM reel_jobs WHERE id = ?', [$rjStale])], [true, 'done', $rjStale]);
+check('hotová úloha: token už neplatí', $jobs->checkClaim($rjStale, (string)($rjC['claim_token'] ?? '')), false);
+
+$rjReset();
+$rjDead = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 3, 'claimed_ago' => 61 * 60, 'token' => str_repeat('b', 32)]);
+check('po 3 pokusech se nevydá', $jobs->claim(), null);
+check('po 3 pokusech → failed', [$rjStatus($rjDead)['status'], $rjStatus($rjDead)['error']], ['failed', 'PC nedokončilo úlohu 3×']);
+$rjFresh = $rjAdd('manual', 311, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 59 * 60, 'token' => str_repeat('c', 32)]);
+check('claimed před 59 min zůstává vydaná', [$jobs->claim(), $rjStatus($rjFresh)['status']], [null, 'claimed']);
+
+// auto_pick: první nález bez videa; tisk s řádkem v reel_queue se přeskočí
+$rjReset();
+$rjRepo = new Hlidac\Repo(db());
+$rjOrder = array_values(array_map(fn($t) => (int)$t['ct'], array_filter(
+    $rjRepo->topFindings((int)Hlidac\Scorer::weights(config())['level_major'], 60), fn($t) => $rjRepo->headline((int)$t['ct']) !== null)));
+check('test auto_pick má aspoň dva nálezy s titulkem', count($rjOrder) >= 2 && in_array(221, $rjOrder, true) && in_array(311, $rjOrder, true), true);
+$rjVideo = fn(int $ct) => db()->run("INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status) VALUES ('ukazka', ?, 'x.mp4', ?, 'popisek', 'published')", [$ct, sha1((string)$ct)]);
+$rjVideo($rjOrder[0] ?? 0);
+$rjAuto = $rjAdd('auto_pick', null);
+$rjC = $jobs->claim();
+check('auto_pick vybere nález bez videa', [$rjC['ct'] ?? null, (int)db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjAuto])], [$rjOrder[1] ?? -1, $rjOrder[1] ?? -1]);
+foreach (array_slice($rjOrder, 2) as $rjCt) {
+    $rjVideo($rjCt);
+}
+// souběh: tisk mezitím dostala jiná aktivní úloha → unikátní index; přiřazení vrátí 'conflict', ne výjimku
+if (db()->driver !== 'mysql') {
+    $rjRace = $rjAdd('auto_pick', null);
+    $rjAssign = new ReflectionMethod($jobs, 'assignCt');
+    try {
+        $rjRes = $rjAssign->invoke($jobs, $rjRace, $rjOrder[1] ?? -1);
+    } catch (Throwable $ex) {
+        $rjRes = get_class($ex) . ': ' . $ex->getMessage();
+    }
+    check('souběžné přiřazení obsazeného tisku → conflict bez výjimky', [$rjRes, db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjRace])], ['conflict', null]);
+    db()->run('DELETE FROM reel_jobs WHERE id = ?', [$rjRace]);
+}
+$rjAuto2 = $rjAdd('auto_pick', null);
+check('auto_pick bez volného nálezu se nevydá', $jobs->claim(), null);
+check('auto_pick bez volného nálezu → failed', [$rjStatus($rjAuto2)['status'], $rjStatus($rjAuto2)['error']], ['failed', 'není nález bez videa']);
+
+// fail: zpět do fronty při attempts < 3, jinak failed
+$rjReset();
+$rjF = $rjAdd('manual', 221);
+$rjC = $jobs->claim();
+check('fail při 1. pokusu → queued', $jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'render spadl'), 'queued');
+check('fail uloží chybu', $rjStatus($rjF)['error'], 'render spadl');
+$rjC = $jobs->claim();
+$jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'znovu');
+$rjC = $jobs->claim();
+check('3. pokus vydán', (int)$rjStatus($rjF)['attempts'], 3);
+check('fail při 3. pokusu → failed', $jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'potřetí'), 'failed');
+check('fail se starým tokenem nic nezmění', [$jobs->fail($rjF, (string)($rjC['claim_token'] ?? ''), 'x'), $rjStatus($rjF)['error']], ['conflict', 'potřetí']);
+
+// karta v2 a údaje claimu
+$rjReset();
+$rjAdd('manual', 221);
+$rjC = $jobs->claim();
+$card = $jobs->cardV2(221);
+$rjKeys = ['ct', 'nazev', 'faze', 'score', 'title', 'perex', 'quote', 'quote_source', 'verified', 'reasons', 'url', 'data_date'];
+check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_keys($card ?? []))), []);
+check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
+    [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
+check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
+check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk.php?ct=221', '2026-11-20']);
+check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
+check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
+check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
+check('claim: karta v2 přiložena', $rjC['card_v2']['ct'] ?? null, 221);
+check('claim: has_amendments při „Nahrazuje se“', $rjC['has_amendments'] ?? null, true);
+$rjReset();
+$rjAdd('manual', 311);
+check('has_amendments bez „nahrazuje se“', $jobs->claim()['has_amendments'] ?? null, false);
+check('karta v2 bez titulku → null', $jobs->cardV2(78), null);
+$rjNo = $rjAdd('manual', 78);
+check('úloha k tisku bez titulku se nevydá → failed', [$jobs->claim(), $rjStatus($rjNo)['status']], [null, 'failed']);
+
+// heartbeat: vložení i přepsání bez ON CONFLICT
+$jobs->heartbeat();
+$rjClock += 300;
+$jobs->heartbeat();
+check('heartbeat uloží čas workeru', [(int)db()->value('SELECT COUNT(*) FROM reel_state'),
+    strtotime((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_seen_at'"))], [1, $rjClock]);
+
+echo "Reels: rozhraní pro worker na PC (ReelsApi)\n";
+$raInbox = $tmp . '/reels-inbox';
+mkdir($raInbox, 0775, true);
+$raToken = 'worker-' . bin2hex(random_bytes(8));
+$raCfg = config();
+$raCfg['reels'] = ['worker_token' => $raToken, 'inbox_dir' => $raInbox];
+$api = new Hlidac\ReelsApi(db(), $raCfg, function () use (&$rjClock): int { return $rjClock; });
+$raH = fn(string $claim = '', array $extra = []): array => ['X-Hlidac-Token' => $raToken, 'X-Claim-Token' => $claim] + $extra;
+$raMp4 = fn(int $len = 4096): string => "\x00\x00\x00\x18ftypisom" . str_repeat("\x01", max(0, $len - 12));
+$raJson = fn(array $data): string => json_encode($data, JSON_UNESCAPED_UNICODE);
+// varianta 1 = šablona v2 (bez formátu), ostatní v3 s formátem; stejné hodnoty posílá worker a čte bot (inbox.py)
+$raVariant = fn(int $n, array $over = []): array => $over + ['n' => $n, 'template' => $n === 1 ? 'template_v2' : 'template_v3',
+    'format' => $n === 1 ? null : 'zmena', 'caption' => "Popisek $n", 'card' => ['ct' => 221]];
+
+$rjReset();
+check('bez tokenu → 403', $api->handle('GET', 'claim', [], '', [])[0], 403);
+check('špatný token → 403', $api->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => 'x'])[0], 403);
+$raZ = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => 'ZMENTE_TOKEN', 'inbox_dir' => $raInbox]] + $raCfg);
+check('token ZMENTE v konfiguraci → 403', $raZ->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => 'ZMENTE_TOKEN'])[0], 403);
+$raE = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => '', 'inbox_dir' => $raInbox]] + $raCfg);
+check('prázdný token v konfiguraci → 403', $raE->handle('GET', 'claim', [], '', ['X-Hlidac-Token' => ''])[0], 403);
+check('hlavičky bez ohledu na velikost písmen', $api->handle('GET', 'claim', [], '', ['x-hlidac-token' => $raToken]), [200, ['job' => null]]);
+
+$raJob = $rjAdd('manual', 221);
+[$raSt, $raRes] = $api->handle('GET', 'claim', [], '', $raH());
+$raClaim = (string)($raRes['job']['claim_token'] ?? '');
+check('claim → 200 a claim_token 32 hex', [$raSt, (bool)preg_match('~^[0-9a-f]{32}$~', $raClaim), $raRes['job']['job_id'] ?? null], [200, true, $raJob]);
+
+$raDir = $raInbox . '/' . $raJob;
+check('video se špatným claim tokenem → 409', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(), $raH(str_repeat('0', 32)))[0], 409);
+check('video se špatným claim tokenem: soubor nevznikl', is_file($raDir . '/variant-1.mp4'), false);
+check('video bez ftyp → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], str_repeat('x', 100), $raH($raClaim))[0], 400);
+check('video > 30 MB podle Content-Length → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(),
+    $raH($raClaim, ['Content-Length' => (string)(30 * 1024 * 1024 + 1)]))[0], 413);
+check('video > 30 MB podle délky těla → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(30 * 1024 * 1024 + 1), $raH($raClaim))[0], 413);
+check('video n mimo 1–3 → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '4'], $raMp4(), $raH($raClaim))[0], 400);
+check('po odmítnutých videích žádný soubor', glob($raDir . '/*') ?: [], []);
+check('video 1 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(), $raH($raClaim))[0], 200);
+check('video 2 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2'], $raMp4(5000), $raH($raClaim))[0], 200);
+check('videa uložena bez .part', [is_file($raDir . '/variant-1.mp4'), filesize($raDir . '/variant-2.mp4'), glob($raDir . '/*.part') ?: []], [true, 5000, []]);
+check('video s neznámou orientací → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'ctverec'], $raMp4(), $raH($raClaim))[0], 400);
+check('video na šířku bez ftyp → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], str_repeat('x', 100), $raH($raClaim))[0], 400);
+check('video na šířku > 30 MB → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(30 * 1024 * 1024 + 1), $raH($raClaim))[0], 413);
+check('video na šířku se špatným claim tokenem → 409', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(), $raH(str_repeat('0', 32)))[0], 409);
+check('video 2 na šířku → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(6000), $raH($raClaim)), [200, ['ok' => true, 'bytes' => 6000, 'orientation' => 'landscape']]);
+check('video na šířku vedle videa na výšku', [filesize($raDir . '/variant-2-sirka.mp4'), filesize($raDir . '/variant-2.mp4')], [6000, 5000]);
+check('orientation=portrait = video na výšku', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1', 'orientation' => 'portrait'], $raMp4(), $raH($raClaim))[0], 200);
+
+check('result s 1 variantou → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1)]]), $raH($raClaim))[0], 400);
+check('result s 1 variantou: manifest nevznikl', is_file($raDir . '/manifest.json'), false);
+check('result s variantou bez videa → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(3)]]), $raH($raClaim))[0], 400);
+$raLong = $raVariant(2);
+$raLong['caption'] = str_repeat('ž', 2121);
+check('result s popiskem > 2120 znaků → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raLong]]), $raH($raClaim))[0], 400);
+$raBad = fn(array $v2): int => $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $v2]]), $raH($raClaim))[0];
+check('result: v2 s formátem → 400', $raBad($raVariant(2, ['template' => 'template_v2', 'format' => 'zmena'])), 400);
+check('result: v3 bez formátu → 400', $raBad($raVariant(2, ['format' => null])), 400);
+check('result: neznámá šablona → 400', $raBad($raVariant(2, ['template' => 'v2'])), 400);
+check('result: v3 s neznámým formátem → 400', $raBad($raVariant(2, ['format' => 'zkratka'])), 400);
+check('result: odmítnuté šablony nezapíšou manifest', is_file($raDir . '/manifest.json'), false);
+check('result se špatným claim tokenem → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH(str_repeat('0', 32)))[0], 409);
+check('GET ?action=result → 400', $api->handle('GET', 'result', [], '', $raH($raClaim))[0], 400);
+check('neznámá akce → 400', $api->handle('POST', 'smaz', [], '', $raH($raClaim))[0], 400);
+[$raSt, $raRes] = $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH($raClaim));
+$raManifest = json_decode((string)@file_get_contents($raDir . '/manifest.json'), true);
+check('result se 2 variantami → 200, úloha done', [$raSt, $rjStatus($raJob)['status']], [200, 'done']);
+check('manifest: úloha, tisk, zdroj a varianty', [$raManifest['job_id'] ?? null, $raManifest['ct'] ?? null, $raManifest['source'] ?? null,
+    array_column($raManifest['variants'] ?? [], 'n'), $raManifest['variants'][1]['caption'] ?? null, $raManifest['variants'][0]['card'] ?? null, glob($raDir . '/*.part') ?: []],
+    [$raJob, 221, 'manual', [1, 2], 'Popisek 2', ['ct' => 221], []]);
+check('manifest: v2 s format null (přijato), v3 s formátem', [array_key_exists('format', $raManifest['variants'][0] ?? []), $raManifest['variants'][0]['template'] ?? null,
+    $raManifest['variants'][0]['format'] ?? null, $raManifest['variants'][1]['template'] ?? null, $raManifest['variants'][1]['format'] ?? null],
+    [true, 'template_v2', null, 'template_v3', 'zmena']);
+check('manifest: šířka jen u varianty s nahraným videem na šířku', array_column($raManifest['variants'] ?? [], 'landscape'), [false, true]);
+
+// výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
+$rjReset();
+$raJob2 = $rjAdd('manual', 221);
+$raOld = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '1'], $raMp4(), $raH($raOld));
+$api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '2'], $raMp4(), $raH($raOld));
+$rjClock += 61 * 60;
+$raNew = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+check('nový claim po vypršení', [$raNew !== '' && $raNew !== $raOld, $rjStatus($raJob2)['status']], [true, 'claimed']);
+check('nový claim smaže videa předchozího pokusu', is_file($raInbox . '/' . $raJob2 . '/variant-1.mp4'), false);
+check('result se starým tokenem po vypršení → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob2, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH($raOld))[0], 409);
+check('result se starým tokenem: manifest nevznikl', is_file($raInbox . '/' . $raJob2 . '/manifest.json'), false);
+check('fail se starým tokenem → 409', $api->handle('POST', 'fail', [], $raJson(['job_id' => $raJob2, 'error' => 'x']), $raH($raOld))[0], 409);
+
+// fail: úloha zpět do fronty, složka úlohy smazaná
+[$raSt, $raRes] = $api->handle('POST', 'fail', [], $raJson(['job_id' => $raJob2, 'error' => 'render spadl']), $raH($raNew));
+check('fail → queued a složka smazaná', [$raSt, $raRes, $rjStatus($raJob2)['status'], is_dir($raInbox . '/' . $raJob2)], [200, ['status' => 'queued'], 'queued', false]);
+
+check('heartbeat → ok', $api->handle('POST', 'heartbeat', [], '', $raH()), [200, ['ok' => true]]);
+$raMissing = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $tmp . '/neni-inbox']] + $raCfg);
+[$raSt, $raRes] = $raMissing->handle('PUT', 'video', ['job_id' => '1', 'n' => '1'], $raMp4(), $raH('x'));
+check('chybějící mezisložka → 500 s hláškou', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir')], [500, true]);
+// bez mezisložky se úloha nevydá (jinak by visela 60 min a generátor běžel zbytečně), fail ale projde
+$rjReset();
+$raJob3 = $rjAdd('manual', 221);
+[$raSt, $raRes] = $raMissing->handle('GET', 'claim', [], '', $raH());
+check('claim bez mezisložky → 500, úloha zůstane queued', [$raSt, str_contains((string)($raRes['error'] ?? ''), 'inbox_dir'), $rjStatus($raJob3)['status']], [500, true, 'queued']);
+$raClaim3 = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+[$raSt, $raRes] = $raMissing->handle('POST', 'fail', [], $raJson(['job_id' => $raJob3, 'error' => 'disk']), $raH($raClaim3));
+check('fail bez mezisložky → 200 a úloha zpět ve frontě', [$raSt, $raRes, $rjStatus($raJob3)['status']], [200, ['status' => 'queued'], 'queued']);
+$raRo = $tmp . '/reels-inbox-ro';
+mkdir($raRo, 0555, true);
+if (!is_writable($raRo)) { // root (Docker) zapisuje i do 0555, tam se kontrola přeskočí
+    $raRoApi = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $raRo]] + $raCfg);
+    check('claim do nezapisovatelné mezisložky → 500', $raRoApi->handle('GET', 'claim', [], '', $raH())[0], 500);
+}
+
+echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
+db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([
+    ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],
+    ['key' => 'deadline_cut', 'label' => 'Zkrácená lhůta pro výbory: 30 dní místo 60', 'points' => 15],
+    ['key' => 'ai_bill', 'label' => 'Rozbor textu návrhu', 'points' => 24],
+], JSON_UNESCAPED_UNICODE)]);
+$rsLevel = (int)Hlidac\Scorer::weights(config())['level_major'];
+$rsCount = Hlidac\ReelsSnapshot::write(db(), new Hlidac\Repo(db()), $rsLevel);
+$rsSnap = json_decode((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'top_findings'"), true);
+check('snímek: tisk 221 s klíči důvodů podle bodů', $rsSnap['items']['221'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
+check('snímek: počet tisků a čas s pásmem', [$rsCount > 0, $rsCount === count($rsSnap['items'] ?? []), (bool)preg_match('~^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$~', (string)($rsSnap['at'] ?? ''))],
+    [true, true, true]);
+$rsNoHeadline = array_filter(array_keys($rsSnap['items'] ?? []), fn($c) => (new Hlidac\Repo(db()))->headline((int)$c) === null);
+check('snímek: jen tisky s titulkem', $rsNoHeadline, []);
+// druhý zápis přepíše řádek (bez ON CONFLICT)
+Hlidac\ReelsSnapshot::write(db(), new Hlidac\Repo(db()), $rsLevel);
+check('snímek: druhý zápis bez duplicity', (int)db()->value("SELECT COUNT(*) FROM reel_state WHERE $rjKey = 'top_findings'"), 1);
+
+// úklid
+$rjReset();
+db()->run('DELETE FROM reel_state');
+db()->run('DELETE FROM tisk_text WHERE ct IN (90, 221, 311)');
+foreach ($rjTextBak as $rjRow) {
+    db()->insertMany('tisk_text', array_keys($rjRow), [$rjRow]);
+}
+foreach ($rjTiskBak as $rjRow) {
+    db()->run('UPDATE tisky SET score = ?, reasons = ?, lhuta = ? WHERE ct = ?', [$rjRow['score'], $rjRow['reasons'], $rjRow['lhuta'], $rjRow['ct']]);
+}
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

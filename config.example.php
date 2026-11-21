@@ -90,6 +90,13 @@ return [
         'timeout' => 300,      // s na jeden rozbor přes CLI
     ],
 
+    // generátor Reels: worker na PC si přes reels_api.php bere úlohy a nahrává videa (token v hlavičce X-Hlidac-Token).
+    // Prázdný token nebo ZMENTE… = rozhraní vypnuté (403). inbox_dir = mezisložka pro bota (volume reelsinbox).
+    'reels' => [
+        'worker_token' => '',
+        'inbox_dir' => '/srv/reels-inbox',
+    ],
+
     // váhy skóre závažnosti; co neuvedete, vezme se z Hlidac\Scorer::defaults()
     'scoring' => [
         // 'mp_bill' => 15, 'p90_passed' => 25, 'deadline_cut' => 15, 'short_gap' => 15,

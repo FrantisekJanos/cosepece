@@ -17,6 +17,8 @@ services:
       - appdata:/var/www/html/data
       # veřejné kopie videí pro Instagram (/reels-media/<token>.mp4, Alias v docker/Dockerfile), jen čtení
       - reelsmedia:/srv/reels-media:ro
+      # mezisložka Reels: reels_api.php sem ukládá videa a manifest.json od workeru na PC, bot je převezme
+      - reelsinbox:/srv/reels-inbox
     depends_on: [db]
 
   # synchronizace s psp.cz každou hodinu (náhrada cronu)
@@ -85,12 +87,15 @@ services:
       REELS_TELEGRAM_CHAT_ID: ${REELS_TELEGRAM_CHAT_ID:-}
       REELS_PUBLIC_BASE: ${REELS_PUBLIC_BASE:-https://cosepece.cz/reels-media}
       REELS_MEDIA_DIR: /media
+      REELS_INBOX_DIR: /inbox
       # Threads (volitelné): bez THREADS_USER_ID bot publikuje jen na FB a IG
       THREADS_USER_ID: ${THREADS_USER_ID:-}
       THREADS_TOKEN: ${THREADS_TOKEN:-}
       THREADS_GRAPH_VERSION: ${THREADS_GRAPH_VERSION:-v1.0}
     volumes:
       - reelsmedia:/media
+      # mezisložka od reels_api.php (čte a po převzetí maže)
+      - reelsinbox:/inbox
     mem_limit: 256m
     depends_on: [db]
 
@@ -110,3 +115,4 @@ volumes:
   appdata:
   pgdata:
   reelsmedia:
+  reelsinbox:

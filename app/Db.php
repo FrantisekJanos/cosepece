@@ -94,6 +94,15 @@ final class Db
             klub VARCHAR(40) NOT NULL,
             pro INTEGER, proti INTEGER, zdrzel INTEGER, nepritomen INTEGER
         )$suffix");
+        // hlasy jednotlivých poslanců (app/Votes.php): kód hlasu psp.cz (A pro, B/N proti, C zdržel, F nehlasoval,
+        // K zdržel/nehlasoval, @ nepřihlášen, M omluven, W před slibem), klub ke dni hlasování
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS hlasovani_poslanci (
+            id_hlasovani INTEGER NOT NULL,
+            id_osoba INTEGER NOT NULL,
+            klub VARCHAR(40),
+            hlas VARCHAR(1) NOT NULL,
+            PRIMARY KEY (id_hlasovani, id_osoba)
+        )$suffix");
         // příprava návrhu u vlády (otevřená data ODok, app/GovPrep.php)
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS priprava (
             ct INTEGER PRIMARY KEY,

@@ -83,6 +83,12 @@ final class Source
         fclose($stream);
     }
 
+    /** Je soubor v balíku? */
+    public function has(string $package, string $file): bool
+    {
+        return $this->open($package)->locateName($file) !== false;
+    }
+
     public function map(string $package, string $file, int $keyCol, int $valueCol): array
     {
         // číselník jako pole klíč => hodnota

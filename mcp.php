@@ -60,7 +60,7 @@ $tools = [
     ],
     'Hlasování' => [
         ['hlasovani_k_tisku', 'všechna hlasování k tisku s výsledky a rozdělením podle klubů'],
-        ['get_hlasovani', 'detail jednoho hlasování a projevy, které se k němu vztahují'],
+        ['get_hlasovani', 'detail jednoho hlasování: kluby, hlas každého poslance a projevy, které se k němu vztahují'],
     ],
     'Ověření a stav' => [
         ['over_citaci', 'ověří, že doslovná citace opravdu zazněla v projevu nebo stojí v textu zákona či PN'],

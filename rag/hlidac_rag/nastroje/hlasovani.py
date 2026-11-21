@@ -1,8 +1,10 @@
 """Hlasování Sněmovny k tiskům: nástroje hlasovani_k_tisku a get_hlasovani.
 
 Data jsou v tabulkách PHP webu `hlasovani` a `hlasovani_kluby` (app/Votes.php je každou hodinu přepíše celé,
-jen aktuální období); MCP je jen čte. V testovací DB nebo u staršího webu tabulky chybět mohou, pak nástroj
-vrátí čitelnou chybu. PN se s hlasováním nepárují: data číslo ani písmeno PN neobsahují.
+jen aktuální období) a `hlasovani_poslanci` (hlasy jednotlivých poslanců, jen přibývají); MCP je jen čte.
+Hlasování, které web s tiskem nespároval (pořad schůze, jiný název), má ct 0: get_hlasovani ho vrátí bez tisku.
+V testovací DB nebo u staršího webu tabulky chybět mohou, pak nástroj vrátí čitelnou chybu (hlasy poslanců
+jen prázdný seznam). PN se s hlasováním nepárují: data číslo ani písmeno PN neobsahují.
 """
 from __future__ import annotations
 
@@ -18,13 +20,17 @@ MAX_PROJEVU = 50
 PROJEVY_TABULKA = "steno.projev"
 KLUBY_SLOUPCE = ["pro", "proti", "zdrzel", "nepritomen"]
 VYSLEDEK = {"A": "přijato", "R": "zamítnuto"}
+# kód hlasu poslance z psp.cz (hl_poslanec)
+HLAS = {"A": "pro", "B": "proti", "N": "proti", "C": "zdržel se", "F": "nehlasoval", "K": "zdržel se nebo nehlasoval",
+        "@": "nepřihlášen", "M": "omluven", "W": "před složením slibu"}
+OSOBY_TABULKA = "steno.osoba"
 TABULKY = ("tisky", "kroky", "hlasovani", "hlasovani_kluby")
 
 # sloupce jednoho hlasování; krok = „stav / akce“ kroku historie tisku (bez akce jen stav), jen u hlasování
 # s příznakem krok = 1; samotný stav by přehlasování Senátu („Prezident / setrváno“) pletl s hlasováním o vetu
 SELECT_HLASOVANI = """
     SELECT h.id_hlasovani, h.ct, h.schuze, h.cislo, h.datum, h.vysledek, h.pro, h.proti, h.zdrzel, h.nehlasoval,
-           h.prihlaseno, h.kvorum,
+           h.prihlaseno, h.kvorum, h.nazev AS nazev_hlasovani,
            CASE WHEN h.krok = 1 THEN (
                SELECT nullif(concat_ws(' / ', nullif(k.stav, ''), nullif(k.akce, '')), '')
                FROM kroky k WHERE k.id_hlasovani = h.id_hlasovani AND k.ct = h.ct ORDER BY k.id_hist LIMIT 1) END AS krok
@@ -104,7 +110,8 @@ def _odpoved(ct: int, nazev: str | None, celkem: int, off: int, radky: list[dict
 def _hlasovani_k_tisku(conn, ct: int, limit: int = 50, offset: int = 0) -> dict:
     _over_tabulky(conn)
     t = _tisk(conn, ct)
-    stat = _stat_hlasovani(conn, ct)
+    # ct 0 = hlasování, která web s tiskem nespároval; nejsou „hlasováními k tisku 0“
+    stat = _stat_hlasovani(conn, ct) if ct > 0 else {"n": 0, "nazev": None}
     if not t and not stat["n"]:
         raise ValueError(f"Tisk {ct} v {OBDOBI}. období nesleduji a hlasování k němu nemám. "
                          "Zkuste seznam_tisku(q=…).")
@@ -133,6 +140,22 @@ def _projevy(conn, id_hlasovani: int, schuze: int | None) -> dict:
     return {"projevy": projevy, "projevu_celkem": celkem}
 
 
+def _poslanci(conn, id_hlasovani: int) -> list[dict]:
+    """Hlasy jednotlivých poslanců: id_osoba, jméno (ze steno.osoba, jinak None), klub ke dni hlasování, hlas textem.
+    Řazeno podle klubu a příjmení; 200 řádků vyjde asi na 20 000 znaků (test_hlasy_poslancu_nejhorsi_pripad)."""
+    if not _one(conn, "SELECT to_regclass('hlasovani_poslanci') IS NOT NULL AS ok")["ok"]:
+        return []
+    osoby = _one(conn, "SELECT to_regclass(%s) IS NOT NULL AS ok", (OSOBY_TABULKA,))["ok"]
+    jmeno = "nullif(concat_ws(' ', o.jmeno, o.prijmeni), '')" if osoby else "NULL"
+    join = f"LEFT JOIN {OSOBY_TABULKA} o ON o.id_osoba = p.id_osoba" if osoby else ""
+    prijmeni = "o.prijmeni" if osoby else "NULL"
+    rows = _rows(conn, f"""SELECT p.id_osoba, {jmeno} AS jmeno, p.klub, p.hlas FROM hlasovani_poslanci p {join}
+                            WHERE p.id_hlasovani = %s
+                            ORDER BY p.klub NULLS LAST, {prijmeni} NULLS LAST, p.id_osoba""", (id_hlasovani,))
+    return [{"id_osoba": r["id_osoba"], "jmeno": r["jmeno"], "klub": r["klub"], "hlas": HLAS.get(r["hlas"], r["hlas"])}
+            for r in rows]
+
+
 def _get_hlasovani(conn, id_hlasovani: int) -> dict:
     _over_tabulky(conn)
     r = _one(conn, f"{SELECT_HLASOVANI} WHERE h.id_hlasovani = %s", (id_hlasovani,))
@@ -143,9 +166,15 @@ def _get_hlasovani(conn, id_hlasovani: int) -> dict:
     # v detailu kluby v plné podobě (seznam objektů), ne kompaktně jako v seznamu k tisku
     out["kluby"] = [{k: v for k, v in kr.items() if k != "id_hlasovani"}
                     for kr in _kluby_radky(conn, [id_hlasovani])]
-    return {"id_hlasovani": out.pop("id_hlasovani"), "ct": ct,
-            "nazev": _nazev_tisku(_tisk(conn, ct), _stat_hlasovani(conn, ct)),
-            "url_web": _tisk_urls(ct)["url_web"], **out, **_projevy(conn, id_hlasovani, r["schuze"])}
+    if ct:
+        tisk_info = {"ct": ct, "nazev": _nazev_tisku(_tisk(conn, ct), _stat_hlasovani(conn, ct)),
+                     "url_web": _tisk_urls(ct)["url_web"]}
+    else:
+        tisk_info = {"ct": None, "nazev": r["nazev_hlasovani"], "url_web": None,
+                     "poznamka": "Hlasování se nepodařilo spárovat s tiskem (např. pořad schůze nebo jiný název "
+                                 "bodu); nazev je popis hlasování z psp.cz."}
+    return {"id_hlasovani": out.pop("id_hlasovani"), **tisk_info, **out,
+            **_projevy(conn, id_hlasovani, r["schuze"]), "poslanci": _poslanci(conn, id_hlasovani)}
 
 
 def register(server, call, annotations) -> None:
@@ -161,7 +190,9 @@ def register(server, call, annotations) -> None:
     @server.tool(annotations=annotations)
     def get_hlasovani(id_hlasovani: int) -> dict:
         """Detail jednoho hlasování: výsledek, počty, tisk (ct, nazev, url_web), všechny kluby jako seznam
-        {klub, pro, proti, zdrzel, nepritomen} (zdrzel klubu zahrnuje i nehlasoval) a projevy (klic pro get_projev),
-        v jejichž textu je hlasování zmíněno. Id hlasování vezměte z hlasovani_k_tisku(ct).
+        {klub, pro, proti, zdrzel, nepritomen} (zdrzel klubu zahrnuje i nehlasoval), projevy (klic pro get_projev),
+        v jejichž textu je hlasování zmíněno, a poslanci: hlas každého poslance [{id_osoba, jmeno, klub, hlas}]
+        (hlas: pro, proti, zdržel se, nehlasoval, nepřihlášen, omluven…; klub ke dni hlasování). Hlasování, které
+        se nepodařilo spárovat s tiskem, má ct null a poznámku. Id hlasování vezměte z hlasovani_k_tisku(ct).
         Příklad: get_hlasovani(88876)."""
         return call("get_hlasovani", _get_hlasovani, id_hlasovani)

@@ -6,6 +6,11 @@
 //  1. krok v historii tisku (hist.unl, sloupec id_hlasovani) – závěrečná hlasování o tisku,
 //  2. bod schůze (bod_schuze.unl: schůze + číslo bodu → id_tisk) a zároveň stejný krátký název tisku
 //     v popisu hlasování; číslo bodu se mezi verzemi pořadu schůze opakuje, název to pojistí.
+// Nespárovaná hlasování (pořad schůze, jiný název tisku) se ukládají s ct = 0, aby je šlo najít podle id.
+//
+// Hlasy jednotlivých poslanců (hl{rok}h1.unl, h2…: id_poslanec | id_hlasovani | kód) jdou do hlasovani_poslanci
+// (id_osoba, klub ke dni hlasování, kód hlasu). Hlas se po hlasování nemění, proto se ukládají jen hlasování,
+// která v tabulce ještě nejsou (první běh ~540 tisíc řádků, další jen nová), po dávkách bez načtení celého souboru.
 
 declare(strict_types=1);
 
@@ -19,6 +24,9 @@ final class Votes
         'C' => 'zdrzel', 'F' => 'zdrzel', 'K' => 'zdrzel',
         '@' => 'nepritomen', 'M' => 'nepritomen', 'W' => 'nepritomen',
     ];
+
+    // dávka vkládání hlasů poslanců (řádků v paměti najednou)
+    private const MP_BATCH = 2000;
 
     public function __construct(private Db $db, private Source $source)
     {
@@ -83,11 +91,8 @@ final class Votes
                     }
                 }
             }
-            if ($ct === null) {
-                continue;
-            }
             $votes[$id] = [
-                'id_hlasovani' => $id, 'ct' => $ct, 'schuze' => (int)$c[2], 'cislo' => (int)$c[3],
+                'id_hlasovani' => $id, 'ct' => $ct ?? 0, 'schuze' => (int)$c[2], 'cislo' => (int)$c[3],
                 'datum' => self::isoDate((string)$c[5], (string)($c[6] ?? '')),
                 'pro' => (int)$c[7], 'proti' => (int)$c[8], 'zdrzel' => (int)$c[9], 'nehlasoval' => (int)$c[10],
                 'prihlaseno' => (int)$c[11], 'kvorum' => (int)$c[12], 'vysledek' => substr((string)($c[14] ?? ''), 0, 1),
@@ -99,17 +104,43 @@ final class Votes
         $clubs = $this->clubs($obdobiId);
         $poslanci = $this->deputies($obdobiId);
         $perClub = [];
-        foreach ($this->source->rows($package, $prefix . 'h1.unl') as $c) {
-            $id = (int)($c[1] ?? 0);
-            if (!isset($votes[$id])) {
-                continue;
+        // hlasování, jejichž hlasy poslanců už jsou uložené (hlas se po hlasování nemění)
+        $stored = array_fill_keys(array_map('intval', array_column(
+            $this->db->all('SELECT DISTINCT id_hlasovani FROM hlasovani_poslanci'), 'id_hlasovani')), true);
+        $mpRows = [];
+        $mpCount = 0;
+        $this->db->pdo->beginTransaction();
+        try {
+            foreach ($this->voteFiles($package, $prefix) as $file) {
+                foreach ($this->source->rows($package, $file) as $c) {
+                    $id = (int)($c[1] ?? 0);
+                    if (!isset($votes[$id])) {
+                        continue;
+                    }
+                    $osoba = $poslanci[(int)$c[0]] ?? null;
+                    $club = $osoba !== null ? $this->clubAt($clubs['member'][$osoba] ?? [], substr($votes[$id]['datum'], 0, 10)) : null;
+                    $code = substr((string)($c[2] ?? ''), 0, 1);
+                    $col = self::VOTE[$code] ?? 'nepritomen';
+                    $perClub[$id][$club ?? 'Nezařazení'][$col] = ($perClub[$id][$club ?? 'Nezařazení'][$col] ?? 0) + 1;
+                    if ($osoba !== null && $code !== '' && !isset($stored[$id])) {
+                        $mpRows[] = ['id_hlasovani' => $id, 'id_osoba' => $osoba,
+                            'klub' => $club !== null ? mb_substr($club, 0, 40) : null, 'hlas' => $code];
+                        if (count($mpRows) >= self::MP_BATCH) {
+                            $this->db->insertMany('hlasovani_poslanci', ['id_hlasovani', 'id_osoba', 'klub', 'hlas'], $mpRows);
+                            $mpCount += count($mpRows);
+                            $mpRows = [];
+                        }
+                    }
+                }
             }
-            $osoba = $poslanci[(int)$c[0]] ?? null;
-            $club = $osoba !== null ? $this->clubAt($clubs['member'][$osoba] ?? [], substr($votes[$id]['datum'], 0, 10)) : null;
-            $club ??= 'Nezařazení';
-            $col = self::VOTE[$c[2] ?? ''] ?? 'nepritomen';
-            $perClub[$id][$club][$col] = ($perClub[$id][$club][$col] ?? 0) + 1;
+            $this->db->insertMany('hlasovani_poslanci', ['id_hlasovani', 'id_osoba', 'klub', 'hlas'], $mpRows);
+            $mpCount += count($mpRows);
+            $this->db->pdo->commit();
+        } catch (\Throwable $ex) {
+            $this->db->pdo->rollBack();
+            throw $ex;
         }
+        unset($mpRows, $stored);
 
         $clubRows = [];
         foreach ($perClub as $id => $list) {
@@ -130,12 +161,25 @@ final class Votes
             $this->db->insertMany('hlasovani', ['id_hlasovani', 'ct', 'schuze', 'cislo', 'datum', 'pro', 'proti', 'zdrzel',
                 'nehlasoval', 'prihlaseno', 'kvorum', 'vysledek', 'nazev', 'krok'], array_values($votes));
             $this->db->insertMany('hlasovani_kluby', ['id_hlasovani', 'klub', 'pro', 'proti', 'zdrzel', 'nepritomen'], $clubRows);
+            // hlasy k hlasováním, která ze zdroje zmizela (jiné volební období)
+            $this->db->run('DELETE FROM hlasovani_poslanci WHERE id_hlasovani NOT IN (SELECT id_hlasovani FROM hlasovani)');
             $this->db->pdo->commit();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
         }
-        return ['votes' => count($votes)];
+        $unmatched = count(array_filter($votes, fn(array $v) => $v['ct'] === 0));
+        return ['votes' => count($votes) - $unmatched, 'nesparovano' => $unmatched, 'hlasy_poslancu' => $mpCount];
+    }
+
+    /** Soubory hlasů poslanců v balíku: h1, h2, … (psp.cz je dělí podle velikosti, další mohou být prázdné). */
+    private function voteFiles(string $package, string $prefix): array
+    {
+        $files = [];
+        for ($i = 1; $i <= 9 && $this->source->has($package, $prefix . 'h' . $i . '.unl'); $i++) {
+            $files[] = $prefix . 'h' . $i . '.unl';
+        }
+        return $files;
     }
 
     public static function normName(string $name): string

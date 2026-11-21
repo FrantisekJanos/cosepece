@@ -746,6 +746,20 @@ echo "Hlasování k tiskům (#5, #24)\n";
 $votesSource = new Hlidac\Source('', $tmp . '/cache-votes', $tmp . '/src');
 (new Hlidac\Importer(db(), $votesSource))->run();
 $vr = (new Hlidac\Votes(db(), $votesSource))->run();
+check('nespárované hlasování se uloží bez tisku (ct 0)', [$vr['nesparovano'] ?? null,
+    (int)db()->value('SELECT ct FROM hlasovani WHERE id_hlasovani = 87152')], [1, 0]);
+check('hlasy poslanců: řádek za poslance a hlasování (uložil už běh synchronizace)', [is_int($vr['hlasy_poslancu'] ?? null),
+    (int)db()->value('SELECT COUNT(*) FROM hlasovani_poslanci')], [true, 15]);
+$mpVotes = [];
+foreach (db()->all('SELECT p.id_osoba, p.klub, p.hlas FROM hlasovani_poslanci p WHERE p.id_hlasovani = 86762 ORDER BY p.klub') as $c) {
+    $mpVotes[] = [$c['klub'], $c['hlas']];
+}
+check('hlasy poslanců: klub ke dni hlasování a kód hlasu', $mpVotes, [['ANO2011', 'A'], ['ODS', '@'], ['Piráti', 'K']]);
+// opakovaný běh hlasy nezdvojí, hlasy k hlasování, které ze zdroje zmizelo, se smažou
+db()->run('INSERT INTO hlasovani_poslanci (id_hlasovani, id_osoba, klub, hlas) VALUES (1, 1, NULL, ?)', ['A']);
+$vr2 = (new Hlidac\Votes(db(), $votesSource))->run();
+check('hlasy poslanců: opakovaný běh bez duplicit a úklid', [$vr2['hlasy_poslancu'], (int)db()->value('SELECT COUNT(*) FROM hlasovani_poslanci'),
+    db()->value('SELECT 1 FROM hlasovani_poslanci WHERE id_hlasovani = 1')], [0, 15, null]);
 check('hlasování k tisku 78 (bez hlasování k jinému tisku se stejným bodem)', [$vr['votes'],
     array_map('intval', array_column(db()->all('SELECT id_hlasovani FROM hlasovani WHERE ct = 78 ORDER BY id_hlasovani'), 'id_hlasovani'))],
     [4, [86762, 86763, 87173, 87174]]);

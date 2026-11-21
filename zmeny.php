@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-21', 'Hlasy jednotlivých poslanců pro AI asistenty',
+        'Napojení pro AI asistenty (MCP) nově u každého hlasování vrací, jak hlasoval každý poslanec (pro, proti, zdržel se, nehlasoval, nepřítomen) a ve kterém klubu ten den byl. Ukládáme i hlasování, která se nepodařilo přiřadit ke konkrétnímu tisku (například o pořadu schůze); jdou najít podle čísla hlasování. Data jsou z otevřených dat Sněmovny.',
+        [], false],
     ['2026-11-20', 'Senát a kroky po něm',
         'U tisku nově ukazujeme, jak návrh dopadl v Senátu: schválen, vrácen s pozměňovacími návrhy, zamítnut, Senát se jím odmítl zabývat, nebo se ve lhůtě 30 dnů nevyjádřil. U návrhu, který v Senátu právě je, uvádíme konec lhůty. Ukazujeme také, zda Sněmovna Senát přehlasovala nebo přijala jeho znění a zda přehlasovala veto prezidenta. Na jiný výsledek než schválení a na přehlasování chodí upozornění. Do skóre to nevstupuje; data jsou z historie tisku na psp.cz.',
         [61], false],

@@ -29,6 +29,9 @@ CREATE TABLE {SCHEMA}.hlasovani (
   vysledek varchar(1), nazev varchar(255), krok int NOT NULL DEFAULT 0);
 CREATE TABLE {SCHEMA}.hlasovani_kluby (
   id_hlasovani int NOT NULL, klub varchar(40) NOT NULL, pro int, proti int, zdrzel int, nepritomen int);
+CREATE TABLE {SCHEMA}.hlasovani_poslanci (
+  id_hlasovani int NOT NULL, id_osoba int NOT NULL, klub varchar(40), hlas varchar(1) NOT NULL,
+  PRIMARY KEY (id_hlasovani, id_osoba));
 """
 
 NAZEV_231 = "Novela z. o daních z příjmů"
@@ -340,8 +343,59 @@ def test_get_hlasovani_plny_detail(steno):
         "kluby": [{"klub": "ANO2011", "pro": 0, "proti": 69, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "ODS", "pro": 23, "proti": 0, "zdrzel": 0, "nepritomen": 11},
                   {"klub": "TOP09", "pro": 7, "proti": 0, "zdrzel": 0, "nepritomen": 2}],
-        "projevy": [], "projevu_celkem": 0,
+        "projevy": [], "projevu_celkem": 0, "poslanci": [],
     }
+
+
+@pg
+def test_get_hlasovani_hlasy_poslancu(steno):
+    """Díra 9 auditu: hlasy jednotlivých poslanců se jménem ze steno.osoba, klubem a hlasem textem."""
+    _detail_s_kluby(steno)
+    for id_osoba, jmeno, prijmeni in ((9001, "Jana", "Zelená"), (9002, "Adam", "Bílý")):
+        steno.execute("INSERT INTO steno.osoba (id_osoba, jmeno, prijmeni) VALUES (%s, %s, %s) "
+                      "ON CONFLICT (id_osoba) DO NOTHING", (id_osoba, jmeno, prijmeni))
+    for id_osoba, klub_p, kod in ((9001, "ODS", "A"), (9002, "ANO2011", "B"), (9003, None, "M")):
+        steno.execute("INSERT INTO hlasovani_poslanci VALUES (1000001, %s, %s, %s)", (id_osoba, klub_p, kod))
+
+    out = h._get_hlasovani(steno, 1000001)
+
+    assert out["poslanci"] == [
+        {"id_osoba": 9002, "jmeno": "Adam Bílý", "klub": "ANO2011", "hlas": "proti"},
+        {"id_osoba": 9001, "jmeno": "Jana Zelená", "klub": "ODS", "hlas": "pro"},
+        {"id_osoba": 9003, "jmeno": None, "klub": None, "hlas": "omluven"},
+    ]
+
+
+@pg
+def test_get_hlasovani_bez_tabulky_hlasu_poslancu(conn):
+    _detail_s_kluby(conn)
+    conn.execute("DROP TABLE hlasovani_poslanci")
+    conn.execute(f"SET LOCAL search_path TO {SCHEMA}")
+
+    assert h._get_hlasovani(conn, 1000001)["poslanci"] == []
+
+
+@pg
+def test_nesparovane_hlasovani(steno):
+    """Hlasování bez tisku (web ho ukládá s ct 0): detail ano, ale bez tisku; hlasovani_k_tisku(0) ne."""
+    hlas(steno, 1000020, 0, 30, 1, "2026-09-01 10:00", nazev="Pořad schůze")
+
+    out = h._get_hlasovani(steno, 1000020)
+
+    assert out["ct"] is None and out["url_web"] is None and out["nazev"] == "Pořad schůze"
+    assert "nepodařilo spárovat" in out["poznamka"]
+    with pytest.raises(ValueError, match="nesleduji"):
+        h._hlasovani_k_tisku(steno, 0)
+
+
+def test_hlasy_poslancu_nejhorsi_pripad_pod_60000_znaku():
+    # 200 poslanců s nejdelším hlasem, dlouhým jménem a klubem, 50 projevů, 10 klubů
+    poslanci = [{"id_osoba": 999999, "jmeno": "Ž" * 40, "klub": "Ž" * 40, "hlas": max(h.HLAS.values(), key=len)}] * 200
+    projevy = [{"klic": "10/999/9999/99", "datum": "2026-12-31", "recnik": "Ž" * 120}] * h.MAX_PROJEVU
+    kluby = [{"klub": "Ž" * 40, "pro": 200, "proti": 200, "zdrzel": 200, "nepritomen": 200}] * 10
+    out = {"id_hlasovani": 999999, "ct": 99999, "nazev": "Ř" * 255, "url_web": "https://cosepece.cz/tisk.php?ct=99999",
+           "krok": "Ž" * 243, "kluby": kluby, "projevy": projevy, "projevu_celkem": 999, "poslanci": poslanci}
+    assert _velikost(out) < 60000
 
 
 @pg

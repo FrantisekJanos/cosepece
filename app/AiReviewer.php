@@ -129,6 +129,12 @@ TXT;
     }
 
     /** Opakované běhy a namátkový vzorek (#7 bod 7), výchozí hodnoty lze přepsat v config.php → ai. */
+    /** Klient AI se zeptal na frontu (ai_api.php?action=queue): meta ai_queue_seen_at, čte ji hlídání dat. */
+    public function markPolled(): void
+    {
+        $this->db->setMeta('ai_queue_seen_at', date('Y-m-d H:i:s'));
+    }
+
     public static function repeatConfig(array $config): array
     {
         $ai = $config['ai'] ?? [];

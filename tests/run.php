@@ -397,6 +397,9 @@ $reviewerLeak = new Hlidac\AiReviewer(db(), config());
 $leakId = (int)db()->value('SELECT id_dokument FROM pn_text ORDER BY id_dokument LIMIT 1');
 $reviewerLeak->saveError('pn', $leakId, 'HTTP 500 z https://web.cz/ai_api.php?token=tajne123&action=result: x');
 check('saveError uloží chybu bez tokenu', str_contains((string)db()->value('SELECT error FROM pn_text WHERE id_dokument = ?', [$leakId]), 'tajne'), false);
+// dotaz klienta na frontu (ai_api.php?action=queue) se zapíše jako známka života klienta AI (hlídání v botovi reels)
+$reviewerLeak->markPolled();
+check('markPolled zapíše čas dotazu na frontu', (bool)preg_match('~^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$~', (string)db()->getMeta('ai_queue_seen_at')), true);
 
 echo "Krátký čas mezi PN a 3. čtením (tisk 198: „zahájeno“ datované po „ukončeno“)\n";
 $gapRow = fn(int $id, string $d, int $typ, int $akce) => db()->run(

@@ -324,7 +324,18 @@ final class Db
             PRIMARY KEY (obdobi, id_dokument)
         )$suffix");
 
+        // historie běhů synchronizace (app/SyncRuns.php): ok NULL = běží, 0 = chyba nebo nedokončeno, 1 = hotovo
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS sync_beh (
+            id INTEGER NOT NULL PRIMARY KEY,
+            zacatek VARCHAR(19) NOT NULL,
+            konec VARCHAR(19),
+            ok INTEGER,
+            vysledek $text,
+            chyba $text
+        )$suffix");
+
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
+        $this->createIndex('sync_beh', 'idx_sync_beh_zacatek', 'zacatek');
         $this->createIndex('text_revize', 'idx_text_revize_ct', 'ct');
         $this->createIndex('ai_revize', 'idx_ai_revize_ct', 'ct');
         $this->createIndex('pn_text', 'idx_pn_text_ct', 'ct');

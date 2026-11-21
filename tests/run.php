@@ -1645,6 +1645,42 @@ foreach ($rjTiskBak as $rjRow) {
     db()->run('UPDATE tisky SET score = ?, reasons = ?, lhuta = ? WHERE ct = ?', [$rjRow['score'], $rjRow['reasons'], $rjRow['lhuta'], $rjRow['ct']]);
 }
 
+echo "Historie běhů synchronizace (sync_beh)\n";
+// předchozí běhy testu: každý má řádek s výsledkem a bez chyby
+$sbRows = db()->all('SELECT * FROM sync_beh ORDER BY id');
+check('sync_beh: řádek za každý běh', count($sbRows) >= 4, true);
+check('sync_beh: dokončené běhy ok s výsledkem',
+    array_values(array_unique(array_map(fn($r) => [(int)$r['ok'], $r['konec'] !== null, $r['chyba'],
+        is_array(json_decode((string)$r['vysledek'], true))], $sbRows), SORT_REGULAR)), [[1, true, null, true]]);
+check('sync_beh: výsledek obsahuje import', isset(json_decode((string)end($sbRows)['vysledek'], true)['import']), true);
+check('sync_beh: čas začátku ve tvaru Y-m-d H:i:s', (bool)preg_match('~^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$~', (string)end($sbRows)['zacatek']), true);
+check('sync_beh: latest = poslední úspěšný', Hlidac\SyncRuns::lastOk(db())['id'] ?? null, end($sbRows)['id']);
+// nedokončený běh (proces skončil zvenku) a běh starší než 90 dní
+$sbMax = (int)db()->value('SELECT MAX(id) FROM sync_beh');
+db()->run('INSERT INTO sync_beh (id, zacatek) VALUES (?, ?)', [$sbMax + 1, date('Y-m-d H:i:s', time() - 600)]);
+db()->run('INSERT INTO sync_beh (id, zacatek, konec, ok) VALUES (?, ?, ?, 1)', [$sbMax + 2, date('Y-m-d H:i:s', time() - 91 * 86400), date('Y-m-d H:i:s', time() - 91 * 86400)]);
+Hlidac\Sync::run();
+$sbUnfinished = db()->one('SELECT ok, konec, chyba FROM sync_beh WHERE id = ?', [$sbMax + 1]);
+check('sync_beh: nedokončený běh označen', [(int)$sbUnfinished['ok'], $sbUnfinished['konec'] !== null, $sbUnfinished['chyba']],
+    [0, true, Hlidac\SyncRuns::UNFINISHED]);
+check('sync_beh: běh starší 90 dní smazán', db()->value('SELECT id FROM sync_beh WHERE id = ?', [$sbMax + 2]), null);
+check('sync_beh: nový běh dokončen', (int)db()->value('SELECT ok FROM sync_beh WHERE id = (SELECT MAX(id) FROM sync_beh)'), 1);
+// chyba běhu: zapíše se ok = 0 a text chyby, výjimka jde dál
+$sbZip = $tmp . '/src/tisky.zip';
+rename($sbZip, $sbZip . '.bak');
+$sbError = null;
+try {
+    Hlidac\Sync::run();
+} catch (Throwable $ex) {
+    $sbError = $ex->getMessage();
+}
+rename($sbZip . '.bak', $sbZip);
+$sbLast = db()->one('SELECT ok, konec, chyba FROM sync_beh WHERE id = (SELECT MAX(id) FROM sync_beh)');
+check('sync_beh: chyba běhu prošla dál', $sbError !== null, true);
+check('sync_beh: chybný běh ok = 0 s textem chyby', [(int)$sbLast['ok'], $sbLast['konec'] !== null, $sbLast['chyba'] !== null && $sbLast['chyba'] !== ''],
+    [0, true, true]);
+check('sync_beh: lastOk přeskočí chybný běh', (int)(Hlidac\SyncRuns::lastOk(db())['ok'] ?? 0), 1);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

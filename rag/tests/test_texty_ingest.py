@@ -475,6 +475,28 @@ def test_chybove_radky_znovu_po_7_dnech(conn):
     assert sql(conn, "SELECT chyba, text IS NOT NULL FROM texty.dokument WHERE cislo_pn = 894") == [(None, True)]
 
 
+def test_sitova_chyba_znovu_po_24_h(conn):
+    """Timeout, spojení a HTTP 5xx se opakují po 24 h; HTTP 4xx a ostatní chyby dál po 7 dnech (díra 4)."""
+    from hlidac_rag.texty.ingest import sync_texty
+
+    chyby = {
+        894: "síť: TimeoutError: timed out",
+        895: "síť: URLError: <urlopen error [Errno 111] Connection refused>",
+        896: "síť: HTTPError: HTTP Error 503: Service Unavailable",
+        897: "síť: HTTPError: HTTP Error 403: Forbidden",
+        898: "stránka na psp.cz nenalezena",
+    }
+    for i, (cislo, chyba) in enumerate(chyby.items()):
+        sql(conn, "INSERT INTO pn (id_dokument, cislo, ct) VALUES (%s, %s, 76)", (500 + i, cislo))
+        sql(conn, """INSERT INTO texty.dokument (druh, ct, cislo_pn, verze, zdroj_textu, znaku, zkontrolovano_at, chyba)
+                     VALUES ('pn', 76, %s, 'puvodni', 'vlastni_stazeni', 0, now() - interval '25 hours', %s)""",
+            (cislo, chyba))
+    f = FakeFetcher()
+    sync_texty(conn, f, 10)
+    assert {c: f.pocet(f"cd={c}") for c in chyby} == {
+        894: 1, 895: 1, 896: 1, 897: 0, 898: 0}
+
+
 def test_faze_vice_radku_tisku(conn):
     from hlidac_rag.texty.ingest import sync_texty
 

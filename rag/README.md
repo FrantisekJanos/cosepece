@@ -23,7 +23,8 @@ Krok ingestu po stenoprotokolech (`hlidac_rag.texty.ingest.sync_texty`, chyba ne
 4. rozdělení dokumentů na celky (části, hlavy, články, paragrafy, body PN; `texty.cel`).
 
 Chyba jednoho dokumentu (nečitelný DOCX, HTTP 403/500/503, timeout) se zapíše do `texty.dokument.chyba` a běh
-pokračuje dalším. Opakování: chybějící původní text po 7 dnech („jen PDF“ se neopakuje), schválené znění po 24 h
+pokračuje dalším. Opakování: chybějící původní text po 7 dnech, po přechodné síťové chybě (timeout, spojení,
+HTTP 5xx) po 24 h („jen PDF“ se neopakuje), schválené znění po 24 h
 (nečitelný DOCX po 7 dnech). Výpadek spojení s psp.cz nebo 3 síťové chyby za sebou stahování v běhu ukončí.
 Když dělení selže, celky dokumentu se smažou a nástroje vrací chybu, dokud se text nezmění.
 Výsledek běhu (ok a počty) je v `stav_dat` jako `steno_last_result.texty_ok` a `steno_last_result.texty`.

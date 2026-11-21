@@ -67,7 +67,10 @@ Test vypisuje `VŠE OK`; po každé změně logiky ho spusť a případně rozš
 ## Architektura
 
 ```
-cron.php / bin/sync.php → Hlidac\Sync::run()
+cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek do sync_beh, app/SyncRuns.php)
+  0. HistoryHtml   stránky historie tisků (historie.sqw) pro tisky se změnou za 14 dní a na pořadu schůze, nejvýš
+                   history_html.per_run za běh: kroky z <!-- LLLP id_hist id_prechod -->, PN z tabulky; do html_kroky /
+                   html_pn jen to, co otevřená data nemají. Importer je přimíchá, po příchodu v nočních datech smaže
   1. Importer      stáhne tisky.zip, sd.zip, poslanci.zip, přepíše tabulky tisky / kroky / pn (aktuální období)
   2. AlertBuilder  vytvoří upozornění s jednoznačným klíčem (bez duplicit); 1. běh = bootstrap (posted=2, nic se nepošle)
   3. Scorer        předběžné skóre (určuje pořadí front textů a AI)
@@ -90,7 +93,8 @@ cron.php / bin/sync.php → Hlidac\Sync::run()
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
-                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby).
+                schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),
+                nespárovaná s ct = 0, hlasy poslanců (hlasovani_poslanci, jen nová hlasování, po dávkách).
                 Do skóre nevstupuje; chyba nezastaví synchronizaci
   1c. GovPrep    příprava návrhu u vlády z otevřených dat Úřadu vlády (odok.gov.cz/opendata, JSON po letech, cache 20 h;
                 robots.txt portálu zakazuje procházení webu, proto jen tyto soubory): vládní návrhy přes tisk_eklep.unl
@@ -167,7 +171,8 @@ textu po odstavcích a slovech přes `app/Diff.php`, změny závažnosti a titul
 za kalendářní den podle času podání, ne za běh synchronizace.
 
 Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `pripravovane`,
-`text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období).
+`text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období), `sync_beh`
+(historie běhů synchronizace, 90 dní), `html_kroky`, `html_pn` (záznamy ze stránek historie tisků), `hlasovani_poslanci`.
 
 ## Zdroj dat (psp.cz open data)
 

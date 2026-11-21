@@ -45,6 +45,13 @@ final class Sync
         );
         // jednorázově: dosavadní texty a rozbory jako první verze historie (meta revize_backfill)
         $backfill = Revisions::backfill(db());
+        try {
+            // nové kroky a PN ze stránek historie tisků (rychleji než noční otevřená data); Importer je přimíchá
+            $history = (new HistoryHtml(db(), $source, $config))->run();
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/HistoryHtml']);
+            $history = ['error' => Http::redact($ex->getMessage())];
+        }
         $import = (new Importer(db(), $source))->run();
         try {
             $prep = (new GovPrep(db(), $source, $config))->run();
@@ -86,6 +93,7 @@ final class Sync
         $posts = (new Publisher(db(), $config))->run();
         $result = [
             'import' => $import,
+            'historie_html' => $history,
             'votes' => $votes,
             'priprava' => $prep,
             'alerts_new' => $alerts,

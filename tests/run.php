@@ -20,6 +20,7 @@ $base['site_url'] = 'https://hlidac.test';
 $base['notify']['dry_run'] = true;
 $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu testujeme přímo
 $base['tisk_text']['enabled'] = false;
+$base['history_html']['enabled'] = false; // stránky historie tisků se testují zvlášť s falešným stahováním
 $base['ai']['enabled'] = false;
 file_put_contents($tmp . '/config.php', '<?php return ' . var_export($base, true) . ';');
 putenv('HLIDAC_CONFIG=' . $tmp . '/config.php');
@@ -1697,6 +1698,73 @@ check('sync_beh: chyba běhu prošla dál', $sbError !== null, true);
 check('sync_beh: chybný běh ok = 0 s textem chyby', [(int)$sbLast['ok'], $sbLast['konec'] !== null, $sbLast['chyba'] !== null && $sbLast['chyba'] !== ''],
     [0, true, true]);
 check('sync_beh: lastOk přeskočí chybný běh', (int)(Hlidac\SyncRuns::lastOk(db())['ok'] ?? 0), 1);
+
+echo "Stránky historie tisků (HistoryHtml, díra 6)\n";
+// uložená stránka historie tisku 311 z psp.cz (windows-1250) ze 19. 11. 2026
+$hhRaw = (string)file_get_contents(__DIR__ . '/html/historie-311.html');
+$hhParsed = Hlidac\HistoryHtml::parse(iconv('CP1250', 'UTF-8', $hhRaw), '2026-11-20 12:00:00');
+check('historie: kroky z LLLP (id_hist, přechod, datum z textu záznamu)', array_map(fn($k) => [$k['id_hist'], $k['id_prechod'], $k['datum']], $hhParsed['kroky']), [
+    [212169, 2116, '2026-09-22 00:00:00'], [212263, 2011, '2026-10-01 00:00:00'], [212296, 2013, '2026-10-13 00:00:00'],
+    [212584, 22, '2026-11-13 00:00:00'], [212587, 2030, '2026-11-20 12:00:00']]);
+check('historie: PN z tabulky (id dokumentu ze jména souboru, autor, čas podání)', $hhParsed['pn'][0] ?? null,
+    ['id_dokument' => 31015, 'cislo' => 2015, 'id_osoba' => 6687, 'osoba' => 'Jan Jakob', 'cas' => '2026-10-15 11:53:35']);
+check('historie: PN s id_dokument a číslem', count($hhParsed['pn']) > 10 && count(array_unique(array_column($hhParsed['pn'], 'id_dokument'))) === count($hhParsed['pn']), true);
+// nový krok, který noční data ještě nemají (přechod 2030 jako u 212587)
+$hhExtra = iconv('UTF-8', 'CP1250', '<!-- LLLP 212999 2030 3000 --><ul class="document-log"><!-- EndR 212999, 30 (30) --><li>Nové pozměňovací návrhy rozeslány 20.&nbsp;11.&nbsp;2026.</li><!--/ Document Log -->');
+$hhUrls = [];
+$hhCfg = ['history_html' => ['enabled' => true, 'per_run' => 5, 'days' => 14, 'delay_ms' => 0]];
+$hhFetch = function (string $url) use (&$hhUrls, $hhRaw, $hhExtra): string {
+    $hhUrls[] = $url;
+    // jiné tisky: stránka bez kroků a PN
+    return str_ends_with($url, '&t=311') ? $hhExtra . $hhRaw : '<html></html>';
+};
+$hhNow = strtotime('2026-11-20 12:00:00');
+$hhSource = new Hlidac\Source('', $tmp . '/cache-hh', $tmp . '/src');
+$hh = new Hlidac\HistoryHtml(db(), $hhSource, $hhCfg, $hhFetch);
+$hhCands = array_column($hh->candidates(5, 14, $hhNow), 'ct');
+check('historie: kandidáti = tisky se změnou za 14 dní (bez vyhlášených)', [in_array(311, $hhCands, true), array_intersect($hhCands, [78, 90])], [true, []]);
+db()->run("UPDATE tisky SET faze = '3. čtení' WHERE ct = 78"); // vrátí další běh Importeru
+check('historie: pořad běžící schůze má přednost', array_column($hh->candidates(5, 14, strtotime('2026-04-20 12:00:00')), 'ct')[0] ?? null, 78);
+db()->run("UPDATE tisky SET faze = 'Vyhlášeno' WHERE ct = 78");
+$hhPnKnown = (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311');
+$hhPnNew = count(array_filter($hhParsed['pn'], fn($p) => db()->value('SELECT 1 FROM pn WHERE id_dokument = ?', [$p['id_dokument']]) === null));
+$hhStats = $hh->run($hhNow);
+check('historie: stažené stránky kandidátů', $hhUrls, array_map(fn($ct) => 'https://www.psp.cz/sqw/historie.sqw?o=10&t=' . $ct, $hhCands));
+check('historie: uložen nový krok a PN, které otevřená data nemají', [$hhStats['stazeno'], $hhStats['kroky'], $hhStats['pn'] === $hhPnNew, $hhPnNew > 0],
+    [count($hhCands), 1, true, true]);
+$hhImport = (new Hlidac\Importer(db(), $hhSource))->run();
+check('historie: Importer přimíchá krok a PN', [$hhImport['html_kroky'], $hhImport['html_pn'], (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311')],
+    [1, $hhPnNew, $hhPnKnown + $hhPnNew]);
+$hhStep = db()->one('SELECT ct, datum, stav FROM kroky WHERE id_hist = 212999');
+$hhStepRef = db()->one('SELECT stav FROM kroky WHERE id_hist = 212587');
+check('historie: krok s datem a stavem podle přechodu', [$hhStep['ct'] ?? null, $hhStep['datum'] ?? null, ($hhStep['stav'] ?? null) === $hhStepRef['stav']],
+    [311, '2026-11-20 00:00:00', true]);
+$hhPnRow = db()->one('SELECT cislo, osoba, cas FROM pn WHERE id_dokument = 31040');
+check('historie: PN se jménem autora a časem podání', [$hhPnRow['cislo'] ?? null, ($hhPnRow['osoba'] ?? '') !== '', $hhPnRow['cas'] ?? null], [2040, true, '2026-10-19 16:18:44']);
+// druhý běh nic nezdvojí; záznam, který už je v otevřených datech, a neověřený starší než týden zmizí
+$hh->run($hhNow);
+db()->run("INSERT INTO html_kroky (id_hist, id_tisk, ct, id_prechod, datum, seen_at) VALUES (212587, 43433, 311, 2030, NULL, ?)", [date('Y-m-d H:i:s')]);
+db()->run("INSERT INTO html_pn (id_dokument, cislo, ct, id_osoba, osoba, cas, seen_at) VALUES (39999, 2999, 311, NULL, 'X', NULL, ?)", [date('Y-m-d H:i:s', time() - 8 * 86400)]);
+$hhImport2 = (new Hlidac\Importer(db(), $hhSource))->run();
+check('historie: bez duplicit po dalším běhu', [(int)db()->value('SELECT COUNT(*) FROM kroky WHERE id_hist IN (212587, 212999)'),
+    (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311')], [2, $hhPnKnown + $hhPnNew]);
+check('historie: potvrzený a starý záznam smazán', [db()->value('SELECT 1 FROM html_kroky WHERE id_hist = 212587'), db()->value('SELECT 1 FROM html_pn WHERE id_dokument = 39999')],
+    [null, null]);
+// výpadek psp.cz: chyba se počítá, běh nespadne
+$hhDown = new Hlidac\HistoryHtml(db(), $hhSource, $hhCfg, function (string $url): string {
+    throw new RuntimeException('HTTP 503');
+});
+check('historie: chyba stažení se jen započítá, po 3 za sebou konec', $hhDown->run($hhNow)['chyby'], min(3, count($hhCands)));
+check('historie: vypnuto v konfiguraci', (new Hlidac\HistoryHtml(db(), $hhSource, ['history_html' => ['enabled' => false]], $hhFetch))->run($hhNow), ['stazeno' => 0]);
+// úklid: tabulky a data bez záznamů ze stránek historie (i z pn, jinak by Importer viděl propad počtu PN)
+foreach (db()->all('SELECT id_dokument FROM html_pn') as $hhRow) {
+    db()->run('DELETE FROM pn WHERE id_dokument = ?', [$hhRow['id_dokument']]);
+}
+db()->run('DELETE FROM kroky WHERE id_hist = 212999');
+db()->run('DELETE FROM html_kroky');
+db()->run('DELETE FROM html_pn');
+(new Hlidac\Importer(db(), $hhSource))->run();
+check('historie: po úklidu původní počet PN', (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311'), $hhPnKnown);
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

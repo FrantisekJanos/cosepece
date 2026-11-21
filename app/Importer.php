@@ -25,6 +25,8 @@ final class Importer
         $kroky = $this->loadKroky($tisky);
         $souhrny = $this->loadSouhrny($tisky);
         $pn = $this->loadPn($obdobiId, $osoby);
+        // kroky a PN ze stránek historie tisku (HistoryHtml), které noční otevřená data ještě nemají
+        [$kroky, $pn, $html] = $this->mergeHtml($tisky, $kroky, $pn, $osoby);
 
         // agregace PN podle čísla tisku
         $pnByCt = [];
@@ -93,13 +95,97 @@ final class Importer
             $this->db->setMeta('obdobi_cislo', (string)$obdobiCislo);
             $this->db->setMeta('last_sync', date('Y-m-d H:i:s'));
             $this->db->setMeta('import_error', '');
+            // záznamy ze stránek historie, které už přišly v otevřených datech, a neověřené starší než týden
+            if ($html['confirmed_steps'] !== []) {
+                $this->db->run('DELETE FROM html_kroky WHERE id_hist IN (' . implode(',', $html['confirmed_steps']) . ')');
+            }
+            if ($html['confirmed_pn'] !== []) {
+                $this->db->run('DELETE FROM html_pn WHERE id_dokument IN (' . implode(',', $html['confirmed_pn']) . ')');
+            }
+            $stale = date('Y-m-d H:i:s', time() - HistoryHtml::KEEP_DAYS * 86400);
+            $this->db->run('DELETE FROM html_kroky WHERE seen_at < ?', [$stale]);
+            $this->db->run('DELETE FROM html_pn WHERE seen_at < ?', [$stale]);
             $this->db->pdo->commit();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
         }
 
-        return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn)];
+        return ['obdobi' => $obdobiCislo, 'tisky' => count($tiskyRows), 'kroky' => count($kroky), 'pn' => count($pn),
+            'html_kroky' => $html['steps'], 'html_pn' => $html['pn']];
+    }
+
+    /**
+     * Přimíchá kroky a PN ze stránek historie tisku (tabulky html_kroky, html_pn), které v otevřených datech
+     * ještě nejsou; otevřená data mají přednost. Vrací [kroky, PN, údaje pro úklid a výsledek].
+     */
+    private function mergeHtml(array $tisky, array $kroky, array $pn, array $osoby): array
+    {
+        $info = ['steps' => 0, 'pn' => 0, 'confirmed_steps' => [], 'confirmed_pn' => []];
+        // neověřené záznamy starší než týden se nepoužijí (a po zápisu se smažou)
+        $stale = date('Y-m-d H:i:s', time() - HistoryHtml::KEEP_DAYS * 86400);
+        $htmlSteps = $this->db->all('SELECT * FROM html_kroky WHERE seen_at >= ?', [$stale]);
+        $htmlPn = $this->db->all('SELECT * FROM html_pn WHERE seen_at >= ?', [$stale]);
+        if ($htmlSteps === [] && $htmlPn === []) {
+            return [$kroky, $pn, $info];
+        }
+        $known = array_fill_keys(array_column($kroky, 'id_hist'), true);
+        $map = $this->stepMapper();
+        foreach ($htmlSteps as $h) {
+            $id = (int)$h['id_hist'];
+            if (isset($known[$id])) {
+                $info['confirmed_steps'][] = $id;
+                continue;
+            }
+            $idTisk = (int)$h['id_tisk'];
+            $row = isset($tisky[$idTisk]) ? $map((int)$h['id_prechod']) : null;
+            if ($row === null) {
+                continue;
+            }
+            $kroky[] = ['id_hist' => $id, 'id_tisk' => $idTisk, 'ct' => $tisky[$idTisk]['ct'],
+                'datum' => $h['datum'] ?: $h['seen_at'], 'id_hlasovani' => null, '_sb' => null, '_vyhl' => null] + $row;
+            $info['steps']++;
+        }
+        usort($kroky, fn(array $a, array $b): int => $a['id_hist'] <=> $b['id_hist']);
+        $knownPn = array_fill_keys(array_column($pn, 'id_dokument'), true);
+        $knownNo = array_fill_keys(array_map(fn(array $p): string => $p['ct'] . '|' . $p['cislo'], $pn), true);
+        $cts = array_fill_keys(array_column($tisky, 'ct'), true);
+        foreach ($htmlPn as $h) {
+            $id = (int)$h['id_dokument'];
+            if (isset($knownPn[$id]) || isset($knownNo[$h['ct'] . '|' . $h['cislo']])) {
+                $info['confirmed_pn'][] = $id;
+                continue;
+            }
+            if (!isset($cts[(int)$h['ct']])) {
+                continue;
+            }
+            $idOsoba = (int)$h['id_osoba'];
+            $pn[] = ['id_dokument' => $id, 'cislo' => (int)$h['cislo'], 'ct' => (int)$h['ct'], 'id_osoba' => $idOsoba ?: null,
+                'osoba' => $osoby[$idOsoba] ?? (string)$h['osoba'], 'cas' => $h['cas'] ?: $h['seen_at']];
+            $info['pn']++;
+        }
+        return [$kroky, $pn, $info];
+    }
+
+    /** Přechod historie → typ stavu, stav, akce (stejně jako u kroků z hist.unl); neznámý přechod = null. */
+    private function stepMapper(): \Closure
+    {
+        $prechody = [];
+        foreach ($this->source->rows('tisky', 'prechody.unl') as $c) {
+            $prechody[(int)$c[0]] = ['kam' => (int)$c[2], 'akce' => (int)$c[3]];
+        }
+        $stavToTyp = $this->source->map('tisky', 'stavy.unl', 0, 1);
+        $typy = $this->source->map('tisky', 'typ_stavu.unl', 0, 1);
+        $akce = $this->source->map('tisky', 'typ_akce.unl', 0, 1);
+        return function (int $idPrechod) use ($prechody, $stavToTyp, $typy, $akce): ?array {
+            $prechod = $prechody[$idPrechod] ?? null;
+            if ($prechod === null) {
+                return null;
+            }
+            $typ = (int)($stavToTyp[$prechod['kam']] ?? 0);
+            return ['typ_stavu' => $typ, 'stav' => $typy[$typ] ?? '', 'akce_id' => $prechod['akce'],
+                'akce' => $akce[$prechod['akce']] ?? ''];
+        };
     }
 
     private function loadSouhrny(array $tisky): array
@@ -246,34 +332,26 @@ final class Importer
 
     private function loadKroky(array $tisky): array
     {
-        $prechody = [];
-        foreach ($this->source->rows('tisky', 'prechody.unl') as $c) {
-            $prechody[(int)$c[0]] = ['kam' => (int)$c[2], 'akce' => (int)$c[3]];
-        }
-        $stavToTyp = $this->source->map('tisky', 'stavy.unl', 0, 1);
-        $typy = $this->source->map('tisky', 'typ_stavu.unl', 0, 1);
-        $akce = $this->source->map('tisky', 'typ_akce.unl', 0, 1);
-
+        $map = $this->stepMapper();
         $out = [];
         foreach ($this->source->rows('tisky', 'hist.unl') as $c) {
             $idTisk = (int)($c[1] ?? 0);
             if (!isset($tisky[$idTisk])) {
                 continue;
             }
-            $prechod = $prechody[(int)($c[4] ?? 0)] ?? null;
-            if ($prechod === null) {
+            $step = $map((int)($c[4] ?? 0));
+            if ($step === null) {
                 continue;
             }
-            $typ = (int)($stavToTyp[$prechod['kam']] ?? 0);
             $out[] = [
                 'id_hist' => (int)$c[0],
                 'id_tisk' => $idTisk,
                 'ct' => $tisky[$idTisk]['ct'],
                 'datum' => $this->isoDate($c[2] ?? ''),
-                'typ_stavu' => $typ,
-                'stav' => $typy[$typ] ?? '',
-                'akce_id' => $prechod['akce'],
-                'akce' => $akce[$prechod['akce']] ?? '',
+                'typ_stavu' => $step['typ_stavu'],
+                'stav' => $step['stav'],
+                'akce_id' => $step['akce_id'],
+                'akce' => $step['akce'],
                 // hlasování, kterým krok skončil (např. závěrečné hlasování ve 3. čtení)
                 'id_hlasovani' => (int)($c[3] ?? 0) ?: null,
                 // číslo ve Sbírce zákonů (sloupce zaver_sb_cislo a datum vyhlášení)

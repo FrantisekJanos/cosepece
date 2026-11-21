@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-21', 'Nové pozměňovací návrhy a kroky do hodiny',
+        'Sněmovna vydává otevřená data jednou denně v noci, takže nový pozměňovací návrh nebo krok projednávání se u nás dřív objevil až druhý den ráno. U tisků, které se v posledních dvou týdnech pohnuly nebo jsou na pořadu schůze, teď každou hodinu čteme i stránku historie tisku na psp.cz a nové návrhy a kroky přebíráme hned. Noční data zůstávají hlavním zdrojem: jakmile záznam přinesou, nahradí ten ze stránky. Stránka neuvádí všechny kroky, ty zbylé doplní noční data jako dosud.',
+        [], false],
     ['2026-11-21', 'Hlasy jednotlivých poslanců pro AI asistenty',
         'Napojení pro AI asistenty (MCP) nově u každého hlasování vrací, jak hlasoval každý poslanec (pro, proti, zdržel se, nehlasoval, nepřítomen) a ve kterém klubu ten den byl. Ukládáme i hlasování, která se nepodařilo přiřadit ke konkrétnímu tisku (například o pořadu schůze); jdou najít podle čísla hlasování. Data jsou z otevřených dat Sněmovny.',
         [], false],

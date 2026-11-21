@@ -333,6 +333,24 @@ final class Db
             PRIMARY KEY (obdobi, id_dokument)
         )$suffix");
 
+        // kroky a PN ze stránek historie tisku, které noční otevřená data ještě nemají (app/HistoryHtml.php)
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS html_kroky (
+            id_hist INTEGER NOT NULL PRIMARY KEY,
+            id_tisk INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            id_prechod INTEGER NOT NULL,
+            datum VARCHAR(19),
+            seen_at VARCHAR(19) NOT NULL
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS html_pn (
+            id_dokument INTEGER NOT NULL PRIMARY KEY,
+            cislo INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            id_osoba INTEGER,
+            osoba VARCHAR(120),
+            cas VARCHAR(19),
+            seen_at VARCHAR(19) NOT NULL
+        )$suffix");
         // historie běhů synchronizace (app/SyncRuns.php): ok NULL = běží, 0 = chyba nebo nedokončeno, 1 = hotovo
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS sync_beh (
             id INTEGER NOT NULL PRIMARY KEY,

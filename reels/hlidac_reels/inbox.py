@@ -1,4 +1,8 @@
-"""Převzetí sady variant z mezisložky (zapisuje PHP API) do fronty reel_queue."""
+"""Převzetí sady variant z mezisložky (zapisuje PHP API) do fronty reel_queue.
+
+Varianta může mít i video na šířku 16:9 (variant-<n>-sirka.mp4, v manifestu "landscape": true), které dostane
+Threads. Vadná šířka variantu nevyřadí: položka vznikne jen s videem na výšku a důvod je v IngestResult.warnings.
+"""
 from __future__ import annotations
 
 import json
@@ -28,6 +32,7 @@ class IngestResult:
     reel_ids: list[int] = field(default_factory=list)
     rejected: dict[int, list[str]] = field(default_factory=dict)  # varianta -> chyby
     ok: bool = False
+    warnings: dict[int, list[str]] = field(default_factory=dict)  # varianta -> proč nemá video na šířku
 
 
 class _BadManifest(Exception):
@@ -57,6 +62,8 @@ def _parse_manifest(path: Path) -> dict:
                 raise ValueError("template/caption")
             if v.get("format") is not None and not isinstance(v["format"], str):
                 raise ValueError("format")
+            if not isinstance(v.get("landscape", False), bool):
+                raise ValueError("landscape")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         raise _BadManifest(f"neplatný manifest: {type(e).__name__}: {e}") from e
     return m
@@ -134,35 +141,71 @@ def _check_variant(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[lis
     return [], digest
 
 
+def _check_landscape(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[list[str], str | None]:
+    """Video na šířku varianty: (varování, otisk). Bez šířky v manifestu ([], None)."""
+    if not v.get("landscape"):
+        return [], None
+    src = folder / f"variant-{v['n']}-sirka.mp4"
+    if not src.is_file():
+        return ["soubor videa na šířku chybí"], None
+    errs: list[str] = []
+    size = src.stat().st_size
+    if size > MAX_VIDEO_BYTES:
+        errs.append(f"video na šířku má {size / 1024 / 1024:.1f} MB, limit je 30 MB")
+    try:
+        errs += media.validate(media.probe(src), orientation="landscape")
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        errs.append(f"kontrola videa na šířku selhala: {e}")
+    if errs:
+        return errs, None
+    digest = media.sha256(src)
+    if digest in seen_sha or queue.sha_in_use(conn, digest):
+        return ["toto video na šířku už ve frontě je"], None
+    return [], digest
+
+
 def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
     job_id = m["job_id"]
     res = IngestResult(job_id)
-    good: list[tuple[dict, str]] = []
+    good: list[tuple[dict, str, str | None]] = []
     seen_sha: set[str] = set()
     for v in sorted(m["variants"], key=lambda x: x["n"]):
         errs, digest = _check_variant(conn, folder, v, seen_sha)
         if errs:
             res.rejected[v["n"]] = errs
-        else:
-            seen_sha.add(digest)
-            good.append((v, digest))
+            continue
+        seen_sha.add(digest)
+        warns, land = _check_landscape(conn, folder, v, seen_sha)
+        if warns:
+            res.warnings[v["n"]] = warns
+            log.warning("sada %s, varianta %s: video na šířku vynecháno: %s", job_id, v["n"], "; ".join(warns))
+        if land:
+            seen_sha.add(land)
+        good.append((v, digest, land))
 
     created: list[Path] = []
     if len(good) >= MIN_VALID:
         try:
             rows = []
-            for v, digest in good:
+            for v, digest, land in good:
                 target, new = _copy_video(folder / f"variant-{v['n']}.mp4", digest, media_dir)
                 if new:
                     created.append(target)
-                rows.append((v, target, digest))
+                land_target = None
+                if land:
+                    land_target, new = _copy_video(folder / f"variant-{v['n']}-sirka.mp4", land, media_dir)
+                    if new:
+                        created.append(land_target)
+                rows.append((v, target, digest, land_target, land))
             try:
-                for v, target, digest in rows:
+                for v, target, digest, land_target, land in rows:
                     fmt = v["format"] if v["template"] == "template_v3" else "v2"
                     res.reel_ids.append(queue.add(
                         conn, video_path=str(target), video_sha256=digest, caption=v["caption"].strip(),
                         ct=m.get("ct"), format=fmt, source=m["source"], set_id=job_id,
-                        variant=v["n"], template=v["template"], commit=False))
+                        variant=v["n"], template=v["template"],
+                        video_landscape_path=str(land_target) if land_target else None,
+                        video_landscape_sha256=land, commit=False))
                 conn.commit()  # celá sada v jedné transakci
             except BaseException:
                 conn.rollback()

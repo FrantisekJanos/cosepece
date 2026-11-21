@@ -20,9 +20,11 @@ JOB = {"job_id": 7, "claim_token": "c" * 32, "ct": 221, "source": "manual", "for
 
 
 class FakeApi:
-    def __init__(self, job=None, conflict_on: str | None = None):
+    def __init__(self, job=None, conflict_on=None, landscape_reply: dict | None = None):
         self.job = job
-        self.conflict_on = conflict_on
+        self.conflict_on = conflict_on  # "upload" | "result" | "landscape" (409) | ApiError při nahrání šířky
+        # odpověď nového serveru; starší server orientation nevrací
+        self.landscape_reply = {"ok": True, "orientation": "landscape"} if landscape_reply is None else landscape_reply
         self.calls: list[tuple] = []
 
     def heartbeat(self):
@@ -32,11 +34,19 @@ class FakeApi:
         self.calls.append(("claim",))
         return self.job
 
-    def upload_video(self, job_id, claim_token, n, path):
+    def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
         assert Path(path).is_file()
+        if orientation == "landscape":
+            self.calls.append(("upload_landscape", job_id, claim_token, n, Path(path).name))
+            if isinstance(self.conflict_on, ApiError):
+                raise self.conflict_on
+            if self.conflict_on == "landscape":
+                raise ApiError(409, '{"error": "claim"}')
+            return self.landscape_reply
         self.calls.append(("upload_video", job_id, claim_token, n, Path(path).name))
         if self.conflict_on == "upload":
             raise ApiError(409, '{"error": "claim"}')
+        return {"ok": True}
 
     def result(self, job_id, claim_token, variants):
         self.calls.append(("result", job_id, claim_token, variants))
@@ -51,8 +61,8 @@ class FakeApi:
         return [c[0] for c in self.calls]
 
 
-def fake_generate(ok_ns: set[int], seen: dict | None = None):
-    """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné."""
+def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] = frozenset()):
+    """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné, z land_ns mají šířku."""
     def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s):
         if seen is not None:
             seen.update(ct=ct, out=Path(out), model=model, hint=hint, mcp_config=mcp_config,
@@ -69,6 +79,9 @@ def fake_generate(ok_ns: set[int], seen: dict | None = None):
                 v.video = d / f"reel-{ct}-{v.format or 'v2'}.mp4"
                 v.video.write_bytes(b"\0\0\0\x18ftypmp42")
                 v.ok = True
+                if v.n in land_ns:
+                    v.video_landscape = d / f"reel-{ct}-{v.format or 'v2'}-sirka.mp4"
+                    v.video_landscape.write_bytes(b"\0\0\0\x18ftypmp42land")
             else:
                 v.errors = [f"chyba v {out / 'x'}"]
         return GenResult(ct=ct, formats=["cesta", "pn"], variants=variants, ok=len(ok_ns) >= 2)
@@ -172,6 +185,44 @@ def test_process_chyba_nahrani_hlasi_fail(tmp_path):
     assert _process(api, tmp_path, fake_generate({1, 2, 3})) is False
     assert api.names() == ["fail"]
     assert "403" in api.calls[0][3]
+
+
+def test_process_sirka_pred_vyskou(tmp_path):
+    api = FakeApi()
+    assert _process(api, tmp_path, fake_generate({1, 2, 3}, land_ns={1, 3})) is True
+    # šířka před výškou: starší server by šířku přepsal videem na výšku
+    assert api.names() == ["upload_landscape", "upload_video", "upload_video", "upload_landscape", "upload_video",
+                           "result"]
+    assert [(c[3], c[4]) for c in api.calls if c[0] == "upload_landscape"] == \
+        [(1, "reel-221-v2-sirka.mp4"), (3, "reel-221-pn-sirka.mp4")]
+    assert "video_landscape" not in api.calls[-1][3][0]
+
+
+def test_process_chyba_sirky_nevyradi_variantu(tmp_path):
+    api = FakeApi(conflict_on=ApiError(413, "<html>too large</html>"))
+    assert _process(api, tmp_path, fake_generate({1, 2}, land_ns={1, 2})) is True
+    assert api.names() == ["upload_landscape", "upload_video", "upload_landscape", "upload_video", "result"]
+
+
+def test_process_konflikt_pri_sirce(tmp_path):
+    api = FakeApi(conflict_on="landscape")
+    assert _process(api, tmp_path, fake_generate({1, 2}, land_ns={1})) is False
+    assert api.names() == ["upload_landscape"]
+
+
+def test_process_starsi_server_bez_sirky(tmp_path, caplog):
+    api = FakeApi(landscape_reply={"ok": True, "bytes": 12})
+    with caplog.at_level("WARNING", logger="hlidac_reels.worker"):
+        assert _process(api, tmp_path, fake_generate({1, 2}, land_ns={2})) is True
+    assert api.names() == ["upload_video", "upload_landscape", "upload_video", "result"]
+    assert "starší" in caplog.text
+
+
+def test_process_velka_sirka_vynechana(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "MAX_VIDEO_BYTES", 13)  # výška má 12 B, šířka 16 B
+    api = FakeApi()
+    assert _process(api, tmp_path, fake_generate({1, 2}, land_ns={1, 2})) is True
+    assert api.names() == ["upload_video", "upload_video", "result"]
 
 
 def test_run_bez_ulohy_ceka(tmp_path):
@@ -320,6 +371,9 @@ def test_api_pozadavky(server, tmp_path):
     video = tmp_path / "v.mp4"
     video.write_bytes(b"\0\0\0\x18ftypmp42")
     api.upload_video(7, "claim-x", 2, video)
+    server.response = (200, "application/json", b'{"ok": true, "bytes": 12, "orientation": "landscape"}')
+    assert api.upload_video(7, "claim-x", 2, video, orientation="landscape")["orientation"] == "landscape"
+    server.response = (200, "application/json", b'{"ok": true, "bytes": 12}')
     api.result(7, "claim-x", [{"n": 1}])
     server.response = (200, "application/json", b'{"status": "failed"}')
     assert api.fail(7, "claim-x", "chyba") == "failed"
@@ -329,16 +383,19 @@ def test_api_pozadavky(server, tmp_path):
     reqs = server.requests
     assert [(r["method"], r["path"]) for r in reqs] == [
         ("GET", "/reels_api.php?action=claim"), ("GET", "/reels_api.php?action=claim"),
-        ("PUT", "/reels_api.php?action=video&job_id=7&n=2"), ("POST", "/reels_api.php?action=result"),
+        ("PUT", "/reels_api.php?action=video&job_id=7&n=2"),
+        ("PUT", "/reels_api.php?action=video&job_id=7&n=2&orientation=landscape"),
+        ("POST", "/reels_api.php?action=result"),
         ("POST", "/reels_api.php?action=fail"), ("POST", "/reels_api.php?action=heartbeat")]
     assert all(r["headers"]["X-Hlidac-Token"] == "tok-123" for r in reqs)
     put = reqs[2]
+    assert reqs[3]["body"] == video.read_bytes() and reqs[3]["headers"]["X-Claim-Token"] == "claim-x"
     assert put["headers"]["X-Claim-Token"] == "claim-x"
     assert put["headers"]["Content-Length"] == "12" and put["body"] == video.read_bytes()
-    assert json.loads(reqs[3]["body"]) == {"job_id": 7, "variants": [{"n": 1}]}
-    assert reqs[3]["headers"]["X-Claim-Token"] == "claim-x"
-    assert json.loads(reqs[4]["body"]) == {"job_id": 7, "error": "chyba"}
-    assert "X-Claim-Token" not in reqs[5]["headers"]
+    assert json.loads(reqs[4]["body"]) == {"job_id": 7, "variants": [{"n": 1}]}
+    assert reqs[4]["headers"]["X-Claim-Token"] == "claim-x"
+    assert json.loads(reqs[5]["body"]) == {"job_id": 7, "error": "chyba"}
+    assert "X-Claim-Token" not in reqs[6]["headers"]
 
 
 def test_api_nesleduje_presmerovani(server):

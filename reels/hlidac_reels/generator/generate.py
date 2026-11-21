@@ -1,4 +1,8 @@
-"""Příkaz reels-generate: sada 3 variant k tisku (1× v2 z karty webu, 2× v3 z MCP) přes claude -p."""
+"""Příkaz reels-generate: sada 3 variant k tisku (1× v2 z karty webu, 2× v3 z MCP) přes claude -p.
+
+Každá platná varianta dostane i video na šířku 16:9 (pro Threads), když ho šablona umí (landscape.css).
+Selhání šířky variantu nevyřadí: zůstane jen na výšku a důvod je ve warnings.
+"""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +15,7 @@ from pathlib import Path
 from ..card import Card
 from ..media import probe
 from ..media import validate as media_validate
-from ..render import render_reel
+from ..render import has_landscape, render_reel
 from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude
 from .formats import pick_formats
 from .validate import check_layout, validate_variant
@@ -28,6 +32,8 @@ class Variant:
     errors: list[str] = field(default_factory=list)
     video: Path | None = None
     caption: str = ""
+    video_landscape: Path | None = None  # 16:9; None = šablona šířku neumí nebo render či kontrola selhaly
+    warnings: list[str] = field(default_factory=list)  # chyby, které variantu nevyřadí (šířka)
 
 
 @dataclass
@@ -65,9 +71,26 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
     return None if v.errors else card
 
 
+def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
+    """Video na šířku k platné variantě; chyba jde do v.warnings, varianta zůstane platná na výšku."""
+    if not has_landscape(v.template):
+        return
+    video = portrait.with_name(portrait.stem + "-sirka.mp4")
+    try:
+        render_reel(Card.from_json(card), video, template=v.template, orientation="landscape")
+        errs = media_validate(probe(video), orientation="landscape")
+    except Exception as e:  # noqa: BLE001 — šířka je navíc, její chyba variantu nevyřadí
+        errs = [f"render selhal: {e}"]
+    if errs:
+        v.warnings.append(f"video na šířku vynecháno: {'; '.join(errs)}")
+        video.unlink(missing_ok=True)
+        return
+    v.video_landscape = video
+
+
 def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: bool, out: Path, mcp_config: Path,
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
-             timeout_s: int = 1200) -> GenResult:
+             timeout_s: int = 1200, landscape: bool = True) -> GenResult:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
@@ -119,6 +142,8 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
             if v.errors:
                 continue
             v.video = video
+            if landscape:
+                _render_landscape(v, card, video)
         v.ok = True
 
     result = GenResult(ct=ct, formats=formats, variants=variants,
@@ -126,6 +151,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     data = asdict(result)
     for item in data["variants"]:
         item["video"] = str(item["video"]) if item["video"] else None
+        item["video_landscape"] = str(item["video_landscape"]) if item["video_landscape"] else None
     (out / "vysledek.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return result
 
@@ -140,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--mcp-config", type=Path, required=True, help="JSON s MCP serverem cosepece (mimo repo)")
     ap.add_argument("--no-render", action="store_true")
+    ap.add_argument("--no-landscape", action="store_true", help="bez videa na šířku 16:9")
     ap.add_argument("--timeout", type=int, default=1200, help="s na jeden běh claude -p")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
@@ -154,10 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     reasons = [k for k in args.reasons.split(",") if k]
     r = generate(ct=args.ct, card_v2=card_v2, reason_keys=reasons, has_amendments=args.has_amendments,
                  out=args.out, mcp_config=args.mcp_config, model=args.model, hint=args.hint,
-                 render=not args.no_render, timeout_s=args.timeout)
+                 render=not args.no_render, timeout_s=args.timeout, landscape=not args.no_landscape)
     for v in r.variants:
         print(f"varianta {v.n} ({v.template} {v.format or ''}): {'OK' if v.ok else 'CHYBA'} "
-              f"{'; '.join(v.errors)}")
+              f"{'; '.join(v.errors + v.warnings)}")
     return 0 if r.ok else 2
 
 

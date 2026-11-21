@@ -52,6 +52,14 @@ def _template_path(template: str) -> Path:
     return path
 
 
+def has_landscape(template: str) -> bool:
+    """Má šablona rozvržení na šířku (landscape.css vedle reel.html)? Neexistující šablona = False."""
+    try:
+        return (_template_path(template).parent / "landscape.css").is_file()
+    except FileNotFoundError:
+        return False
+
+
 @contextmanager
 def _page(card: Card, template: str = "template", orientation: Orientation = "portrait"):
     """Otevře šablonu s načtenou a vměstnanou kartou; viewport i rozvržení podle orientace."""
@@ -59,7 +67,7 @@ def _page(card: Card, template: str = "template", orientation: Orientation = "po
 
     if orientation not in SIZES:
         raise ValueError(f"neznámá orientace {orientation!r} (portrait, landscape)")
-    if orientation == "landscape" and not (_template_path(template).parent / "landscape.css").is_file():
+    if orientation == "landscape" and not has_landscape(template):
         raise ValueError(f"šablona {template!r} nemá rozvržení na šířku")
     width, height = SIZES[orientation]
 

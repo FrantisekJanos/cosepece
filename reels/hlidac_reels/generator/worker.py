@@ -1,7 +1,8 @@
 """Příkaz reels-worker: worker na PC vyzvedává úlohy z reels_api.php a generuje k nim sady variant.
 
 Smyčka: heartbeat → claim → generate() z části 1 (claude -p na předplatném + render) → nahrání platných videí →
-result. Bez úlohy nebo při chybě sítě čeká 5 minut. Vždy jen jedna úloha a jedna instance (zámek root/worker.lock),
+result. Video na šířku 16:9 se nahraje před videem na výšku: server, který šířku ještě neumí (parametr orientation
+ignoruje), ho tak přepíše videem na výšku a sada projde bez šířky. Chyba šířky variantu nevyřadí. Bez úlohy nebo při chybě sítě čeká 5 minut. Vždy jen jedna úloha a jedna instance (zámek root/worker.lock),
 naplánovaná úloha při přihlášení a ruční spuštění se tak nepotkají.
 """
 from __future__ import annotations
@@ -74,6 +75,30 @@ def _report_fail(api, job_id: int, claim_token: str, error: str, root: Path) -> 
     return False
 
 
+def _upload_landscape(api, job_id: int, claim: str, v) -> None:
+    """Nahraje video na šířku varianty, když je; chyba (mimo 409) jen varování, varianta jde dál na výšku."""
+    video = getattr(v, "video_landscape", None)
+    if not video:
+        return
+    size = Path(video).stat().st_size
+    if size > MAX_VIDEO_BYTES:
+        v.warnings = [*v.warnings, f"video na šířku má {size / 1024 / 1024:.1f} MB, limit je 30 MB"]
+        log.warning("úloha %s: video na šířku %s je větší než 30 MB, vynechávám", job_id, v.n)
+        return
+    try:
+        r = api.upload_video(job_id, claim, v.n, video, orientation="landscape")
+    except ApiError as e:
+        if e.status == 409:
+            raise
+        v.warnings = [*v.warnings, f"nahrání videa na šířku selhalo: {e}"]
+        log.warning("úloha %s: nahrání videa na šířku %s selhalo: %s", job_id, v.n, e)
+        return
+    if isinstance(r, dict) and r.get("orientation") == "landscape":
+        log.info("úloha %s: video na šířku %s nahráno", job_id, v.n)
+    else:  # starší server: soubor přepíše následující video na výšku
+        log.warning("úloha %s: server video na šířku nepřijal (starší verze), varianta %s jen na výšku", job_id, v.n)
+
+
 def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate) -> bool:
     """Zpracuje jednu vydanou úlohu; True, když server sadu přijal."""
     root = Path(root)
@@ -116,6 +141,9 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
                              "format": v.format if v.template == "template_v3" else None,
                              "caption": v.caption, "card": card})
         for v in good:
+            for w in v.warnings:
+                log.warning("úloha %s: varianta %s: %s", job_id, v.n, w)
+            _upload_landscape(api, job_id, claim, v)
             api.upload_video(job_id, claim, v.n, v.video)
             log.info("úloha %s: video %s nahráno", job_id, v.n)
         api.result(job_id, claim, variants)

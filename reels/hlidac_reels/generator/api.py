@@ -90,8 +90,12 @@ class ReelsApi:
         job = self._request("GET", "claim").get("job")
         return job if isinstance(job, dict) else None
 
-    def upload_video(self, job_id: int, claim_token: str, n: int, path: Path) -> None:
-        self._request("PUT", "video", query={"job_id": job_id, "n": n}, claim_token=claim_token, file=Path(path))
+    def upload_video(self, job_id: int, claim_token: str, n: int, path: Path, orientation: str = "portrait") -> dict:
+        """Nahraje video varianty; orientation="landscape" = video na šířku 16:9 (odpověď pak nese orientation)."""
+        query = {"job_id": job_id, "n": n}
+        if orientation != "portrait":
+            query["orientation"] = orientation
+        return self._request("PUT", "video", query=query, claim_token=claim_token, file=Path(path))
 
     def result(self, job_id: int, claim_token: str, variants: list[dict]) -> None:
         self._request("POST", "result", claim_token=claim_token, payload={"job_id": job_id, "variants": variants})

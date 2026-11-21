@@ -37,6 +37,8 @@ def fake_probe(monkeypatch):
             raise RuntimeError("ffprobe selhal: poškozený soubor")
         if data.startswith(b"short"):
             return VideoInfo("h264", "aac", 1080, 1920, 1.0, len(data))
+        if data.startswith(b"wide"):  # video na šířku 16:9
+            return VideoInfo("h264", "aac", 1920, 1080, 30.0, len(data))
         return VideoInfo("h264", "aac", 1080, 1920, 30.0, len(data))
     monkeypatch.setattr(media, "probe", probe)
 
@@ -50,7 +52,8 @@ def _job(conn, status="done"):
     return jid
 
 
-def _set(tmp_path, jid, kinds, manifest=True, templates=None):
+def _set(tmp_path, jid, kinds, manifest=True, templates=None, land=None):
+    """land: n -> obsah videa na šířku (wide = 16:9, ok = 9:16, None = příznak bez souboru)."""
     folder = tmp_path / "inbox" / str(jid)
     folder.mkdir(parents=True)
     variants = []
@@ -59,6 +62,10 @@ def _set(tmp_path, jid, kinds, manifest=True, templates=None):
         tpl = (templates or {}).get(n, "template_v3")
         variants.append({"n": n, "template": tpl, "format": "pn" if tpl == "template_v3" else None,
                          "caption": f"Popisek {n}", "card": {}})
+        if land and n in land:
+            variants[-1]["landscape"] = True
+            if land[n] is not None:
+                (folder / f"variant-{n}-sirka.mp4").write_bytes(f"{land[n]}-{n}".encode())
     if manifest:
         (folder / "manifest.json").write_text(
             json.dumps({"job_id": jid, "ct": 311, "source": "manual", "variants": variants}), encoding="utf-8")
@@ -260,3 +267,53 @@ def test_uz_prevzata_sada_jen_smaze_slozku(conn, tmp_path):
         cur.execute("SELECT status, error FROM reel_jobs WHERE id=%s", (jid,))
         assert cur.fetchone() == ("done", None)
     conn.commit()
+
+
+def test_sada_se_sirkou(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok", "ok", "ok"], templates={1: "template_v2"}, land={1: "wide", 3: "wide"})
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and not res[0].warnings
+    items = queue.set_items(conn, jid)
+    assert [r.video_landscape_sha256 is not None for r in items] == [True, False, True]
+    for r in (items[0], items[2]):
+        assert r.video_landscape_path == str(tmp_path / "media" / "videos" / f"{r.video_landscape_sha256}.mp4")
+        assert (tmp_path / "media" / "videos" / f"{r.video_landscape_sha256}.mp4").read_bytes().startswith(b"wide")
+        assert r.video_landscape_sha256 != r.video_sha256
+
+
+def test_vadna_sirka_nevyradi_variantu(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    # 1: šířka s poměrem 9:16, 2: poškozená, 3: příznak bez souboru
+    _set(tmp_path, jid, ["ok", "ok", "ok"], land={1: "ok", 2: "broken", 3: None})
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and len(res[0].reel_ids) == 3 and not res[0].rejected
+    assert "16:9" in " ".join(res[0].warnings[1])
+    assert "selhala" in " ".join(res[0].warnings[2])
+    assert "chybí" in " ".join(res[0].warnings[3])
+    assert all(r.video_landscape_path is None for r in queue.set_items(conn, jid))
+
+
+def test_sirka_duplicitni_s_frontou(conn, tmp_path):
+    from hlidac_reels import inbox, media as m, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"], land={1: "wide"})
+    digest = m.sha256(folder / "variant-1-sirka.mp4")
+    queue.add(conn, video_path="/x.mp4", video_sha256="jine", caption="c",
+              video_landscape_path="/y.mp4", video_landscape_sha256=digest)
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and "už ve frontě" in " ".join(res[0].warnings[1])
+    assert queue.set_items(conn, jid)[0].video_landscape_path is None
+
+
+def test_sirka_neni_bool_je_vadny_manifest(conn, tmp_path):
+    from hlidac_reels import inbox
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["variants"][0]["landscape"] = "ano"
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res and not res[0].ok and not folder.exists()

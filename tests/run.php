@@ -1545,6 +1545,13 @@ check('po odmítnutých videích žádný soubor', glob($raDir . '/*') ?: [], []
 check('video 1 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1'], $raMp4(), $raH($raClaim))[0], 200);
 check('video 2 → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2'], $raMp4(5000), $raH($raClaim))[0], 200);
 check('videa uložena bez .part', [is_file($raDir . '/variant-1.mp4'), filesize($raDir . '/variant-2.mp4'), glob($raDir . '/*.part') ?: []], [true, 5000, []]);
+check('video s neznámou orientací → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'ctverec'], $raMp4(), $raH($raClaim))[0], 400);
+check('video na šířku bez ftyp → 400', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], str_repeat('x', 100), $raH($raClaim))[0], 400);
+check('video na šířku > 30 MB → 413', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(30 * 1024 * 1024 + 1), $raH($raClaim))[0], 413);
+check('video na šířku se špatným claim tokenem → 409', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(), $raH(str_repeat('0', 32)))[0], 409);
+check('video 2 na šířku → 200', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '2', 'orientation' => 'landscape'], $raMp4(6000), $raH($raClaim)), [200, ['ok' => true, 'bytes' => 6000, 'orientation' => 'landscape']]);
+check('video na šířku vedle videa na výšku', [filesize($raDir . '/variant-2-sirka.mp4'), filesize($raDir . '/variant-2.mp4')], [6000, 5000]);
+check('orientation=portrait = video na výšku', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1', 'orientation' => 'portrait'], $raMp4(), $raH($raClaim))[0], 200);
 
 check('result s 1 variantou → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1)]]), $raH($raClaim))[0], 400);
 check('result s 1 variantou: manifest nevznikl', is_file($raDir . '/manifest.json'), false);
@@ -1570,6 +1577,7 @@ check('manifest: úloha, tisk, zdroj a varianty', [$raManifest['job_id'] ?? null
 check('manifest: v2 s format null (přijato), v3 s formátem', [array_key_exists('format', $raManifest['variants'][0] ?? []), $raManifest['variants'][0]['template'] ?? null,
     $raManifest['variants'][0]['format'] ?? null, $raManifest['variants'][1]['template'] ?? null, $raManifest['variants'][1]['format'] ?? null],
     [true, 'template_v2', null, 'template_v3', 'zmena']);
+check('manifest: šířka jen u varianty s nahraným videem na šířku', array_column($raManifest['variants'] ?? [], 'landscape'), [false, true]);
 
 // výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
 $rjReset();

@@ -18,7 +18,8 @@ KEYS = [r["key"] for r in load_fixture("v3-cesta-311.json")["reasons"]]
 
 @pytest.fixture
 def fake(monkeypatch):
-    state = {"calls": [], "renders": [], "active": 0, "prepare": None, "timed_out": False, "skip": set()}
+    state = {"calls": [], "renders": [], "landscape": [], "active": 0, "prepare": None, "timed_out": False,
+             "skip": set(), "land_fail": None}
 
     def run_claude(prompt, *, workdir, mcp_config, model, timeout_s=1200):
         state["calls"].append(prompt)
@@ -33,10 +34,17 @@ def fake(monkeypatch):
         to = state["timed_out"]
         return ClaudeRun(ok=not to, returncode=None if to else 0, timed_out=to, log_path=log)
 
-    def render_reel(card, out_path, *, template="template", **kw):
+    def render_reel(card, out_path, *, template="template", orientation="portrait", **kw):
         state["active"] += 1
         assert state["active"] == 1, "render běží souběžně"
-        state["renders"].append(template)
+        if orientation == "landscape":
+            assert Path(out_path).name.endswith("-sirka.mp4")
+            state["landscape"].append(template)
+            if state["land_fail"] == "render":
+                state["active"] -= 1
+                raise RuntimeError("Chromium spadl")
+        else:
+            state["renders"].append(template)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         Path(out_path).write_bytes(b"mp4")
         state["active"] -= 1
@@ -44,7 +52,12 @@ def fake(monkeypatch):
     monkeypatch.setattr(gen, "run_claude", run_claude)
     monkeypatch.setattr(gen, "render_reel", render_reel)
     monkeypatch.setattr(gen, "check_layout", lambda card, template: [])
-    monkeypatch.setattr(gen, "probe", lambda p: VideoInfo("h264", "aac", 1080, 1920, 30.0, 3))
+    def probe(p):
+        # video na šířku má rozměry 16:9; land_fail="ratio" u varianty 2 podvrhne šířku s poměrem 9:16
+        if Path(p).name.endswith("-sirka.mp4") and not (state["land_fail"] == "ratio" and "variant-2" in str(p)):
+            return VideoInfo("h264", "aac", 1920, 1080, 30.0, 3)
+        return VideoInfo("h264", "aac", 1080, 1920, 30.0, 3)
+    monkeypatch.setattr(gen, "probe", probe)
     return state
 
 
@@ -167,3 +180,48 @@ def test_timeout_je_v_chybe_varianty(tmp_path, fake):
     assert any("timeout" in e for e in r.variants[2].errors)
     data = json.loads((tmp_path / "out" / "vysledek.json").read_text(encoding="utf-8"))
     assert data["runs"][0]["timed_out"] is True
+
+
+def test_sirka_ke_kazde_platne_variante(tmp_path, fake):
+    r = _run(tmp_path)
+    assert fake["landscape"] == ["template_v2", "template_v3", "template_v3"]
+    for v in r.variants:
+        assert v.ok and v.video_landscape and v.video_landscape.exists() and not v.warnings
+        assert v.video_landscape.name == v.video.stem + "-sirka.mp4"
+    data = json.loads((tmp_path / "out" / "vysledek.json").read_text(encoding="utf-8"))
+    assert all(item["video_landscape"].endswith("-sirka.mp4") for item in data["variants"])
+
+
+def test_vadna_sirka_nevyradi_variantu(tmp_path, fake):
+    fake["land_fail"] = "ratio"
+    r = _run(tmp_path)
+    v = r.variants[1]
+    assert r.ok and v.ok and v.video and v.video_landscape is None
+    assert any("šířku" in w and "16:9" in w for w in v.warnings) and not v.errors
+    assert not list((tmp_path / "out" / "variant-2").glob("*-sirka.mp4"))
+    assert r.variants[0].video_landscape and r.variants[2].video_landscape
+
+
+def test_pad_renderu_sirky_nevyradi_variantu(tmp_path, fake):
+    fake["land_fail"] = "render"
+    r = _run(tmp_path)
+    assert r.ok and all(v.ok and v.video and v.video_landscape is None for v in r.variants)
+    assert all(any("Chromium spadl" in w for w in v.warnings) for v in r.variants)
+
+
+def test_sablona_bez_sirky(tmp_path, fake, monkeypatch):
+    monkeypatch.setattr(gen, "has_landscape", lambda template: template != "template_v2")
+    r = _run(tmp_path)
+    assert fake["landscape"] == ["template_v3", "template_v3"]
+    assert r.variants[0].ok and r.variants[0].video_landscape is None and not r.variants[0].warnings
+
+
+def test_bez_sirky_na_prani(tmp_path, fake):
+    r = _run(tmp_path, landscape=False)
+    assert r.ok and fake["landscape"] == [] and all(v.video_landscape is None for v in r.variants)
+
+
+def test_vadna_varianta_sirku_nerenderuje(tmp_path, fake):
+    fake["prepare"] = lambda wd: shutil.rmtree(wd / "variant-3")
+    _run(tmp_path)
+    assert fake["landscape"] == ["template_v2", "template_v3"]

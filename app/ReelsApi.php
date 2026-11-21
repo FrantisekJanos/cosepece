@@ -3,7 +3,9 @@
 // Token workeru v hlavičce X-Hlidac-Token (config reels.worker_token), token vydané úlohy v X-Claim-Token.
 //   GET  ?action=claim                      → {"job": {...}} nebo {"job": null}
 //   PUT  ?action=video&job_id=N&n=1..3      tělo = MP4 (≤ 30 MB) → <inbox>/<job_id>/variant-<n>.mp4
+//        &orientation=landscape             video na šířku 16:9 (volitelné) → variant-<n>-sirka.mp4
 //   POST ?action=result  {"job_id","variants":[{"n","template","format","caption","card"}]} → manifest.json, úloha done
+//        (manifest u varianty doplní "landscape": true/false podle nahraného videa na šířku)
 //   POST ?action=fail    {"job_id","error"}  → {"status": "queued"|"failed"}, složka úlohy se smaže
 //   POST ?action=heartbeat                  → {"ok": true}
 // Mezisložku čte služba reels (bot): přebírá jen složky s manifest.json, který se proto zapisuje jako poslední
@@ -93,6 +95,10 @@ final class ReelsApi
             if ($jobId === null || $n === null || $n > 3) {
                 return [400, ['error' => 'Chybí job_id nebo n (1–3)']];
             }
+            $orientation = (string)($query['orientation'] ?? '');
+            if (!in_array($orientation, ['', 'portrait', 'landscape'], true)) {
+                return [400, ['error' => 'Orientace musí být portrait nebo landscape']];
+            }
             // nejdřív ohlášená délka, ať se 30+ MB vůbec nečte
             if (isset($headers['content-length']) && (int)$headers['content-length'] > self::MAX_VIDEO_BYTES) {
                 return [413, ['error' => 'Video je větší než 30 MB']];
@@ -105,7 +111,7 @@ final class ReelsApi
                 fwrite($input, $body);
                 rewind($input);
             }
-            return $this->storeVideo($inbox, $jobId, $n, $input);
+            return $this->storeVideo($inbox, $jobId, $n, $input, $orientation === 'landscape');
         }
 
         if (strlen($body) > self::MAX_JSON_BYTES) {
@@ -158,20 +164,22 @@ final class ReelsApi
     }
 
     /**
-     * Uloží video z proudu do <inbox>/<job_id>/variant-<n>.mp4 přes .part + rename. Hlídá velikost během
-     * kopírování (tělo může být delší, než hlásí Content-Length) a značku MP4 „ftyp“ na offsetu 4.
+     * Uloží video z proudu do <inbox>/<job_id>/variant-<n>.mp4 (na šířku variant-<n>-sirka.mp4) přes .part
+     * + rename. Hlídá velikost během kopírování (tělo může být delší, než hlásí Content-Length) a značku MP4
+     * „ftyp“ na offsetu 4. Odpověď na video na šířku nese "orientation": "landscape" (worker podle ní pozná
+     * server, který šířku umí).
      *
      * @param resource $input
      * @return array{0:int,1:array}
      */
-    public function storeVideo(string $inbox, int $jobId, int $n, $input): array
+    public function storeVideo(string $inbox, int $jobId, int $n, $input, bool $landscape = false): array
     {
         $jobDir = $inbox . '/' . $jobId;
         if (!is_dir($jobDir) && !@mkdir($jobDir, 0777) && !is_dir($jobDir)) {
             return [500, ['error' => 'Složku úlohy nejde vytvořit']];
         }
         @chmod($jobDir, 0777); // umask by ubral zápis pro bota (jiný uživatel), který složku po převzetí maže
-        $target = $jobDir . '/variant-' . $n . '.mp4';
+        $target = $jobDir . '/variant-' . $n . ($landscape ? '-sirka' : '') . '.mp4';
         $part = $target . '.part';
         $out = @fopen($part, 'wb');
         if ($out === false) {
@@ -215,7 +223,7 @@ final class ReelsApi
             @unlink($part);
             return [500, ['error' => 'Video nejde uložit']];
         }
-        return [200, ['ok' => true, 'bytes' => $size]];
+        return [200, $landscape ? ['ok' => true, 'bytes' => $size, 'orientation' => 'landscape'] : ['ok' => true, 'bytes' => $size]];
     }
 
     /** Mezisložka z config reels.inbox_dir, nebo null, když chybí nebo do ní nejde zapisovat. */
@@ -227,7 +235,7 @@ final class ReelsApi
 
     /**
      * Kontrola variant výsledku: 2–3 různá n 1–3, každé s videem na disku, šablonou (v2 bez formátu,
-     * v3 s formátem z FORMATS), popiskem do CAPTION_LIMIT a kartou. Vrací pročištěné varianty (seřazené podle n), nebo text chyby.
+     * v3 s formátem z FORMATS), popiskem do CAPTION_LIMIT a kartou; příznak landscape podle videa na šířku. Vrací pročištěné varianty (seřazené podle n), nebo text chyby.
      */
     private function validVariants(mixed $variants, string $jobDir): array|string
     {
@@ -262,7 +270,9 @@ final class ReelsApi
             if (!is_file($jobDir . '/variant-' . $n . '.mp4')) {
                 return "Varianta $n: chybí nahrané video";
             }
-            $out[$n] = ['n' => $n, 'template' => $template, 'format' => $format, 'caption' => $caption, 'card' => $v['card']];
+            // video na šířku je volitelné: bot ho ověří sám a bez něj variantu převezme jen na výšku
+            $out[$n] = ['n' => $n, 'template' => $template, 'format' => $format, 'caption' => $caption, 'card' => $v['card'],
+                'landscape' => is_file($jobDir . '/variant-' . $n . '-sirka.mp4')];
         }
         ksort($out);
         return array_values($out);

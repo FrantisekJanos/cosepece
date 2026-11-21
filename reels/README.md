@@ -133,6 +133,11 @@ Se 2 nebo 3 platnými variantami server sadu přijme, s méně worker nahlásí 
 5 minut. Worker zpracuje vždy jen jednu úlohu a druhá instance (třeba naplánovaná úloha plus ruční spuštění) hned
 skončí se zprávou (zámek `worker.lock` v pracovní složce).
 
+Ke každé platné variantě vyrenderuje generátor i video na šířku 16:9 (šablony s `landscape.css`, soubor `…-sirka.mp4`,
+kontrola `media.validate(..., "landscape")`), worker ho nahraje jako `PUT ?action=video&orientation=landscape`
+(před videem na výšku, stejný limit 30 MB) a bot ho při převzetí sady uloží do `video_landscape_path`, takže Threads
+dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se zaloguje; `reels-generate --no-landscape` ji vypne.
+
 ```bash
 pip install -e ".[render]"
 reels-worker --env <soubor .env> --root <pracovní složka> --mcp-config <mcp.json> [--once]

@@ -8,7 +8,8 @@ import pytest
 
 from conftest import load_fixture
 from hlidac_reels.card import Card
-from hlidac_reels.render import LANDSCAPE_SAFE, STAMPS, audio_cues, measure_blocks, render_reel, scene_ids, stamps_for
+from hlidac_reels.render import (LANDSCAPE_SAFE, STAMPS, audio_cues, has_landscape, measure_blocks, render_reel,
+                                 scene_ids, stamps_for)
 
 
 def test_card_from_json_roundtrip():
@@ -77,6 +78,11 @@ def test_long_title_stays_in_safe_zone():
 
 
 # ---------- na šířku (1920 × 1080 pro X.com, šablona v2) ----------
+
+
+def test_has_landscape():
+    assert has_landscape("template_v2") and has_landscape("template_v3")
+    assert not has_landscape("template") and not has_landscape("neexistuje")
 
 
 def test_landscape_needs_known_orientation_and_template():

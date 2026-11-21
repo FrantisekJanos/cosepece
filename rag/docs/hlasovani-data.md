@@ -27,6 +27,19 @@ Tabulky plní web (`app/Votes.php`) každou hodinu znovu celé (DELETE + INSERT 
   Nejspíš zalomení řádku (neověřeno). Komentář ve `Votes::normName` („hvězdičky značí hlasování k PN“) data nepotvrzují:
   88666 (veto) `**` má, 3. čtení tisku 77 (88009–88026) ne.
 
+## Hlasy poslanců (`hlasovani_poslanci`) a nespárovaná hlasování (od 21. 11. 2026)
+
+- `app/Votes.php` ukládá i hlasy jednotlivých poslanců z `hl{rok}h1.unl` (a `h2`…, když nejsou prázdné):
+  `id_hlasovani`, `id_osoba`, `klub` ke dni hlasování (NULL = nezařazený), `hlas` = kód psp.cz (A pro, B/N proti,
+  C zdržel, F nehlasoval, K zdržel/nehlasoval, @ nepřihlášen, M omluven, W před slibem). Na produkci 21. 11. 2026
+  540 400 řádků. Hlas se po hlasování nemění, proto se zapisují jen hlasování, která v tabulce ještě nejsou (po dávkách
+  2 000 řádků, soubor se nenačítá celý do paměti); řádky k hlasování, které z `hlasovani` zmizí, se smažou.
+- Nespárovaná hlasování (pořad schůze, jiný název tisku, viz níže) web ukládá s `ct = 0`. `get_hlasovani` je vrátí
+  s `ct` null, `nazev` z popisu hlasování a poznámkou; `hlasovani_k_tisku(0)` je chyba.
+- `get_hlasovani` vrací pole `poslanci` `[{id_osoba, jmeno, klub, hlas}]` (jméno ze `steno.osoba`, hlas textem),
+  řazené podle klubu a příjmení. 200 poslanců vyjde asi na 20 000 znaků, s 50 projevy a 10 kluby pod 60 000
+  (`test_hlasy_poslancu_nejhorsi_pripad_pod_60000_znaku`).
+
 ## Kluby (`hlasovani_kluby`)
 
 - `klub` = zkratka klubu z `organy.unl` ke dni hlasování: `ANO2011`, `MS` (Motoristé sobě), `SPD`, `STAN`, `Piráti`, `TOP09`,

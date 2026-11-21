@@ -18,12 +18,14 @@ reels-enqueue = "hlidac_reels.enqueue:main"
 reels-add-landscape = "hlidac_reels.enqueue:add_landscape_main"
 reels-bot = "hlidac_reels.bot:main"
 reels-threads-backfill = "hlidac_reels.backfill:main"
+reels-generate = "hlidac_reels.generator.generate:main"
+reels-worker = "hlidac_reels.generator.worker:main"
 
 [tool.setuptools.packages.find]
 include = ["hlidac_reels*"]
 
 [tool.setuptools.package-data]
-hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "schema_reels.sql"]
+hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "schema_reels.sql", "generator/prompts/*", "generator/examples/*"]
 
 [build-system]
 requires = ["setuptools>=68"]

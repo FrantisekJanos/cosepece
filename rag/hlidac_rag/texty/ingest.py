@@ -143,6 +143,9 @@ def _chyba_dokumentu(e: Exception) -> str:
 # Po tolika síťových chybách jednotlivých dokumentů za sebou (timeout, HTTP 5xx) stahování v běhu skončí,
 # ať se psp.cz v potížích nezahltí; dokumenty, které chybu dostaly, se zkusí znovu podle svého rozvrhu.
 MAX_SITOVYCH_ZA_SEBOU = 3
+# Přechodná síťová chyba (timeout, spojení, HTTP 5xx) se opakuje po 24 h; HTTP 4xx (např. 403) po 7 dnech jako
+# ostatní chyby. Zápis chyby viz _sitova_chyba („síť: <třída>: <text>“). %% kvůli parametrům psycopg.
+SITOVA_PRECHODNA = "(d.chyba LIKE 'síť:%%' AND d.chyba NOT LIKE 'síť: HTTPError: HTTP Error 4%%')"
 
 
 def _chyba_dokumentu_site(e: OSError) -> bool:
@@ -168,10 +171,12 @@ def _sitova_chyba(conn: psycopg.Connection, e: OSError, st: dict, sit: list[int]
 def _stahni_chybejici(conn: psycopg.Connection, fetcher: Fetcher, obdobi: int, limit: int, st: dict,
                       sit: list[int]) -> int:
     """Tisky a PN bez dokumentu `puvodni`, nejdřív tisky (základ pro PN), novější dřív.
-    Chybové řádky bez textu (kromě „jen PDF“) se zkusí znovu po 7 dnech, až po nových. Vrací počet pokusů."""
+    Chybové řádky bez textu (kromě „jen PDF“) se zkusí znovu po 7 dnech, až po nových; síťové chyby
+    (timeout, spojení, HTTP 5xx) už po 24 hodinách. Vrací počet pokusů."""
     if limit <= 0:
         return 0
-    znovu = "d.text IS NULL AND d.chyba IS DISTINCT FROM %s AND d.zkontrolovano_at < now() - interval '7 days'"
+    znovu = ("d.text IS NULL AND d.chyba IS DISTINCT FROM %s AND d.zkontrolovano_at < now() - CASE WHEN "
+             f"{SITOVA_PRECHODNA} THEN interval '24 hours' ELSE interval '7 days' END")
     with conn.cursor() as cur:
         cur.execute(f"""
             SELECT 'tisk', t.ct, 0 FROM (SELECT DISTINCT ct FROM tisky) t

@@ -1,0 +1,190 @@
+{
+  "ct": 311,
+  "nazev": "Novela zákona o daních z příjmů",
+  "faze": "2. čtení",
+  "score": 85,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai",
+      "points": 21,
+      "label": "Rozbor PN č. 2315 (Marian Jurečka): závažnost 7/10 – Jde o zásadní nový režim zvýhodnění vymezené skupiny zemědělských poplatníků, včetně nových institutů a výjimek, vložený pozměňovacím návrhem do novely zákona o daních z příjmů, která takový režim neobsahuje.; 8 z 30 PN se závažností ≥ 6"
+    },
+    {
+      "key": "ai_bill",
+      "points": 18,
+      "label": "Rozbor textu návrhu: závažnost 6/10 – Nová daňová povinnost se zpětně použije na zdaňovací období započaté v roce 2026, tedy před dnem nabytí účinnosti, a tíží úzce vymezený okruh poplatníků, přičemž přechodné ustanovení č. 1 a č. 2 si v tomto ohledu odporují."
+    },
+    {
+      "key": "deadline_cut",
+      "points": 15,
+      "label": "Zkrácená lhůta pro výbory: 30 dní místo 60"
+    },
+    {
+      "key": "late_pn",
+      "points": 10,
+      "label": "26 z 30 pozměňovacích návrhů podáno v den konce podrobné rozpravy"
+    },
+    {
+      "key": "watched",
+      "points": 10,
+      "label": "Sledovaný zákon"
+    },
+    {
+      "key": "pn_large",
+      "points": 6,
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    },
+    {
+      "key": "pn_many",
+      "points": 0,
+      "label": "9 z 30 pozměňovacích návrhů je problematických"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=311",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-22",
+  "kdo": "předkládá ministryně financí",
+  "format": "rozprava",
+  "title": "Daň pro rafinerie: o co se poslanci přeli",
+  "perex": "Vláda navrhuje mimořádnou daň 50 % pro zpracovatele ropy. Sněmovna o ní jednala 13. října a 13. listopadu 2026.",
+  "hook": {
+    "big": 40,
+    "unit": "projevů",
+    "sub": "16 řečníků, 1. a 2. čtení"
+  },
+  "rozprava": {
+    "projevu": 40,
+    "recniku": 16,
+    "sub": "1. a 2. čtení",
+    "neautorizovano": 19,
+    "kluby": [
+      {
+        "klub": "ANO2011",
+        "projevu": 9
+      },
+      {
+        "klub": "KDU-ČSL",
+        "projevu": 8
+      },
+      {
+        "klub": "ODS",
+        "projevu": 7
+      },
+      {
+        "klub": "STAN",
+        "projevu": 6
+      },
+      {
+        "klub": "Piráti",
+        "projevu": 6
+      },
+      {
+        "klub": "TOP09",
+        "projevu": 4
+      }
+    ],
+    "pozn": "bez předsedajících, projevy od 200 znaků · psp.cz",
+    "ai_z_projevu": 6,
+    "pro": {
+      "kdo": "Alena Schillerová, ministryně financí (ANO)",
+      "body": [
+        {
+          "text": "Marže rafinerií vyrostly kvůli ropné krizi, ne díky inovacím nebo vyšší efektivitě.",
+          "zdroj": "Schillerová · 13. 10.",
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
+          "klic": "10/34/25/3",
+          "autorizovano": true
+        },
+        {
+          "text": "Výnos má státu částečně vrátit výdaje spojené s růstem cen pohonných hmot.",
+          "zdroj": "Schillerová · 13. 10.",
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
+          "klic": "10/34/25/3",
+          "autorizovano": true
+        },
+        {
+          "text": "Vzorem je Polsko, kde navrhli 60% daň z mimořádné rafinérské marže.",
+          "zdroj": "Schillerová · 13. 10.",
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r1",
+          "klic": "10/34/25/1",
+          "autorizovano": true
+        }
+      ]
+    },
+    "namitky": {
+      "body": [
+        {
+          "text": "Daň fakticky zaplatí jediná firma, která provozuje obě české rafinerie.",
+          "zdroj": "Jakob, Munzar · 13. 10.",
+          "kluby": [
+            "TOP09",
+            "ODS"
+          ],
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034026.htm#r4",
+          "klic": "10/34/26/4",
+          "dalsi_url": [
+            "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034029.htm#r2"
+          ],
+          "autorizovano": true
+        },
+        {
+          "text": "Zdaňuje se hrubá marže, ne zisk. Daň může vzniknout, i když firmě zisk klesne.",
+          "zdroj": "Jakob, Munzar · 13. 10.",
+          "kluby": [
+            "TOP09",
+            "ODS"
+          ],
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034026.htm#r4",
+          "klic": "10/34/26/4",
+          "dalsi_url": [
+            "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034029.htm#r2"
+          ],
+          "autorizovano": true
+        },
+        {
+          "text": "Odhad výnosu 5,5 miliardy Kč je nejistý, připouští to i důvodová zpráva.",
+          "zdroj": "Jakob · 13. 10.",
+          "kluby": [
+            "TOP09"
+          ],
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034026.htm#r4",
+          "klic": "10/34/26/4",
+          "autorizovano": true
+        }
+      ],
+      "pozn": "STAN daň v principu podporuje, chce ji rozšířit i na dovoz.",
+      "pozn_url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034028.htm#r2"
+    },
+    "odpovedi": {
+      "lab": "Odpověď ministryně",
+      "kdo": "Alena Schillerová v rozpravě 13. 10. 2026",
+      "body": [
+        {
+          "text": "Zisky rafineriím „spadly do klína“, při plánování investic s nimi počítat nemohly.",
+          "zdroj": "Schillerová · 13. 10.",
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034035.htm#r1",
+          "klic": "10/34/35/1",
+          "autorizovano": true
+        },
+        {
+          "text": "5,5 miliardy je odhad. Když rok 2027 mimořádný nebude, stát nevybere nic.",
+          "zdroj": "Schillerová · 13. 10.",
+          "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034035.htm#r1",
+          "klic": "10/34/35/1",
+          "autorizovano": true
+        }
+      ]
+    }
+  },
+  "ai_note": "Shrnutí AI ze 6 ze 40 projevů, odkazy na cosepece.cz",
+  "zdroje": "Zdroj: stenozáznamy 34. a 36. schůze, psp.cz"
+}

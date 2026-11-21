@@ -47,6 +47,8 @@ try {
     if ($action === 'queue' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $limit = max(1, min(50, (int)($_GET['limit'] ?? 10)));
         $ct = isset($_GET['ct']) ? (int)$_GET['ct'] : null;
+        // známka života klienta AI i při prázdné frontě (hlídání dat v botovi reels)
+        $reviewer->markPolled();
         aiApiReply(['items' => $reviewer->queue($limit, $ct, !empty($_GET['verify']))]);
     }
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

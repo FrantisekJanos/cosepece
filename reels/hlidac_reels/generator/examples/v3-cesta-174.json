@@ -1,0 +1,114 @@
+{
+  "ct": 174,
+  "nazev": "Novela zákona na ochranu zvířat proti týrání",
+  "faze": "3. čtení",
+  "score": 85,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "points": 20,
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (242/2000 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí"
+    },
+    {
+      "key": "mp_bill",
+      "points": 15,
+      "label": "Poslanecký návrh postupuje projednáváním – text nepřipravovalo ministerstvo v připomínkovém řízení; vláda si k němu připomínky nevyžádala"
+    },
+    {
+      "key": "short_gap",
+      "points": 15,
+      "label": "Mezi rozesláním souhrnu pozměňovacích návrhů a 3. čtením jen 6 dní"
+    },
+    {
+      "key": "ai",
+      "points": 15,
+      "label": "Rozbor PN č. 2044 (Jiří Pospíšil): závažnost 5/10 – Text zavádí nový režim přechodu vlastnictví zvířat na stát, ale neobsahuje výslovnou zpětnou účinnost ani zkrácení lhůt pro vymáhání či kontrolu státu.; 5 z 36 PN se závažností ≥ 5"
+    },
+    {
+      "key": "ai_bill",
+      "points": 10,
+      "label": "Rozbor textu návrhu: závažnost 4/10 – Rozhodnutí o zvláštním opatření lze vydat před skončením řízení o přestupku, což obchází běžné pořadí řízení, a výjimka pro kurzy řidičů a průvodců silničních vozidel je úzce vymezená."
+    },
+    {
+      "key": "p90_requested",
+      "points": 10,
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)"
+    },
+    {
+      "key": "late_pn",
+      "points": 0,
+      "label": "24 z 36 pozměňovacích návrhů podáno v den konce podrobné rozpravy"
+    },
+    {
+      "key": "surge",
+      "points": 0,
+      "label": "Nával pozměňovacích návrhů"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=174",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-04-21",
+  "kdo": "Lucie Šafránková a 8 dalších poslanců",
+  "format": "cesta",
+  "title": "Ochrana zvířat: od pozměňovacích návrhů ke 3. čtení za 6 dní",
+  "perex": "Devět poslanců navrhlo novelu zákona na ochranu zvířat proti týrání. Chtěli ji schválit už v prvním čtení.",
+  "hook": {
+    "big": 6,
+    "unit": "dní",
+    "sub": "od rozeslání pozměňovacích návrhů do 3. čtení"
+  },
+  "cesta": {
+    "kroky": [
+      {
+        "date": "2026-04-21",
+        "label": "Předloženo, navrženo schválit už v 1. čtení"
+      },
+      {
+        "date": "2026-05-05",
+        "label": "Vyjádření vlády"
+      },
+      {
+        "date": "2026-06-30",
+        "label": "1. čtení: zrychlení neprošlo, jde do výborů"
+      },
+      {
+        "date": "2026-10-20",
+        "label": "2. čtení, ten den podáno 24 z 36 návrhů",
+        "hot": true
+      },
+      {
+        "date": "2026-10-21",
+        "label": "Návrhy rozeslány garančnímu výboru"
+      },
+      {
+        "date": "2026-10-27",
+        "label": "3. čtení",
+        "hot": true
+      }
+    ],
+    "dni": 189,
+    "dni_popis": "od předložení do 3. čtení",
+    "normalne": [
+      {
+        "label": "Od 1. do 2. čtení",
+        "par": "lhůta výborů § 91",
+        "normal": 60,
+        "actual": 112,
+        "unit": "dní"
+      },
+      {
+        "label": "Od návrhů do 3. čtení",
+        "par": "§ 95 odst. 1",
+        "normal": 14,
+        "actual": 6,
+        "unit": "dní"
+      }
+    ],
+    "ferove": "Výbory dostaly víc času, než je běžná lhůta. Pauzu před 3. čtením může Sněmovna zkrátit, nejvýš na 7 dní."
+  },
+  "zdroje": "Zdroj: psp.cz, historie tisku 174"
+}

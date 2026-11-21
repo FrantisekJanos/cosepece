@@ -3,11 +3,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, fields as dc_fields
-from datetime import datetime
+from datetime import date, datetime
 
 import psycopg
 
-STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown")
+# reel_state set_picked:<set_id> = id vybraných variant oddělená čárkou (dřívější hodnota je jedno id);
+# vybraná varianta nevyprší a sada s výběrem se nestáhne
+PICKED_KEY = "set_picked:"
+
+STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
+            "expired", "withdrawn")
 
 
 class DuplicateVideo(Exception):
@@ -47,6 +52,10 @@ class Reel:
     video_landscape_sha256: str | None
     telegram_landscape_msg_id: int | None
     telegram_landscape_sha256: str | None  # otisk šířky odeslané do Telegramu
+    # sada variant z generátoru (reel_jobs.id)
+    set_id: int | None
+    variant: int | None
+    template: str | None
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -80,18 +89,22 @@ def _row(cur) -> Reel | None:
 def add(conn, *, video_path: str, video_sha256: str, caption: str,
         ct: int | None = None, format: str | None = None, source: str = "ukazka",
         video_landscape_path: str | None = None,
-        video_landscape_sha256: str | None = None) -> int:
+        video_landscape_sha256: str | None = None,
+        set_id: int | None = None, variant: int | None = None, template: str | None = None,
+        commit: bool = True) -> int:
+    """Vloží položku. commit=False nechá transakci otevřenou (volající commitne, při chybě rollback)."""
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, "
-                "video_landscape_path, video_landscape_sha256) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                "video_landscape_path, video_landscape_sha256, set_id, variant, template) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (source, ct, format, video_path, video_sha256, caption,
-                 video_landscape_path, video_landscape_sha256),
+                 video_landscape_path, video_landscape_sha256, set_id, variant, template),
             )
             new_id = cur.fetchone()[0]
-        conn.commit()
+        if commit:
+            conn.commit()
         return new_id
     except psycopg.errors.UniqueViolation as e:
         conn.rollback()
@@ -106,9 +119,12 @@ def get(conn, id: int) -> Reel | None:
     return r
 
 
-def next_queued(conn) -> Reel | None:
+def next_queued(conn, sets: bool = True) -> Reel | None:
+    """Nejstarší položka queued; sets=False přeskočí automatické sady (denní limit sad je vyčerpaný),
+    samostatná videa a sady ručních úloh (source manual) projdou."""
+    only_solo = "" if sets else " AND (set_id IS NULL OR source = 'manual')"
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued' ORDER BY id LIMIT 1")
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued'{only_solo} ORDER BY id LIMIT 1")
         r = _row(cur)
     conn.commit()
     return r
@@ -135,9 +151,43 @@ def by_status(conn, statuses: tuple[str, ...]) -> list[Reel]:
     return out
 
 
-def pending_count(conn) -> int:
+def set_items(conn, set_id: int) -> list[Reel]:
+    """Položky jedné sady podle čísla varianty."""
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM reel_queue WHERE status='pending'")
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE set_id=%s ORDER BY variant, id", (set_id,))
+        out = [Reel(*r) for r in cur.fetchall()]
+    conn.commit()
+    return out
+
+
+def pending_count(conn) -> int:
+    """Nevyřízené jednotky ke schválení: sada se počítá jednou, samostatné video taky."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(DISTINCT coalesce(set_id, -id)) FROM reel_queue WHERE status='pending'")
+        n = cur.fetchone()[0]
+    conn.commit()
+    return n
+
+
+def local_date(conn, at: datetime) -> date:
+    """Den v Europe/Prague pro okamžik at (časová pásma z PostgreSQL, obraz nepotřebuje tzdata)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT (%s::timestamptz AT TIME ZONE 'Europe/Prague')::date", (at,))
+        d = cur.fetchone()[0]
+    conn.commit()
+    return d
+
+
+def sets_sent_on(conn, day: date) -> int:
+    """Kolik automatických sad odešlo ke schválení v daném dni (Europe/Prague); samostatná videa
+    a sady ručních úloh (source manual) se nepočítají."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(DISTINCT set_id) FROM reel_queue WHERE set_id IS NOT NULL AND sent_at IS NOT NULL "
+            "AND source <> 'manual' "
+            "AND (sent_at AT TIME ZONE 'Europe/Prague')::date = %s",
+            (day,),
+        )
         n = cur.fetchone()[0]
     conn.commit()
     return n
@@ -235,6 +285,28 @@ def recover_after_restart(conn) -> list[int]:
         cur.execute("UPDATE reel_queue SET status='unknown' WHERE status='publishing' RETURNING id")
         ids = sorted(r[0] for r in cur.fetchall())
     return ids
+
+
+def _parse_picked(value: str | None) -> set[int]:
+    """Hodnota set_picked:<set_id>: "12" (dřívější jediný výběr) i "12,15"; neplatné části se vynechají."""
+    out = set()
+    for part in (value or "").split(","):
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out
+
+
+def picked(conn, set_id: int) -> set[int]:
+    """Id variant vybraných ze sady, prázdná množina = ještě bez výběru."""
+    return _parse_picked(get_state(conn, f"{PICKED_KEY}{set_id}"))
+
+
+def mark_picked(conn, set_id: int, reel_id: int) -> None:
+    """Přidá variantu k vybraným (bot zpracovává tlačítka jedno po druhém)."""
+    ids = picked(conn, set_id) | {reel_id}
+    set_state(conn, f"{PICKED_KEY}{set_id}", ",".join(str(i) for i in sorted(ids)))
 
 
 def get_state(conn, key: str) -> str | None:

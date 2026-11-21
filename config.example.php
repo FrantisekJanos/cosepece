@@ -52,6 +52,15 @@ return [
         'retry_hours' => 24, // neúspěšné stažení (síť, chybějící Word) zkusit znovu po tolika hodinách
     ],
 
+    // nové kroky a PN ze stránek historie tisků (historie.sqw), než je přinesou noční otevřená data psp.cz:
+    // tisky se změnou v posledních `days` dnech a tisky na pořadu běžící nebo příští schůze
+    'history_html' => [
+        'enabled' => true,
+        'per_run' => 30, // nejvýš tolik stránek za běh synchronizace (hodinu)
+        'days' => 14,
+        'delay_ms' => 1000, // pauza mezi požadavky na psp.cz
+    ],
+
     // stahování textů samotných návrhů zákonů (Word); zásadní změny bývají přímo v poslaneckých návrzích
     // příprava návrhu u vlády z otevřených dat Úřadu vlády (ODok/VeKLEP); jen zobrazení u tisku
     'odok' => [
@@ -88,6 +97,13 @@ return [
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI
+    ],
+
+    // generátor Reels: worker na PC si přes reels_api.php bere úlohy a nahrává videa (token v hlavičce X-Hlidac-Token).
+    // Prázdný token nebo ZMENTE… = rozhraní vypnuté (403). inbox_dir = mezisložka pro bota (volume reelsinbox).
+    'reels' => [
+        'worker_token' => '',
+        'inbox_dir' => '/srv/reels-inbox',
     ],
 
     // váhy skóre závažnosti; co neuvedete, vezme se z Hlidac\Scorer::defaults()

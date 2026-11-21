@@ -94,6 +94,15 @@ final class Db
             klub VARCHAR(40) NOT NULL,
             pro INTEGER, proti INTEGER, zdrzel INTEGER, nepritomen INTEGER
         )$suffix");
+        // hlasy jednotlivých poslanců (app/Votes.php): kód hlasu psp.cz (A pro, B/N proti, C zdržel, F nehlasoval,
+        // K zdržel/nehlasoval, @ nepřihlášen, M omluven, W před slibem), klub ke dni hlasování
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS hlasovani_poslanci (
+            id_hlasovani INTEGER NOT NULL,
+            id_osoba INTEGER NOT NULL,
+            klub VARCHAR(40),
+            hlas VARCHAR(1) NOT NULL,
+            PRIMARY KEY (id_hlasovani, id_osoba)
+        )$suffix");
         // příprava návrhu u vlády (otevřená data ODok, app/GovPrep.php)
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS priprava (
             ct INTEGER PRIMARY KEY,
@@ -324,7 +333,36 @@ final class Db
             PRIMARY KEY (obdobi, id_dokument)
         )$suffix");
 
+        // kroky a PN ze stránek historie tisku, které noční otevřená data ještě nemají (app/HistoryHtml.php)
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS html_kroky (
+            id_hist INTEGER NOT NULL PRIMARY KEY,
+            id_tisk INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            id_prechod INTEGER NOT NULL,
+            datum VARCHAR(19),
+            seen_at VARCHAR(19) NOT NULL
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS html_pn (
+            id_dokument INTEGER NOT NULL PRIMARY KEY,
+            cislo INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            id_osoba INTEGER,
+            osoba VARCHAR(120),
+            cas VARCHAR(19),
+            seen_at VARCHAR(19) NOT NULL
+        )$suffix");
+        // historie běhů synchronizace (app/SyncRuns.php): ok NULL = běží, 0 = chyba nebo nedokončeno, 1 = hotovo
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS sync_beh (
+            id INTEGER NOT NULL PRIMARY KEY,
+            zacatek VARCHAR(19) NOT NULL,
+            konec VARCHAR(19),
+            ok INTEGER,
+            vysledek $text,
+            chyba $text
+        )$suffix");
+
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
+        $this->createIndex('sync_beh', 'idx_sync_beh_zacatek', 'zacatek');
         $this->createIndex('text_revize', 'idx_text_revize_ct', 'ct');
         $this->createIndex('ai_revize', 'idx_ai_revize_ct', 'ct');
         $this->createIndex('pn_text', 'idx_pn_text_ct', 'ct');

@@ -46,3 +46,34 @@ CREATE TABLE IF NOT EXISTS reel_state (
     key   text PRIMARY KEY,
     value text
 );
+
+-- Sada variant z generátoru (část 2, 2026-11-20): úlohy generátoru a vazba položek fronty na sadu.
+CREATE TABLE IF NOT EXISTS reel_jobs (
+    id            bigserial PRIMARY KEY,
+    source        text NOT NULL CHECK (source IN ('manual','auto_pick','fresh')),
+    ct            integer,
+    format_hint   text,
+    reason_keys   text,  -- JSON seznam klíčů v době založení (fresh)
+    status        text NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued','claimed','done','failed','expired','cancelled')),
+    claimed_at    timestamptz,
+    claim_token   text,
+    attempts      integer NOT NULL DEFAULT 0,
+    error         text,
+    set_id        bigint,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    finished_at   timestamptz,
+    notified_at   timestamptz
+);
+-- Pro jeden tisk nejvýš jedna aktivní úloha.
+CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct)
+    WHERE status IN ('queued','claimed') AND ct IS NOT NULL;
+
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS set_id   bigint;  -- reel_jobs.id
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS variant  smallint;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS template text;
+-- Nové stavy expired a withdrawn: CHECK se vytvoří znovu (idempotentně, i nad starou produkční tabulkou).
+ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_status_check;
+ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_status_check
+    CHECK (status IN ('queued','pending','approved','publishing','published','rejected','failed','unknown',
+                      'expired','withdrawn'));

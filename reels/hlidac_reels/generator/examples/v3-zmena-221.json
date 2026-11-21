@@ -1,0 +1,85 @@
+{
+  "ct": 221,
+  "nazev": "Novela zákona o střetu zájmů",
+  "faze": "1. čtení",
+  "score": 47,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "ai_bill",
+      "points": 27,
+      "label": "Rozbor textu návrhu: závažnost 9/10 – Lhůta, v níž stát může vymáhat neoprávněně vyplacené dotace, se zkracuje z 10 na 4 roky a podle přechodného ustanovení se použije i na platby poskytnuté před účinností, přičemž zkrácení lhůty pro odvody v rozpočtových pravidlech s deklarovanou tematikou střetu zájmů souvisí jen volně."
+    },
+    {
+      "key": "watched",
+      "points": 10,
+      "label": "Sledovaný zákon"
+    },
+    {
+      "key": "mp_bill",
+      "points": 5,
+      "label": "Poslanecký návrh – text nepřipravovalo ministerstvo v připomínkovém řízení (zatím nepostoupil do 2. čtení); vláda si ke stanovisku vyžádala připomínky 7 míst na 8 dní"
+    },
+    {
+      "key": "topic",
+      "points": 5,
+      "label": "Citlivá oblast: střet zájmů"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=221",
+  "data_date": "2026-11-19",
+  "typ_navrhu": "poslanecký návrh",
+  "predlozeno": "2026-06-08",
+  "kdo": "Radek Vondráček a 3 další poslanci",
+  "format": "zmena",
+  "title": "Vrácení neoprávněné dotace: lhůta 10 let se má zkrátit na 4",
+  "perex": "Čtyři poslanci navrhují novelu zákona o střetu zájmů. Jedna její část mění i zákon o Státním zemědělském intervenčním fondu. Sněmovna ji zatím neprojednala.",
+  "hook": {
+    "big": "10 → 4",
+    "unit": "roky",
+    "sub": "lhůta pro zahájení řízení o vrácení dotace"
+  },
+  "zmena": {
+    "body": [
+      {
+        "kde": "§ 11a zákona o SZIF",
+        "co": "Lhůta, ve které lze zahájit řízení o vrácení dotace",
+        "pred": "10 let",
+        "po": "4 roky",
+        "citace": "V § 11a odst. 1 větě druhé se číslo „10“ nahrazuje číslem „4“",
+        "zdroj": "tisk 221, část třetí, čl. V",
+        "url": "https://www.psp.cz/sqw/text/orig2.sqw?idd=271528"
+      },
+      {
+        "kde": "§ 11a odst. 1",
+        "co": "Od kdy se lhůta počítá",
+        "pred": "ode dne vyplacení dotace",
+        "po": "ode dne, kdy došlo k nesrovnalosti podle předpisu EU",
+        "citace": "slova „jejího vyplacení“ se nahrazují slovy „, kdy došlo k nesrovnalosti podle přímo použitelného předpisu Evropské unie“",
+        "zdroj": "tisk 221, část třetí, čl. V",
+        "url": "https://www.psp.cz/sqw/text/orig2.sqw?idd=271528"
+      },
+      {
+        "kde": "čl. VI, přechodné ustanovení",
+        "co": "Na které dotace se nová lhůta použije",
+        "bez_pred": "nové pravidlo",
+        "po": "i na dotace vyplacené před účinností novely",
+        "citace": "Lhůta pro zahájení řízení o vrácení dotace se posuzuje podle zákona č. 256/2000 Sb., ve znění účinném ode dne nabytí účinnosti tohoto zákona, i tehdy, pokud byla neoprávněná platba dotace poskytnuta přede dnem nabytí účinnosti tohoto zákona.",
+        "zdroj": "tisk 221, část třetí, čl. VI",
+        "url": "https://www.psp.cz/sqw/text/orig2.sqw?idd=271528"
+      }
+    ],
+    "proc": {
+      "text": "Podle předkladatelů jde o sladění s nařízením EU č. 2988/95 a s novější praxí soudů.",
+      "zdroj": "důvodová zpráva k tisku 221"
+    },
+    "pozor": {
+      "lab": "Na co se dívat",
+      "text": "Kratší lhůta dopadne i na dříve vyplacené dotace. Návrh neprošel připomínkovým řízením ministerstev.",
+      "zdroj": "čl. VI návrhu · rozbor cosepece.cz"
+    }
+  },
+  "zdroje": "Zdroj: text návrhu a důvodová zpráva, psp.cz, tisk 221"
+}

@@ -40,10 +40,10 @@ def set_video_caption(reel: Reel) -> str:
 
 
 def set_text(items: list[Reel]) -> str:
-    """Zpráva sady nad tlačítky Vybrat: tisk a z každé varianty první 2 řádky popisku."""
+    """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku."""
     first = items[0]
     head = f"Sada #{first.set_id}" + (f" · tisk {first.ct}" if first.ct is not None else "")
-    head += "\nVyber variantu, ostatní se zamítnou."
+    head += "\nVyber jednu nebo víc variant, Hotovo zbylé zamítne."
     blocks = []
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])
@@ -55,8 +55,9 @@ def set_text(items: list[Reel]) -> str:
 
 
 def set_buttons(items: list[Reel]) -> list[tuple[str, str]]:
+    """Vybrat N pro každou nevybranou variantu a Hotovo (zamítne zbylé nevybrané, před výběrem všechny)."""
     picks = [(f"Vybrat {r.variant}", f"pick:{r.id}") for r in items]
-    return picks + [("Zamítnout vše", f"noset:{items[0].set_id}")]
+    return picks + [("Hotovo, zbytek zamítnout", f"doneset:{items[0].set_id}")]
 
 
 def _fb_block(reel: Reel) -> str:

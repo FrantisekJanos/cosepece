@@ -1384,7 +1384,7 @@ def test_sada_se_posle_najednou(bot, conn, api, media_dir):
     assert "#7 · varianta 2 · v2" in videos[1]["_multipart"]
     msgs = [b for b in api.sent() if _buttons(b)]
     assert len(msgs) == 1
-    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["noset:7"]
+    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["doneset:7"]
     text = msgs[0]["text"]
     assert "tisk 221" in text and "Varianta 2 řádek 1\nřádek 2 varianty 2" in text
     assert "řádek 3 se nevypíše" not in text
@@ -1395,31 +1395,147 @@ def test_sada_se_posle_najednou(bot, conn, api, media_dir):
     assert all(r.sent_at is not None for r in reels)
 
 
+def _edits(api) -> list[tuple[int, list[str]]]:
+    """Úpravy tlačítek: (message_id, callback_data); prázdný seznam = tlačítka odebrána."""
+    return [(b["message_id"], _buttons(b)) for m, b in api.calls if m == "editMessageReplyMarkup"]
+
+
+def _previews(api) -> list[dict]:
+    return [b for b in api.sent() if any(d.startswith("ok:") for d in _buttons(b))]
+
+
 @pg
-def test_vybrat_2(bot, conn, api, media_dir):
+def test_vybrat_vice_variant(bot, conn, api, media_dir):
     ids = _add_set(conn, media_dir, 7)
     bot.send_next()
     set_msg = _set_msg_id(conn, ids[0])
     api.calls.clear()
-    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
-    assert [_get(conn, i).status for i in ids] == ["rejected", "pending", "rejected"]
-    previews = [b for b in api.sent() if _buttons(b)]
-    assert len(previews) == 1 and f"ok:{ids[1]}" in _buttons(previews[0])
-    chosen = _get(conn, ids[1])
-    assert chosen.telegram_msg_id != set_msg
-    # tlačítka sady zmizela
-    assert set_msg in _dropped(api)
-    # další stisknutí na staré zprávě sady nic nezmění
-    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
     bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
-    bot.handle(_cb("noset:7", msg_id=set_msg))
-    assert [_get(conn, i).status for i in ids] == ["rejected", "pending", "rejected"]
-    assert len([b for b in api.sent() if _buttons(b)]) == 1
-    # odpověď na starou zprávu sady needituje žádnou variantu, odpověď na náhled vybrané ano
+    # ostatní varianty dál čekají, zpráva sady přijde jen o tlačítko vybrané
+    assert [_get(conn, i).status for i in ids] == ["pending"] * 3
+    assert _edits(api) == [(set_msg, [f"pick:{ids[1]}", f"pick:{ids[2]}", "doneset:7"])]
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[0]}"]
+    assert _get(conn, ids[0]).telegram_msg_id != set_msg
+    assert {_get(conn, i).telegram_msg_id for i in ids[1:]} == {set_msg}
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    assert _edits(api) == [(set_msg, [f"pick:{ids[1]}", "doneset:7"])]
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[2]}"]
+    # znovu Vybrat u už vybrané varianty nic nepošle
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    assert _previews(api) == [] and _edits(api) == []
+    # Hotovo zamítne zbylou nevybranou, vybrané čekají na schválení
+    bot.handle(_cb("doneset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "pending"]
+    assert (set_msg, []) in _edits(api)
+    assert "Sada #7: zbylé varianty zamítnuty." in api.texts()
+
+
+@pg
+def test_vybrat_posledni_variantu_odebere_tlacitka(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7, n=2)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    assert _edits(api) == [(set_msg, [])]
+    assert [_get(conn, i).status for i in ids] == ["pending", "pending"]
+    # Hotovo už nemá co zamítnout
+    bot.handle(_cb("doneset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["pending", "pending"]
+
+
+@pg
+def test_vybrane_jde_schvalit_nevybrane_ne(bot, conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "pending"
+    assert sum(meta.calls.values()) == 0
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert _get(conn, ids[0]).status == "published"
+    # sada má dál nevyřízené varianty: počítá se jako jedna jednotka
+    assert queue.pending_count(conn) == 1
+    bot.handle(_cb(f"ok:{ids[2]}"))
+    assert _get(conn, ids[2]).status == "published"
+    assert _get(conn, ids[1]).status == "pending"
+
+
+@pg
+def test_odpoved_po_vyberu(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    # odpověď na zprávu sady needituje žádnou variantu, odpověď na náhled vybrané ano
     bot.handle(_msg("Nový popisek", reply_to=set_msg))
     assert all(_get(conn, i).caption.startswith("Varianta") for i in ids)
+    assert "Nejdřív vyber variantu" in api.texts()[-1]
+    # odpověď na video nevybrané varianty taky ne
+    bot.handle(_msg("Nový popisek", reply_to=_get(conn, ids[0]).telegram_video_msg_id))
+    assert _get(conn, ids[0]).caption.startswith("Varianta")
     bot.handle(_msg("Nový popisek", reply_to=_get(conn, ids[1]).telegram_msg_id))
     assert _get(conn, ids[1]).caption == "Nový popisek"
+    assert _get(conn, ids[0]).caption.startswith("Varianta")
+
+
+@pg
+def test_stare_noset_funguje_i_po_vyberu(bot, conn, api, media_dir):
+    """Zpráva sady odeslaná před nasazením má noset:<set_id>; zamítne zbylé nevybrané varianty."""
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    bot.handle(_cb("noset:7", msg_id=set_msg))
+    assert [_get(conn, i).status for i in ids] == ["rejected", "pending", "rejected"]
+
+
+@pg
+def test_stary_vyber_jednim_cislem(bot, conn, api, meta, media_dir):
+    """Hodnota set_picked:<set_id> z dřívějška je jedno id; čte se stejně jako seznam."""
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    queue.set_state(conn, "set_picked:7", str(ids[1]))
+    assert queue.picked(conn, 7) == {ids[1]}
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    assert _get(conn, ids[0]).status == "pending"
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "published"
+    # další výběr se ke starému přidá
+    queue.mark_picked(conn, 7, ids[2])
+    assert queue.picked(conn, 7) == {ids[1], ids[2]}
+    assert queue.get_state(conn, "set_picked:7") == f"{ids[1]},{ids[2]}"
+
+
+@pg
+def test_fronta_po_vyberu_nabidne_zbyle_varianty(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    msgs = [_buttons(b) for b in api.sent() if _buttons(b)]
+    assert [f"pick:{ids[0]}", f"pick:{ids[2]}", "doneset:7"] in msgs
+    assert [f"ok:{ids[1]}", f"edit:{ids[1]}", f"no:{ids[1]}"] in msgs
+    assert len(msgs) == 2
+    new_set = _set_msg_id(conn, ids[0])
+    assert new_set != set_msg and _set_msg_id(conn, ids[2]) == new_set
+    assert set_msg in _dropped(api)
+    # nová zpráva sady: text jen se zbylými variantami, výběr platí jen z ní
+    text = [b["text"] for b in api.sent() if "doneset:7" in _buttons(b)][0]
+    assert "Varianta 1 řádek 1" in text and "Varianta 2 řádek 1" not in text
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    assert _get(conn, ids[2]).telegram_msg_id == new_set
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=new_set))
+    assert _get(conn, ids[2]).telegram_msg_id != new_set
 
 
 @pg
@@ -1442,13 +1558,15 @@ def test_odpoved_pred_vyberem_needituje(bot, conn, api, media_dir):
 
 
 @pg
-def test_zamitnout_vse(bot, conn, api, media_dir):
+@pytest.mark.parametrize("action", ["doneset", "noset"])
+def test_zamitnout_vse(bot, conn, api, media_dir, action):
     ids = _add_set(conn, media_dir, 7)
     bot.send_next()
     set_msg = _set_msg_id(conn, ids[0])
-    bot.handle(_cb("noset:7", msg_id=set_msg))
+    bot.handle(_cb(f"{action}:7", msg_id=set_msg))
     assert [_get(conn, i).status for i in ids] == ["rejected"] * 3
     assert set_msg in _dropped(api)
+    assert "Sada #7 zamítnuta." in api.texts()
 
 
 @pg
@@ -1517,12 +1635,13 @@ def test_fronta_obnovi_tlacitka_sady(bot, conn, api, media_dir):
     msgs = [b for b in api.sent() if _buttons(b)]
     # jen zpráva sady, žádné náhledy se Schválit
     assert len(msgs) == 1
-    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["noset:7"]
+    assert _buttons(msgs[0]) == [f"pick:{i}" for i in ids] + ["doneset:7"]
     new_id = _get(conn, ids[0]).telegram_msg_id
     assert new_id and {_get(conn, i).telegram_msg_id for i in ids} == {new_id}
     bot.handle(_cb(f"pick:{ids[0]}", msg_id=new_id))
+    bot.handle(_cb("doneset:7", msg_id=new_id))
     assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "rejected"]
-    # po výběru /fronta ukáže náhled vybrané varianty
+    # po výběru a Hotovo /fronta ukáže jen náhled vybrané varianty
     api.calls.clear()
     bot.handle(_msg("/fronta"))
     assert [_buttons(b) for b in api.sent() if _buttons(b)] == [
@@ -1558,7 +1677,7 @@ def test_sada_odmitnute_video_vyradi_jen_variantu(bot, conn, api, media_dir):
     Path(_get(conn, ids[1]).video_path).unlink()
     bot.send_next()
     assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "pending"]
-    assert _buttons(_set_msg(api)) == [f"pick:{ids[0]}", f"pick:{ids[2]}", "noset:7"]
+    assert _buttons(_set_msg(api)) == [f"pick:{ids[0]}", f"pick:{ids[2]}", "doneset:7"]
 
 
 @pg
@@ -1642,6 +1761,28 @@ def test_cerstve_stazeni_a_vyprseni_sady(bot, conn, api, media_dir, monkeypatch)
 
 
 @pg
+def test_vyprseni_zbylych_variant_po_vyberu(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import fresh
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    preview = _get(conn, ids[0]).telegram_msg_id
+
+    def retire(c, now):
+        for i in ids[1:]:
+            _to(c, i, "expired")
+        return [(7, "expired")]
+    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
+    monkeypatch.setattr(fresh, "retire", retire)
+    api.calls.clear()
+    bot.maybe_fresh()
+    assert "#7 zbylé varianty vypršely" in api.texts()
+    assert _dropped(api) == [set_msg] and preview not in _dropped(api)
+    assert _get(conn, ids[0]).status == "pending"
+
+
+@pg
 def test_chyba_inboxu_jen_zaloguje(bot, conn, api, media_dir, monkeypatch, caplog):
     from hlidac_reels import inbox
 
@@ -1676,6 +1817,12 @@ def test_pending_count_po_sadach(conn, media_dir):
     for i in [*a, solo]:
         queue.transition(conn, i, "queued", "pending")
     assert queue.pending_count(conn) == 2
+    # sada s vybranými i nevybranými variantami zůstává jedna jednotka
+    queue.mark_picked(conn, 1, a[0])
+    queue.mark_picked(conn, 1, a[1])
+    assert queue.pending_count(conn) == 2
+    queue.transition(conn, a[2], "pending", "rejected")
+    assert queue.pending_count(conn) == 2
 
 
 def test_texty_sady():
@@ -1696,7 +1843,8 @@ def test_texty_sady():
     items = [reel(11, 1, "template_v2", "v2", "a\nb\nc"), reel(12, 2, "template_v3", "dopad", "x" * 5000)]
     assert set_video_caption(items[0]) == "#5 · varianta 1 · v2"
     assert set_video_caption(items[1]) == "#5 · varianta 2 · v3 dopad"
-    assert set_buttons(items) == [("Vybrat 1", "pick:11"), ("Vybrat 2", "pick:12"), ("Zamítnout vše", "noset:5")]
+    assert set_buttons(items) == [("Vybrat 1", "pick:11"), ("Vybrat 2", "pick:12"),
+                                  ("Hotovo, zbytek zamítnout", "doneset:5")]
     text = set_text(items)
     assert len(text) <= 4096 and "a\nb" in text and "\nc" not in text
 

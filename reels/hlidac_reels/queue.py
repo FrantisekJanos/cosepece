@@ -7,7 +7,8 @@ from datetime import date, datetime
 
 import psycopg
 
-# reel_state set_picked:<set_id> = id vybrané varianty; sada s výběrem nevyprší ani se nestáhne
+# reel_state set_picked:<set_id> = id vybraných variant oddělená čárkou (dřívější hodnota je jedno id);
+# vybraná varianta nevyprší a sada s výběrem se nestáhne
 PICKED_KEY = "set_picked:"
 
 STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
@@ -283,14 +284,26 @@ def recover_after_restart(conn) -> list[int]:
     return ids
 
 
-def picked(conn, set_id: int) -> int | None:
-    """Id varianty vybrané ze sady, None = ještě bez výběru."""
-    v = get_state(conn, f"{PICKED_KEY}{set_id}")
-    return int(v) if v else None
+def _parse_picked(value: str | None) -> set[int]:
+    """Hodnota set_picked:<set_id>: "12" (dřívější jediný výběr) i "12,15"; neplatné části se vynechají."""
+    out = set()
+    for part in (value or "").split(","):
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out
+
+
+def picked(conn, set_id: int) -> set[int]:
+    """Id variant vybraných ze sady, prázdná množina = ještě bez výběru."""
+    return _parse_picked(get_state(conn, f"{PICKED_KEY}{set_id}"))
 
 
 def mark_picked(conn, set_id: int, reel_id: int) -> None:
-    set_state(conn, f"{PICKED_KEY}{set_id}", str(reel_id))
+    """Přidá variantu k vybraným (bot zpracovává tlačítka jedno po druhém)."""
+    ids = picked(conn, set_id) | {reel_id}
+    set_state(conn, f"{PICKED_KEY}{set_id}", ",".join(str(i) for i in sorted(ids)))
 
 
 def get_state(conn, key: str) -> str | None:

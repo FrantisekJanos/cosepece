@@ -17,7 +17,7 @@ SNAPSHOT_KEY = "top_findings"
 BASELINE_KEY = "fresh_baseline"
 # snímek starší než tohle znamená, že synchronizace stojí: nic se nezakládá ani nestahuje
 SNAPSHOT_MAX_AGE = timedelta(hours=3)
-# sada fresh/auto_pick bez výběru starší než tohle vyprší
+# nevybrané varianty sady fresh/auto_pick starší než tohle vyprší
 SET_MAX_AGE = timedelta(days=7)
 # nejvýš tolik nových úloh fresh za den (Europe/Prague): změna skóre nesmí spustit vlnu generování
 FRESH_PER_DAY = 2
@@ -109,10 +109,13 @@ def _load_baseline(raw: str | None) -> dict[str, list[str]] | None:
 
 
 def retire(conn, now: datetime) -> list[tuple[int, str]]:
-    """Sady fresh/auto_pick bez výběru: starší než 7 dní (fresh od založení úlohy) → expired, tisk mimo nálezy → withdrawn.
+    """Sady fresh/auto_pick: nevybrané varianty starší než 7 dní (fresh od založení úlohy) → expired,
+    sada bez výběru s tiskem mimo nálezy → withdrawn.
 
-    Mění se všechny položky sady ve stavu queued/pending. Bez čerstvého snímku nebo s prázdným snímkem
-    (chyba skóre, obnovená prázdná DB) se nic nestahuje, aby nezmizely všechny sady najednou; vypršení platí dál. Vrací (set_id, nový stav) jen pro sady, které se změnily.
+    Mění se nevybrané položky sady ve stavu queued/pending; vybrané varianty (queue.picked) zůstávají a sada
+    s výběrem se nestahuje. Bez čerstvého snímku nebo s prázdným snímkem (chyba skóre, obnovená prázdná DB)
+    se nic nestahuje, aby nezmizely všechny sady najednou; vypršení platí dál. Vrací (set_id, nový stav)
+    jen pro sady, které se změnily.
     """
     items = _snapshot(conn, now)
     with conn.cursor() as cur:
@@ -122,25 +125,23 @@ def retire(conn, now: datetime) -> list[tuple[int, str]]:
             "(SELECT j.created_at FROM reel_jobs j WHERE j.id = reel_queue.set_id), min(created_at)) "
             "ELSE min(created_at) END, max(ct) FROM reel_queue "
             "WHERE set_id IS NOT NULL AND status IN ('queued','pending') AND source <> 'manual' "
-            # sada s vybranou variantou už není „bez výběru“: nevyprší ani se nestáhne
-            "AND NOT EXISTS (SELECT 1 FROM reel_state s WHERE s.key = concat(%s::text, reel_queue.set_id)) "
             "GROUP BY set_id ORDER BY set_id",
-            (queue.PICKED_KEY,),
         )
         sets = cur.fetchall()
     conn.commit()
 
     out: list[tuple[int, str]] = []
     for set_id, created_at, ct in sets:
+        picked = queue.picked(conn, set_id)
         if now - created_at > SET_MAX_AGE:
             status = "expired"
-        elif items and ct is not None and str(ct) not in items:
+        elif not picked and items and ct is not None and str(ct) not in items:
             status = "withdrawn"
         else:
             continue
         changed = False
         for reel in queue.set_items(conn, set_id):
-            if queue.transition(conn, reel.id, ("queued", "pending"), status):
+            if reel.id not in picked and queue.transition(conn, reel.id, ("queued", "pending"), status):
                 changed = True
         if changed:
             out.append((set_id, status))

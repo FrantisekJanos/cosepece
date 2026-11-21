@@ -10,8 +10,9 @@ drží reel_state (threads_token); při startu se naplní z THREADS_TOKEN, když
 a smyčka ho prodlužuje (nejvýš jeden pokus denně, když je starší než 7 dní).
 
 Sady variant z generátoru (set_id): videa sady odejdou najednou, pod nimi jedna zpráva s tlačítky
-Vybrat N a Zamítnout vše (všechny položky sdílejí její telegram_msg_id). Po výběru dostane vybraná
-varianta náhled se Schválit / Upravit / Zamítnout jako samostatné video (fáze 1), ostatní se zamítnou.
+Vybrat N a Hotovo, zbytek zamítnout (nevybrané položky sdílejí její telegram_msg_id). Vybrat N dá variantě
+náhled se Schválit / Upravit / Zamítnout jako samostatnému videu (fáze 1) a zpráva sady přijde o její tlačítko;
+ostatní varianty jdou vybrat dál. Hotovo (i dřívější noset) zamítne nevybrané varianty.
 Do Telegramu odejdou nejvýš 2 sady denně (den podle Europe/Prague), /dalsi limit obchází. Smyčka
 každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
 """
@@ -63,11 +64,12 @@ WORKER_SEEN_KEY = "worker_seen_at"
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
-        "Ze sady variant nejdřív vyber jednu tlačítkem Vybrat.")
+        "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
 SET_GONE = "Sada už nečeká na výběr."
 RETIRED = {"withdrawn": "#{} staženo: nález už není mezi hlavními",
            "expired": "#{} vypršelo (7 dní bez výběru)"}
+RETIRED_REST = "#{} zbylé varianty vypršely"  # sada s výběrem: vyprší jen nevybrané varianty
 LANDSCAPE_NOT_SENT = "Video na šířku ještě nebylo odesláno ke schválení."
 LANDSCAPE_REJECTED = "Video na šířku Telegram odmítl. Vyměň ho přes reels-add-landscape, nebo položku zamítni."
 LANDSCAPE_FAILED_KEY = "landscape_failed:{}"  # reel_state: sha256 šířky, kterou Telegram trvale odmítl
@@ -183,7 +185,8 @@ class Bot:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
             return
         handlers = {"ok": self._approve, "no": self._reject, "retry": self._retry, "edit": self._edit,
-                    "pick": self._pick, "noset": self._reject_set}
+                    # noset: tlačítko zpráv sad odeslaných před výběrem více variant
+                    "pick": self._pick, "doneset": self._reject_set, "noset": self._reject_set}
         handler = handlers.get(action)
         if handler is None:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
@@ -270,9 +273,14 @@ class Bot:
     # --- sady variant ----------------------------------------------------
 
     def _unpicked(self, reel: Reel) -> bool:
-        """Čekající položka sady, z níž ještě nebyla vybraná varianta."""
+        """Čekající varianta sady, která sama ještě nebyla vybraná (jiné varianty sady vybrané být můžou)."""
         return (reel.set_id is not None and reel.status == "pending"
-                and queue.picked(self.conn, reel.set_id) is None)
+                and reel.id not in queue.picked(self.conn, reel.set_id))
+
+    def _unpicked_items(self, set_id: int) -> list[Reel]:
+        """Čekající nevybrané varianty sady (ty, které nabízí zpráva sady)."""
+        picked = queue.picked(self.conn, set_id)
+        return [r for r in queue.set_items(self.conn, set_id) if r.status == "pending" and r.id not in picked]
 
     def _pick(self, reel_id: int, cb_id, msg_id) -> None:
         reel = queue.get(self.conn, reel_id)
@@ -281,39 +289,43 @@ class Bot:
             self._answer(cb_id, SET_GONE)
             return
         self._answer(cb_id, f"Vybrána varianta {reel.variant}")
-        # nejdřív náhled; když se nepošle, nic se nemění a sada dál čeká na výběr
+        # nejdřív náhled; když se nepošle, nic se nemění a varianta dál čeká na výběr
         try:
             preview_id = self._send_preview(reel)
         except TelegramError as e:
             log.warning("náhled #%s se nepodařilo poslat: %s", reel.id, self._safe(e))
             self._say(f"Náhled varianty {reel.variant} se nepodařilo poslat, výběr neproběhl. Zkus to znovu.")
             return
-        # nejdřív zamítnout ostatní, výběr zapsat až potom: pád mezi kroky nenechá schválitelné jiné varianty
-        for other in queue.set_items(self.conn, reel.set_id):
-            if other.id != reel.id:
-                queue.transition(self.conn, other.id, "pending", "rejected", decided_at=_now())
+        # ostatní varianty zůstávají pending a jdou vybrat dál; schválit jde jen vybraná
         queue.mark_picked(self.conn, reel.set_id, reel.id)
         queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
-        self._drop_buttons(msg_id)
+        # zpráva sady přijde o tlačítko vybrané varianty; po poslední i o Hotovo
+        rest = [r for r in self._unpicked_items(reel.set_id) if r.telegram_msg_id == msg_id]
+        if rest:
+            self._try("editMessageReplyMarkup", self.tg.edit_buttons, self.chat_id, msg_id, set_buttons(rest))
+        else:
+            self._drop_buttons(msg_id)
 
     def _reject_set(self, set_id: int, cb_id, msg_id) -> None:
-        pending = [r for r in queue.set_items(self.conn, set_id) if r.status == "pending"]
-        if not pending or not self._unpicked(pending[0]) or msg_id != pending[0].telegram_msg_id:
+        """Hotovo (doneset, dřívější noset): zamítne nevybrané varianty; před výběrem celou sadu."""
+        rest = self._unpicked_items(set_id)
+        if not rest or msg_id != rest[0].telegram_msg_id:
             self._answer(cb_id, SET_GONE)
             return
-        for r in pending:
+        any_picked = bool(queue.picked(self.conn, set_id))
+        for r in rest:
             queue.transition(self.conn, r.id, "pending", "rejected", decided_at=_now())
         self._answer(cb_id, "Zamítnuto")
         self._drop_buttons(msg_id)
-        self._say(f"Sada #{set_id} zamítnuta.")
+        self._say(f"Sada #{set_id}: zbylé varianty zamítnuty." if any_picked else f"Sada #{set_id} zamítnuta.")
         self._safe_send_next()
 
     def _offer_set(self, set_id: int) -> bool:
-        """Zpráva sady s tlačítky Vybrat pro čekající varianty; stará zpráva sady přijde o tlačítka.
+        """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, /fronta to zkusí znovu).
         """
-        pending = [r for r in queue.set_items(self.conn, set_id) if r.status == "pending"]
+        pending = self._unpicked_items(set_id)
         if not pending:
             return False
         msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, set_text(pending), set_buttons(pending))
@@ -712,7 +724,9 @@ class Bot:
                 continue
             for msg_id in {r.telegram_msg_id for r in items if r.telegram_msg_id}:
                 self._drop_buttons(msg_id)
-            self._say(RETIRED.get(status, "#{} " + status).format(set_id))
+            # u sady s výběrem vypršely jen nevybrané varianty, vybrané dál čekají na schválení
+            text = RETIRED_REST if queue.picked(self.conn, set_id) else RETIRED.get(status, "#{} " + status)
+            self._say(text.format(set_id))
 
     def maybe_send_next(self) -> None:
         """Nově zařazené video (i doplněné video na šířku) dorazí samo, nejvýš jednou za SEND_INTERVAL s."""

@@ -161,7 +161,12 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 - `/vyber`: tisk vybere automatika z hlavních nálezů (nikdy formát `rozprava`),
 - `/fronta`: kromě položek ke schválení i zadání ve frontě a kdy bylo PC naposledy vidět.
 
-Ze sady pošle bot všechny varianty a vlastník jednu vybere tlačítkem Vybrat; teprve vybraná jde ke schválení.
+Ze sady pošle bot všechny varianty a pod ně jednu zprávu s tlačítky Vybrat N a Hotovo, zbytek zamítnout. Vybrat N
+pošle variantě vlastní náhled se Schválit / Upravit popisek / Zamítnout (jako samostatné video) a zpráva sady přijde
+jen o její tlačítko, takže jde vybrat víc variant. Hotovo zamítne zbylé nevybrané varianty (před výběrem celou sadu);
+starší zprávy sad s tlačítkem Zamítnout vše fungují stejně. Schválit ani úprava popisku nejde u nevybrané varianty,
+odpověď na zprávu sady nemění žádnou. `/fronta` pošle znovu zprávu sady se zbylými variantami a náhledy vybraných.
+Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco čeká (výběr nebo schválení).
 
 **Limity:**
 
@@ -172,8 +177,8 @@ Ze sady pošle bot všechny varianty a vlastník jednu vybere tlačítkem Vybrat
 - vydaná úloha bez výsledku se po 60 minutách vrátí do fronty, po 3 pokusech skončí `failed`; `fresh` starší než
   7 dní se už nevydá (`expired`),
 - do Telegramu jdou nejvýš 2 sady denně (Europe/Prague) a najednou nejvýš 1 nevyřízená; `/dalsi` limit obchází,
-- sada `fresh` nebo `auto_pick` bez výběru vyprší po 7 dnech (`fresh` se počítá od založení úlohy), sada, jejíž tisk
-  vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+- nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
+  zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
 
 ## Testy
 

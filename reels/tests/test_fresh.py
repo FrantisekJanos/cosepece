@@ -256,6 +256,27 @@ def test_retire_vybrana_sada_nevyprsi_ani_nestahne(conn):
     assert _statuses(conn, s) == ["pending", "rejected"]
 
 
+def test_retire_po_vyberu_vyprsi_jen_nevybrane(conn):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    s = _set(conn, source="fresh", ct=221, age=timedelta(days=8), variants=3)
+    first = queue.set_items(conn, s)[0].id
+    queue.mark_picked(conn, s, first)
+    assert fresh.retire(conn, NOW) == [(s, "expired")]
+    assert _statuses(conn, s) == ["pending", "expired", "expired"]
+    assert fresh.retire(conn, NOW) == []
+
+
+def test_retire_po_vyberu_nestahuje(conn):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    # tisk mimo nálezy, ale jedna varianta vybraná: nestáhne se nic
+    s = _set(conn, source="fresh", ct=500, age=timedelta(days=1), variants=3)
+    queue.mark_picked(conn, s, queue.set_items(conn, s)[1].id)
+    assert fresh.retire(conn, NOW) == []
+    assert _statuses(conn, s) == ["pending"] * 3
+
+
 def _age_all_fresh(conn, at: datetime) -> None:
     with conn.cursor() as cur:
         cur.execute("UPDATE reel_jobs SET created_at=%s WHERE source='fresh'", (at,))

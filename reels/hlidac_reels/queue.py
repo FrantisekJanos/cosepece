@@ -120,8 +120,9 @@ def get(conn, id: int) -> Reel | None:
 
 
 def next_queued(conn, sets: bool = True) -> Reel | None:
-    """Nejstarší položka queued; sets=False přeskočí položky sad (denní limit sad je vyčerpaný)."""
-    only_solo = "" if sets else " AND set_id IS NULL"
+    """Nejstarší položka queued; sets=False přeskočí automatické sady (denní limit sad je vyčerpaný),
+    samostatná videa a sady ručních úloh (source manual) projdou."""
+    only_solo = "" if sets else " AND (set_id IS NULL OR source = 'manual')"
     with conn.cursor() as cur:
         cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued'{only_solo} ORDER BY id LIMIT 1")
         r = _row(cur)
@@ -178,10 +179,12 @@ def local_date(conn, at: datetime) -> date:
 
 
 def sets_sent_on(conn, day: date) -> int:
-    """Kolik sad odešlo ke schválení v daném dni (Europe/Prague); samostatná videa se nepočítají."""
+    """Kolik automatických sad odešlo ke schválení v daném dni (Europe/Prague); samostatná videa
+    a sady ručních úloh (source manual) se nepočítají."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(DISTINCT set_id) FROM reel_queue WHERE set_id IS NOT NULL AND sent_at IS NOT NULL "
+            "AND source <> 'manual' "
             "AND (sent_at AT TIME ZONE 'Europe/Prague')::date = %s",
             (day,),
         )

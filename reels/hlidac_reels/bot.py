@@ -13,7 +13,8 @@ Sady variant z generátoru (set_id): videa sady odejdou najednou, pod nimi jedna
 Vybrat N a Hotovo, zbytek zamítnout (nevybrané položky sdílejí její telegram_msg_id). Vybrat N dá variantě
 náhled se Schválit / Upravit / Zamítnout jako samostatnému videu (fáze 1) a zpráva sady přijde o její tlačítko;
 ostatní varianty jdou vybrat dál. Hotovo (i dřívější noset) zamítne nevybrané varianty.
-Do Telegramu odejdou nejvýš 2 sady denně (den podle Europe/Prague), /dalsi limit obchází. Smyčka
+Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague); sady ručních úloh (/video)
+limit neomezují a nepočítají se do něj, /dalsi limit obchází. Čekání na limit bot ohlásí jednou za sadu. Smyčka
 každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
 """
 from __future__ import annotations
@@ -47,7 +48,8 @@ SEND_ATTEMPTS = 3  # kolik neposlatelných videí se vyřadí v jednom send_next
 SEND_INTERVAL = 50  # s, jak často smyčka sama zkusí poslat další položku
 INGEST_INTERVAL = 60  # s, jak často smyčka převezme hotové sady z mezisložky
 FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuje staré sady
-SETS_PER_DAY = 2  # sad odeslaných ke schválení za den (Europe/Prague), /dalsi limit obchází
+SETS_PER_DAY = 2  # automatických sad ke schválení za den (Europe/Prague); ruční sady a /dalsi limit obchází
+LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot ohlásil čekání na limit
 STALE_PUBLISHING = timedelta(minutes=15)
 DB_LOST_EXIT = 3
 INTERRUPTED = "přerušeno před zveřejněním"
@@ -573,13 +575,16 @@ class Bot:
         """
         if not force and queue.pending_count(self.conn) > 0:
             return
-        # denní limit platí jen pro sady; samostatná videa (reels-enqueue) jdou dál
+        # denní limit platí jen pro automatické sady; samostatná videa (reels-enqueue) a sady ručních
+        # úloh (/video) jdou dál
         sets_ok = force or queue.sets_sent_on(self.conn, queue.local_date(self.conn, self.now())) < SETS_PER_DAY
         for attempt in range(SEND_ATTEMPTS):
             reel = queue.next_queued(self.conn, sets=sets_ok)
             if reel is None:
                 if force and attempt == 0:
                     self._say("Fronta je prázdná.")
+                elif not sets_ok:
+                    self._announce_limit()
                 return
             if reel.set_id is not None:
                 if self._send_set(reel.set_id):
@@ -609,6 +614,17 @@ class Bot:
                              telegram_landscape_sha256=reel.video_landscape_sha256 if landscape_id else None,
                              telegram_msg_id=preview_id)
             return
+
+    def _announce_limit(self) -> None:
+        """Automatická sada čeká kvůli dennímu limitu: ohlásí se jednou za sadu (reel_state sets_limit_notified)."""
+        waiting = queue.next_queued(self.conn)
+        if waiting is None or waiting.set_id is None:
+            return
+        if queue.get_state(self.conn, LIMIT_NOTIFIED_KEY) == str(waiting.set_id):
+            return
+        if self._say(f"Sada #{waiting.set_id} čeká na zítřek: denní limit {SETS_PER_DAY} automatických sad "
+                     "je vyčerpaný. Poslat hned: /dalsi"):
+            queue.set_state(self.conn, LIMIT_NOTIFIED_KEY, str(waiting.set_id))
 
     def _send_landscape_updates(self) -> None:
         """Video na šířku doplněné k čekající položce: pošle ho a nový náhled s tlačítky.

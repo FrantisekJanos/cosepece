@@ -181,7 +181,9 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
   `fresh` za den (Europe/Prague), zbylé nálezy přijdou na řadu další dny; první běh detektoru jen uloží výchozí stav,
 - vydaná úloha bez výsledku se po 60 minutách vrátí do fronty, po 3 pokusech skončí `failed`; `fresh` starší než
   7 dní se už nevydá (`expired`),
-- do Telegramu jdou nejvýš 2 sady denně (Europe/Prague) a najednou nejvýš 1 nevyřízená; `/dalsi` limit obchází,
+- do Telegramu jdou nejvýš 2 automatické sady (`fresh`, `auto_pick`) denně (Europe/Prague) a najednou nejvýš
+  1 nevyřízená jednotka; sady ručních úloh (`/video`) denní limit neomezuje a nepočítají se do něj, `/dalsi` limit
+  obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
 - nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
   zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
 

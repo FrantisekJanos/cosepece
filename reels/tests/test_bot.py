@@ -1594,6 +1594,63 @@ def test_denni_limit(bot, conn, api, media_dir):
 
 
 @pg
+def test_rucni_sada_limit_neomezuje_a_nepocita_se(bot, conn, api, media_dir):
+    """Sada ruční úlohy (/video) jde i po vyčerpání limitu a do limitu se nepočítá (dnešní chyba)."""
+    from hlidac_reels import queue
+    a = _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2)
+    bot.send_next()
+    bot.handle(_cb("noset:1", msg_id=_set_msg_id(conn, a[0])))
+    bot.handle(_cb("noset:2", msg_id=_set_msg_id(conn, b[0])))
+    m = _add_set(conn, media_dir, 3, source="manual")
+    auto = _add_set(conn, media_dir, 4)
+    bot.send_next()
+    assert [_get(conn, i).status for i in m] == ["pending"] * 3
+    # pořád jen jedna nevyřízená jednotka najednou
+    bot.send_next()
+    assert _get(conn, auto[0]).status == "queued"
+    bot.handle(_cb("noset:3", msg_id=_set_msg_id(conn, m[0])))
+    assert queue.sets_sent_on(conn, queue.local_date(conn, bot.now())) == 2
+    assert _get(conn, auto[0]).status == "queued"
+
+
+@pg
+def test_rucni_sada_v_limitu_nespotrebuje_misto(bot, conn, api, media_dir):
+    m = _add_set(conn, media_dir, 1, source="manual")
+    bot.send_next()
+    bot.handle(_cb("noset:1", msg_id=_set_msg_id(conn, m[0])))
+    a = _add_set(conn, media_dir, 2)
+    b = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    bot.handle(_cb("noset:2", msg_id=_set_msg_id(conn, a[0])))
+    assert _get(conn, b[0]).status == "pending"
+
+
+@pg
+def test_cekani_na_limit_ohlasi_jednou(bot, conn, api, media_dir):
+    a = _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2)
+    c = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    bot.handle(_cb("noset:1", msg_id=_set_msg_id(conn, a[0])))
+    bot.handle(_cb("noset:2", msg_id=_set_msg_id(conn, b[0])))
+    bot.send_next()
+    bot.send_next()
+    notes = [t for t in api.texts() if "denní limit" in t]
+    assert len(notes) == 1 and "/dalsi" in notes[0] and "#3" in notes[0]
+    assert _get(conn, c[0]).status == "queued"
+    # jiná sada, která čeká kvůli limitu, se ohlásí znovu (jednou za sadu)
+    _add_set(conn, media_dir, 4)
+    bot.handle(_cb("noset:3", msg_id=_set_msg_id(conn, c[0])))  # sada 3 ještě neodešla: nic se nezmění
+    from hlidac_reels import queue
+    for i in c:
+        queue.transition(conn, i, "queued", "rejected")
+    bot.send_next()
+    notes = [t for t in api.texts() if "denní limit" in t]
+    assert len(notes) == 2 and "#4" in notes[1]
+
+
+@pg
 def test_denni_limit_podle_prazskeho_dne(conn, media_dir):
     from datetime import date, datetime, timezone
     from hlidac_reels import queue

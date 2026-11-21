@@ -273,7 +273,10 @@ def zmeny_projevu(od: str | None = None, ct: int | None = None, limit: int = 50)
 @server.tool(annotations=READ_ONLY)
 def stav_dat() -> dict:
     """Stav dat: počty projevů a částí, poslední stažená schůze, výsledek posledního běhu synchronizace,
-    texty: {dokumentu, celku, jen_pdf, schvalenych} (None, dokud se texty poprvé nenačtou)."""
+    texty: {dokumentu, celku, jen_pdf, schvalenych} (None, dokud se texty poprvé nenačtou),
+    sync: {posledni_uspesny, posledni_beh: {zacatek, konec, ok}} (synchronizace s psp.cz),
+    ai_fronta: {cekajicich, nejstarsi_cekajici, posledni_vysledek, klient_naposledy} (AI rozbor),
+    vystrahy: {zkontrolovano, polozky} (hodinová kontrola čerstvosti dat; prázdné polozky = vše v pořádku)."""
     return _call("stav_dat", tools.stav_dat)
 
 

@@ -13,6 +13,8 @@ Sady variant z generátoru (set_id): videa sady odejdou najednou, pod nimi jedna
 Vybrat N a Hotovo, zbytek zamítnout (nevybrané položky sdílejí její telegram_msg_id). Vybrat N dá variantě
 náhled se Schválit / Upravit / Zamítnout jako samostatnému videu (fáze 1) a zpráva sady přijde o její tlačítko;
 ostatní varianty jdou vybrat dál. Hotovo (i dřívější noset) zamítne nevybrané varianty.
+Hlídání dat (hlidani.py): každou hodinu výstraha při novém problému a zpráva „obnoveno“, v 8:00 Europe/Prague
+denní souhrn, /stav na požádání.
 Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague); sady ručních úloh (/video)
 limit neomezují a nepočítají se do něj, /dalsi limit obchází. Čekání na limit bot ohlásí jednou za sadu. Smyčka
 každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
@@ -31,7 +33,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db, fresh, inbox, jobs, publish, queue
+from . import db, fresh, hlidani, inbox, jobs, publish, queue
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (approval_buttons, preview_parts, preview_text, result_text,  # noqa: F401
@@ -48,6 +50,9 @@ SEND_ATTEMPTS = 3  # kolik neposlatelných videí se vyřadí v jednom send_next
 SEND_INTERVAL = 50  # s, jak často smyčka sama zkusí poslat další položku
 INGEST_INTERVAL = 60  # s, jak často smyčka převezme hotové sady z mezisložky
 FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuje staré sady
+WATCH_INTERVAL = 3600  # s, jak často smyčka kontroluje čerstvost dat (hlidani.check)
+SUMMARY_CHECK_INTERVAL = 300  # s, jak často smyčka zjišťuje, jestli už má odejít denní souhrn (8:00)
+TELEGRAM_TEXT_LIMIT = 4000  # znaků zprávy (Telegram bere nejvýš 4096)
 SETS_PER_DAY = 2  # automatických sad ke schválení za den (Europe/Prague); ruční sady a /dalsi limit obchází
 LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot ohlásil čekání na limit
 STALE_PUBLISHING = timedelta(minutes=15)
@@ -64,7 +69,8 @@ MAX_CT = 999_999  # nejvyšší číslo tisku, které /video přijme
 VIDEO_USAGE = "Použití: /video <číslo tisku> [cesta|pn|zmena|rozprava]"
 WORKER_SEEN_KEY = "worker_seen_at"
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
-        "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky).\n"
+        "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
+        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
@@ -135,6 +141,8 @@ class Bot:
         self._next_ingest = float("-inf")
         self._next_fresh = float("-inf")
         self._next_notify = float("-inf")
+        self._next_watch = float("-inf")
+        self._next_summary = float("-inf")
         # None = Threads není nastavené (bez THREADS_USER_ID)
         self.threads = threads
         self.threads_env_token = threads_env_token or None
@@ -387,6 +395,8 @@ class Bot:
             self._cmd_video((text or "").split()[1:])
         elif command == "/vyber":
             self._add_job("auto_pick", None, None)
+        elif command == "/stav":
+            self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
         else:
             self._say(HELP)
 
@@ -744,6 +754,36 @@ class Bot:
             text = RETIRED_REST if queue.picked(self.conn, set_id) else RETIRED.get(status, "#{} " + status)
             self._say(text.format(set_id))
 
+    # --- hlídání čerstvosti dat ----------------------------------------------
+
+    @staticmethod
+    def _clip(text: str) -> str:
+        return text if len(text) <= TELEGRAM_TEXT_LIMIT else text[:TELEGRAM_TEXT_LIMIT - 1] + "…"
+
+    def maybe_watch(self) -> None:
+        """Kontrola dat nejvýš jednou za WATCH_INTERVAL s (výstrahy a obnovení), denní souhrn po 8:00."""
+        now = self.clock()
+        if now >= self._next_watch:
+            self._next_watch = now + WATCH_INTERVAL
+            self._guard("hlídání dat", self._watch)
+        if now >= self._next_summary:
+            self._next_summary = now + SUMMARY_CHECK_INTERVAL
+            self._guard("denní souhrn stavu dat", self._daily_summary)
+
+    def _watch(self) -> None:
+        new, recovered = hlidani.check(self.conn, self.now())
+        text = hlidani.alert_text(new, recovered)
+        if text:
+            self._say(self._clip(text))
+
+    def _daily_summary(self) -> None:
+        day = hlidani.summary_due(self.conn, self.now())
+        if day is None:
+            return
+        # souhrn se nezapíše jako odeslaný, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL)
+        if self._say(self._clip(hlidani.summary_text(self.conn, self.now()))):
+            hlidani.mark_summary(self.conn, day)
+
     def maybe_send_next(self) -> None:
         """Nově zařazené video (i doplněné video na šířku) dorazí samo, nejvýš jednou za SEND_INTERVAL s."""
         now = self.clock()
@@ -861,6 +901,7 @@ class Bot:
                 self.maybe_notify_failed()
                 self.maybe_fresh()
                 self.maybe_refresh_threads_token()
+                self.maybe_watch()
                 self.poll_once()
             except Exception as e:  # noqa: BLE001
                 if self._db_lost(e):

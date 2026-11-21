@@ -769,6 +769,50 @@ def stav_dat(conn) -> dict:
     out["embeddingy"] = _one(conn, """SELECT count(*) AS useku, count(DISTINCT projev_id) AS projevu,
           count(DISTINCT cel_id) AS celku, mode() WITHIN GROUP (ORDER BY model) AS model, max(indexovano) AS posledni
           FROM rag.usek""") if _embeddingy_ok(conn) else None
+    out.update(_stav_hlidani(conn))
+    return out
+
+
+# čas z tabulek PHP webu ('Y-m-d H:i:s' v místním čase) → timestamptz
+_PHP_CAS = "(NULLIF({}, '')::timestamp AT TIME ZONE 'Europe/Prague')"
+# klíč reel_state, kam bot reels ukládá poslední výsledek hlídání dat (hlidac_reels.hlidani.SNAPSHOT_KEY)
+HLIDANI_KLIC = "hlidani_vystrahy"
+
+
+def _stav_hlidani(conn) -> dict:
+    """Hlídání dat (audit 2026-11-21): historie běhů synchronizace, fronta AI rozboru a výstrahy bota reels.
+    Bez textů chyb; None = tabulka zatím neexistuje."""
+    t = _one(conn, """SELECT to_regclass('sync_beh') IS NOT NULL AS sync, to_regclass('reel_state') IS NOT NULL AS reel,
+                             to_regclass('tisk_text') IS NOT NULL AND to_regclass('pn_text') IS NOT NULL AS ai""")
+    out: dict = {"sync": None, "ai_fronta": None, "vystrahy": None}
+    if t["sync"]:
+        r = _one(conn, f"""SELECT (SELECT max({_PHP_CAS.format('konec')}) FROM sync_beh WHERE ok = 1) AS posledni_uspesny,
+                                    {_PHP_CAS.format('zacatek')} AS zacatek, {_PHP_CAS.format('konec')} AS konec, ok
+                             FROM sync_beh ORDER BY id DESC LIMIT 1""")
+        if r:
+            # ok: None = běží, False = chyba nebo nedokončeno
+            out["sync"] = {"posledni_uspesny": r["posledni_uspesny"],
+                           "posledni_beh": {"zacatek": r["zacatek"], "konec": r["konec"],
+                                            "ok": None if r["ok"] is None else bool(r["ok"])}}
+    if t["ai"]:
+        # jako ai_api.php?action=queue: nové texty bez rozboru (opakování po změně promptu a ověření se nepočítají)
+        zive = "EXISTS (SELECT 1 FROM tisky t WHERE t.ct = x.ct AND t.faze <> 'Vyhlášeno')"
+        out["ai_fronta"] = _one(conn, f"""SELECT count(*) AS cekajicich, min(od) AS nejstarsi_cekajici,
+              greatest((SELECT max({_PHP_CAS.format('ai_at')}) FROM tisk_text),
+                       (SELECT max({_PHP_CAS.format('ai_at')}) FROM pn_text)) AS posledni_vysledek,
+              (SELECT {_PHP_CAS.format('v')} FROM meta WHERE k = 'ai_queue_seen_at') AS klient_naposledy
+            FROM (SELECT {_PHP_CAS.format('x.fetched_at')} AS od FROM tisk_text x
+                   WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
+                  UNION ALL
+                  SELECT {_PHP_CAS.format('x.fetched_at')} FROM pn_text x
+                   WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
+                     AND EXISTS (SELECT 1 FROM pn p WHERE p.id_dokument = x.id_dokument)) q""")
+    if t["reel"]:
+        r = _one(conn, "SELECT value FROM reel_state WHERE key = %s", (HLIDANI_KLIC,))
+        raw = _json(r["value"]) if r else None
+        if isinstance(raw, dict) and isinstance(raw.get("vystrahy"), list):
+            out["vystrahy"] = {"zkontrolovano": raw.get("at"),
+                               "polozky": [v for v in raw["vystrahy"] if isinstance(v, str)]}
     return out
 
 

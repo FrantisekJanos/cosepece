@@ -94,3 +94,17 @@ def test_probe_vrati_velikost(monkeypatch, tmp_path):
     p.write_bytes(b"x" * 1234)
     _fake_ffprobe(monkeypatch, {"duration": "30.0"}, {"width": 1080, "height": 1920})
     assert media.probe(p).size == 1234
+
+
+def test_validate_sirka_ok():
+    assert media.validate(VideoInfo("h264", "aac", 1920, 1080, 30.0, 1000), orientation="landscape") == []
+
+
+def test_validate_sirka_odmitne_vysku():
+    errs = media.validate(VideoInfo("h264", "aac", 1080, 1920, 30.0, 1000), orientation="landscape")
+    assert len(errs) == 1 and "16:9" in errs[0]
+
+
+def test_validate_vychozi_je_vyska():
+    errs = media.validate(VideoInfo("h264", "aac", 1920, 1080, 30.0, 1000))
+    assert any("9:16" in e for e in errs)

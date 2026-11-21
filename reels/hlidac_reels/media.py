@@ -9,7 +9,9 @@ from pathlib import Path
 
 MIN_DURATION = 3.0
 MAX_DURATION = 90.0
-ASPECT = 9 / 16
+ASPECT_PORTRAIT = 9 / 16
+ASPECT_LANDSCAPE = 16 / 9
+ASPECT = ASPECT_PORTRAIT  # zpětná kompatibilita
 ASPECT_TOLERANCE = 0.01  # 1 %
 MAX_SIZE = 50 * 1024 * 1024  # limit nahrání videa botem do Telegramu
 
@@ -53,8 +55,13 @@ def probe(path) -> VideoInfo:
                      width, height, dur, Path(path).stat().st_size)
 
 
-def validate(info: VideoInfo) -> list[str]:
-    """Vrací české chyby; prázdný seznam = video je v pořádku."""
+def validate(info: VideoInfo, orientation: str = "portrait") -> list[str]:
+    """Vrací české chyby; prázdný seznam = video je v pořádku.
+
+    orientation: "portrait" (9:16, výchozí) nebo "landscape" (16:9)."""
+    landscape = orientation == "landscape"
+    target = ASPECT_LANDSCAPE if landscape else ASPECT_PORTRAIT
+    label = "16:9" if landscape else "9:16"
     errs: list[str] = []
     if info.codec_v != "h264":
         errs.append(f"video kodek musí být h264, je {info.codec_v}")
@@ -62,8 +69,8 @@ def validate(info: VideoInfo) -> list[str]:
         errs.append("video nemá zvuk")
     elif info.codec_a != "aac":
         errs.append(f"zvukový kodek musí být aac, je {info.codec_a}")
-    if info.height <= 0 or abs(info.width / info.height - ASPECT) > ASPECT * ASPECT_TOLERANCE:
-        errs.append(f"poměr stran musí být 9:16, je {info.width}×{info.height}")
+    if info.height <= 0 or abs(info.width / info.height - target) > target * ASPECT_TOLERANCE:
+        errs.append(f"poměr stran musí být {label}, je {info.width}×{info.height}")
     if not MIN_DURATION <= info.duration <= MAX_DURATION:
         errs.append(f"délka musí být {MIN_DURATION:.0f}–{MAX_DURATION:.0f} s, je {info.duration:.1f} s")
     if info.size > MAX_SIZE:

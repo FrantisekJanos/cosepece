@@ -134,3 +134,105 @@ def test_migrace_dvakrat(conn):
     i = _add(conn, 1)
     assert queue.transition(conn, i, "queued", "withdrawn")
     assert queue.transition(conn, i, "withdrawn", "expired")
+
+
+def test_add_se_sirkou(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1, video_landscape_path="/m/l.mp4", video_landscape_sha256="L")
+    r = queue.get(conn, i)
+    assert r.video_landscape_path == "/m/l.mp4"
+    assert r.video_landscape_sha256 == "L"
+    assert r.telegram_landscape_msg_id is None
+
+
+def test_by_telegram_msg_najde_video_na_sirku(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, telegram_landscape_msg_id=77)
+    assert queue.by_telegram_msg(conn, 77).id == i
+
+
+def test_set_landscape_jen_queued_pending(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, telegram_landscape_msg_id=5)
+    assert queue.set_landscape(conn, i, "/m/l.mp4", "L1") is True
+    r = queue.get(conn, i)
+    assert (r.video_landscape_path, r.video_landscape_sha256) == ("/m/l.mp4", "L1")
+    assert r.telegram_landscape_msg_id is None
+    assert queue.transition(conn, i, "queued", "pending")
+    queue.set_fields(conn, i, telegram_landscape_msg_id=6)
+    assert queue.set_landscape(conn, i, "/m/l2.mp4", "L2") is True
+    assert queue.get(conn, i).telegram_landscape_msg_id is None
+    assert queue.transition(conn, i, "pending", "published")
+    assert queue.set_landscape(conn, i, "/m/l3.mp4", "L3") is False
+    assert queue.get(conn, i).video_landscape_sha256 == "L2"
+
+
+def test_sha_in_use(conn):
+    from hlidac_reels import queue
+    _add(conn, 1, video_landscape_path="/m/l.mp4", video_landscape_sha256="L")
+    assert queue.sha_in_use(conn, "sha1") is True   # jako video na výšku
+    assert queue.sha_in_use(conn, "L") is True      # jako video na šířku
+    assert queue.sha_in_use(conn, "jine") is False
+
+
+def test_approve_jen_kdyz_vlastnik_videl_sirku(conn):
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    now = datetime.now(timezone.utc)
+    # bez šířky: běžné schválení z pending
+    a = _add(conn, 1)
+    assert queue.approve(conn, a, now) is False  # queued
+    assert queue.transition(conn, a, "queued", "pending", telegram_msg_id=10)
+    assert queue.approve(conn, a, now) is True
+    assert queue.get(conn, a).status == "approved" and queue.get(conn, a).decided_at is not None
+    # šířka doplněná, ještě neodeslaná
+    b = _add(conn, 2)
+    assert queue.transition(conn, b, "queued", "pending", telegram_msg_id=20)
+    assert queue.set_landscape(conn, b, "/m/w.mp4", "W")
+    assert queue.approve(conn, b, now) is False
+    # odeslaná, ale náhled je starší než video
+    queue.set_fields(conn, b, telegram_landscape_msg_id=21, telegram_landscape_sha256="W")
+    assert queue.approve(conn, b, now) is False
+    assert queue.get(conn, b).status == "pending"
+    # nový náhled po videu, ale do Telegramu odešel jiný soubor (vyměněný během odesílání)
+    queue.set_fields(conn, b, telegram_msg_id=22, telegram_landscape_sha256="X")
+    assert queue.approve(conn, b, now) is False
+    queue.set_fields(conn, b, telegram_landscape_sha256=None)
+    assert queue.approve(conn, b, now) is False
+    # odeslaná právě ta šířka, která je v řádku
+    queue.set_fields(conn, b, telegram_landscape_sha256="W")
+    assert queue.approve(conn, b, now) is True
+
+
+def test_set_landscape_nuluje_odeslany_otisk(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, telegram_landscape_msg_id=5, telegram_landscape_sha256="L0")
+    assert queue.set_landscape(conn, i, "/m/l.mp4", "L1")
+    r = queue.get(conn, i)
+    assert r.telegram_landscape_msg_id is None and r.telegram_landscape_sha256 is None
+
+
+def test_set_landscape_sent_jen_pro_stejny_soubor(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    assert queue.set_landscape(conn, i, "/m/l.mp4", "L1")
+    assert queue.set_landscape_sent(conn, i, 7, "L0") is False
+    assert queue.get(conn, i).telegram_landscape_msg_id is None
+    assert queue.set_landscape_sent(conn, i, 7, "L1") is True
+    r = queue.get(conn, i)
+    assert (r.telegram_landscape_msg_id, r.telegram_landscape_sha256) == (7, "L1")
+    # šířka bez otisku (NULL) se páruje s NULL
+    j = _add(conn, 2)
+    assert queue.set_landscape(conn, j, "/m/l2.mp4", None)
+    assert queue.set_landscape_sent(conn, j, 8, None) is True
+
+
+def test_delete_state(conn):
+    from hlidac_reels import queue
+    queue.set_state(conn, "k", "v")
+    queue.delete_state(conn, "k")
+    assert queue.get_state(conn, "k") is None
+    queue.delete_state(conn, "k")  # neexistující klíč nevadí

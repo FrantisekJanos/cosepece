@@ -15,6 +15,7 @@ dev = ["pytest"]
 
 [project.scripts]
 reels-enqueue = "hlidac_reels.enqueue:main"
+reels-add-landscape = "hlidac_reels.enqueue:add_landscape_main"
 reels-bot = "hlidac_reels.bot:main"
 reels-threads-backfill = "hlidac_reels.backfill:main"
 reels-generate = "hlidac_reels.generator.generate:main"

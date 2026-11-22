@@ -10,6 +10,9 @@ use ZipArchive;
 
 final class Source
 {
+    /** pauzy v sekundách před jednotlivými pokusy o stažení balíku (první hned) */
+    private const RETRY_DELAYS = [0, 15, 60];
+
     /** @var array<string, ZipArchive> */
     private array $zips = [];
 
@@ -37,28 +40,35 @@ final class Source
         $url = rtrim($this->baseUrl, '/') . '/' . $package . '.zip';
         $target = $this->cacheDir . '/' . $package . '.zip';
         $tmp = $target . '.part';
-        $fp = fopen($tmp, 'wb');
-        if ($fp === false) {
-            throw new RuntimeException("Nelze zapisovat do $tmp");
-        }
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_FILE => $fp,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 300,
-            CURLOPT_CONNECTTIMEOUT => 20,
-            CURLOPT_USERAGENT => 'HlidacZakonu/1.0 (+' . siteUrl() . ')',
-            CURLOPT_FAILONERROR => true,
-        ]);
-        $ok = curl_exec($ch);
-        $error = curl_error($ch);
-        fclose($fp);
-        if ($ok === false) {
+        // psp.cz občas krátce neodpovídá (timeout spojení); dva další pokusy po pauze, teprve pak chyba
+        $error = '';
+        foreach (self::RETRY_DELAYS as $delay) {
+            if ($delay > 0) {
+                sleep($delay);
+            }
+            $fp = fopen($tmp, 'wb');
+            if ($fp === false) {
+                throw new RuntimeException("Nelze zapisovat do $tmp");
+            }
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_FILE => $fp,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT => 300,
+                CURLOPT_CONNECTTIMEOUT => 20,
+                CURLOPT_USERAGENT => 'HlidacZakonu/1.0 (+' . siteUrl() . ')',
+                CURLOPT_FAILONERROR => true,
+            ]);
+            $ok = curl_exec($ch);
+            $error = curl_error($ch);
+            fclose($fp);
+            if ($ok !== false) {
+                rename($tmp, $target);
+                return $target;
+            }
             @unlink($tmp);
-            throw new RuntimeException("Stažení $url selhalo: $error");
         }
-        rename($tmp, $target);
-        return $target;
+        throw new RuntimeException("Stažení $url selhalo (" . count(self::RETRY_DELAYS) . " pokusy): $error");
     }
 
     public function rows(string $package, string $file): \Generator

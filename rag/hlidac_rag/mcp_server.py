@@ -343,7 +343,11 @@ class AuthMiddleware:
         if scope["path"] == "/health":
             return await _respond(send, 200, {"ok": True})
         headers = dict(scope.get("headers") or [])
-        auth = headers.get(b"authorization", b"").decode()
+        # platný token je jen ASCII; jiné bajty (skener, rozbitý klient) = bez tokenu → 401, ne výjimka
+        try:
+            auth = headers.get(b"authorization", b"").decode("ascii")
+        except UnicodeDecodeError:
+            auth = ""
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         tid = None
         if token:

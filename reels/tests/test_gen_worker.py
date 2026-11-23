@@ -63,10 +63,11 @@ class FakeApi:
 
 def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] = frozenset()):
     """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné, z land_ns mají šířku."""
-    def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s):
+    def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s,
+            published=None):
         if seen is not None:
             seen.update(ct=ct, out=Path(out), model=model, hint=hint, mcp_config=mcp_config,
-                        reason_keys=reason_keys, has_amendments=has_amendments)
+                        reason_keys=reason_keys, has_amendments=has_amendments, published=published)
         out = Path(out)
         variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", "cesta"),
                     Variant(3, "template_v3", "pn")]
@@ -492,3 +493,11 @@ def test_druha_instance(tmp_path, monkeypatch, capsys):
     # po skončení prvního procesu je zámek volný
     assert worker.main(args) == 0
     assert _RecordingApi.instances and _RecordingApi.instances[-1].names() == ["heartbeat", "claim"]
+
+
+def test_process_preda_vydana_videa(tmp_path):
+    seen: dict = {}
+    job = dict(JOB, published=[{"format": "cesta", "caption": "Výbory měly 30 dní.", "published_at": "2026-11-21"}])
+    worker.process(FakeApi(), job, root=tmp_path, mcp_config=tmp_path / "mcp.json", model="m",
+                   generate=fake_generate({1, 2, 3}, seen))
+    assert seen["published"] == job["published"]

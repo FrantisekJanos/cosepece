@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hlidac_reels.generator.claude import (ALLOWED_TOOLS, DISALLOWED_TOOLS, build_prompt, claude_argv,
-                                           prepare_workdir, run_claude)
+                                           prepare_workdir, run_claude, write_published)
 
 FAKE = Path(__file__).parent / "fake_claude.py"
 
@@ -117,3 +117,21 @@ def test_run_claude_smaze_projektova_nastaveni(tmp_path, monkeypatch):
     (tmp_path / "CLAUDE.md").write_text("x", encoding="utf-8")
     run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
     assert not (tmp_path / ".claude").exists() and not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_publikovano_md(tmp_path):
+    prepare_workdir(tmp_path, 300)
+    write_published(tmp_path, [{"format": "cesta", "caption": "Výbory měly 30 dní místo 60.",
+                                "published_at": "2026-11-21 10:10:53+01"}, {"caption": "  "}])
+    text = (tmp_path / "podklady" / "publikovano.md").read_text(encoding="utf-8")
+    assert "Výbory měly 30 dní místo 60." in text and "formát cesta, 2026-11-21" in text
+    assert text.count("## Video") == 1
+    # bez vydaných videí soubor zmizí (pracovní složka se používá znovu)
+    write_published(tmp_path, [])
+    assert not (tmp_path / "podklady" / "publikovano.md").exists()
+
+
+def test_navody_ctou_publikovano():
+    from hlidac_reels.generator import claude
+    for name in ("v2.md", "v3.md"):
+        assert "publikovano.md" in (claude.HERE / "prompts" / name).read_text(encoding="utf-8")

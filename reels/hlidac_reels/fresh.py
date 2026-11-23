@@ -21,6 +21,14 @@ SNAPSHOT_MAX_AGE = timedelta(hours=3)
 SET_MAX_AGE = timedelta(days=7)
 # nejvýš tolik nových úloh fresh za den (Europe/Prague): změna skóre nesmí spustit vlnu generování
 FRESH_PER_DAY = 2
+# k tisku, ke kterému za tuto dobu vznikla úloha (i ruční) nebo vyšlo video, se fresh nezakládá
+COOLDOWN = timedelta(days=14)
+# klíče důvodů skóre, které znamenají novou událost v projednávání (zkrácení lhůty, nové PN…). Ostatní klíče
+# popisují tisk (AI rozbor, poslanecký návrh, sledovaný zákon, citlivá oblast) a samy o sobě nové video nespustí
+NEWS_KEYS = frozenset({
+    "p90_requested", "p90_passed", "deadline_cut", "short_gap", "late_pn", "surge",
+    "pn_other_law", "pn_large", "retro_deadline", "pn_many",
+})
 
 
 def _snapshot(conn, now: datetime) -> dict[str, list[str]] | None:
@@ -43,10 +51,12 @@ def _snapshot(conn, now: datetime) -> dict[str, list[str]] | None:
 
 
 def detect(conn, now: datetime) -> list[int]:
-    """Založí úlohy fresh pro nové tisky v nálezech a tisky s novým klíčem důvodu; vrací id úloh.
+    """Založí úlohy fresh pro nové tisky v nálezech a tisky s novým klíčem důvodu z NEWS_KEYS; vrací id úloh.
 
     Baseline (reel_state fresh_baseline) drží všechny dosud viděné klíče každého tisku. První běh jen uloží
     baseline. Tisk, který ze snímku vypadl, v baseline zůstává: návrat se stejnými klíči úlohu nezaloží.
+    Nový klíč mimo NEWS_KEYS a změna u tisku s úlohou nebo videem za posledních COOLDOWN se jen zapíše do
+    baseline (úloha nevznikne ani později), aby k jednomu tisku nevznikala videa se stejným obsahem.
     Za den (Europe/Prague) vznikne nejvýš FRESH_PER_DAY úloh fresh, kandidáti v pořadí snímku (podle skóre);
     kandidát nad limit se do baseline nezapíše, takže úlohu dostane některý další den.
     Prázdný snímek se bere jako chybějící; prázdná baseline jako první běh.
@@ -69,6 +79,11 @@ def detect(conn, now: datetime) -> list[int]:
         new_keys = [k for k in keys if known is None or k not in known]
         if known is not None and not new_keys:
             continue
+        news = known is None or any(k in NEWS_KEYS for k in new_keys)
+        if not news or _recent(conn, int(ct), now):
+            baseline[ct] = (known or []) + new_keys
+            queue.set_state(conn, BASELINE_KEY, json.dumps(baseline, ensure_ascii=False))
+            continue
         if left <= 0:
             continue  # denní limit: baseline beze změny, tisk přijde na řadu jindy
         try:
@@ -80,6 +95,21 @@ def detect(conn, now: datetime) -> list[int]:
         baseline[ct] = (known or []) + new_keys
         queue.set_state(conn, BASELINE_KEY, json.dumps(baseline, ensure_ascii=False))
     return created
+
+
+def _recent(conn, ct: int, now: datetime) -> bool:
+    """K tisku vznikla za posledních COOLDOWN úloha (kromě nepovedených) nebo vyšlo video."""
+    since = now - COOLDOWN
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM reel_jobs WHERE ct=%s AND created_at > %s "
+            "AND status NOT IN ('failed','expired','cancelled') "
+            "UNION ALL SELECT 1 FROM reel_queue WHERE ct=%s AND status='published' AND published_at > %s LIMIT 1",
+            (ct, since, ct, since),
+        )
+        found = cur.fetchone() is not None
+    conn.commit()
+    return found
 
 
 def _fresh_created_on(conn, day) -> int:

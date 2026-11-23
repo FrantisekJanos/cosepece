@@ -22,6 +22,7 @@ $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu 
 $base['tisk_text']['enabled'] = false;
 $base['history_html']['enabled'] = false; // stránky historie tisků se testují zvlášť s falešným stahováním
 $base['ai']['enabled'] = false;
+$base['pn_outcome']['enabled'] = false; // souhrny PN se stahují z psp.cz; čtení a párování testujeme přímo
 file_put_contents($tmp . '/config.php', '<?php return ' . var_export($base, true) . ';');
 putenv('HLIDAC_CONFIG=' . $tmp . '/config.php');
 
@@ -1247,6 +1248,92 @@ $fail();
 $states[] = is_int($peek());
 check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
+
+echo "Které pozměňovací návrhy prošly (#5)\n";
+// souhrn s výslovnými písmeny (jako tisk 90/2)
+$sum1 = Hlidac\PnOutcome::parseSummary("Pozměňovací návrhy přednesené ve druhém čtení dne 15. dubna 2026\nA.\tPoslankyně Vendula Svobodová\nSD 839\nV čl. II bodě 25 …\nB.\tPoslankyně Alena Schillerová\nB1. SD 825\nV čl. II …\nB2. SD 826\nD.\tPoslanec Karel Haas\nSD 837\nK části druhé …");
+check('souhrn: písmena s číslem dokumentu', [$sum1['pismena'], $sum1['odhad']], [['A' => [839], 'B1' => [825], 'B2' => [826], 'D' => [837]], []]);
+// písmena předkladatelů čísluje Word (v textu chybí): odvodí se z pořadí, výslovné „B1.“ odhad potvrdí; oddíl výboru zabírá písmeno
+$sum2 = Hlidac\PnOutcome::parseSummary("Pozměňovací návrhy přednesené ve druhém čtení dne 7. července 2026.\nPoslanec Adam Vojtěch\nSD 1546\nPoslanec Vojtěch Munzar\nB1. SD 1538\nB2. SD 1539\nPoslankyně Jana Filipovičová\n(SD 1537)\nPoslanec Jan Novák\nD.1.\nPřihlašuje se k návrhu\n(SD 633)\nD.2 (SD 779)");
+check('souhrn: písmeno odvozené z pořadí a různé zápisy SD', [$sum2['pismena'], $sum2['odhad']],
+    [['A' => [1546], 'B1' => [1538], 'B2' => [1539], 'C' => [1537], 'D1' => [633], 'D2' => [779]], ['A', 'C']]);
+$sum3 = Hlidac\PnOutcome::parseSummary("Pozměňovací návrhy obsažené v usnesení garančního výboru č. 29\nV čl. I se vkládá bod X12\nPozměňovací návrhy přednesené ve druhém čtení\nPoslankyně Berenika Peštová\nSD 1790\nPoslanec Petr Hladík\nC1. SD 1807\nV textu se zmiňuje i SD 1999.");
+check('souhrn: oddíl návrhů výboru zabírá písmeno A; zmíněná čísla', [$sum3['pismena'], $sum3['odhad'], $sum3['zminena']], [['B' => [1790], 'C1' => [1807]], ['B'], [1790, 1807, 1999]]);
+$sum4 = Hlidac\PnOutcome::parseSummary("Poslanec Jan První\nSD 10\nPoslanec Jan Druhý\nSD 20\nPoslanec Jan Třetí\nF1. SD 30");
+check('souhrn: odhad, který nesedí s výslovným písmenem, se zahodí', [$sum4['pismena'], $sum4['odhad']], [['F1' => [30]], []]);
+// párování hlasování podle stenozáznamu
+$vt = [901 => ['cislo' => 12, 'vysledek' => 'A'], 902 => ['cislo' => 13, 'vysledek' => 'R'], 903 => ['cislo' => 14, 'vysledek' => 'R'], 904 => ['cislo' => 15, 'vysledek' => 'A'],
+    905 => ['cislo' => 16, 'vysledek' => 'A'], 906 => ['cislo' => 17, 'vysledek' => 'R'], 907 => ['cislo' => 18, 'vysledek' => 'A'], 908 => ['cislo' => 19, 'vysledek' => 'A'], 909 => ['cislo' => 20, 'vysledek' => 'A']];
+$zp = fn(string $t): array => ['predsedajici' => false, 'text' => $t, 'hlasovani' => []];
+$pr = fn(array $ids, string $t = 'Zahajuji hlasování. Kdo je pro? Návrh byl přijat.'): array => ['predsedajici' => true, 'text' => $t, 'hlasovani' => $ids];
+$mv = Hlidac\PnOutcome::mapVotes([
+    $zp('Nejprve budeme hlasovat o proceduře, pak návrh A, návrh B1 a návrh D.'), $pr([901]),                       // procedura: víc písmen bez jména → nic
+    $zp('Pozměňovací návrh A paní poslankyně Svobodové, překročení výdajů. Stanovisko výboru: nedoporučující.'), $pr([902]),
+    $zp('Návrh s označením B1, navrhovatel Alena Schillerová. Stanovisko: doporučující.'), $pr([904]),
+    $zp('D-a, varianta 1, pan poslanec Haas.'), $pr([903]),
+    $zp('D-a, varianta 2, pan poslanec Haas.'), $pr([905]),
+    $zp('Pozměňovací návrh pod písmenem B2 kolegyně Schillerové.'), $pr([906, 907]),                                 // dvě hlasování v jednom projevu → nic
+    $zp('Díky přijetí návrhu B1 se stal nehlasovatelným návrh A a jdeme na pozměňovací návrh B2 paní ministryně Schillerové.'), $pr([908]),
+    $zp('Návrh D pana poslance Haase.'), $pr([909]), $pr([909], 'To bylo zmatečné hlasování, začneme znovu.'),      // zmatečné → vynechat
+], $vt, ['A', 'B1', 'B2', 'D'], ['A' => ['Vendula Svobodová'], 'B1' => ['Alena Schillerová'], 'B2' => ['Alena Schillerová'], 'D' => ['Karel Haas']]);
+check('hlasování přiřazená k písmenům (ohlášení, varianty, víc písmen podle jména, zmatečné hlasování)',
+    array_map(fn($v) => [$v['cislo'], $v['pismeno'], $v['varianta'], $v['vysledek'], $v['stanovisko']], $mv),
+    [[13, 'A', null, 'R', 'nedoporučující'], [14, 'D-a', 1, 'R', null], [15, 'B1', null, 'A', 'doporučující'], [16, 'D-a', 2, 'A', null], [19, 'B2', null, 'A', null]]);
+$oc = Hlidac\PnOutcome::outcomes($sum1, $mv, [839 => 'Vendula Svobodová', 825 => 'Alena Schillerová', 826 => 'Alena Schillerová', 837 => 'Karel Haas', 836 => 'Karel Haas']);
+check('výsledek návrhů: zamítnut, přijat, přijatá varianta, nezazněl ve 2. čtení', array_map(fn($r) => $r['stav'], $oc), [839 => 'zamitnut', 825 => 'prijat', 826 => 'prijat', 837 => 'prijat', 836 => 'nezaznel']);
+check('ohlášení jmenuje předkladatele (skloňované příjmení)', [Hlidac\PnOutcome::namesAuthor('Pozměňovací návrh E1 pana poslance Jurečky', 'Marian Jurečka'),
+    Hlidac\PnOutcome::namesAuthor('návrh paní poslankyně Sedmihradské', 'Lucie Sedmihradská'), Hlidac\PnOutcome::namesAuthor('návrh pana poslance Haase', 'Marian Jurečka')], [true, true, false]);
+// písmeno odvozené z pořadí platí jen se jménem předkladatele; návrh bez přiřazeného hlasování je „nelze určit“
+$mvGuess = [['pismeno' => 'A', 'zaklad' => 'A', 'varianta' => null, 'stanovisko' => null, 'ohlaseni' => 'Návrh A pana poslance Nováka.', 'id_hlasovani' => 1, 'cislo' => 5, 'vysledek' => 'A']];
+check('odhadnuté písmeno bez shody jména a návrh bez hlasování → nelze určit',
+    array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes($sum2, $mvGuess, [1546 => 'Adam Vojtěch', 1538 => 'Vojtěch Munzar', 1537 => 'Jana Filipovičová', 2000 => 'Někdo Jiný'])),
+    [1546 => 'neurceno', 1538 => 'neurceno', 1537 => 'neurceno', 2000 => 'nezaznel']);
+// celý výpočet nad databází: souhrn tisku 90, hlasování a stenozáznam (schéma steno jako u služby rag/)
+if (db()->driver === 'sqlite') {
+    db()->pdo->exec("ATTACH DATABASE ':memory:' AS steno");
+} elseif (db()->driver === 'pgsql') {
+    db()->pdo->exec('CREATE SCHEMA IF NOT EXISTS steno');
+}
+if (in_array(db()->driver, ['sqlite', 'pgsql'], true)) {
+    db()->pdo->exec('CREATE TABLE steno.projev (schuze INTEGER, datum VARCHAR(10), poradi INTEGER, ct INTEGER, predsedajici INTEGER, text TEXT, hlasovani TEXT)');
+    $pn90 = array_map('intval', array_column(db()->all('SELECT cislo FROM pn WHERE ct = 90 ORDER BY cislo LIMIT 3'), 'cislo'));
+    db()->run('INSERT INTO pn_souhrn (ct, cislo_za, pismena, chars, fetched_at) VALUES (90, 2, ?, 100, ?)',
+        [json_encode(['pismena' => ['A' => [$pn90[0]], 'B1' => [$pn90[1]]], 'odhad' => [], 'zminena' => [$pn90[0], $pn90[1]]]), date('Y-m-d H:i:s')]);
+    db()->run("INSERT INTO hlasovani (id_hlasovani, ct, schuze, cislo, datum, vysledek, nazev) VALUES (990001, 90, 99, 14, '2026-05-15 12:40', 'R', 'test'), (990002, 90, 99, 15, '2026-05-15 12:41', 'A', 'test')");
+    foreach ([[1, 0, 'Pozměňovací návrh A. Stanovisko výboru: nedoporučující.', ''], [2, 1, 'Zahajuji hlasování. Návrh nebyl přijat.', '{990001}'],
+        [3, 0, 'Pozměňovací návrh B1. Stanovisko: doporučující.', ''], [4, 1, 'Zahajuji hlasování. Návrh byl přijat.', '{990002}']] as [$por, $chair, $txt, $hl]) {
+        db()->run("INSERT INTO steno.projev (schuze, datum, poradi, ct, predsedajici, text, hlasovani) VALUES (99, '2026-05-15', ?, 90, ?, ?, ?)", [$por, $chair, $txt, $hl]);
+    }
+    $po = new Hlidac\PnOutcome(db(), config());
+    $poStats = $po->compute();
+    $poRows = (new Hlidac\Repo(db()))->pnOutcomes(90);
+    check('výpočet nad databází: přijat, zamítnut, nezazněl; se stenozáznamem', [$po->stenoAvailable(), $poStats['prirazeno_hlasovani'], $poRows[$pn90[0]]['stav'] ?? null, $poRows[$pn90[1]]['stav'] ?? null,
+        $poRows[$pn90[2]]['stav'] ?? null, $poRows[$pn90[1]]['hlasovani'][0]['cislo'] ?? null, $poRows[$pn90[0]]['stanovisko'] ?? null], [true, 2, 'zamitnut', 'prijat', 'nezaznel', 15, 'nedoporučující']);
+    $_GET = ['ct' => '90'];
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/tisk.php');
+    $poHtml = (string)ob_get_clean();
+    $_GET = [];
+    check('detail tisku ukazuje výsledek návrhu a odkaz na hlasování', [str_contains($poHtml, 'Přijat · B1'), str_contains($poHtml, 'Zamítnut · A'), str_contains($poHtml, 'Nezazněl ve 2. čtení'),
+        str_contains($poHtml, 'hlasy.sqw?g=990002'), str_contains($poHtml, 'stanovisko výboru: nedoporučující')], [true, true, true, true, true]);
+    $poApi = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->bill(90)['vysledky_pn'];
+    check('API: výsledky pozměňovacích návrhů', [count($poApi) === count(db()->all('SELECT 1 FROM pn WHERE ct = 90')), array_values(array_filter($poApi, fn($r) => $r['cislo'] === $pn90[1]))[0]['stav'] ?? null], [true, 'prijat']);
+    // bez stenozáznamu (hosting bez služby rag/) zůstane jen informace, zda návrh zazněl
+    db()->pdo->exec('DROP TABLE steno.projev');
+    if (db()->driver === 'sqlite') {
+        db()->pdo->exec('DETACH DATABASE steno');
+    } else {
+        db()->pdo->exec('DROP SCHEMA steno');
+    }
+    $po->compute();
+    $poRows = (new Hlidac\Repo(db()))->pnOutcomes(90);
+    check('bez stenozáznamu: jen zazněl / nezazněl', [$po->stenoAvailable(), $poRows[$pn90[0]]['stav'] ?? null, $poRows[$pn90[2]]['stav'] ?? null], [false, 'neurceno', 'nezaznel']);
+    db()->run('DELETE FROM hlasovani WHERE id_hlasovani IN (990001, 990002)');
+    db()->run('DELETE FROM pn_souhrn WHERE ct = 90');
+    db()->run('DELETE FROM pn_vysledek WHERE ct = 90');
+}
 
 echo "Kontrola struktury databáze jen po změně schématu\n";
 check('po migraci se kontrola při dalším požadavku přeskočí', [db()->migrateIfNeeded(), db()->getMeta('schema_stamp') === Hlidac\Db::schemaStamp()], [false, true]);

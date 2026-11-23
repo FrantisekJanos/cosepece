@@ -462,6 +462,17 @@ final class Repo
         return $this->db->all('SELECT * FROM kroky WHERE ct = ? ORDER BY id_hist', [$ct]);
     }
 
+    /** Výsledky písemných pozměňovacích návrhů tisku ve 3. čtení: číslo PN => řádek (hlasovani jako pole). */
+    public function pnOutcomes(int $ct): array
+    {
+        $out = [];
+        foreach ($this->db->all('SELECT * FROM pn_vysledek WHERE ct = ?', [$ct]) as $r) {
+            $r['hlasovani'] = json_decode((string)$r['hlasovani'], true) ?: [];
+            $out[(int)$r['cislo']] = $r;
+        }
+        return $out;
+    }
+
     public function amendments(int $ct): array
     {
         return $this->db->all('SELECT * FROM pn WHERE ct = ? ORDER BY cas DESC', [$ct]);

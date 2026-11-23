@@ -143,8 +143,9 @@ po změně tabulky `View::forgetUpcoming()`). Filtr `zakon=` v API a RSS páruje
 Které PN prošly (#5, bez skóre): `app/PnOutcome.php`. Souhrn PN po 2. čtení (tisk X/n, `tisky.souhrn_pn`) → písmena a čísla
 SD (`parseSummary`, tabulka `pn_souhrn`; písmena předkladatelů čísluje často Word, pak se odvodí z pořadí = „odhad“ a platí
 jen se jménem předkladatele v ohlášení). Stenozáznam 3. čtení ze schématu `steno` služby rag/ (`steno.projev.hlasovani`):
-zpravodaj těsně před hlasováním řekne písmeno (`mapVotes`), výsledek z tabulky `hlasovani`. Stavy v `pn_vysledek`: prijat,
-castecne, zamitnut, nezaznel (není v souhrnu), neurceno. Nehlasovatelné návrhy zatím nerozlišujeme (= neurceno). Bez schématu
+zpravodaj těsně před hlasováním řekne písmeno nebo rovnou číslo dokumentu (`mapVotes`; číslo má přednost, popis hlasovací
+procedury a dlouhé projevy se přeskakují, „návrh B“ bez čísla se k B1, B2 nepřiřazuje), výsledek z tabulky `hlasovani`. Stavy v `pn_vysledek`: prijat,
+castecne, zamitnut, nezaznel (není v souhrnu), ceka (3. čtení ještě neproběhlo), neurceno. Nehlasovatelné návrhy zatím nerozlišujeme (= neurceno). Bez schématu
 `steno` (SQLite, hosting) jen zazněl / nezazněl. Zobrazení `tisk.php` (`View::pnOutcome`), API `tisk.vysledky_pn`.
 
 Senát a kroky po něm (#6, bez skóre): `Analyzer::senate()` z historie tisku – výsledek je akce kroku, který následuje

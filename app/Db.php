@@ -38,6 +38,37 @@ final class Db
         }
     }
 
+    /**
+     * Otisk schématu: mění se s každou úpravou tohoto souboru (nová tabulka, sloupec, index).
+     * Všechny změny struktury databáze proto patří jen do migrate() v tomto souboru.
+     */
+    public static function schemaStamp(): string
+    {
+        return md5_file(__FILE__) ?: '0';
+    }
+
+    /**
+     * Spustí migrate() jen tehdy, když je databáze nová nebo se od poslední migrace změnilo schéma
+     * (jiný otisk tohoto souboru než ten uložený v meta schema_stamp). Kontrola struktury při každém
+     * požadavku stála v PostgreSQL desítky dotazů (kolem 0,2 s); takhle je to jeden dotaz.
+     * Vrací true, když migrace proběhla.
+     */
+    public function migrateIfNeeded(): bool
+    {
+        $stamp = self::schemaStamp();
+        try {
+            if ($this->value("SELECT v FROM meta WHERE k = 'schema_stamp'") === $stamp) {
+                return false;
+            }
+        } catch (\Throwable) {
+            // nová databáze: tabulka meta ještě neexistuje
+        }
+        $this->migrate();
+        // otisk až po úspěšné migraci: když selže, zkusí se při dalším požadavku znovu
+        $this->setMeta('schema_stamp', $stamp);
+        return true;
+    }
+
     public function migrate(): void
     {
         // tabulky se vytvoří jen pokud neexistují; data z psp.cz se při každém importu přepíší

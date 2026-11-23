@@ -1934,6 +1934,32 @@ db()->run('DELETE FROM html_pn');
 (new Hlidac\Importer(db(), $hhSource))->run();
 check('historie: po úklidu původní počet PN', (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311'), $hhPnKnown);
 
+// čekání na databázi před synchronizací (bin/sync.php): opakuje spojení, dokud se nepodaří nebo nevyprší čas
+$wdTries = 0;
+$wdOk = Hlidac\Db::waitUntilReady(static function () use (&$wdTries): void {
+    if (++$wdTries < 3) {
+        throw new PDOException('connection refused');
+    }
+}, 5, 0);
+check('čekání na DB: třetí pokus uspěje', [$wdOk, $wdTries], [true, 3]);
+$wdTries = 0;
+$wdOk = Hlidac\Db::waitUntilReady(static function () use (&$wdTries): void {
+    $wdTries++;
+    throw new PDOException('connection refused');
+}, 0, 0);
+check('čekání na DB: po vypršení času vrátí false', [$wdOk, $wdTries], [false, 1]);
+check('čekání na DB: skutečná databáze odpoví hned', Hlidac\Db::waitUntilReady(
+    static fn() => new Hlidac\Db(config('db_dsn'), config('db_user'), config('db_pass')), 0, 0), true);
+$wdOther = '';
+try {
+    Hlidac\Db::waitUntilReady(static function (): void {
+        throw new RuntimeException('jiná chyba');
+    }, 5, 0);
+} catch (RuntimeException $ex) {
+    $wdOther = $ex->getMessage();
+}
+check('čekání na DB: jiné chyby než spojení nepolyká', $wdOther, 'jiná chyba');
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

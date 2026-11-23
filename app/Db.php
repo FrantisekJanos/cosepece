@@ -48,6 +48,30 @@ final class Db
     }
 
     /**
+     * Počká, až databáze začne přijímat spojení: volá $connect, dokud nepřestane vyhazovat PDOException,
+     * nejdéle $timeout sekund s pauzou $step sekund mezi pokusy. Vrací true, když se spojení podařilo.
+     * Jen pro úlohy na pozadí (bin/sync.php): po restartu serveru startuje jejich kontejner zároveň
+     * s databází a první pokus by jinak selhal. Web nečeká, požadavek má při výpadku selhat hned.
+     */
+    public static function waitUntilReady(callable $connect, int $timeout = 60, int $step = 2): bool
+    {
+        $deadline = time() + $timeout;
+        while (true) {
+            try {
+                $connect();
+                return true;
+            } catch (\PDOException $ex) {
+                if (time() >= $deadline) {
+                    return false;
+                }
+                if ($step > 0) {
+                    sleep($step);
+                }
+            }
+        }
+    }
+
+    /**
      * Spustí migrate() jen tehdy, když je databáze nová nebo se od poslední migrace změnilo schéma
      * (jiný otisk tohoto souboru než ten uložený v meta schema_stamp). Kontrola struktury při každém
      * požadavku stála v PostgreSQL desítky dotazů (kolem 0,2 s); takhle je to jeden dotaz.

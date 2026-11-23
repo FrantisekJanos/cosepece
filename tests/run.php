@@ -1288,6 +1288,20 @@ $mvGuess = [['pismeno' => 'A', 'zaklad' => 'A', 'varianta' => null, 'stanovisko'
 check('odhadnuté písmeno bez shody jména a návrh bez hlasování → nelze určit',
     array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes($sum2, $mvGuess, [1546 => 'Adam Vojtěch', 1538 => 'Vojtěch Munzar', 1537 => 'Jana Filipovičová', 2000 => 'Někdo Jiný'])),
     [1546 => 'neurceno', 1538 => 'neurceno', 1537 => 'neurceno', 2000 => 'nezaznel']);
+// popis procedury se nepočítá; číslo sněmovního dokumentu určí přesné písmeno; „návrh B“ bez čísla neplatí pro B1 a B2
+$mv2 = Hlidac\PnOutcome::mapVotes([
+    $zp('Výbor navrhuje následující proceduru: začneme pozměňovacím návrhem B1 pana poslance Nováka.'), $pr([901]),
+    $zp('Nyní budeme hlasovat pozměňovací návrh B, sněmovní dokument 825, který řeší koordinaci prací.'), $pr([902]),
+    $zp('Nyní poslední pozměňovací návrh B paní ministryně Schillerové.'), $pr([904]),
+], $vt, ['A', 'B1', 'B2', 'D'], ['B1' => ['Alena Schillerová'], 'B2' => ['Alena Schillerová']], [825 => 'B1', 826 => 'B2', 839 => 'A', 836 => '']);
+check('popis procedury se přeskočí, číslo dokumentu určí písmeno', array_map(fn($v) => [$v['cislo'], $v['zaklad']], $mv2), [[13, 'B1'], [15, 'B']]);
+check('hlasování o „návrhu B“ bez čísla se k B1 ani B2 nepřiřadí', array_map(fn($r) => [$r['stav'], count($r['hlasovani'])],
+    Hlidac\PnOutcome::outcomes($sum1, $mv2, [825 => 'Alena Schillerová', 826 => 'Alena Schillerová'])), [825 => ['zamitnut', 1], 826 => ['neurceno', 0]]);
+// zpravodaj jmenuje číslo dokumentu návrhu, kterému souhrn nepřiřadil písmeno: výsledek se přesto určí
+$mv3 = Hlidac\PnOutcome::mapVotes([$zp('Nyní pozměňovací návrh D, sněmovní dokument 836, poslance Králíčka. Stanovisko souhlasné.'), $pr([904])], $vt, ['A', 'B1'], [], [836 => '', 839 => 'A']);
+check('číslo dokumentu stačí i bez písmene ze souhrnu', [array_map(fn($v) => [$v['cislo'], $v['sd']], $mv3),
+    array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes(['pismena' => ['A' => [839]], 'odhad' => [], 'zminena' => [839, 836]], $mv3, [836 => 'Jiří Jiný', 839 => 'Vendula Svobodová']))],
+    [[[15, 836]], [836 => 'prijat', 839 => 'neurceno']]);
 check('před 3. čtením návrh čeká na hlasování, výsledek se neuvádí', array_map(fn($r) => $r['stav'],
     Hlidac\PnOutcome::outcomes($sum1, [], [839 => 'Vendula Svobodová', 825 => 'Alena Schillerová', 836 => 'Karel Haas'], false)), [839 => 'ceka', 825 => 'ceka', 836 => 'nezaznel']);
 check('štítek před 3. čtením', strip_tags(Hlidac\View::pnOutcome(['stav' => 'ceka', 'pismena' => 'B1', 'hlasovani' => [], 'stanovisko' => null])), 'Zazněl ve 2. čtení · B1');

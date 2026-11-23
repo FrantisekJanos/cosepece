@@ -197,9 +197,11 @@ final class PnOutcome
      * @param array<int, array{cislo: int, vysledek: string}> $votes id_hlasovani => hlasování tohoto tisku
      * @param string[] $letters písmena ze souhrnu
      * @param array<string, string[]> $authorsByLetter písmeno => předkladatelé návrhů pod tímto písmenem
+     * @param array<int, string> $sdLetters číslo písemného PN (sněmovního dokumentu) => písmeno ze souhrnu nebo '';
+     *     zpravodaj někdy řekne rovnou číslo dokumentu, pak se hlasování přiřadí přímo k němu
      * @return array<int, array{pismeno: string, zaklad: string, varianta: ?int, stanovisko: ?string, ohlaseni: string, id_hlasovani: int, cislo: int, vysledek: string}>
      */
-    public static function mapVotes(array $speeches, array $votes, array $letters, array $authorsByLetter = []): array
+    public static function mapVotes(array $speeches, array $votes, array $letters, array $authorsByLetter = [], array $sdLetters = []): array
     {
         if ($letters === [] || $votes === []) {
             return [];
@@ -221,11 +223,27 @@ final class PnOutcome
             if (empty($s['predsedajici'])) {
                 $pending = null;
                 $head = mb_substr($text, 0, 500);
+                // popis hlasovací procedury vyjmenuje písmena všech návrhů a následuje po něm hlasování o proceduře;
+                // dlouhý projev těsně před hlasováním je rozprava, ne ohlášení
+                if (mb_strlen($text) > 800 || preg_match('~procedur~ui', $head)) {
+                    continue;
+                }
                 $found = [];
-                if (preg_match($bare, $head, $m)) {
+                // číslo sněmovního dokumentu je nejspolehlivější („návrh B, sněmovní dokument 1411“ je B1, ne celé B)
+                $bySd = [];
+                if (preg_match_all('~(?i:sněmovní\w*\s+dokument\w*|\bSD)\s*(?i:č\.|číslo)?\s*(\d{2,6})\b~u', $head, $sd)) {
+                    $bySd = array_values(array_unique(array_filter(array_map('intval', $sd[1]), fn(int $n) => isset($sdLetters[$n]))));
+                }
+                if (count($bySd) > 1) {
+                    continue;
+                }
+                if (count($bySd) === 1) {
+                    // písmeno ze souhrnu (může chybět nebo být odvozené); rozhoduje číslo dokumentu
+                    $found['sd|'] = [$sdLetters[$bySd[0]] !== '' ? $sdLetters[$bySd[0]] : 'SD ' . $bySd[0], '', 0];
+                } elseif (preg_match($bare, $head, $m)) {
                     $found[$m[1] . '|' . ($m[2] ?? '')] = [$m[1], $m[2] ?? '', 0];
                 }
-                if (preg_match_all($announce, $head, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+                if ($bySd === [] && preg_match_all($announce, $head, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
                     foreach ($all as $m) {
                         $part = isset($m[2]) && $m[2][1] >= 0 ? $m[2][0] : '';
                         $found[$m[1][0] . '|' . $part] ??= [$m[1][0], $part, (int)$m[0][1]];
@@ -257,7 +275,7 @@ final class PnOutcome
                     $opinion = preg_match('~[Ss]tanovisko(?:\s+\S+){0,3}?\s*:?\s*(nedoporučující|doporučující|nesouhlasné|souhlasné|neutrální|bez\s+stanoviska|žádné)~u', $text, $o)
                         ? (string)preg_replace('~\s+~u', ' ', $o[1]) : null;
                     $pending = ['pismeno' => $letter . ($part !== '' ? '-' . $part : ''), 'zaklad' => $letter, 'varianta' => $variant, 'stanovisko' => $opinion,
-                        'ohlaseni' => mb_substr($text, 0, 300)];
+                        'ohlaseni' => mb_substr($text, 0, 300), 'sd' => $bySd[0] ?? null];
                 }
                 continue;
             }
@@ -315,11 +333,14 @@ final class PnOutcome
             $number = (int)$number;
             $own = array_map('strval', array_keys(array_filter($letters, fn(array $sds) => in_array($number, $sds, true))));
             $guessed = $own !== [] && array_diff($own, $summary['odhad']) === [];
-            // hlasování k písmenu návrhu, nebo k samotnému písmenu bez čísla („B“ pro B1 i B2)
-            $votes = array_values(array_filter($mapped, function (array $v) use ($own, $guessed, $author): bool {
-                $hit = in_array($v['zaklad'], $own, true)
-                    || (preg_match('~^[A-Z]{1,2}$~', $v['zaklad']) && array_filter($own, fn(string $l) => preg_match('~^' . $v['zaklad'] . '\d+$~', $l)) !== []);
-                if (!$hit) {
+            // jen hlasování přesně k písmenu návrhu: „návrh B“ bez čísla se k B1, B2… nepřiřazuje,
+            // protože nejde ověřit, zda se hlasovalo o všech najednou
+            $votes = array_values(array_filter($mapped, function (array $v) use ($own, $guessed, $author, $number): bool {
+                // zpravodaj jmenoval číslo dokumentu: hlasování patří právě tomuto návrhu, bez ohledu na písmeno
+                if (($v['sd'] ?? null) !== null) {
+                    return (int)$v['sd'] === $number;
+                }
+                if (!in_array($v['zaklad'], $own, true)) {
                     return false;
                 }
                 // křížová kontrola jménem: zpravodaj obvykle řekne i předkladatele („E1 pana poslance Jurečky“).
@@ -333,9 +354,9 @@ final class PnOutcome
             foreach ($votes as $v) {
                 $opinion ??= $v['stanovisko'];
             }
-            if ($own === []) {
+            if ($own === [] && $votes === []) {
                 // v souhrnu není vůbec, nebo ho jen neumíme přiřadit k písmenu
-                $state = in_array($number, $summary['zminena'], true) ? 'neurceno' : 'nezaznel';
+                $state = in_array($number, $summary['zminena'], true) ? ($voted ? 'neurceno' : 'ceka') : 'nezaznel';
             } elseif ($votes === []) {
                 // před 3. čtením návrh na hlasování teprve čeká. Po něm: písmeno v souhrnu je, ale hlasování k němu ne –
                 // návrh se stal nehlasovatelným, nebo se hlasování nepodařilo přiřadit; to zatím neumíme rozlišit
@@ -423,7 +444,18 @@ final class PnOutcome
                 foreach ($letters as $letter => $sds) {
                     $byLetter[(string)$letter] = array_values(array_filter(array_map(fn($sd) => $authors[(int)$sd] ?? '', $sds)));
                 }
-                $mapped = self::mapVotes($speeches, $votes, array_map('strval', array_keys($letters)), $byLetter);
+                // každý písemný PN tisku s písmenem ze souhrnu (prázdné, když písmeno neznáme nebo jich má víc)
+                $sdLetters = array_fill_keys(array_keys($authors), '');
+                $seen = [];
+                foreach ($letters as $letter => $sds) {
+                    foreach ($sds as $sd) {
+                        if (isset($sdLetters[(int)$sd])) {
+                            $sdLetters[(int)$sd] = isset($seen[(int)$sd]) ? '' : (string)$letter;
+                            $seen[(int)$sd] = true;
+                        }
+                    }
+                }
+                $mapped = self::mapVotes($speeches, $votes, array_map('strval', array_keys($letters)), $byLetter, $sdLetters);
             }
             $results = self::outcomes($summary, $mapped, $authors, $votes !== []);
             $this->db->run('DELETE FROM pn_vysledek WHERE ct = ?', [$ct]);

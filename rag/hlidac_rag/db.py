@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from importlib import resources
 
 import psycopg
@@ -25,6 +26,22 @@ def dsn() -> str:
 
 def connect(autocommit: bool = False) -> psycopg.Connection:
     return psycopg.connect(dsn(), autocommit=autocommit)
+
+
+def connect_wait(timeout: float = 60, step: float = 2, autocommit: bool = False) -> psycopg.Connection:
+    """Jako connect(), ale při nedostupné databázi zkouší spojení znovu, nejdéle timeout sekund.
+
+    Jen pro úlohy na pozadí (hlidac_rag.run): po restartu serveru startuje jejich kontejner zároveň
+    s databází a první pokus by jinak selhal. MCP server nečeká, dotaz má při výpadku selhat hned.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return connect(autocommit=autocommit)
+        except psycopg.OperationalError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(step)
 
 
 def schema_files() -> list[str]:

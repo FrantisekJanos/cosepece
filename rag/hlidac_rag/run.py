@@ -125,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     sentry.init("ingest")
 
     started = time.time()
-    conn = db.connect()
+    # po restartu serveru může databáze startovat zároveň s tímto kontejnerem: chvíli na ni počkáme
+    conn = db.connect_wait()
     db.migrate(conn)
     with conn.cursor() as cur:
         cur.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))

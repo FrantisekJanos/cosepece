@@ -116,7 +116,8 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
     try:
         res = generate(ct=int(job["ct"]), card_v2=job["card_v2"], reason_keys=list(job.get("reason_keys") or []),
                        has_amendments=bool(job.get("has_amendments")), out=workdir, mcp_config=Path(mcp_config),
-                       model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S)
+                       model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S,
+                       published=list(job.get("published") or []))
         good = []
         for v in res.variants:
             if not (v.ok and v.video):

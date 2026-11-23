@@ -363,3 +363,64 @@ def test_retire_fresh_stari_od_zalozeni_ulohy(conn):
     assert fresh.retire(conn, NOW) == [(f, "expired")]
     assert _statuses(conn, f) == ["expired", "expired"]
     assert _statuses(conn, a) == ["pending", "pending"]
+
+
+def test_klic_bez_udalosti_nezalozi(conn):
+    from hlidac_reels import fresh, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    # hotový AI rozbor nebo sledovaný zákon není nová událost: jen baseline
+    items = dict(BASE_ITEMS, **{"221": ["ai_bill", "deadline_cut", "sensitive", "ai", "watched"]})
+    t = NOW + timedelta(hours=1)
+    _snapshot(conn, items, t)
+    assert fresh.detect(conn, t) == []
+    assert set(json.loads(queue.get_state(conn, "fresh_baseline"))["221"]) == set(items["221"])
+    assert _fresh_jobs(conn) == []
+
+
+def test_cooldown_po_rucni_uloze(conn):
+    from hlidac_reels import fresh, jobs, queue
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    # ruční video k tisku 221 před 3 dny (úloha doběhla)
+    job = jobs.add(conn, source="manual", ct=221)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done', created_at=%s WHERE id=%s", (NOW - timedelta(days=3), job))
+    conn.commit()
+    items = dict(BASE_ITEMS, **{"221": ["ai_bill", "deadline_cut", "sensitive", "pn_many", "pn_other_law"]})
+    t = NOW + timedelta(hours=1)
+    _snapshot(conn, items, t)
+    assert fresh.detect(conn, t) == []
+    assert "pn_many" in json.loads(queue.get_state(conn, "fresh_baseline"))["221"]
+    # po cooldownu spustí úlohu jen další nová událost
+    t2 = NOW + timedelta(days=15)
+    _snapshot(conn, items, t2)
+    assert fresh.detect(conn, t2) == []
+    items2 = dict(items, **{"221": items["221"] + ["late_pn"]})
+    _snapshot(conn, items2, t2)
+    assert len(fresh.detect(conn, t2)) == 1
+
+
+def test_cooldown_po_publikovanem_videu(conn):
+    from hlidac_reels import fresh
+    _snapshot(conn, BASE_ITEMS, NOW)
+    fresh.detect(conn, NOW)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status, published_at) "
+                    "VALUES ('ukazka', 400, 'x.mp4', 'sha400', 'popisek', 'published', %s)",
+                    (NOW - timedelta(days=5),))
+    conn.commit()
+    items = dict(BASE_ITEMS, **{"400": ["deadline_cut"]})
+    t = NOW + timedelta(hours=1)
+    _snapshot(conn, items, t)
+    assert fresh.detect(conn, t) == []
+    # video starší než cooldown nebrání novému tisku
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET published_at=%s WHERE ct=400", (NOW - timedelta(days=20),))
+    conn.commit()
+    items = dict(BASE_ITEMS, **{"401": ["deadline_cut"]})
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET ct=401 WHERE ct=400")
+    conn.commit()
+    _snapshot(conn, items, t)
+    assert len(fresh.detect(conn, t)) == 1

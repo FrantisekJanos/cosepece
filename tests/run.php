@@ -1383,7 +1383,8 @@ if (db()->driver !== 'mysql') {
     db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
 }
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
-    video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', created_at $rjTs)");
+    video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', format VARCHAR(40),
+    created_at $rjTs, published_at $rjTs)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
 
 // tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí
@@ -1461,6 +1462,14 @@ $rjVideo($rjOrder[0] ?? 0);
 $rjAuto = $rjAdd('auto_pick', null);
 $rjC = $jobs->claim();
 check('auto_pick vybere nález bez videa', [$rjC['ct'] ?? null, (int)db()->value('SELECT ct FROM reel_jobs WHERE id = ?', [$rjAuto])], [$rjOrder[1] ?? -1, $rjOrder[1] ?? -1]);
+check('claim: published prázdné u tisku bez videa', $rjC['published'] ?? null, []);
+$rjPubCt = $rjOrder[0] ?? 0;
+db()->run("UPDATE reel_queue SET caption = 'Výbory měly 30 dní místo 60.' WHERE ct = ?", [$rjPubCt]);
+db()->run("INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status) VALUES ('manual', ?, 'y.mp4', ?, 'zamítnuto', 'rejected')", [$rjPubCt, sha1('rej' . $rjPubCt)]);
+$rjPub = $rjAdd('manual', $rjPubCt);
+$rjC = $jobs->claim();
+check('claim: published jen vydaná videa tisku', array_column($rjC['published'] ?? [], 'caption'), ['Výbory měly 30 dní místo 60.']);
+db()->run("UPDATE reel_jobs SET status = 'done' WHERE id = ?", [$rjPub]);
 foreach (array_slice($rjOrder, 2) as $rjCt) {
     $rjVideo($rjCt);
 }

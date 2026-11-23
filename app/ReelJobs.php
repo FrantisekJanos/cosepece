@@ -16,6 +16,8 @@ final class ReelJobs
     /** po tolika pokusech úloha skončí jako failed */
     public const MAX_ATTEMPTS = 3;
     /** pořadí výdeje podle zdroje úlohy, uvnitř podle created_at */
+    /** Nejvýš tolik už vydaných videí k tisku dostane generátor v claim (pole published). */
+    private const PUBLISHED_LIMIT = 10;
     private const SOURCE_ORDER = "CASE source WHEN 'manual' THEN 0 WHEN 'auto_pick' THEN 1 ELSE 2 END";
 
     /** @var callable(): int */
@@ -112,6 +114,7 @@ final class ReelJobs
                 'reason_keys' => array_column($card['reasons'], 'key'),
                 'has_amendments' => $this->hasAmendments($ct),
                 'card_v2' => $card,
+                'published' => $this->published($ct),
             ];
         }
         return null;
@@ -238,6 +241,24 @@ final class ReelJobs
             }
         }
         return $card;
+    }
+
+    /**
+     * Videa k tisku, která už vyšla nebo se právě publikují (nejnovější první, nejvýš PUBLISHED_LIMIT):
+     * generátor z nich pozná, jaký úhel už zazněl, a zvolí jiný.
+     */
+    private function published(int $ct): array
+    {
+        $rows = $this->db->all(
+            "SELECT format, caption, published_at FROM reel_queue
+              WHERE ct = ? AND status IN ('approved', 'publishing', 'published') ORDER BY id DESC LIMIT " . self::PUBLISHED_LIMIT,
+            [$ct]
+        );
+        return array_map(fn(array $r): array => [
+            'format' => $r['format'] !== null ? (string)$r['format'] : null,
+            'caption' => (string)$r['caption'],
+            'published_at' => $r['published_at'] !== null ? (string)$r['published_at'] : null,
+        ], $rows);
     }
 
     /** Text návrhu mění jiný předpis („nahrazuje se“, bez ohledu na velikost písmen) – volba formátu zmena. */

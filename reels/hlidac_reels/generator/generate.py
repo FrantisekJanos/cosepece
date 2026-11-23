@@ -16,7 +16,7 @@ from ..card import Card
 from ..media import probe
 from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
-from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude
+from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude, write_published
 from .formats import pick_formats
 from .validate import check_layout, validate_variant
 
@@ -90,7 +90,8 @@ def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
 
 def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: bool, out: Path, mcp_config: Path,
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
-             timeout_s: int = 1200, landscape: bool = True) -> GenResult:
+             timeout_s: int = 1200, landscape: bool = True,
+             published: list[dict] | None = None) -> GenResult:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
@@ -101,6 +102,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
                                               ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
     prepare_workdir(out, ct)
+    write_published(out, published or [])
     variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", formats[0]),
                 Variant(3, "template_v3", formats[1])]
 

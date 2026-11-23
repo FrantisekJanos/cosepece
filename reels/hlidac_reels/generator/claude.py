@@ -53,6 +53,26 @@ def prepare_workdir(workdir: Path, ct: int) -> None:
         shutil.copy2(_pick(list(src.glob(f"v3-{fmt}-*.json")), ct), dest / f"vzor-v3-{fmt}.json")
 
 
+def write_published(workdir: Path, published: list[dict]) -> None:
+    """Zapíše `podklady/publikovano.md` s popisky videí, která k tisku už vyšla (bez nich soubor smaže).
+
+    Návody v2 a v3 soubor čtou: nová varianta nemá opakovat hlavní fakt a úhel už vydaných videí.
+    """
+    path = Path(workdir) / "podklady" / "publikovano.md"
+    items = [p for p in published if isinstance(p, dict) and str(p.get("caption") or "").strip()]
+    if not items:
+        path.unlink(missing_ok=True)
+        return
+    parts = ["# Videa k tomuto tisku, která už vyšla",
+             "Popisky jsou od nejnovějšího. Jejich hlavní fakt a úhel už diváci viděli, neopakuj je.", ""]
+    for n, p in enumerate(items, start=1):
+        fmt = p.get("format") or "v2"
+        when = str(p.get("published_at") or "")[:10]
+        parts += [f"## Video {n} (formát {fmt}{', ' + when if when else ''})", str(p["caption"]).strip(), ""]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(parts), encoding="utf-8")
+
+
 def _task_line(n: int, fmt: str | None) -> str:
     if fmt is None:
         return f"- varianta {n}: „Přečti podklady/v2.md a postupuj podle něj. Výstup do variant-{n}/.“"

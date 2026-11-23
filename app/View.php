@@ -41,12 +41,17 @@ final class View
         $repo = new Repo(db());
         $obdobi = $repo->obdobi();
         $sync = $repo->lastSync();
+        // hlavní menu: nejdřív obsah (co se ve Sněmovně a u vlády děje), pak stránky o webu a datech
         $nav = [
             'prehled' => ['index.php', 'Přehled'],
             'tisky' => ['tisky.php', 'Tisky'],
+            'zakony' => ['zakon.php', 'Zákony'],
             'upozorneni' => ['upozorneni.php', 'Upozornění'],
             'pripravovane' => ['pripravovane.php', 'Připravované'],
             'metodika' => ['metodika.php', 'Jak hodnotíme'],
+            'data' => ['data.php', 'Data a API'],
+            'mcp' => ['mcp.php', 'Pro AI asistenty'],
+            'zmeny' => ['zmeny.php', 'Co jsme změnili'],
         ];
         $desc = $description !== '' ? $description : 'Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty v Poslanecké sněmovně.';
         // náhled pro sociální sítě: vlastní obrázek ke každé stránce (og.php), absolutní adresy ze site_url
@@ -101,16 +106,18 @@ final class View
       <span class="brand-name">Hlídač zákonů</span>
       <span class="brand-sub">Poslanecká sněmovna · <?= $obdobi ?>. volební období</span>
     </a>
-    <nav aria-label="Hlavní menu">
-      <?php foreach ($nav as $key => [$href, $label]): ?>
-        <a href="<?= $href ?>"<?= $key === $active ? ' class="active" aria-current="page"' : '' ?>><?= $label ?></a>
-      <?php endforeach; ?>
-      <a href="rss.php">RSS</a>
-    </nav>
+    <?php if (!in_array($active, ['prehled', 'hledat', 'tisky'], true)): ?><?php self::searchForm('', 'top'); ?><?php endif; ?>
     <div class="top-row2">
+      <nav id="site-nav" aria-label="Hlavní menu">
+        <?php foreach ($nav as $key => [$href, $label]): ?>
+          <a href="<?= $href ?>"<?= $key === $active ? ' class="active" aria-current="page"' : '' ?>><?= $label ?></a>
+        <?php endforeach; ?>
+        <a href="rss.php">RSS</a>
+      </nav>
       <div class="sync"><?= $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' ?></div>
-      <?php if (!in_array($active, ['prehled', 'hledat', 'tisky'], true)): ?><?php self::searchForm('', 'top'); ?><?php endif; ?>
     </div>
+    <?php // na telefonu je menu jeden posuvný řádek: aktuální stránku posuneme do zorného pole (bez JS zůstane menu na začátku) ?>
+    <script>(function(){var n=document.getElementById('site-nav'),a=n&&n.querySelector('a.active');if(a&&n.scrollWidth>n.clientWidth){n.scrollLeft=a.offsetLeft-n.offsetLeft-(n.clientWidth-a.offsetWidth)/2;}})();</script>
   </div>
 </header>
 <main class="wrap">

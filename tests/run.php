@@ -1061,6 +1061,13 @@ $_GET = [];
 check('stránka nařízení vlády', [str_contains($nvHtml, '<h1>Připravovaná nařízení vlády</h1>'), str_contains($nvHtml, 'Připomínky 7 dní (obvykle 3 týdny)'),
     str_contains($nvHtml, 'id="prep-KORNNV000001"'), str_contains($nvHtml, 'KORNUP000001'), str_contains($upHtml, 'pripravovane.php?druh=narizeni')],
     [true, true, true, false, true]);
+// hlavní menu: všechny stěžejní stránky, každá jednou, cíle existují a aktuální stránka je označená
+preg_match('~<nav id="site-nav".*?</nav>~s', $nvHtml, $navM);
+preg_match_all('~<a href="([^"]+)"( class="active" aria-current="page")?>([^<]+)</a>~', $navM[0] ?? '', $navLinks, PREG_SET_ORDER);
+check('hlavní menu: stránky a pořadí', array_column($navLinks, 1),
+    ['index.php', 'tisky.php', 'zakon.php', 'upozorneni.php', 'pripravovane.php', 'metodika.php', 'data.php', 'mcp.php', 'zmeny.php', 'rss.php']);
+check('hlavní menu: cíle existují', array_values(array_filter(array_column($navLinks, 1), static fn(string $f): bool => !is_file(APP_ROOT . '/' . $f))), []);
+check('hlavní menu: označená je jen aktuální stránka', array_column(array_values(array_filter($navLinks, static fn(array $l): bool => ($l[2] ?? '') !== '')), 1), ['pripravovane.php']);
 [$nvCode, $nvBody] = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->handle(['pripravovane' => '1', 'druh' => 'narizeni']);
 check('API: nařízení jen s druh=narizeni, výchozí zůstávají zákony', [$nvCode, array_column($nvBody['pripravovane'], 'druh'), array_unique(array_column($apiBody['pripravovane'], 'druh'))],
     [200, ['narizeni', 'narizeni', 'narizeni'], ['zakon']]);

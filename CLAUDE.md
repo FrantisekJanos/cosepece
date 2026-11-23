@@ -145,7 +145,9 @@ SD (`parseSummary`, tabulka `pn_souhrn`; písmena předkladatelů čísluje čas
 jen se jménem předkladatele v ohlášení). Stenozáznam 3. čtení ze schématu `steno` služby rag/ (`steno.projev.hlasovani`):
 zpravodaj těsně před hlasováním řekne písmeno nebo rovnou číslo dokumentu (`mapVotes`; číslo má přednost, popis hlasovací
 procedury a dlouhé projevy se přeskakují, „návrh B“ bez čísla se k B1, B2 nepřiřazuje), výsledek z tabulky `hlasovani`. Stavy v `pn_vysledek`: prijat,
-castecne, zamitnut, nezaznel (není v souhrnu), ceka (3. čtení ještě neproběhlo), neurceno. Nehlasovatelné návrhy zatím nerozlišujeme (= neurceno). Bez schématu
+castecne, zamitnut, nehlasovatelny (zpravodaj řekl, že se o něm nehlasuje: `notVoted`), nezaznel (není v souhrnu), ceka (3. čtení
+ještě neproběhlo), neurceno. Ohlášení se čte po větách (`announced`): věty o nehlasovatelných návrzích se vynechají, společné
+hlasování („jedním hlasováním“, „E1 až E6“, „návrhy pod písmeny E1, E2 a E4“) platí pro všechny jmenované návrhy. Bez schématu
 `steno` (SQLite, hosting) jen zazněl / nezazněl. Zobrazení `tisk.php` (`View::pnOutcome`), API `tisk.vysledky_pn`.
 
 Senát a kroky po něm (#6, bez skóre): `Analyzer::senate()` z historie tisku – výsledek je akce kroku, který následuje

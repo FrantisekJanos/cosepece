@@ -60,7 +60,8 @@ function db(): Hlidac\Db
     static $db = null;
     if ($db === null) {
         $db = new Hlidac\Db(config('db_dsn'), config('db_user'), config('db_pass'));
-        $db->migrate();
+        // struktura databáze se kontroluje jen po změně schématu (nová verze), ne při každém požadavku
+        $db->migrateIfNeeded();
     }
     return $db;
 }

@@ -1248,6 +1248,17 @@ $states[] = is_int($peek());
 check('chybné tokeny: po vyčerpání pokusů je adresa zablokovaná, kontrola sama nepočítá', $states, [null, null, true]);
 check('limit 0 = bez omezení', Hlidac\RateLimit::hit('api', 0, 60, '203.0.113.5', $rlDir), null);
 
+echo "Kontrola struktury databáze jen po změně schématu\n";
+check('po migraci se kontrola při dalším požadavku přeskočí', [db()->migrateIfNeeded(), db()->getMeta('schema_stamp') === Hlidac\Db::schemaStamp()], [false, true]);
+db()->setMeta('schema_stamp', 'starší verze');
+check('jiný otisk schématu (nová verze) migraci spustí a zapíše nový otisk', [db()->migrateIfNeeded(), db()->getMeta('schema_stamp') === Hlidac\Db::schemaStamp(), db()->migrateIfNeeded()], [true, true, false]);
+// chybějící sloupec po obnově ze starší zálohy: starý otisk → migrace ho doplní
+if (db()->driver === 'sqlite') {
+    $fresh = new Hlidac\Db('sqlite:' . $tmp . '/nova.sqlite', null, null);
+    check('nová databáze bez tabulek se založí', [$fresh->migrateIfNeeded(), $fresh->getMeta('schema_stamp') === Hlidac\Db::schemaStamp(), $fresh->migrateIfNeeded(),
+        (int)$fresh->value('SELECT COUNT(*) FROM tisky')], [true, true, false, 0]);
+}
+
 echo "Opakování odeslání při výpadku webu\n";
 check('přechodné stavy: bez odpovědi a 502–504 ano, 500 a 403 ne', array_map([Hlidac\Http::class, 'transient'], [0, 502, 503, 504, 500, 403, 200]), [true, true, true, true, false, false, false]);
 // místní server: první dva dotazy 502 (jako proxy při výměně kontejneru), pak 200

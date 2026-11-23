@@ -37,6 +37,10 @@ Docker (cosepece.cz): `docker/redeploy.sh [commit]` – před výměnou kontejne
 SQLite i PostgreSQL; testy musí projít na obou), `deploy.yml` (po sloučení do `main`, vypnuto do `DEPLOY_ENABLED`).
 `Http::post(..., $retryDelays)` opakuje jen při výpadku (bez odpovědi, 502–504); `bin/ai.php` tak přečká výměnu kontejneru.
 
+Struktura databáze: `db()` volá `Db::migrateIfNeeded()` – `migrate()` běží jen na nové databázi nebo když se změní otisk
+souboru `app/Db.php` (meta `schema_stamp`). Všechny změny struktury (tabulky, sloupce, indexy) proto patří jen do
+`Db::migrate()`; DDL jinde by se po nasazení nespustilo.
+
 ## Konvence
 
 - Komentáře v kódu **česky**, názvy funkcí, tříd a proměnných **anglicky**.

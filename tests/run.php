@@ -1302,6 +1302,40 @@ $mv3 = Hlidac\PnOutcome::mapVotes([$zp('Nyní pozměňovací návrh D, sněmovn�
 check('číslo dokumentu stačí i bez písmene ze souhrnu', [array_map(fn($v) => [$v['cislo'], $v['sd']], $mv3),
     array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes(['pismena' => ['A' => [839]], 'odhad' => [], 'zminena' => [839, 836]], $mv3, [836 => 'Jiří Jiný', 839 => 'Vendula Svobodová']))],
     [[[15, 836]], [836 => 'prijat', 839 => 'neurceno']]);
+// čtení po větách: nehlasovatelné návrhy, „(dokument) 1219“ bez slova sněmovní, společné hlasování
+$sdl = [1175 => 'G2', 1235 => 'Q11', 1178 => 'G3', 1068 => 'H4', 1239 => 'H5', 1155 => 'G1', 1290 => ''];
+$ann = fn(string $t): array => array_map(fn($a) => [$a['pismeno'], $a['sd']], Hlidac\PnOutcome::announced($t, ['G1', 'G2', 'G3', 'Q11', 'H4', 'H5', 'E1', 'E2', 'E3'], [], $sdl));
+check('ohlášení: nehlasovatelné návrhy se vynechají, platí číslo dokumentu a označení zpravodaje',
+    $ann('Tímto se staly nehlasovatelnými G2, (dokument) 1175, a Q11, (dokument) 1235. Nyní k hlasování třináct, (návrh) G3, (dokument) 1178, Davida Pražáka. Hospodářský výbor doporučuje.'), [['G3', 1178]]);
+check('ohlášení: společné hlasování o dvou dokumentech', $ann('Bod sedmnáct, jedním hlasováním (návrh) H4, (dokument) 1068; (návrh) H5, (dokument) 1239, kolegy Niemiece. Výbor nedoporučuje.'), [['H4', 1068], ['H5', 1239]]);
+check('ohlášení: dva dokumenty bez společného hlasování → nic', $ann('Nyní návrh H4, dokument 1068, a potom H5, dokument 1239.'), []);
+check('ohlášení: řada písmen „E1 až E3“ je společné hlasování', $ann('Nyní pozměňovací návrhy E1 až E3 společně jedním hlasováním.'), [['E1', null], ['E2', null], ['E3', null]]);
+check('ohlášení: výčet za množným číslem je společné hlasování, výčet za jednotným číslem ne',
+    [$ann('Jedním hlasováním pozměňovací návrhy pod písmeny E1, E2 a E3, terminologické úpravy.'), $ann('Pozměňovací návrhy E1 a E2 kolegy Nováka.'), $ann('Pozměňovací návrh E1, E2 je obdobný.')],
+    [[['E1', null], ['E2', null], ['E3', null]], [['E1', null], ['E2', null]], []]);
+check('ohlášení: návrh bez písmene v souhrnu podle čísla dokumentu a označení zpravodaje', $ann('G1 se nehlasuje. Nyní hlasování dvanáct, pozměňovací návrh Cc, (dokument) 1290, Bereniky Peštové.'), [['Cc', 1290]]);
+check('stanovisko výboru i ve tvaru „výbor nedoporučuje“', array_column(Hlidac\PnOutcome::announced('Bod patnáct, (návrh) G3, (dokument) 1178, kolega Pražák. Hospodářský výbor nedoporučuje.', ['G3'], [], $sdl), 'stanovisko'), ['nedoporučující']);
+$nv = Hlidac\PnOutcome::notVoted([
+    $zp('Tímto se staly nehlasovatelnými G2, (dokument) 1175, a Q11, (dokument) 1235. Nyní k hlasování třináct, (návrh) G3, (dokument) 1178.'),
+    $zp('(Návrh) G1, (dokument) 1155, Davida Pražáka se nehlasuje, jelikož byly přijaty návrhy H4 a H5.'),
+    $zp('Pokud bude přijat návrh E1, stane se nehlasovatelným návrh E2.'),                            // podmíněné: nepočítá se
+    $zp('Díky přijetí návrhu E1 se stal nehlasovatelným návrh E3 a jdeme na pozměňovací návrh E2.'),
+    $zp('Navrhuji proceduru: návrh H4 je nehlasovatelný.'),                                           // popis procedury: nepočítá se
+], ['G1', 'G2', 'G3', 'Q11', 'H4', 'H5', 'E1', 'E2', 'E3'], $sdl);
+check('nehlasovatelné návrhy: jen jednoznačné výroky, bez návrhů uvedených jako důvod', $nv, ['sd' => [1175, 1235, 1155], 'pismena' => ['E3']]);
+check('ohlášení za výrokem o nehlasovatelných („…, takže bychom měli hlasovat návrh G“); odkaz na proceduru nevadí',
+    array_map(fn($a) => $a['pismeno'], Hlidac\PnOutcome::announced('Díky přijetí pozměňovacího návrhu E1 se staly nehlasovatelné ty, které máte v hlasovací proceduře jako G2 a Q11, takže bychom nyní měli hlasovat pozměňovací návrh pod písmenem G3. Je to návrh kolegy Pražáka.',
+        ['G1', 'G2', 'G3', 'Q11', 'E1'], ['G3' => ['David Pražák']], [])), ['G3']);
+check('nehlasovatelné: návrh, o kterém se hned potom hlasuje, mezi ně nepatří; podbod K14.1 není návrh K14',
+    Hlidac\PnOutcome::notVoted([$zp('Díky přijetí návrhu E1 se staly nehlasovatelné G2 a Q11, takže bychom nyní měli hlasovat pozměňovací návrh pod písmenem G3.'),
+        $zp('Nyní se stává nehlasovatelným návrh G1.1, G1.2 a E2.')], ['G1', 'G2', 'G3', 'Q11', 'E1', 'E2'], []), ['sd' => [], 'pismena' => ['G2', 'Q11', 'E2']]);
+check('popis procedury × odkaz na ni', [Hlidac\PnOutcome::announced('Výbor navrhuje následující proceduru: nejprve návrh G1 pana Pražáka.', ['G1'], [], []),
+    array_column(Hlidac\PnOutcome::announced('Podle schválené procedury nyní hlasujeme pozměňovací návrh G1 pana Pražáka.', ['G1'], [], []), 'pismeno')], [[], ['G1']]);
+check('nehlasovatelný návrh má vlastní stav; hlasování má přednost', array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes(
+    ['pismena' => ['G2' => [1175], 'G3' => [1178], 'E3' => [900], 'E2' => [901]], 'odhad' => [], 'zminena' => [1175, 1178, 900, 901]],
+    [['pismeno' => 'G3', 'zaklad' => 'G3', 'sd' => 1178, 'varianta' => null, 'stanovisko' => null, 'ohlaseni' => '', 'id_hlasovani' => 1, 'cislo' => 13, 'vysledek' => 'A']],
+    [1175 => 'David Pražák', 1178 => 'David Pražák', 900 => 'Jan Novák', 901 => 'Jan Novák'], true, ['sd' => [1175, 1178], 'pismena' => ['E3']])),
+    [1175 => 'nehlasovatelny', 1178 => 'prijat', 900 => 'nehlasovatelny', 901 => 'neurceno']);
 check('před 3. čtením návrh čeká na hlasování, výsledek se neuvádí', array_map(fn($r) => $r['stav'],
     Hlidac\PnOutcome::outcomes($sum1, [], [839 => 'Vendula Svobodová', 825 => 'Alena Schillerová', 836 => 'Karel Haas'], false)), [839 => 'ceka', 825 => 'ceka', 836 => 'nezaznel']);
 check('štítek před 3. čtením', strip_tags(Hlidac\View::pnOutcome(['stav' => 'ceka', 'pismena' => 'B1', 'hlasovani' => [], 'stanovisko' => null])), 'Zazněl ve 2. čtení · B1');

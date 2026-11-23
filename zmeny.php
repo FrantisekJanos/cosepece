@@ -10,8 +10,8 @@ use Hlidac\View;
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
     ['2026-11-23', 'Které pozměňovací návrhy prošly',
-        'U tisků po 3. čtení nově u každého písemného pozměňovacího návrhu ukazujeme, zda byl přijat nebo zamítnut, s odkazem na hlasování a se stanoviskem výboru. Poznáme i návrh, který byl podán písemně, ale ve 2. čtení nezazněl. Bereme to ze souhrnu pozměňovacích návrhů, stenozáznamu a výsledků hlasování, bez umělé inteligence. Kde hlasování nejde k návrhu přiřadit jednoznačně, píšeme „nelze určit“. U tisků před 3. čtením ukazujeme jen to, zda návrh ve 2. čtení zazněl. Do skóre to zatím nevstupuje.',
-        [72, 73], false],
+        'U tisků po 3. čtení nově u každého písemného pozměňovacího návrhu ukazujeme, zda byl přijat nebo zamítnut, s odkazem na hlasování a se stanoviskem výboru. Poznáme i návrh, který byl podán písemně, ale ve 2. čtení nezazněl. Bereme to ze souhrnu pozměňovacích návrhů, stenozáznamu a výsledků hlasování, bez umělé inteligence. Kde hlasování nejde k návrhu přiřadit jednoznačně, píšeme „nelze určit“. U tisků před 3. čtením ukazujeme jen to, zda návrh ve 2. čtení zazněl. Poznáme i návrh, o kterém se nehlasovalo, protože se stal nehlasovatelným, a společné hlasování o více návrzích. Do skóre to zatím nevstupuje.',
+        [72, 73, 0], false],
     ['2026-11-23', 'Rychlejší načítání stránek',
         'Web při každém otevření stránky znovu kontroloval strukturu databáze. Teď to dělá jen po nasazení nové verze, takže se stránky načítají znatelně rychleji.',
         [71], false],

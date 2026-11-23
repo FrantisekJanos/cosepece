@@ -25,7 +25,6 @@ if ($law === '' || !Laws::valid($law)) {
     <h1>Zákony</h1>
     <p class="lead"><?= count($all) ?> zákonů, které mění návrhy ve Sněmovně nebo připravované u vlády. U každého je přehled všech změn a vlastní RSS.</p>
   </div>
-  <?php View::searchForm(); ?>
 </section>
 <?php if ($law !== ''): ?><section class="card pad"><p>„<?= e($law) ?>“ není číslo zákona ve tvaru <code>159/2006</code>.</p></section><?php endif; ?>
 <section class="card">

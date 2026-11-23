@@ -73,6 +73,13 @@ final class Sync
         $scorer = new Scorer(db(), $config);
         $scorer->scoreBills();
         $pnText = (new PnText(db(), $config))->run();
+        try {
+            // které pozměňovací návrhy prošly (souhrn PN + stenozáznam 3. čtení); doplňkové, chyba synchronizaci nezastaví
+            $pnOutcome = (new PnOutcome(db(), $config))->run();
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/PnOutcome']);
+            $pnOutcome = ['error' => Http::redact($ex->getMessage())];
+        }
         $tiskText = (new TiskText(db(), $config))->run();
         $ai = (new AiReviewer(db(), $config))->run();
         $scorer->scoreBills();
@@ -98,6 +105,7 @@ final class Sync
             'priprava' => $prep,
             'alerts_new' => $alerts,
             'pn_text' => $pnText,
+            'pn_vysledek' => $pnOutcome,
             'tisk_text' => $tiskText,
             'ai' => $ai,
             'revize_backfill' => $backfill,

@@ -262,6 +262,30 @@ final class View
         self::$upcoming = null;
     }
 
+    /** Štítek s výsledkem pozměňovacího návrhu ve 3. čtení (PnOutcome) a odkazy na hlasování. */
+    public static function pnOutcome(?array $o): string
+    {
+        if ($o === null) {
+            return '';
+        }
+        $state = (string)$o['stav'];
+        $class = match ($state) {
+            'prijat', 'castecne' => 'chip chip-fast',
+            'zamitnut' => 'chip chip-mp',
+            default => 'chip',
+        };
+        $letters = trim((string)$o['pismena']);
+        $html = '<span class="' . $class . '">' . e(PnOutcome::STATES[$state] ?? $state) . ($letters !== '' ? ' · ' . e($letters) : '') . '</span>';
+        $links = [];
+        foreach (array_slice((array)$o['hlasovani'], 0, 8) as $v) {
+            $links[] = '<a href="https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$v['id'] . '">č. ' . (int)$v['cislo']
+                . (!empty($v['varianta']) ? ' (var. ' . (int)$v['varianta'] . ')' : '') . ' ' . (($v['vysledek'] ?? '') === 'A' ? 'přijato' : 'zamítnuto') . '</a>';
+        }
+        $note = ($links !== [] ? 'hlasování ' . implode(', ', $links) : '')
+            . (!empty($o['stanovisko']) ? ($links !== [] ? ' · ' : '') . 'stanovisko výboru: ' . e((string)$o['stanovisko']) : '');
+        return $html . ($note !== '' ? ' <span class="muted small">' . $note . '</span>' : '');
+    }
+
     public static function alertUrl(array $alert, bool $absolute = false): string
     {
         // připravovaný zákon (bez tisku): na stránku připravovaných, a když už tam není, do VeKLEP

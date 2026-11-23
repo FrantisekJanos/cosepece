@@ -29,6 +29,7 @@ $pn = $repo->amendments($ct);
 $authors = $repo->amendmentAuthors($ct);
 $alerts = $repo->alerts(10, 0, $ct);
 $texts = $repo->pnTexts($ct);
+$pnOutcomes = $repo->pnOutcomes($ct);
 $billText = $repo->billText($ct);
 $votes = $repo->votes($ct);
 $prep = $repo->prep($ct);
@@ -222,6 +223,9 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     <section class="card pad">
       <h2>Pozměňovací návrhy</h2>
       <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
+      <?php if ($pnOutcomes !== []): ?>
+        <p class="muted small">Výsledek ve 3. čtení (přijat, zamítnut…) bereme ze souhrnu pozměňovacích návrhů, stenozáznamu a hlasování, bez AI. Kde hlasování nejde přiřadit jednoznačně, uvádíme „nelze určit“. Senát a prezident mohou znění ještě změnit.</p>
+      <?php endif; ?>
       <?php if (!empty($t['souhrn_pn'])): ?>
         <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o=<?= (int)$obdobi ?>&amp;ct=<?= $ct ?>&amp;ct1=<?= (int)$t['souhrn_pn'] ?>">Souhrn platně podaných pozměňovacích návrhů (tisk <?= $ct ?>/<?= (int)$t['souhrn_pn'] ?>)</a> <span class="muted">rozeslán <?= e(formatDate((string)$t['souhrn_pn_at'] . ':00', true)) ?></span></p>
       <?php endif; ?>
@@ -231,6 +235,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
           <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>
           <li class="pn-item" id="pn-<?= (int)$p['cislo'] ?>">
             <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= e($p['osoba']) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
+            <?php if (isset($pnOutcomes[(int)$p['cislo']])): ?><span class="pn-outcome"><?= View::pnOutcome($pnOutcomes[(int)$p['cislo']]) ?></span><?php endif; ?>
             <?php if ($x !== null): ?>
               <span class="chips">
                 <?php if (!empty($x['signals']['other_laws'])): ?><span class="chip chip-cut">Přílepek: <?= e(implode(', ', $x['signals']['other_laws'])) ?></span><?php endif; ?>

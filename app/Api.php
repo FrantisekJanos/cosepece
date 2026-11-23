@@ -94,6 +94,13 @@ final class Api
         $out['upozorneni'] = array_map([$this, 'alert'], $this->repo->alerts(100, 0, $ct));
         $status = $this->repo->reviewStatus($ct)[$ct] ?? ['total' => 0, 'done' => 0];
         $out['rozbor_textu'] = ['posouzeno' => (int)$status['done'], 'celkem' => (int)$status['total']];
+        // výsledek písemných pozměňovacích návrhů ve 3. čtení (prázdné, dokud není souhrn PN a hlasování)
+        $out['vysledky_pn'] = array_values(array_map(fn(array $r) => [
+            'cislo' => (int)$r['cislo'], 'pismena' => array_values(array_filter(array_map('trim', explode(',', (string)$r['pismena'])))),
+            'stav' => $r['stav'], 'stanovisko_vyboru' => $r['stanovisko'],
+            'hlasovani' => array_map(fn(array $v) => ['cislo' => (int)$v['cislo'], 'vysledek' => ($v['vysledek'] ?? '') === 'A' ? 'přijato' : 'zamítnuto',
+                'pismeno' => $v['pismeno'] ?? null, 'varianta' => $v['varianta'] ?? null, 'psp_url' => 'https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$v['id']], $r['hlasovani']),
+        ], $this->repo->pnOutcomes($ct)));
         // průchod Senátem a kroky po něm (null, dokud návrh do Senátu nedošel); jen popis postupu, do skóre nevstupuje
         $senate = Analyzer::senate($this->repo->steps($ct));
         $out['senat'] = $senate['doruceno'] !== null ? $senate + ['popis' => Analyzer::senateLines($senate)] : null;

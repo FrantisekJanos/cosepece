@@ -184,6 +184,27 @@ final class Db
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn_seen (
             id_dokument INTEGER PRIMARY KEY
         )$suffix");
+        // které pozměňovací návrhy prošly (app/PnOutcome.php): souhrn PN po 2. čtení (písmena → čísla návrhů)
+        // a výsledek každého písemného návrhu ve 3. čtení
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn_souhrn (
+            ct INTEGER PRIMARY KEY,
+            cislo_za INTEGER NOT NULL,
+            docx_url VARCHAR(255),
+            pismena $text,
+            chars INTEGER NOT NULL DEFAULT 0,
+            fetched_at VARCHAR(19),
+            error VARCHAR(255)
+        )$suffix");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS pn_vysledek (
+            ct INTEGER NOT NULL,
+            cislo INTEGER NOT NULL,
+            pismena VARCHAR(120),
+            stav VARCHAR(20) NOT NULL,
+            hlasovani $text,
+            stanovisko VARCHAR(40),
+            updated_at VARCHAR(19),
+            PRIMARY KEY (ct, cislo)
+        )$suffix");
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS alerts (
             alert_key $key PRIMARY KEY,
             kind VARCHAR(20) NOT NULL,

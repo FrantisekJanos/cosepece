@@ -46,6 +46,9 @@ return [
     'issues_url' => 'https://github.com/FrantisekJanos/cosepece/issues',
 
     // stahování textů pozměňovacích návrhů (Word) a pravidlová analýza přílepků a rozsahu
+    // které pozměňovací návrhy prošly: stahování souhrnů PN po 2. čtení (párování s hlasováním jen se službou rag/)
+    'pn_outcome' => ['enabled' => true, 'per_run' => 10, 'retry_hours' => 24],
+
     'pn_text' => [
         'enabled' => true,
         'per_run' => 40, // kolik PN zpracovat za jeden běh (první běh dožene historii postupně)

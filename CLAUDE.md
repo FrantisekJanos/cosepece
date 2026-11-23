@@ -140,6 +140,13 @@ jiný PID: `pripravovane.pidy` drží PID všech verzí, `addUpcoming()` nevydá
 z nich. `View::alertUrl` vede na `pripravovane.php#prep-<pid>`, jinak do VeKLEP (tabulka PID `View::upcomingIndex()`,
 po změně tabulky `View::forgetUpcoming()`). Filtr `zakon=` v API a RSS páruje tato upozornění podle čísla zákona v názvu.
 
+Které PN prošly (#5, bez skóre): `app/PnOutcome.php`. Souhrn PN po 2. čtení (tisk X/n, `tisky.souhrn_pn`) → písmena a čísla
+SD (`parseSummary`, tabulka `pn_souhrn`; písmena předkladatelů čísluje často Word, pak se odvodí z pořadí = „odhad“ a platí
+jen se jménem předkladatele v ohlášení). Stenozáznam 3. čtení ze schématu `steno` služby rag/ (`steno.projev.hlasovani`):
+zpravodaj těsně před hlasováním řekne písmeno (`mapVotes`), výsledek z tabulky `hlasovani`. Stavy v `pn_vysledek`: prijat,
+castecne, zamitnut, nezaznel (není v souhrnu), neurceno. Nehlasovatelné návrhy zatím nerozlišujeme (= neurceno). Bez schématu
+`steno` (SQLite, hosting) jen zazněl / nezazněl. Zobrazení `tisk.php` (`View::pnOutcome`), API `tisk.vysledky_pn`.
+
 Senát a kroky po něm (#6, bez skóre): `Analyzer::senate()` z historie tisku – výsledek je akce kroku, který následuje
 po stavu 12 „Senát“ (21/33 schválen, 24 vrácen, 27 zamítnut, 11/37/53 nezabýval se, 6 nečinný, 36 bez usnesení); po stavu
 14/63 akce 20 = Sněmovna setrvala (přehlasovala Senát), 15 = přijala znění Senátu; po stavu 8 akce 7 = veto, po stavu 13

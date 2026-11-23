@@ -274,8 +274,13 @@ final class View
             'zamitnut' => 'chip chip-mp',
             default => 'chip',
         };
+        // před 3. čtením stačí písmeno ze souhrnu, výsledek ještě není
+        $label = match ($state) {
+            'ceka' => 'Zazněl ve 2. čtení',
+            default => PnOutcome::STATES[$state] ?? $state,
+        };
         $letters = trim((string)$o['pismena']);
-        $html = '<span class="' . $class . '">' . e(PnOutcome::STATES[$state] ?? $state) . ($letters !== '' ? ' · ' . e($letters) : '') . '</span>';
+        $html = '<span class="' . $class . '">' . e($label) . ($letters !== '' ? ' · ' . e($letters) : '') . '</span>';
         $links = [];
         foreach (array_slice((array)$o['hlasovani'], 0, 8) as $v) {
             $links[] = '<a href="https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$v['id'] . '">č. ' . (int)$v['cislo']

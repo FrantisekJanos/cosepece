@@ -1288,6 +1288,9 @@ $mvGuess = [['pismeno' => 'A', 'zaklad' => 'A', 'varianta' => null, 'stanovisko'
 check('odhadnuté písmeno bez shody jména a návrh bez hlasování → nelze určit',
     array_map(fn($r) => $r['stav'], Hlidac\PnOutcome::outcomes($sum2, $mvGuess, [1546 => 'Adam Vojtěch', 1538 => 'Vojtěch Munzar', 1537 => 'Jana Filipovičová', 2000 => 'Někdo Jiný'])),
     [1546 => 'neurceno', 1538 => 'neurceno', 1537 => 'neurceno', 2000 => 'nezaznel']);
+check('před 3. čtením návrh čeká na hlasování, výsledek se neuvádí', array_map(fn($r) => $r['stav'],
+    Hlidac\PnOutcome::outcomes($sum1, [], [839 => 'Vendula Svobodová', 825 => 'Alena Schillerová', 836 => 'Karel Haas'], false)), [839 => 'ceka', 825 => 'ceka', 836 => 'nezaznel']);
+check('štítek před 3. čtením', strip_tags(Hlidac\View::pnOutcome(['stav' => 'ceka', 'pismena' => 'B1', 'hlasovani' => [], 'stanovisko' => null])), 'Zazněl ve 2. čtení · B1');
 // celý výpočet nad databází: souhrn tisku 90, hlasování a stenozáznam (schéma steno jako u služby rag/)
 if (db()->driver === 'sqlite') {
     db()->pdo->exec("ATTACH DATABASE ':memory:' AS steno");
@@ -1330,6 +1333,9 @@ if (in_array(db()->driver, ['sqlite', 'pgsql'], true)) {
     $po->compute();
     $poRows = (new Hlidac\Repo(db()))->pnOutcomes(90);
     check('bez stenozáznamu: jen zazněl / nezazněl', [$po->stenoAvailable(), $poRows[$pn90[0]]['stav'] ?? null, $poRows[$pn90[2]]['stav'] ?? null], [false, 'neurceno', 'nezaznel']);
+    db()->run('DELETE FROM hlasovani WHERE id_hlasovani IN (990001, 990002)');
+    $po->compute();
+    check('bez hlasování po souhrnu (před 3. čtením): čeká', (new Hlidac\Repo(db()))->pnOutcomes(90)[$pn90[0]]['stav'] ?? null, 'ceka');
     db()->run('DELETE FROM hlasovani WHERE id_hlasovani IN (990001, 990002)');
     db()->run('DELETE FROM pn_souhrn WHERE ct = 90');
     db()->run('DELETE FROM pn_vysledek WHERE ct = 90');

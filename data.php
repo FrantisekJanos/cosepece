@@ -94,7 +94,7 @@ $fields = [
         ['hlasovani', 'pole objektů', 'id, datum, vysledek (přijato / zamítnuto), pro, proti, zdrzel, kvorum, kluby (klub, pro, proti, zdrzel_nehlasoval, nepritomen), psp_url'],
         ['upozorneni', 'pole objektů', 'upozornění k tisku (pole jako níže)'],
         ['rozbor_textu', 'objekt', 'posouzeno / celkem: kolik textů (návrh a pozměňovací návrhy) už posoudil rozbor AI'],
-        ['vysledky_pn', 'pole objektů', 'výsledek písemných pozměňovacích návrhů ve 3. čtení: cislo, pismena (ze souhrnu po 2. čtení), stav (prijat, castecne, zamitnut, nezaznel = v souhrnu po 2. čtení není, neurceno = nelze určit), stanovisko_vyboru, hlasovani (cislo, vysledek, pismeno, varianta, psp_url); prázdné pole, dokud souhrn a hlasování nejsou'],
+        ['vysledky_pn', 'pole objektů', 'výsledek písemných pozměňovacích návrhů ve 3. čtení: cislo, pismena (ze souhrnu po 2. čtení), stav (prijat, castecne, zamitnut, nezaznel = v souhrnu po 2. čtení není, ceka = 3. čtení ještě neproběhlo, neurceno = nelze určit), stanovisko_vyboru, hlasovani (cislo, vysledek, pismeno, varianta, psp_url); prázdné pole, dokud souhrn a hlasování nejsou'],
         ['senat', 'objekt nebo null', 'průchod Senátem: doruceno, vysledek (schvalen, vracen, zamitnut, nezabyval, necinny, bez_usneseni nebo null), rozhodnuto, lhuta_do (30 dní od doručení, dokud Senát nerozhodl), snemovna (setrvala = přehlasovala Senát, prijala = přijala jeho znění), snemovna_datum, veto, veto_prehlasovano, popis (věty česky); null = návrh do Senátu nedošel'],
     ],
     'Upozornění' => [

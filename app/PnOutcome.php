@@ -23,6 +23,7 @@ final class PnOutcome
         'castecne' => 'Přijat zčásti',
         'zamitnut' => 'Zamítnut',
         'nezaznel' => 'Nezazněl ve 2. čtení',
+        'ceka' => 'Čeká na hlasování ve 3. čtení',
         'neurceno' => 'Výsledek nelze určit',
     ];
 
@@ -40,13 +41,14 @@ final class PnOutcome
         return $fetched + $this->compute();
     }
 
-    /** Stáhne souhrny pozměňovacích návrhů, které ještě nemáme (nebo se změnilo číslo podtisku). */
+    /** Stáhne souhrny pozměňovacích návrhů, které ještě nemáme (nebo se změnilo číslo podtisku); nejdřív tisky po 3. čtení. */
     public function fetchSummaries(int $limit, int $retryHours = 24): array
     {
         $rows = $this->db->all('SELECT t.ct, t.souhrn_pn FROM tisky t LEFT JOIN pn_souhrn s ON s.ct = t.ct
             WHERE t.souhrn_pn IS NOT NULL AND t.souhrn_pn > 0
               AND (s.ct IS NULL OR s.cislo_za <> t.souhrn_pn OR (s.error IS NOT NULL AND s.fetched_at < ?))
-            ORDER BY t.posledni DESC LIMIT ' . max(0, $limit), [date('Y-m-d H:i:s', time() - 3600 * $retryHours)]);
+            ORDER BY CASE WHEN EXISTS (SELECT 1 FROM kroky k WHERE k.ct = t.ct AND k.typ_stavu = ' . Analyzer::STAV_ODESLANO_SENATU . ') THEN 0 ELSE 1 END,
+                t.posledni DESC LIMIT ' . max(0, $limit), [date('Y-m-d H:i:s', time() - 3600 * $retryHours)]);
         $obdobi = (int)$this->db->getMeta('obdobi_cislo', '0');
         $stats = ['souhrny_stazeno' => 0, 'souhrny_chyby' => 0];
         foreach ($rows as $r) {
@@ -302,9 +304,10 @@ final class PnOutcome
      * @param array{pismena: array<string, int[]>, odhad: string[], zminena: int[]} $summary výstup parseSummary()
      * @param array $mapped výstup mapVotes()
      * @param array<int, string> $authors číslo PN => předkladatel (pn.osoba)
+     * @param bool $voted o tisku se po rozeslání souhrnu už hlasovalo (3. čtení proběhlo nebo běží)
      * @return array<int, array{pismena: string[], stav: string, hlasovani: array, stanovisko: ?string}> číslo PN => výsledek
      */
-    public static function outcomes(array $summary, array $mapped, array $authors): array
+    public static function outcomes(array $summary, array $mapped, array $authors, bool $voted = true): array
     {
         $letters = $summary['pismena'];
         $out = [];
@@ -334,9 +337,9 @@ final class PnOutcome
                 // v souhrnu není vůbec, nebo ho jen neumíme přiřadit k písmenu
                 $state = in_array($number, $summary['zminena'], true) ? 'neurceno' : 'nezaznel';
             } elseif ($votes === []) {
-                // písmeno v souhrnu je, ale hlasování k němu ne: návrh se stal nehlasovatelným, nebo se hlasování
-                // nepodařilo přiřadit – to zatím neumíme rozlišit, proto „nelze určit“
-                $state = 'neurceno';
+                // před 3. čtením návrh na hlasování teprve čeká. Po něm: písmeno v souhrnu je, ale hlasování k němu ne –
+                // návrh se stal nehlasovatelným, nebo se hlasování nepodařilo přiřadit; to zatím neumíme rozlišit
+                $state = $voted ? 'neurceno' : 'ceka';
             } else {
                 // část návrhu = písmeno (i s částí „D-a“); u variant platí poslední hlasování každé varianty
                 $parts = [];
@@ -422,7 +425,7 @@ final class PnOutcome
                 }
                 $mapped = self::mapVotes($speeches, $votes, array_map('strval', array_keys($letters)), $byLetter);
             }
-            $results = self::outcomes($summary, $mapped, $authors);
+            $results = self::outcomes($summary, $mapped, $authors, $votes !== []);
             $this->db->run('DELETE FROM pn_vysledek WHERE ct = ?', [$ct]);
             $now = date('Y-m-d H:i:s');
             $this->db->insertMany('pn_vysledek', ['ct', 'cislo', 'pismena', 'stav', 'hlasovani', 'stanovisko', 'updated_at'], array_map(

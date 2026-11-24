@@ -11,8 +11,18 @@ final class ReelJobs
 {
     /** fresh úloha starší než tento počet dní se nevydá (expired) */
     public const FRESH_MAX_DAYS = 7;
-    /** vydaná úloha bez výsledku se po tolika minutách vrátí do fronty */
+    /** lhůta vydání po claim (lease_until): bez průběhu nebo výsledku se úloha po tolika minutách vrátí do fronty */
     public const CLAIM_TIMEOUT_MIN = 60;
+    /** lhůta vydání po každém hlášení průběhu (progress) */
+    public const PROGRESS_LEASE_MIN = 15;
+    /** propadlé vydání se vrátí do fronty s tímto odkladem (minuty) */
+    public const LEASE_RETRY_MIN = 10;
+    /** úloha bez rozboru AI se zkusí znovu za tolik minut */
+    public const AI_RETRY_MIN = 30;
+    /** na rozbor AI úloha čeká nejvýš tolik hodin od založení, pak failed (data) */
+    public const AI_MAX_HOURS = 6;
+    /** worker hlásí průběh po tolika sekundách (posílá se v odpovědi claim) */
+    public const PROGRESS_INTERVAL_S = 120;
     /** po tolika pokusech úloha skončí jako failed */
     public const MAX_ATTEMPTS = 3;
     /** pořadí výdeje podle zdroje úlohy, uvnitř podle created_at */
@@ -39,35 +49,58 @@ final class ReelJobs
     }
 
     /**
-     * Vydá další úlohu workeru, nebo null, když ve frontě nic není. Nejdřív uklidí prošlé fresh úlohy
-     * a vydané úlohy bez výsledku, pak bere frontu v pořadí manual, auto_pick, fresh.
+     * Vydá další úlohu workeru, nebo null, když ve frontě nic není. Nejdřív uklidí propadlá vydání a prošlé
+     * fresh úlohy, pak bere frontu bez odkladu (not_before) v pořadí manual, auto_pick, fresh. Úloha bez rozboru
+     * AI počká (wait_reason ai_title), dokud rozbor nedorazí, nejvýš AI_MAX_HOURS od založení.
      */
     public function claim(): ?array
     {
         $now = ($this->now)();
         $stampNow = $this->stamp($now);
 
-        // 1. vydaná úloha bez výsledku po 60 min: po 3 pokusech failed, jinak zpět do fronty
-        $staleBefore = $this->stamp($now - self::CLAIM_TIMEOUT_MIN * 60);
-        $this->db->run(
-            "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL
-              WHERE status = 'claimed' AND claimed_at < ? AND attempts >= ?",
-            ['PC nedokončilo úlohu ' . self::MAX_ATTEMPTS . '×', $stampNow, $staleBefore, self::MAX_ATTEMPTS]
-        );
-        $this->db->run(
-            "UPDATE reel_jobs SET status = 'queued', claim_token = NULL, claimed_at = NULL
-              WHERE status = 'claimed' AND claimed_at < ? AND attempts < ?",
-            [$staleBefore, self::MAX_ATTEMPTS]
-        );
+        // 1. propadlá vydání: lease_until v minulosti, starý worker bez lease_until podle claimed_at + 60 min.
+        //    Po řádcích (podmíněný UPDATE s tokenem), aby šlo po každé změně zapsat událost. Podmínka propadnutí
+        //    platí i v UPDATE: průběh, který mezi SELECT a UPDATE vydání prodloužil, se nepřepíše.
+        $staleCond = "status = 'claimed' AND (lease_until < ? OR (lease_until IS NULL AND claimed_at < ?))";
+        $staleParams = [$stampNow, $this->stamp($now - self::CLAIM_TIMEOUT_MIN * 60)];
+        $stale = $this->db->all("SELECT id, claim_token, attempts, stage FROM reel_jobs WHERE $staleCond ORDER BY id", $staleParams);
+        foreach ($stale as $row) {
+            $where = "id = ? AND claim_token = ? AND $staleCond";
+            $params = [(int)$row['id'], (string)$row['claim_token'], ...$staleParams];
+            if ((int)$row['attempts'] >= self::MAX_ATTEMPTS) {
+                // po 3 vydáních failed; poslední fáze z průběhu napoví, kde PC uvázlo
+                $stage = trim((string)($row['stage'] ?? ''));
+                $error = 'PC nedokončilo úlohu ' . self::MAX_ATTEMPTS . '×' . ($stage !== '' ? " (poslední fáze: $stage)" : '');
+                $this->db->run(
+                    "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = 'lease' WHERE $where",
+                    [$error, $stampNow, ...$params]
+                );
+            } else {
+                // zpět do fronty s odkladem: PC, které právě spadlo, nedostane úlohu hned znovu
+                $this->db->run(
+                    "UPDATE reel_jobs SET status = 'queued', claim_token = NULL, claimed_at = NULL, lease_until = NULL, stage = NULL,
+                            stage_at = NULL, fail_kind = 'lease', not_before = ?, wait_reason = 'retry' WHERE $where",
+                    [$this->stamp($now + self::LEASE_RETRY_MIN * 60), ...$params]
+                );
+            }
+        }
         // 2. fresh starší 7 dní se už nevydá; až po kroku 1, aby se nevydala ani prošlá úloha vrácená do fronty
-        $this->db->run(
-            "UPDATE reel_jobs SET status = 'expired', finished_at = ? WHERE source = 'fresh' AND status = 'queued' AND created_at < ?",
-            [$stampNow, $this->stamp($now - self::FRESH_MAX_DAYS * 86400)]
+        $expired = $this->db->all(
+            "SELECT id FROM reel_jobs WHERE source = 'fresh' AND status = 'queued' AND created_at < ? ORDER BY id",
+            [$this->stamp($now - self::FRESH_MAX_DAYS * 86400)]
         );
+        foreach ($expired as $row) {
+            $this->db->run(
+                "UPDATE reel_jobs SET status = 'expired', finished_at = ? WHERE id = ? AND status = 'queued'",
+                [$stampNow, (int)$row['id']]
+            );
+        }
 
-        // 3.–4. první úloha ve frontě; při souběhu nebo nepoužitelné úloze se zkusí další
+        // 3.–4. první úloha ve frontě bez odkladu; při souběhu nebo nepoužitelné úloze se zkusí další
         $queued = $this->db->all(
-            "SELECT id, source, ct, format_hint, focus_pn, autopilot FROM reel_jobs WHERE status = 'queued' ORDER BY " . self::SOURCE_ORDER . ', created_at, id'
+            "SELECT id, source, ct, format_hint, focus_pn, autopilot FROM reel_jobs
+              WHERE status = 'queued' AND (not_before IS NULL OR not_before <= ?) ORDER BY " . self::SOURCE_ORDER . ', created_at, id',
+            [$stampNow]
         );
         foreach ($queued as $job) {
             $id = (int)$job['id'];
@@ -94,18 +127,22 @@ final class ReelJobs
             $focus = self::parsePnArray($job['focus_pn'] ?? null);
             $card = $this->cardV2($ct, $focus);
             if ($card === null) {
-                $this->markFailed($id, $focus === null ? 'tisk nemá titulek z rozboru AI' : 'tisk ani zadané PN nemají titulek z rozboru AI');
+                $this->deferOrFail($id, $ct, $focus, $now);
                 continue;
             }
             $token = bin2hex(random_bytes(16));
             $claimed = $this->db->run(
-                "UPDATE reel_jobs SET status = 'claimed', claim_token = ?, claimed_at = ?, attempts = attempts + 1
+                "UPDATE reel_jobs SET status = 'claimed', claim_token = ?, claimed_at = ?, lease_until = ?, attempts = attempts + 1,
+                        not_before = NULL, wait_reason = NULL, stage = NULL, stage_at = NULL
                   WHERE id = ? AND status = 'queued'",
-                [$token, $stampNow, $id]
+                [$token, $stampNow, $this->stamp($now + self::CLAIM_TIMEOUT_MIN * 60), $id]
             );
             if ($claimed->rowCount() === 0) {
                 continue;
             }
+            // pořadí vydání a chyba předchozího pokusu (UPDATE výše error nemění)
+            $issued = $this->db->one('SELECT attempts, error FROM reel_jobs WHERE id = ?', [$id]);
+            $lastError = $issued !== null && $issued['error'] !== null && $issued['error'] !== '' ? (string)$issued['error'] : null;
             return [
                 'job_id' => $id,
                 'claim_token' => $token,
@@ -121,6 +158,12 @@ final class ReelJobs
                 'focus_pn_info' => $focus !== null ? $this->pnInfo($ct, $focus) : [],
                 // úloha autopilota (/pn): worker dělá jen 2 varianty (v2 a v3 pn). Starší worker pole ignoruje.
                 'autopilot' => self::isTrue($job['autopilot'] ?? false),
+                // protokol F3: kolikáté vydání, chyba minulého pokusu, lhůta vydání a interval hlášení průběhu.
+                // Starší worker pole ignoruje.
+                'attempt' => (int)($issued['attempts'] ?? 0),
+                'last_error' => $lastError,
+                'lease_s' => self::CLAIM_TIMEOUT_MIN * 60,
+                'progress_s' => self::PROGRESS_INTERVAL_S,
             ];
         }
         return null;
@@ -402,12 +445,59 @@ final class ReelJobs
         return $set->rowCount() > 0 ? 'ok' : 'taken';
     }
 
-    /** Úloha ve frontě, kterou nejde vydat, skončí jako failed (jen pokud je pořád queued). */
-    private function markFailed(int $id, string $error): void
+    /** Úloha ve frontě, kterou nejde vydat, skončí jako failed (jen pokud je pořád queued); $kind = fail_kind. */
+    private function markFailed(int $id, string $error, ?string $kind = null): void
     {
         $this->db->run(
-            "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ? WHERE id = ? AND status = 'queued'",
-            [$error, $this->stamp(($this->now)()), $id]
+            "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, fail_kind = ? WHERE id = ? AND status = 'queued'",
+            [$error, $this->stamp(($this->now)()), $kind, $id]
         );
+    }
+
+    /**
+     * Úloha bez karty (tisk ani zadané PN nemají titulek z rozboru AI). Když rozbor ještě neproběhl, počká
+     * AI_RETRY_MIN minut (wait_reason ai_title), po AI_MAX_HOURS od založení failed. Když rozbor proběhl a titulek
+     * nedal (např. závažnost pod 4), čekat nemá smysl: failed hned.
+     */
+    private function deferOrFail(int $id, int $ct, ?array $focus, int $now): void
+    {
+        if (!$this->aiPending($ct, $focus)) {
+            $this->markFailed($id, $focus === null ? 'tisk nemá titulek z rozboru AI' : 'tisk ani zadané PN nemají titulek z rozboru AI', 'data');
+            return;
+        }
+        $young = $this->db->value(
+            'SELECT 1 FROM reel_jobs WHERE id = ? AND created_at >= ?',
+            [$id, $this->stamp($now - self::AI_MAX_HOURS * 3600)]
+        );
+        if ($young !== null) {
+            $this->db->run(
+                "UPDATE reel_jobs SET not_before = ?, wait_reason = 'ai_title' WHERE id = ? AND status = 'queued'",
+                [$this->stamp($now + self::AI_RETRY_MIN * 60), $id]
+            );
+            return;
+        }
+        $this->markFailed($id, ($focus === null ? 'rozbor AI tisku' : 'rozbor AI zadaných PN') . ' nedorazil do ' . self::AI_MAX_HOURS . ' h', 'data');
+    }
+
+    /**
+     * Rozbor AI ještě neproběhl: u úlohy k PN některé zadané PN nemá řádek pn_text nebo rozbor (ai_json IS NULL;
+     * PN, které ještě není v tabulce pn, také), u celého tisku chybí řádek tisk_text nebo rozbor.
+     */
+    private function aiPending(int $ct, ?array $focus): bool
+    {
+        if ($focus === null) {
+            $bill = $this->db->one('SELECT ai_json FROM tisk_text WHERE ct = ?', [$ct]);
+            return $bill === null || $bill['ai_json'] === null;
+        }
+        if ($focus === []) {
+            return false;
+        }
+        $marks = implode(', ', array_fill(0, count($focus), '?'));
+        $done = (int)$this->db->value(
+            "SELECT COUNT(DISTINCT p.cislo) FROM pn p JOIN pn_text x ON x.id_dokument = p.id_dokument
+              WHERE p.ct = ? AND p.cislo IN ($marks) AND x.ai_json IS NOT NULL",
+            [$ct, ...$focus]
+        );
+        return $done < count(array_unique($focus));
     }
 }

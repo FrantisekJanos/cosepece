@@ -1689,6 +1689,8 @@ check('prošlá fresh vrácená z claimed → expired', $rjStatus($rjOldClaimed)
 
 $rjReset();
 $rjStale = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('a', 32)]);
+$jobs->claim(); // propadlé vydání jde zpět do fronty s odkladem 10 min, v tomtéž claimu se nevydá
+$rjClock += 601;
 $rjC = $jobs->claim();
 check('claimed bez výsledku po 61 min se vydá znovu', [$rjC['job_id'] ?? null, (int)$rjStatus($rjStale)['attempts']], [$rjStale, 2]);
 check('starý token po novém claimu neplatí', $jobs->checkClaim($rjStale, str_repeat('a', 32)), false);
@@ -1777,7 +1779,8 @@ $rjAdd('manual', 311);
 check('has_amendments bez „nahrazuje se“', $jobs->claim()['has_amendments'] ?? null, false);
 check('karta v2 bez titulku → null', $jobs->cardV2(78), null);
 $rjNo = $rjAdd('manual', 78);
-check('úloha k tisku bez titulku se nevydá → failed', [$jobs->claim(), $rjStatus($rjNo)['status']], [null, 'failed']);
+check('úloha k tisku bez rozboru AI se nevydá → čeká na titulek', [$jobs->claim(), $rjStatus($rjNo)['status'],
+    db()->value('SELECT wait_reason FROM reel_jobs WHERE id = ?', [$rjNo])], [null, 'queued', 'ai_title']);
 // /pn k tisku bez titulku (např. rozpočet, PN s nízkou závažností): karta z rozboru zadaného PN
 $rjReset();
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (99781, 9781, 78, 'Test Autor', '2026-11-24 10:00:00'), (99782, 9782, 78, 'Test Autor', '2026-11-24 10:01:00')");
@@ -1961,6 +1964,8 @@ $raOld = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_
 $api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '1'], $raMp4(), $raH($raOld));
 $api->handle('PUT', 'video', ['job_id' => (string)$raJob2, 'n' => '2'], $raMp4(), $raH($raOld));
 $rjClock += 61 * 60;
+$api->handle('GET', 'claim', [], '', $raH()); // propadlé vydání: zpět do fronty s odkladem 10 min
+$rjClock += 601;
 $raNew = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
 check('nový claim po vypršení', [$raNew !== '' && $raNew !== $raOld, $rjStatus($raJob2)['status']], [true, 'claimed']);
 check('nový claim smaže videa předchozího pokusu', is_file($raInbox . '/' . $raJob2 . '/variant-1.mp4'), false);
@@ -1990,6 +1995,102 @@ if (!is_writable($raRo)) { // root (Docker) zapisuje i do 0555, tam se kontrola 
     $raRoApi = new Hlidac\ReelsApi(db(), ['reels' => ['worker_token' => $raToken, 'inbox_dir' => $raRo]] + $raCfg);
     check('claim do nezapisovatelné mezisložky → 500', $raRoApi->handle('GET', 'claim', [], '', $raH())[0], 500);
 }
+
+// --- F3: protokol úloh (odklad not_before, lhůta vydání lease_until, čekání na rozbor AI, druh chyby)
+echo "Reels F3: protokol úloh\n";
+$f3Set = function (int $id, array $cols): void {
+    $sets = implode(', ', array_map(fn(string $c): string => "$c = ?", array_keys($cols)));
+    db()->run("UPDATE reel_jobs SET $sets WHERE id = ?", [...array_values($cols), $id]);
+};
+$f3Row = fn(int $id) => db()->one('SELECT status, attempts, error, fail_kind, wait_reason, not_before, lease_until, stage, claim_token FROM reel_jobs WHERE id = ?', [$id]);
+// čas z DB jako unixový čas: PostgreSQL vrací timestamptz s posunem pásma, SQLite text bez něj
+$f3Ts = fn(mixed $v): ?int => $v === null ? null : (strtotime((string)$v) ?: null);
+
+$rjReset();
+$f3Old = $rjAdd('manual', 221, ['age' => 120]);
+$f3Set($f3Old, ['not_before' => $jobs->stamp($rjClock + 300)]);
+$f3New = $rjAdd('manual', 311, ['age' => 60]);
+$f3A = $jobs->claim();
+$rjClock += 360;
+$f3B = $jobs->claim();
+check('F3: úloha s budoucím not_before se nevydá a pustí další', [$f3A['job_id'] ?? null, $f3B['job_id'] ?? null], [$f3New, $f3Old]);
+check('F3: claim bez předchozí chyby: last_error null', [array_key_exists('last_error', $f3A ?? []), $f3A['last_error'] ?? null], [true, null]);
+
+$rjReset();
+$f3L = $rjAdd('manual', 221);
+$f3Set($f3L, ['error' => 'předchozí chyba', 'not_before' => $jobs->stamp($rjClock - 1), 'wait_reason' => 'retry', 'stage' => 'render',
+    'stage_at' => $jobs->stamp($rjClock - 900)]);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3L);
+check('F3: claim nastaví lease_until na 60 min a vrátí attempt, last_error, lease_s, progress_s',
+    [$f3C['job_id'] ?? null, $f3Ts($f3R['lease_until']), $f3C['attempt'] ?? null, $f3C['lease_s'] ?? null, $f3C['progress_s'] ?? null, $f3C['last_error'] ?? null],
+    [$f3L, $rjClock + 3600, 1, 3600, 120, 'předchozí chyba']);
+check('F3: vydání smaže odklad, důvod čekání a fázi', [$f3R['not_before'], $f3R['wait_reason'], $f3R['stage']], [null, null, null]);
+
+$rjReset();
+$f3Exp = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 30 * 60, 'token' => str_repeat('e', 32)]);
+$f3Set($f3Exp, ['lease_until' => $jobs->stamp($rjClock - 1), 'stage' => 'model', 'stage_at' => $jobs->stamp($rjClock - 600)]);
+// vydání prodloužené průběhem: lease_until v budoucnu platí, i když claimed_at je starší než 60 min
+$f3Live = $rjAdd('manual', 311, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('f', 32)]);
+$f3Set($f3Live, ['lease_until' => $jobs->stamp($rjClock + 1)]);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Exp);
+check('F3: propadlé vydání podle lease_until → queued s odkladem 10 min',
+    [$f3C, $f3R['status'], $f3R['fail_kind'], $f3R['wait_reason'], $f3Ts($f3R['not_before']), $f3R['claim_token'], $f3R['lease_until'], $f3R['stage'], (int)$f3R['attempts']],
+    [null, 'queued', 'lease', 'retry', $rjClock + 600, null, null, null, 1]);
+check('F3: vydání s lease_until v budoucnu zůstává (claimed_at nerozhoduje)', $f3Row($f3Live)['status'], 'claimed');
+
+$rjReset();
+$f3Keep = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 59 * 60, 'token' => str_repeat('g', 32)]);
+$f3Drop = $rjAdd('manual', 311, ['status' => 'claimed', 'attempts' => 1, 'claimed_ago' => 61 * 60, 'token' => str_repeat('h', 32)]);
+$jobs->claim();
+check('F3: starý worker bez lease_until propadá podle claimed_at + 60 min', [$f3Row($f3Keep)['status'], $f3Row($f3Drop)['status'], $f3Row($f3Drop)['fail_kind']],
+    ['claimed', 'queued', 'lease']);
+
+$rjReset();
+$f3Dead = $rjAdd('manual', 221, ['status' => 'claimed', 'attempts' => 3, 'claimed_ago' => 30 * 60, 'token' => str_repeat('i', 32)]);
+$f3Set($f3Dead, ['lease_until' => $jobs->stamp($rjClock - 1), 'stage' => 'render']);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Dead);
+check('F3: třetí propadlé vydání → failed s poslední fází', [$f3C, $f3R['status'], $f3R['error'], $f3R['fail_kind'], $f3R['claim_token']],
+    [null, 'failed', 'PC nedokončilo úlohu 3× (poslední fáze: render)', 'lease', null]);
+
+// tisk 78 nemá text ani titulek; PN 9783 bez řádku pn_text (rozbor AI ještě neproběhl), PN 9784 s hotovým rozborem bez titulku
+db()->run("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (99783, 9783, 78, 'Test Autor', '2026-11-24 10:00:00'), (99784, 9784, 78, 'Test Autor', '2026-11-24 10:01:00')");
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_score, ai_model, ai_json) VALUES (99784, 78, 9784, 'x', 1, 0, 0, 'claude-haiku-5-5', ?)",
+    [json_encode(['zavaznost' => 0])]);
+$rjReset();
+$f3Wait = $rjAdd('manual', 78);
+$f3Set($f3Wait, ['focus_pn' => '{9783}']);
+$f3WaitMix = $rjAdd('manual', 78);
+$f3Set($f3WaitMix, ['focus_pn' => '{9783,9784}']);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Wait);
+$f3Waiting = [$f3C, $f3R['status'], $f3R['wait_reason'], $f3Ts($f3R['not_before']), (int)$f3R['attempts']];
+$f3MixR = $f3Row($f3WaitMix);
+$rjReset();
+$f3Late = $rjAdd('manual', 78, ['age' => 6 * 3600 + 1]);
+$f3Set($f3Late, ['focus_pn' => '{9783}']);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Late);
+check('F3: úloha bez rozboru AI čeká 30 min, po 6 h selže', [$f3Waiting, [$f3C, $f3R['status'], $f3R['fail_kind'], $f3R['error']]],
+    [[null, 'queued', 'ai_title', $rjClock + 1800, 0], [null, 'failed', 'data', 'rozbor AI zadaných PN nedorazil do 6 h']]);
+check('F3: čeká i úloha, kde rozbor chybí jen u některého zadaného PN', [$f3MixR['status'], $f3MixR['wait_reason']], ['queued', 'ai_title']);
+$rjReset();
+$f3LateBill = $rjAdd('manual', 78, ['age' => 6 * 3600 + 1]);
+$jobs->claim();
+$f3R = $f3Row($f3LateBill);
+check('F3: úloha k tisku bez rozboru AI po 6 h selže', [$f3R['status'], $f3R['fail_kind'], $f3R['error']], ['failed', 'data', 'rozbor AI tisku nedorazil do 6 h']);
+$rjReset();
+$f3Done = $rjAdd('manual', 78);
+$f3Set($f3Done, ['focus_pn' => '{9784}']);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Done);
+check('F3: rozbor AI hotový bez titulku selže hned', [$f3C, $f3R['status'], $f3R['error'], $f3R['fail_kind']],
+    [null, 'failed', 'tisk ani zadané PN nemají titulek z rozboru AI', 'data']);
+db()->run('DELETE FROM pn_text WHERE id_dokument IN (99783, 99784)');
+db()->run('DELETE FROM pn WHERE id_dokument IN (99783, 99784)');
+$rjReset();
 
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
 db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([

@@ -25,6 +25,12 @@ def test_zadny_klic():
     assert pick_formats([], has_amendments=False) == ["pn", "cesta"]
 
 
+def test_video_k_pn_ma_pevne_formaty():
+    # zadání /pn: oba formáty v3 o obsahu PN, hint ani klíče důvodů nerozhodují
+    assert pick_formats(["deadline_cut"], False, hint="cesta", focus=True) == ["pn", "zmena"]
+    assert pick_formats([], True, focus=True) == ["pn", "zmena"]
+
+
 def test_hint_je_prvni():
     assert pick_formats(["deadline_cut", "late_pn"], False, hint="zmena") == ["zmena", "cesta"]
 

@@ -16,7 +16,7 @@ from ..card import Card
 from ..media import probe
 from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
-from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude, write_published
+from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude, write_focus, write_published
 from .formats import pick_formats
 from .validate import check_layout, validate_variant
 
@@ -45,7 +45,8 @@ class GenResult:
     runs: list[dict] = field(default_factory=list)  # stav běhů claude -p (timeout, návratový kód)
 
 
-def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool) -> dict | None:
+def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
+           focus_pn: list[int] | None = None) -> dict | None:
     """Načte a ověří variantu; vrací kartu, nebo None (chyby v v.errors)."""
     d = workdir / f"variant-{v.n}"
     v.errors = []
@@ -63,7 +64,7 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         return None
     try:  # pád kontroly (nečekaný tvar karty, chybějící Chromium) vyřadí jen tuto variantu
         v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
-                                    fmt=v.format)
+                                    fmt=v.format, focus_pn=focus_pn)
         if not v.errors and layout:
             v.errors = check_layout(card, v.template)
     except Exception as e:  # noqa: BLE001
@@ -91,18 +92,22 @@ def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
 def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: bool, out: Path, mcp_config: Path,
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
              timeout_s: int = 1200, landscape: bool = True,
-             published: list[dict] | None = None) -> GenResult:
+             published: list[dict] | None = None, focus_pn: list[int] | None = None,
+             focus_info: list[dict] | None = None) -> GenResult:
+    """Sada 3 variant k tisku; focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
         shutil.rmtree(old, ignore_errors=True)
     (out / "vysledek.json").unlink(missing_ok=True)
-    formats = pick_formats(reason_keys, has_amendments, hint)
-    (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats},
-                                              ensure_ascii=False, indent=1), encoding="utf-8")
+    focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
+    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None)
+    (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats,
+                                               "focus_pn": focus_pn}, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
     prepare_workdir(out, ct)
     write_published(out, published or [])
+    write_focus(out, focus_pn, focus_info or [])
     variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", formats[0]),
                 Variant(3, "template_v3", formats[1])]
 
@@ -117,7 +122,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out), workdir=out, mcp_config=mcp_config,
                         model=model, timeout_s=timeout_s))
-    cards = {v.n: _check(v, out, ct, reason_keys, render) for v in variants}
+    cards = {v.n: _check(v, out, ct, reason_keys, render, focus_pn) for v in variants}
     for v in variants:
         with_timeout(v)
     broken = {v.n: v.errors for v in variants if cards[v.n] is None}
@@ -126,7 +131,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
                             mcp_config=mcp_config, model=model, timeout_s=timeout_s))
         for v in variants:
             if v.n in broken:
-                cards[v.n] = _check(v, out, ct, reason_keys, render)
+                cards[v.n] = _check(v, out, ct, reason_keys, render, focus_pn)
                 with_timeout(v)
 
     for v in variants:  # render vždy jen jeden najednou
@@ -165,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reasons", default="", help="klíče důvodů skóre seřazené podle váhy, čárkou")
     ap.add_argument("--has-amendments", action="store_true", help="návrh má novelizační body „nahrazuje se“")
     ap.add_argument("--format", dest="hint", choices=["cesta", "pn", "zmena", "rozprava"])
+    ap.add_argument("--pn", default="", help="video jen o těchto PN tisku, čísla čárkou (jako /pn)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--mcp-config", type=Path, required=True, help="JSON s MCP serverem cosepece (mimo repo)")
     ap.add_argument("--no-render", action="store_true")
@@ -181,9 +187,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"chybí konfigurace MCP: {args.mcp_config}", file=sys.stderr)
         return 1
     reasons = [k for k in args.reasons.split(",") if k]
+    try:
+        focus = [int(n) for n in args.pn.split(",") if n.strip()] or None
+    except ValueError:
+        print(f"chybné --pn: {args.pn}", file=sys.stderr)
+        return 1
     r = generate(ct=args.ct, card_v2=card_v2, reason_keys=reasons, has_amendments=args.has_amendments,
                  out=args.out, mcp_config=args.mcp_config, model=args.model, hint=args.hint,
-                 render=not args.no_render, timeout_s=args.timeout, landscape=not args.no_landscape)
+                 render=not args.no_render, timeout_s=args.timeout, landscape=not args.no_landscape,
+                 focus_pn=focus)
     for v in r.variants:
         print(f"varianta {v.n} ({v.template} {v.format or ''}): {'OK' if v.ok else 'CHYBA'} "
               f"{'; '.join(v.errors + v.warnings)}")

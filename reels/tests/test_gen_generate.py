@@ -225,3 +225,29 @@ def test_vadna_varianta_sirku_nerenderuje(tmp_path, fake):
     fake["prepare"] = lambda wd: shutil.rmtree(wd / "variant-3")
     _run(tmp_path)
     assert fake["landscape"] == ["template_v2", "template_v3"]
+
+
+FOCUS_INFO = [{"cislo": 2315, "osoba": "Jana Malá", "cas": "2026-11-23 20:09:00", "titulek": "Mění daň",
+               "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=2315&o=10"}]
+
+
+def test_video_k_pn_zadani_a_formaty(tmp_path, fake):
+    r = _run(tmp_path, focus_pn=[2315], focus_info=FOCUS_INFO, hint="cesta", render=False)
+    assert r.formats == ["pn", "zmena"]
+    out = tmp_path / "out"
+    tisk = json.loads((out / "tisk.json").read_text(encoding="utf-8"))
+    assert tisk["focus_pn"] == [2315] and tisk["formats"] == ["pn", "zmena"]
+    zadani = (out / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "PN 2315" in zadani and "Jana Malá" in zadani
+    # další běh bez PN zadání smaže
+    _run(tmp_path, render=False)
+    assert not (out / "podklady" / "zadani.md").exists()
+    assert json.loads((out / "tisk.json").read_text(encoding="utf-8"))["focus_pn"] is None
+
+
+def test_video_k_pn_karta_bez_pn_vypadne(tmp_path, fake):
+    r = _run(tmp_path, focus_pn=[9999], focus_info=[], render=False)
+    assert not r.variants[0].ok
+    assert any("9999" in e for e in r.variants[0].errors)
+    # oprava dostala chybu PN
+    assert len(fake["calls"]) == 2 and "9999" in fake["calls"][1]

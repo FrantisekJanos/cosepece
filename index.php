@@ -48,7 +48,7 @@ View::header('Přehled', 'prehled');
   <div class="card kpi">
     <div class="kpi-label">Podáno za posledních 7 dní</div>
     <div class="kpi-value"><?= $s['pn_7d'] ?></div>
-    <div class="kpi-note"><?php if ($s['pn_7d_top']): ?>z toho <?= (int)$s['pn_7d_top']['n'] ?> k tisku <a href="tisk.php?ct=<?= (int)$s['pn_7d_top']['ct'] ?>"><?= (int)$s['pn_7d_top']['ct'] ?></a><?php else: ?>žádné nové návrhy<?php endif; ?></div>
+    <div class="kpi-note"><?php if ($s['pn_7d_top']): ?>z toho <?= (int)$s['pn_7d_top']['n'] ?> k tisku <a href="<?= e(url('tisk', ['ct' => (int)$s['pn_7d_top']['ct']])) ?>"><?= (int)$s['pn_7d_top']['ct'] ?></a><?php else: ?>žádné nové návrhy<?php endif; ?></div>
   </div>
   <div class="card kpi">
     <div class="kpi-label">Navrženo schválit v 1. čtení (§ 90/2)</div>
@@ -58,7 +58,7 @@ View::header('Přehled', 'prehled');
   <div class="card kpi">
     <div class="kpi-label">Zkrácená lhůta</div>
     <div class="kpi-value kpi-warn"><?= $s['zl'] ?></div>
-    <div class="kpi-note"><?php if ($s['zl_last']): ?>naposledy <?= e(formatDate($s['zl_last']['datum'])) ?> (tisk <a href="tisk.php?ct=<?= (int)$s['zl_last']['ct'] ?>"><?= (int)$s['zl_last']['ct'] ?></a>)<?php else: ?>zatím žádná<?php endif; ?></div>
+    <div class="kpi-note"><?php if ($s['zl_last']): ?>naposledy <?= e(formatDate($s['zl_last']['datum'])) ?> (tisk <a href="<?= e(url('tisk', ['ct' => (int)$s['zl_last']['ct']])) ?>"><?= (int)$s['zl_last']['ct'] ?></a>)<?php else: ?>zatím žádná<?php endif; ?></div>
   </div>
 </section>
 
@@ -68,7 +68,7 @@ View::header('Přehled', 'prehled');
       <h2>Hlavní nálezy</h2>
       <p class="muted small head-note">Rozpracované tisky se skóre od <?= (int)$w['finding_min'] ?> bodů (a uzavřené za poslední 4 měsíce), k tomu tisky s nálezem AI od <?= (int)$w['finding_ai_min'] ?>/10 ověřeným silnějším modelem. Skóre hodnotí postup (obcházení připomínek, zrychlení, přílepky), ne politický obsah. Titulky a shrnutí připravuje AI a může se mýlit; rozhodující je původní text.</p>
     </div>
-    <a href="tisky.php?min=<?= (int)$w['finding_min'] ?>">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
+    <a href="<?= e(url('tisky', ['min' => (int)$w['finding_min']])) ?>">Všechny od <?= (int)$w['finding_min'] ?> bodů</a>
   </div>
   <?php if ($found['total'] > 0): ?>
   <div class="finding-controls">
@@ -96,7 +96,7 @@ View::header('Přehled', 'prehled');
   <?php endif; ?>
   <div class="findings">
     <?php foreach ($findings as $i => $t): ?>
-      <a class="finding" href="tisk.php?ct=<?= (int)$t['ct'] ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
+      <a class="finding" href="<?= e(url('tisk', ['ct' => (int)$t['ct']])) ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
         <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null || ($sort === 'ai' && $t['ai_verified'] !== null)): ?><span class="chip <?= (int)$t['ai_verified'] >= 6 ? 'chip-cut' : 'chip-surge' ?>" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['ai_verified'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
@@ -137,11 +137,11 @@ View::header('Přehled', 'prehled');
   <section class="card main-col" aria-label="Poslední upozornění">
     <div class="card-head">
       <h2>Poslední upozornění</h2>
-      <a href="upozorneni.php">Všechna upozornění</a>
+      <a href="<?= e(url('upozorneni')) ?>">Všechna upozornění</a>
     </div>
     <?php View::alertList($alerts); ?>
     <?php if ($suppressed > 0): ?>
-      <p class="suppressed"><a href="upozorneni.php?vse=1"><?= $suppressed ?> běžných událostí je skryto</a> – mají nízké skóre závažnosti.</p>
+      <p class="suppressed"><a href="<?= e(url('upozorneni', ['vse' => 1])) ?>"><?= $suppressed ?> běžných událostí je skryto</a> – mají nízké skóre závažnosti.</p>
     <?php endif; ?>
   </section>
 
@@ -152,7 +152,7 @@ View::header('Přehled', 'prehled');
         <p class="muted">Nastavte sledované zákony v konfiguraci (<code>watch_laws</code>).</p>
       <?php endif; ?>
       <?php foreach (array_slice($watch, 0, 4) as $t): ?>
-        <a class="watch" href="tisk.php?ct=<?= (int)$t['ct'] ?>">
+        <a class="watch" href="<?= e(url('tisk', ['ct' => (int)$t['ct']])) ?>">
           <span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['typ_navrhu']) ?> návrh</span>
           <strong><?= e($t['nazev']) ?></strong>
           <span class="small"><?= e($t['faze']) ?> · <?= (int)$t['pn_count'] ?> PN · <?= e(formatDate($t['posledni'])) ?></span>
@@ -180,10 +180,10 @@ View::header('Přehled', 'prehled');
   <div class="card-head">
     <h2>Tisky ke sledování</h2>
     <div class="filters">
-      <a class="pill active" href="tisky.php?f=flagged">Všechny příznaky</a>
-      <a class="pill" href="tisky.php?f=mp">Poslanecké návrhy</a>
-      <a class="pill" href="tisky.php?f=p90">Zrychlené čtení</a>
-      <a class="pill" href="tisky.php?f=cut">Zkrácená lhůta</a>
+      <a class="pill active" href="<?= e(url('tisky', ['f' => 'flagged'])) ?>">Všechny příznaky</a>
+      <a class="pill" href="<?= e(url('tisky', ['f' => 'mp'])) ?>">Poslanecké návrhy</a>
+      <a class="pill" href="<?= e(url('tisky', ['f' => 'p90'])) ?>">Zrychlené čtení</a>
+      <a class="pill" href="<?= e(url('tisky', ['f' => 'cut'])) ?>">Zkrácená lhůta</a>
     </div>
   </div>
   <?php require __DIR__ . '/app/partials/bills_table.php'; ?>

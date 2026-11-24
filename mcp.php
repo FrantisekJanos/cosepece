@@ -147,7 +147,7 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
         </div>
       <?php elseif ($canIssue): ?>
         <?php if (isset($issued['error'])): ?><p class="token-error" role="alert"><?= e($issued['error']) ?></p><?php endif; ?>
-        <form class="token-form" method="post" action="mcp.php#pristup">
+        <form class="token-form" method="post" action="<?= e(url('mcp', [], 'pristup')) ?>">
           <label for="ucel">K čemu MCP použijete? <span class="muted small">(nepovinné, pomůže nám s plánováním; nepište osobní údaje)</span></label>
           <input id="ucel" name="ucel" type="text" maxlength="80" placeholder="např. rešerše k článku, výzkum, vlastní projekt" autocomplete="off">
           <input type="text" name="web" value="" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
@@ -206,7 +206,7 @@ View::header('Pro AI asistenty (MCP)', 'mcp', 'Napojení AI asistentů (Claude a
 
     <section class="card pad" id="upozorneni">
       <h2>Upozornění</h2>
-      <p>Data jsou stejná jako na webu, ale odpověď skládá váš asistent a může se mýlit: špatně shrnout, přehlédnout souvislost nebo si citaci domyslet. Doslovné citace si nechte ověřit nástrojem <code>over_citaci</code> a důležité údaje zkontrolujte na psp.cz. Hodnocení AI v datech (skóre, titulky) má stejná omezení jako na webu, viz <a href="metodika.php#odpovednost">omezení odpovědnosti</a>. Jiná strojová data (JSON, RSS) jsou na stránce <a href="data.php">Data a API</a>.</p>
+      <p>Data jsou stejná jako na webu, ale odpověď skládá váš asistent a může se mýlit: špatně shrnout, přehlédnout souvislost nebo si citaci domyslet. Doslovné citace si nechte ověřit nástrojem <code>over_citaci</code> a důležité údaje zkontrolujte na psp.cz. Hodnocení AI v datech (skóre, titulky) má stejná omezení jako na webu, viz <a href="<?= e(url('metodika', [], 'odpovednost')) ?>">omezení odpovědnosti</a>. Jiná strojová data (JSON, RSS) jsou na stránce <a href="<?= e(url('data')) ?>">Data a API</a>.</p>
     </section>
   </div>
 </div>

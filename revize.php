@@ -20,7 +20,7 @@ $analyses = $id > 0 ? Revisions::aiVersions(db(), $kind, $id, $obdobi) : [];
 if ($texts === [] && $analyses === []) {
     http_response_code(404);
     View::header('Historie nenalezena', 'tisky');
-    echo '<section class="card pad"><h1>Historie nenalezena</h1><p><a href="tisky.php">Zpět na seznam tisků</a></p></section>';
+    echo '<section class="card pad"><h1>Historie nenalezena</h1><p><a href="' . e(url('tisky')) . '">Zpět na seznam tisků</a></p></section>';
     View::footer();
     exit;
 }
@@ -28,7 +28,7 @@ if ($texts === [] && $analyses === []) {
 $ct = (int)(($texts !== [] ? end($texts) : end($analyses))['ct']);
 $cislo = $texts !== [] ? (int)end($texts)['cislo'] : 0;
 $past = $obdobi !== $current;
-$billUrl = $past ? View::pspTiskUrl($ct, $obdobi) : 'tisk.php?ct=' . $ct;
+$billUrl = $past ? View::pspTiskUrl($ct, $obdobi) : url('tisk', ['ct' => $ct]);
 $subject = $kind === 'tisk' ? 'textu návrhu zákona' : 'pozměňovacího návrhu' . ($cislo > 0 ? ' č. ' . $cislo : '');
 
 // porovnávané verze: výchozí předposlední → poslední
@@ -58,7 +58,7 @@ $docLabel = function (?string $url): string {
 
 View::header('Historie ' . $subject . ' – tisk ' . $ct, 'tisky', 'Předchozí znění a rozbory ' . $subject . ' k tisku ' . $ct . '.');
 ?>
-<p class="crumbs"><a href="tisky.php">Tisky</a> › <a href="<?= e($billUrl) ?>">Tisk <?= $ct ?><?= $past ? ' (' . $obdobi . '. období)' : '' ?></a> › Historie</p>
+<p class="crumbs"><a href="<?= e(url('tisky')) ?>">Tisky</a> › <a href="<?= e($billUrl) ?>">Tisk <?= $ct ?><?= $past ? ' (' . $obdobi . '. období)' : '' ?></a> › Historie</p>
 <section class="detail-head">
   <h1>Historie <?= e($subject) ?></h1>
   <p class="muted">Tisk <?= $ct ?> · <?= e(Revisions::versionsLabel(count($texts))) ?> textu · <?= count($analyses) ?> <?= count($analyses) === 1 ? 'rozbor' : (count($analyses) >= 2 && count($analyses) <= 4 ? 'rozbory' : 'rozborů') ?> AI<?= $past ? ' · ' . $obdobi . '. volební období' : '' ?></p>
@@ -90,7 +90,7 @@ View::header('Historie ' . $subject . ' – tisk ' . $ct, 'tisky', 'Předchozí 
 <?php if (count($numbers) >= 2): ?>
 <section class="card pad" aria-label="Rozdíl mezi verzemi">
   <h2>Rozdíl mezi verzemi</h2>
-  <form class="diff-form" method="get" action="revize.php">
+  <form class="diff-form" method="get" action="<?= e(url('revize')) ?>">
     <input type="hidden" name="druh" value="<?= e($kind) ?>">
     <input type="hidden" name="id" value="<?= $id ?>">
     <?php if ($past): ?><input type="hidden" name="o" value="<?= $obdobi ?>"><?php endif; ?>

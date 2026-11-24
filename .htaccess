@@ -17,6 +17,13 @@ DirectoryIndex index.php
   RewriteRule ^(app|bin|data|deploy|docker|rag|reels|tests|podnety)(/|$) - [F,L]
   # soubory a adresáře začínající tečkou (.github, .dockerignore, .gitattributes…), kromě .well-known
   RewriteRule (^|/)\.(?!well-known/) - [F,L]
+  # hezké adresy bez .php: /tisk/221, /zakon/159/2006, /tisky… Tabulka je v app/Url.php (shodu hlídá test),
+  # staré adresy s .php přesměruje app/bootstrap.php. Bez mod_rewrite nastavte v config.php pretty_urls = false.
+  RewriteRule ^tisk/([0-9]+)/?$ tisk.php?ct=$1 [L,QSA]
+  RewriteRule ^zakon/([0-9]{1,4})/([0-9]{4})/?$ zakon.php?z=$1/$2 [L,QSA]
+  RewriteRule ^zakony/?$ zakon.php [L,QSA]
+  RewriteRule ^data-a-api/?$ data.php [L,QSA]
+  RewriteRule ^(tisky|tisk|upozorneni|pripravovane|metodika|mcp|zmeny|hledat|revize)/?$ $1.php [L,QSA]
 </IfModule>
 
 # Bezpečnostní hlavičky: web nejde vložit do cizí stránky (clickjacking), žádné pluginy ani cizí formuláře,

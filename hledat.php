@@ -41,7 +41,7 @@ $q = mb_substr(trim((string)($_GET['q'] ?? '')), 0, 100);
 // samotné číslo tisku vede rovnou na tisk
 if (preg_match('~^(?:(?:sněmovní\s+)?tisk\s*)?(\d{1,4})$~ui', $q, $m) && db()->value('SELECT 1 FROM tisky WHERE ct = ?', [(int)$m[1]]) !== null) {
     if (!headers_sent()) {
-        header('Location: tisk.php?ct=' . (int)$m[1], true, 302);
+        header('Location: ' . url('tisk', ['ct' => (int)$m[1]]), true, 302);
     }
     exit;
 }
@@ -60,7 +60,7 @@ View::header($q !== '' ? 'Hledání: ' . $q : 'Hledání', 'hledat', 'Hledání 
 
 <?php if ($q !== '' && $total === 0): ?>
 <section class="card pad">
-  <p>Zkuste kratší nebo obecnější slovo, číslo tisku (např. <a href="hledat.php?q=221">221</a>), číslo zákona (<a href="hledat.php?q=159%2F2006">159/2006</a>) nebo jméno poslance. Hledá se bez ohledu na diakritiku a stačí začátek slova.</p>
+  <p>Zkuste kratší nebo obecnější slovo, číslo tisku (např. <a href="<?= e(url('hledat', ['q' => '221'])) ?>">221</a>), číslo zákona (<a href="<?= e(url('hledat', ['q' => '159/2006'])) ?>">159/2006</a>) nebo jméno poslance. Hledá se bez ohledu na diakritiku a stačí začátek slova.</p>
 </section>
 <?php endif; ?>
 
@@ -70,7 +70,7 @@ View::header($q !== '' ? 'Hledání: ' . $q : 'Hledání', 'hledat', 'Hledání 
   <ul class="search-results">
     <?php foreach ($items as $it): ?>
       <li>
-        <a href="<?= e($it['u']) ?>"><?php if ($it['k'] === 'tisk'): ?><?= View::scoreBadge((int)$it['w']) ?> <?php endif; ?><strong><?= e($it['t']) ?></strong></a>
+        <a href="<?= e(SearchIndex::href((string)$it['u'])) ?>"><?php if ($it['k'] === 'tisk'): ?><?= View::scoreBadge((int)$it['w']) ?> <?php endif; ?><strong><?= e($it['t']) ?></strong></a>
         <?php if ($it['s'] !== ''): ?><span class="muted small"><?= e($it['s']) ?></span><?php endif; ?>
         <?php if ($it['d'] !== ''): ?><span class="small"><?= e($it['d']) ?></span><?php endif; ?>
       </li>

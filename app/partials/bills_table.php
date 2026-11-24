@@ -17,8 +17,8 @@ if ($bills === []): ?>
       <?php foreach ($bills as $b): ?>
         <tr>
           <td><?= View::scoreBadge((int)$b['score']) ?></td>
-          <td class="strong"><a href="tisk.php?ct=<?= (int)$b['ct'] ?>"><?= (int)$b['ct'] ?></a></td>
-          <td class="wide"><a class="plain" href="tisk.php?ct=<?= (int)$b['ct'] ?>"><?= e($b['nazev']) ?></a></td>
+          <td class="strong"><a href="<?= e(url('tisk', ['ct' => (int)$b['ct']])) ?>"><?= (int)$b['ct'] ?></a></td>
+          <td class="wide"><a class="plain" href="<?= e(url('tisk', ['ct' => (int)$b['ct']])) ?>"><?= e($b['nazev']) ?></a></td>
           <td class="muted"><?= e($b['navrhovatel']) ?></td>
           <td class="num strong"><?= (int)$b['pn_count'] ?></td>
           <td><span class="chips"><?= View::chips($b['flags']) ?></span></td>

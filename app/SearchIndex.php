@@ -13,7 +13,8 @@ namespace Hlidac;
 
 final class SearchIndex
 {
-    public const VERSION = 1;
+    // 2: adresy položek jsou hezké cesty od kořene webu (app/Url.php), dřív relativní adresy s .php
+    public const VERSION = 2;
     // druhy položek v pořadí skupin: klíč => název skupiny
     public const KINDS = [
         'tisk' => 'Tisky',
@@ -47,10 +48,19 @@ final class SearchIndex
         return count($index['items']);
     }
 
-    /** Otisk aktuálních dat pro adresu indexu (mění se s každou synchronizací). */
+    /**
+     * Odkaz z položky indexu: adresy stránek webu jsou v indexu od kořene webu bez úvodního lomítka
+     * (index tak nezávisí na tom, kde web běží), cizí adresy (VeKLEP) jsou celé. Totéž dělá assets/search.js.
+     */
+    public static function href(string $u): string
+    {
+        return preg_match('~^https?://~', $u) ? $u : asset($u);
+    }
+
+    /** Otisk aktuálních dat a verze indexu pro adresu indexu (mění se s každou synchronizací). */
     public static function stamp(Db $db): string
     {
-        return substr(md5((string)$db->getMeta('last_sync', '')), 0, 10);
+        return substr(md5(self::VERSION . '|' . (string)$db->getMeta('last_sync', '')), 0, 10);
     }
 
     /** Aktuální index jako hotový JSON (soubor z disku, bez dekódování a nového kódování při každém dotazu). */
@@ -94,7 +104,7 @@ final class SearchIndex
                 'd' => $h !== null ? 'AI: ' . $h['title'] : self::shorten((string)$t['uplny_nazev'], 140),
                 'x' => trim($t['uplny_nazev'] . ' ' . $t['navrhovatel'] . ' ' . str_replace(',', ' ', (string)$t['zakony'])
                     . ($h !== null ? ' ' . $h['perex'] : '')),
-                'u' => 'tisk.php?ct=' . $ct,
+                'u' => Url::path('tisk', ['ct' => $ct]),
                 'w' => (int)$t['score'],
             ];
             // slovník zákonů z úplných názvů: „zákon č. 586/1992 Sb., o daních z příjmů“
@@ -114,7 +124,7 @@ final class SearchIndex
                 't' => $law . ' Sb.' . (isset($laws[$law]) ? ' ' . $laws[$law] : ''),
                 's' => 'mění ' . $n . ' ' . ($n === 1 ? 'tisk' : ($n < 5 ? 'tisky' : 'tisků')),
                 'd' => '', 'x' => '',
-                'u' => Laws::url($law),
+                'u' => Url::path('zakon', ['z' => (string)$law]),
                 'w' => $n,
             ];
         }
@@ -134,7 +144,7 @@ final class SearchIndex
                 's' => 'PN č. ' . (int)$p['cislo'] . ' k tisku ' . (int)$p['ct'] . ($osoba !== '' ? ' · ' . $osoba : ''),
                 'd' => self::shorten((string)($a['perex'] ?? ''), 160),
                 'x' => '',
-                'u' => 'tisk.php?ct=' . (int)$p['ct'] . '#pn-' . (int)$p['cislo'],
+                'u' => Url::path('tisk', ['ct' => (int)$p['ct']], 'pn-' . (int)$p['cislo']),
                 'w' => (int)($a['zavaznost'] ?? 0),
             ];
             if ($osoba !== '') {
@@ -146,7 +156,7 @@ final class SearchIndex
                 'k' => 'osoba', 'id' => $name, 't' => $name,
                 's' => $n . ' ' . ($n === 1 ? 'pozměňovací návrh' : ($n < 5 ? 'pozměňovací návrhy' : 'pozměňovacích návrhů')),
                 'd' => '', 'x' => '',
-                'u' => 'hledat.php?q=' . rawurlencode($name),
+                'u' => Url::path('hledat', ['q' => (string)$name]),
                 'w' => $n,
             ];
         }
@@ -177,16 +187,16 @@ final class SearchIndex
         ];
         foreach (Repo::PROBLEM_GROUPS as $key => [$label]) {
             $items[] = ['k' => 'tema', 'id' => $key, 't' => $label, 's' => 'hlavní nálezy podle druhu problému', 'd' => '',
-                'x' => $groupWords[$key] ?? '', 'u' => 'index.php?druh=' . $key . '#nalezy', 'w' => 0];
+                'x' => $groupWords[$key] ?? '', 'u' => Url::path('index', ['druh' => $key], 'nalezy'), 'w' => 0];
         }
         $pages = [
-            ['Jak hodnotíme', 'metodika skóre body váhy omezení odpovědnosti AI', 'metodika.php'],
-            ['Připravované zákony', 'vláda připomínkové řízení VeKLEP ministerstvo', 'pripravovane.php'],
-            ['Připravovaná nařízení vlády', 'nařízení vlády připomínkové řízení VeKLEP ministerstvo', 'pripravovane.php?druh=narizeni'],
-            ['Data a API', 'JSON RSS export stažení vývojáři', 'data.php'],
-            ['Pro AI asistenty (MCP)', 'MCP Claude AI asistent napojení nástroje rozprava projevy', 'mcp.php'],
-            ['Co jsme změnili', 'změny opravy novinky', 'zmeny.php'],
-            ['Upozornění', 'upozornění RSS nové kroky', 'upozorneni.php'],
+            ['Jak hodnotíme', 'metodika skóre body váhy omezení odpovědnosti AI', Url::path('metodika')],
+            ['Připravované zákony', 'vláda připomínkové řízení VeKLEP ministerstvo', Url::path('pripravovane')],
+            ['Připravovaná nařízení vlády', 'nařízení vlády připomínkové řízení VeKLEP ministerstvo', Url::path('pripravovane', ['druh' => 'narizeni'])],
+            ['Data a API', 'JSON RSS export stažení vývojáři', Url::path('data')],
+            ['Pro AI asistenty (MCP)', 'MCP Claude AI asistent napojení nástroje rozprava projevy', Url::path('mcp')],
+            ['Co jsme změnili', 'změny opravy novinky', Url::path('zmeny')],
+            ['Upozornění', 'upozornění RSS nové kroky', Url::path('upozorneni')],
         ];
         foreach ($pages as [$title, $words, $url]) {
             $items[] = ['k' => 'tema', 'id' => $url, 't' => $title, 's' => 'stránka webu', 'd' => '', 'x' => $words, 'u' => $url, 'w' => 0];

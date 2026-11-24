@@ -80,7 +80,7 @@ final class RateLimit
         http_response_code(429);
         header('Retry-After: ' . $retryAfter);
         header('Cache-Control: no-store');
-        $message = 'Příliš mnoho dotazů z vaší adresy. Zkuste to znovu za ' . $retryAfter . ' s. Limity: ' . siteUrl('data.php#limity');
+        $message = 'Příliš mnoho dotazů z vaší adresy. Zkuste to znovu za ' . $retryAfter . ' s. Limity: ' . absUrl('data', [], 'limity');
         if ($json) {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['error' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), "\n";

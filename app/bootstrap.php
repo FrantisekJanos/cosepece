@@ -94,6 +94,27 @@ function siteUrl(string $path = ''): string
     return rtrim((string)config('site_url', ''), '/') . '/' . ltrim($path, '/');
 }
 
+/**
+ * Adresa stránky od kořene domény pro odkazy v HTML: url('tisk', ['ct' => 221], 'pn-5') = '/tisk/221#pn-5'.
+ * Jména stránek a pravidla jsou v app/Url.php; jiné jméno je skript s příponou: url('rss') = '/rss.php'.
+ */
+function url(string $page = 'index', array $query = [], string $fragment = ''): string
+{
+    return Hlidac\Url::to($page, $query, $fragment);
+}
+
+/** Totéž jako url(), ale celá adresa se site_url (příspěvky na sítě, RSS, API, náhledy pro sdílení). */
+function absUrl(string $page = 'index', array $query = [], string $fragment = ''): string
+{
+    return siteUrl(Hlidac\Url::path($page, $query, $fragment));
+}
+
+/** Adresa souboru webu (styl, skript, ikona) od kořene domény: asset('assets/style.css') = '/assets/style.css'. */
+function asset(string $file): string
+{
+    return Hlidac\Url::base() . '/' . ltrim($file, '/');
+}
+
 // hlášení chyb do Sentry (prázdný klíč sentry.dsn = vypnuto, nic se neodesílá)
 \Hlidac\Sentry::init((array)config('sentry', []), PHP_SAPI === 'cli' ? 'sync' : 'web');
 
@@ -122,6 +143,15 @@ if (PHP_SAPI !== 'cli') {
         } elseif (preg_match('~^-?\d{10,}$~', $value)) {
             // číslo mimo rozsah sloupce INTEGER by skončilo chybou databáze (500); tak velké číslo tisku ani stránky není
             $_GET[$key] = '999999999';
+        }
+    }
+    // staré adresy stránek s .php (i lomítko na konci nebo číslo tisku v dotazu) přesměrujeme na hezké;
+    // jen při čtení a jen u stránek z tabulky Url::PAGES, strojové adresy (api.php, rss.php…) se nemění
+    if (in_array($method, ['GET', 'HEAD'], true)) {
+        $canonical = \Hlidac\Url::redirectTarget($script, (string)($_SERVER['REQUEST_URI'] ?? ''), $_GET, \Hlidac\Url::base());
+        if ($canonical !== null) {
+            header('Location: ' . $canonical, true, 301);
+            exit;
         }
     }
 }

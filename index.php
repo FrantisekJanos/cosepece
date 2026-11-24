@@ -98,6 +98,7 @@ View::header('Přehled', 'prehled');
     <?php foreach ($findings as $i => $t): ?>
       <a class="finding" href="<?= e(url('tisk', ['ct' => (int)$t['ct']])) ?>"<?= $i >= $findingsShown ? ' hidden' : '' ?>>
         <span class="finding-top"><?= View::scoreBadge((int)$t['score']) ?><?php if ($t['strong_ai'] !== null || ($sort === 'ai' && $t['ai_verified'] !== null)): ?><span class="chip <?= (int)$t['ai_verified'] >= 6 ? 'chip-cut' : 'chip-surge' ?>" title="Nález AI ověřený silnějším modelem a doložený citací z textu">Ověřený nález AI <?= (int)$t['ai_verified'] ?>/10</span><?php endif; ?><span class="muted small">Tisk <?= (int)$t['ct'] ?> · <?= e($t['nazev']) ?> · <?= e($t['faze']) ?></span></span>
+        <?php if ($t['activity'] !== ''): ?><span class="finding-date small"><strong><?= e(View::when($t['activity'])) ?></strong> · <?= $t['activity_kind'] === 'pn' ? 'nový pozměňovací návrh' : 'poslední krok v projednávání' ?></span><?php endif; ?>
         <?php if ($t['headline'] !== null): ?>
           <?php $h = $t['headline']; ?>
           <strong class="finding-title"><?= e($h['title']) ?></strong>

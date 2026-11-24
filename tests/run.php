@@ -1164,6 +1164,25 @@ ob_start();
 $idx = (string)ob_get_clean();
 check('úvodní stránka s řazením a filtrem v adrese', str_contains($idx, 'Závažnost textu (AI)') && str_contains($idx, 'Co hledám')
     && (bool)preg_match('~class="pill active"[^>]*>Zpětné použití~', $idx) && (bool)preg_match('~class="pill active"[^>]*>Závažnost textu \(AI\)~', $idx), true);
+// datum posledního dění na kartě hlavního nálezu: dnes s časem, včera, jinak celé datum
+$whenNow = strtotime('2026-11-24 23:00:00');
+check('datum události: dnes, včera, starší, bez času, prázdné', [Hlidac\View::when('2026-11-24 22:21:00', $whenNow), Hlidac\View::when('2026-11-24 09:05:00', $whenNow),
+    Hlidac\View::when('2026-11-24 00:00:00', $whenNow), Hlidac\View::when('2026-11-23 18:00:00', $whenNow), Hlidac\View::when('2026-11-13 09:45:15', $whenNow), Hlidac\View::when('', $whenNow)],
+    ['dnes, 22:21', 'dnes, 9:05', 'dnes', 'včera', '13. 11. 2026', '']);
+$_GET = ['razeni' => 'nove'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/index.php');
+$idxNew = (string)ob_get_clean();
+$newest = (new Hlidac\Repo(db()))->findings((int)Hlidac\Scorer::weights(config())['finding_min'], 'nove')['rows'][0];
+$newestPn = (string)db()->value('SELECT MAX(cas) FROM pn WHERE ct = ?', [(int)$newest['ct']]);
+check('hlavní nálezy: každá karta má datum posledního dění', [substr_count($idxNew, 'class="finding-date small"') === substr_count($idxNew, 'class="finding"'),
+    substr_count($idxNew, 'class="finding"') > 0], [true, true]);
+check('hlavní nálezy: první karta má datum a druh posledního dění', [$newest['activity'] === max((string)$newest['posledni'], $newestPn),
+    $newest['activity_kind'] === ($newestPn > (string)$newest['posledni'] ? 'pn' : 'krok'),
+    str_contains($idxNew, '<strong>' . Hlidac\View::when($newest['activity']) . '</strong> · ' . ($newest['activity_kind'] === 'pn' ? 'nový pozměňovací návrh' : 'poslední krok v projednávání'))],
+    [true, true, true]);
 $_GET = ['razeni' => 'cokoli', 'druh' => '<script>'];
 ob_start();
 (function (string $file): void {

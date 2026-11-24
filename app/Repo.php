@@ -116,6 +116,8 @@ final class Repo
             $row['strong_ai'] = ($ai[$ct]['score'] ?? 0) >= $strongMin ? $ai[$ct]['score'] : null;
             $row['groups'] = $this->problemGroups($row, $ai[$ct] ?? null, isset($short[$ct]));
             $row['activity'] = max((string)$row['posledni'], $lastPn[$ct] ?? '');
+            // co se stalo naposledy: nový pozměňovací návrh, nebo krok v projednávání (datum na kartě nálezu)
+            $row['activity_kind'] = ($lastPn[$ct] ?? '') > (string)$row['posledni'] ? 'pn' : 'krok';
             foreach ($row['groups'] as $g) {
                 $counts[$g]++;
             }

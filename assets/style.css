@@ -89,6 +89,8 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .finding { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; color: var(--ink); text-decoration: none; }
 .finding:hover { border-color: #B91C1C; color: var(--ink); }
 .finding-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.finding-date { color: var(--muted); }
+.finding-date strong { color: var(--ink-2); font-weight: 600; }
 .finding-title { font-size: 17px; line-height: 1.35; }
 .finding-perex { color: var(--ink-2); line-height: 1.5; }
 .finding-quote { padding: 6px 10px; border-left: 3px solid #F59E0B; background: #FFFBEB; border-radius: 0 6px 6px 0; color: var(--ink-2); overflow-wrap: anywhere; }

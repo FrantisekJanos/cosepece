@@ -209,6 +209,27 @@ final class View
     }
 
     /**
+     * Datum události pro čtenáře: „dnes, 22:21“, „včera“, jinak „13. 11. 2026“. Čas se uvádí jen u dneška
+     * a jen když ho záznam má (kroky projednávání mají jen den). $now je pro testy.
+     */
+    public static function when(?string $value, ?int $now = null): string
+    {
+        $ts = $value !== null && $value !== '' ? strtotime($value) : false;
+        if ($ts === false) {
+            return '';
+        }
+        $now ??= time();
+        $day = date('Y-m-d', $ts);
+        if ($day === date('Y-m-d', $now)) {
+            return 'dnes' . (date('H:i', $ts) !== '00:00' ? ', ' . date('G:i', $ts) : '');
+        }
+        if ($day === date('Y-m-d', strtotime('-1 day', $now))) {
+            return 'včera';
+        }
+        return date('j. n. Y', $ts);
+    }
+
+    /**
      * Jméno poslance s poslaneckým klubem v závorce, např. „Jan Novák (ODS)“. Klub je ke dni podání návrhu
      * (pn.klub); bez klubu jen jméno. Vrací hotové HTML.
      */

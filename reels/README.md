@@ -164,8 +164,25 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 
 - `/video <číslo tisku> [cesta|pn|zmena|rozprava]`: ruční zadání (formát je jen nápověda pro generátor),
 - `/vyber`: tisk vybere automatika z hlavních nálezů (nikdy formát `rozprava`),
-- `/fronta`: kromě položek ke schválení i zadání ve frontě a kdy bylo PC naposledy vidět,
+- `/pn`: video k vybraným pozměňovacím návrhům (ruční úloha, viz níže),
+- `/fronta`: kromě položek ke schválení i zadání ve frontě (u úloh k PN i čísla PN) a kdy bylo PC naposledy vidět,
 - `/stav`: stav dat (viz Hlídání dat níže).
+
+**Video k PN (`/pn`):**
+
+- `/pn` bez čísla: PN podané za posledních 48 h (podle `pn.cas`), nejvýš 10, nejnovější první, s autorem, časem
+  a titulkem rozboru AI. U každého tlačítko „Video k PN N“, u tisku s víc PN v seznamu navíc „Jedno video ze všech“
+  (z nejnovějších nejvýš 5 PN tisku),
+- `/pn 2376`: úloha k jednomu PN; `/pn 2376 2377 2378`: tři samostatné úlohy (každá vlastní sada),
+- `/pn 2376+2377`: jedno video o obou PN; všechny musí patřit k jednomu tisku, nejvýš 5,
+- neznámý PN (ještě nedorazil synchronizací) i kombinaci PN z různých tisků bot odmítne s vysvětlením.
+
+Úloha je ruční (`manual`, denní limit sad se jí netýká), tisk se vezme z tabulky `pn` a čísla PN se uloží seřazená
+do `reel_jobs.focus_pn` (NULL = celý tisk). `claim` je vrátí jako `focus_pn` a k nim `focus_pn_info` (autor, čas,
+titulek AI, odkaz na psp.cz). Generátor zapíše `podklady/zadani.md` a vezme pevně formáty v3 `pn` a `zmena` (formát
+`cesta` ani `rozprava` o obsahu PN nevypráví a `/pn` formát nezadává). Návody staví hlavní fakt, titulek a háček
+všech variant na zadaných PN, tisk je jen kontext; kontrola vyřadí variantu, jejíž karta nebo popisek číslo žádného
+zadaného PN nezmíní. Ručně: `reels-generate … --pn 2376,2377`.
 
 Ze sady pošle bot všechny varianty a pod ně jednu zprávu s tlačítky Vybrat N a Hotovo, zbytek zamítnout. Vybrat N
 pošle variantě vlastní náhled se Schválit / Upravit popisek / Zamítnout (jako samostatné video) a zpráva sady přijde
@@ -177,13 +194,14 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
 **Limity:**
 
 - výdej úloh: nejdřív `manual`, pak `auto_pick`, pak `fresh` (čerstvé nálezy), uvnitř podle stáří; pro jeden tisk
-  nejvýš jedna aktivní úloha,
+  a jednu množinu PN nejvýš jedna aktivní úloha (index `reel_jobs_active_ct_pn`; úloha k celému tisku a úlohy
+  k jeho PN běží vedle sebe),
 - úloha `fresh` vzniká, když se mezi hlavními nálezy objeví nový tisk nebo nový důvod skóre; nejvýš 2 nové úlohy
   `fresh` za den (Europe/Prague), zbylé nálezy přijdou na řadu další dny; první běh detektoru jen uloží výchozí stav,
 - vydaná úloha bez výsledku se po 60 minutách vrátí do fronty, po 3 pokusech skončí `failed`; `fresh` starší než
   7 dní se už nevydá (`expired`),
 - do Telegramu jdou nejvýš 2 automatické sady (`fresh`, `auto_pick`) denně (Europe/Prague) a najednou nejvýš
-  1 nevyřízená jednotka; sady ručních úloh (`/video`) denní limit neomezuje a nepočítají se do něj, `/dalsi` limit
+  1 nevyřízená jednotka; sady ručních úloh (`/video`, `/pn`) denní limit neomezuje a nepočítají se do něj, `/dalsi` limit
   obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
 - nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
   zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.

@@ -1778,7 +1778,7 @@ def test_smycka_inbox_a_cerstve(conn, api, meta, media_dir, tmp_path, monkeypatc
     tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
     bot = Bot(conn, tg, meta, CHAT, str(media_dir), PUBLIC_BASE, inbox_dir=str(tmp_path / "inbox"))
     calls = []
-    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m: calls.append(("ingest", i, m)) or [])
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on=False: calls.append(("ingest", i, m)) or [])
     monkeypatch.setattr(fresh, "detect", lambda c, now: calls.append(("detect",)) or [])
     monkeypatch.setattr(fresh, "retire", lambda c, now: calls.append(("retire",)) or [])
     t = [1000.0]
@@ -1857,7 +1857,7 @@ def test_vyprseni_zbylych_variant_po_vyberu(bot, conn, api, media_dir, monkeypat
 def test_chyba_inboxu_jen_zaloguje(bot, conn, api, media_dir, monkeypatch, caplog):
     from hlidac_reels import inbox
 
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("disk")
     monkeypatch.setattr(inbox, "ingest_all", boom)
     bot.inbox_dir = str(media_dir / "inbox")
@@ -1871,13 +1871,28 @@ def test_inbox_nova_sada_se_hned_posle(bot, conn, api, media_dir, monkeypatch):
     from hlidac_reels import inbox
     ids = []
 
-    def ingest(c, i, m):
+    def ingest(c, i, m, autopilot_on=False):
         ids.extend(_add_set(c, media_dir, 9))
         return [inbox.IngestResult(9, list(ids), {}, True)]
     monkeypatch.setattr(inbox, "ingest_all", ingest)
     bot.inbox_dir = str(media_dir / "inbox")
     bot.maybe_ingest()
     assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_ingest_preda_stav_autopilota(bot, conn, media_dir, monkeypatch):
+    from hlidac_reels import inbox, queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    seen = []
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on: seen.append(autopilot_on) or [])
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot._ingest()
+    queue.set_state(conn, AUTOPILOT_KEY, "1")
+    bot._ingest()
+    queue.set_state(conn, AUTOPILOT_KEY, "0")
+    bot._ingest()
+    assert seen == [False, True, False]
 
 
 @pg

@@ -893,7 +893,9 @@ class Bot:
         self._guard("převzetí sad z mezisložky", self._ingest)
 
     def _ingest(self) -> None:
-        results = inbox.ingest_all(self.conn, Path(self.inbox_dir), Path(self.media_dir))
+        # autopilot jen pro úlohy s příznakem a jen dokud je přepínač zapnutý (jinak běžné schvalování)
+        results = inbox.ingest_all(self.conn, Path(self.inbox_dir), Path(self.media_dir),
+                                   autopilot_on=self._autopilot_on())
         for r in results:
             if not r.ok:
                 # úloha je už failed; zprávu o ní pošle oznámení neúspěšných úloh

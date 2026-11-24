@@ -308,3 +308,42 @@ def test_zasah_normalizace_prezije_opravu(tmp_path, fake, monkeypatch):
     assert len(fake["calls"]) == 2 and r.variants[1].ok, r.variants[1].errors
     notes = json.loads((tmp_path / "out" / "variant-2" / "normalize.json").read_text(encoding="utf-8"))
     assert len(notes) == 1 and "800 mil. Kč" in notes[0]
+
+
+def test_beh_nic_nezapsal(tmp_path, fake):
+    # Review Focus 2: oprava skončí rc 0, ale soubory varianty nezmění (podvržený model při opravě nic nepíše)
+    def bad(wd):
+        card = json.loads((wd / "variant-3" / "card.json").read_text(encoding="utf-8"))
+        card["ct"] = 999
+        (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = bad
+    r = _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 2
+    assert "běh modelu nic nezapsal" in r.variants[2].errors and not r.variants[2].ok
+    assert all("běh modelu nic nezapsal" not in v.errors for v in r.variants[:2])
+
+
+def _fake_bin(monkeypatch, **env):
+    import sys
+    monkeypatch.setenv("CLAUDE_BIN", f"{sys.executable} {Path(__file__).parent / 'fake_claude.py'}")
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
+    for k, val in env.items():
+        monkeypatch.setenv(k, val)
+
+
+def test_beh_nic_nezapsal_skutecny_proces(tmp_path, monkeypatch):
+    # stejný projev jako chyba D1 (Edit nepovolený): rc 0, žádný soubor; nesmí projít potichu
+    _fake_bin(monkeypatch, FAKE_CLAUDE_NOWRITE="1")
+    r = _run(tmp_path, render=False)
+    assert not r.ok and len(r.runs) == 2
+    assert all("běh modelu nic nezapsal" in v.errors for v in r.variants)
+
+
+def test_env_chyba_bez_opravy(tmp_path, monkeypatch):
+    from hlidac_reels.generator.claude import EnvError
+    _fake_bin(monkeypatch, FAKE_CLAUDE_ERROR="1")
+    with pytest.raises(EnvError) as e:
+        _run(tmp_path, render=False)
+    assert "limit" in e.value.reason
+    log = (tmp_path / "out" / "claude.log").read_text(encoding="utf-8")
+    assert log.count("=== běh ===") == 1  # oprava se nespustila

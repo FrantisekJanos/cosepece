@@ -6,6 +6,7 @@ Selhání šířky variantu nevyřadí: zůstane jen na výšku a důvod je ve w
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -16,12 +17,13 @@ from ..card import Card
 from ..media import probe
 from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
-from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude, write_focus, write_published
+from .claude import DEFAULT_MODEL, EnvError, build_prompt, prepare_workdir, run_claude, write_focus, write_published
 from .formats import pick_formats
 from .normalize import normalize
 from .validate import check_layout, validate_variant
 
 MIN_OK = 2
+NOTHING_WRITTEN = "běh modelu nic nezapsal"
 
 
 @dataclass
@@ -55,6 +57,17 @@ def _append_notes(path: Path, notes: list[str]) -> None:
     if not isinstance(old, list):
         old = []
     path.write_text(json.dumps(old + notes, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _fingerprints(workdir: Path, numbers: list[int]) -> dict[int, tuple[str | None, ...]]:
+    """sha256 souborů card.json a caption.txt zadaných variant (None = soubor chybí)."""
+    def digest(path: Path) -> str | None:
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+    return {n: tuple(digest(workdir / f"variant-{n}" / name) for name in ("card.json", "caption.txt"))
+            for n in numbers}
 
 
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
@@ -119,6 +132,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN 2).
 
     focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
+    Chyba prostředí claude -p (limit, přihlášení) bez zapsaných souborů vyhodí EnvError.
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -139,26 +153,41 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     runs: list[dict] = []
 
-    def note_run(r) -> None:
-        runs.append({"ok": r.ok, "returncode": r.returncode, "timed_out": r.timed_out})
+    def model_run(prompt: str, numbers: list[int]) -> set[int]:
+        """Jeden běh claude -p; vrací čísla variant, jejichž card.json ani caption.txt se nezměnily.
 
-    def with_timeout(v: Variant) -> None:
-        if runs[-1]["timed_out"] and v.errors:
+        Chyba prostředí (limit, přihlášení) bez jediného zapsaného souboru ukončí generování výjimkou
+        EnvError: oprava by skončila stejně a spálila by pokus.
+        """
+        before = _fingerprints(out, numbers)
+        r = run_claude(prompt, workdir=out, mcp_config=mcp_config, model=model, timeout_s=timeout_s)
+        runs.append({"ok": r.ok, "returncode": r.returncode, "timed_out": r.timed_out,
+                     "kind": r.kind, "result": r.result})
+        after = _fingerprints(out, numbers)
+        unchanged = {n for n in numbers if after[n] == before[n]}
+        if r.kind == "env" and len(unchanged) == len(numbers):
+            raise EnvError(r.result or f"claude -p skončil s kódem {r.returncode}")
+        return unchanged
+
+    def mark(v: Variant, unchanged: set[int]) -> None:
+        if not v.errors:
+            return
+        if v.n in unchanged:  # rc 0 bez zápisu (např. nepovolený nástroj) nesmí vypadat jako chyba obsahu
+            v.errors.insert(0, NOTHING_WRITTEN)
+        if runs[-1]["timed_out"]:
             v.errors.insert(0, "běh claude -p vypršel (timeout)")
 
-    note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out), workdir=out, mcp_config=mcp_config,
-                        model=model, timeout_s=timeout_s))
+    unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out), [v.n for v in variants])
     cards = {v.n: _check(v, out, ct, reason_keys, render, focus_pn, focus_info) for v in variants}
     for v in variants:
-        with_timeout(v)
+        mark(v, unchanged)
     broken = {v.n: v.errors for v in variants if cards[v.n] is None}
     if broken:  # jedna oprava jen vadných variant, pak vypadnou
-        note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out, repair=broken), workdir=out,
-                            mcp_config=mcp_config, model=model, timeout_s=timeout_s))
+        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out, repair=broken), sorted(broken))
         for v in variants:
             if v.n in broken:
                 cards[v.n] = _check(v, out, ct, reason_keys, render, focus_pn, focus_info)
-                with_timeout(v)
+                mark(v, unchanged)
 
     for v in variants:  # render vždy jen jeden najednou
         card = cards[v.n]

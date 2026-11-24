@@ -1685,6 +1685,26 @@ check('has_amendments bez „nahrazuje se“', $jobs->claim()['has_amendments'] 
 check('karta v2 bez titulku → null', $jobs->cardV2(78), null);
 $rjNo = $rjAdd('manual', 78);
 check('úloha k tisku bez titulku se nevydá → failed', [$jobs->claim(), $rjStatus($rjNo)['status']], [null, 'failed']);
+// /pn k tisku bez titulku (např. rozpočet, PN s nízkou závažností): karta z rozboru zadaného PN
+$rjReset();
+db()->run("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (99781, 9781, 78, 'Test Autor', '2026-11-24 10:00:00'), (99782, 9782, 78, 'Test Autor', '2026-11-24 10:01:00')");
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_score, ai_model, ai_json) VALUES (99781, 78, 9781, 'x', 1, 0, 2, 'claude-haiku-5-5', ?), (99782, 78, 9782, 'x', 1, 0, 0, 'claude-haiku-5-5', ?)",
+    [json_encode(['titulek' => 'Přesun 600 mil. Kč', 'perex' => 'Perex PN', 'citace' => ['citace PN 9781']], JSON_UNESCAPED_UNICODE), json_encode(['zavaznost' => 0])]);
+$rjCardPn = $jobs->cardV2(78, [9781, 9782]);
+check('karta /pn bez titulku tisku: z rozboru PN', [$rjCardPn['title'] ?? null, $rjCardPn['perex'] ?? null, $rjCardPn['quote'] ?? null, $rjCardPn['quote_source'] ?? null, $rjCardPn['verified'] ?? null],
+    ['Přesun 600 mil. Kč', 'Perex PN', 'citace PN 9781', 'pozměňovací návrh č. 9781', false]);
+check('karta /pn: PN bez titulku → null', $jobs->cardV2(78, [9782]), null);
+check('karta celého tisku bez titulku zůstává null', $jobs->cardV2(78), null);
+$rjPnOk = $rjAdd('manual', 78);
+db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9781}', $rjPnOk]);
+$rjC = $jobs->claim();
+check('úloha /pn k tisku bez titulku se vydá', [$rjC['job_id'] ?? null, $rjC['card_v2']['title'] ?? null], [$rjPnOk, 'Přesun 600 mil. Kč']);
+$rjReset();
+$rjPnNo = $rjAdd('manual', 78);
+db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9782}', $rjPnNo]);
+check('úloha /pn bez titulku tisku i PN → failed', [$jobs->claim(), $rjStatus($rjPnNo)['status'], $rjStatus($rjPnNo)['error']], [null, 'failed', 'tisk ani zadané PN nemají titulek z rozboru AI']);
+db()->run('DELETE FROM pn_text WHERE id_dokument IN (99781, 99782)');
+db()->run('DELETE FROM pn WHERE id_dokument IN (99781, 99782)');
 
 // úloha k vybraným PN (/pn): claim vrací focus_pn a údaje PN pro zadání generátoru
 $rjReset();

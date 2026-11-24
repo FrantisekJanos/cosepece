@@ -103,13 +103,15 @@
 #s-r-kdo .body { gap: 30px; }
 .kbars { display: flex; flex-direction: column; gap: 14px; }
 .kbar { display: flex; align-items: center; gap: 18px; }
-.kbar .klub { flex: none; width: 250px; text-align: center; white-space: nowrap; overflow: hidden; }
+/* štítek klubu má v seznamu pevnou šířku (stejný vzhled pro každý klub); vejde se i nejdelší popisek
+   NEZAŘAZENÍ (10 znaků: 295 px, v úzké variantě .nar 214 px) */
+.kbar .klub { flex: none; width: 310px; text-align: center; white-space: nowrap; overflow: hidden; }
 .kbar .kname { flex: none; width: 400px; font: 600 40px/1.15 'IBM Plex Sans', sans-serif; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .kbar .track { flex: 1; height: 44px; margin: 0; background: transparent; }
 .kbar .track i { background: var(--grey); }
 .kbar .kv { flex: none; width: 80px; text-align: right; font: 400 64px/1 Anton, sans-serif; color: var(--paper); }
-.kbar.nar .klub { width: 190px; font-size: 30px; padding: 6px 8px; }
+.kbar.nar .klub { width: 230px; font-size: 30px; padding: 6px 8px; }
 .s-bul .body { gap: 34px; }
 .bul { display: flex; flex-direction: column; gap: 34px; }
 .bu { display: flex; gap: 26px; align-items: flex-start; }

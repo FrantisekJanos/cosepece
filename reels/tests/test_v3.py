@@ -394,3 +394,38 @@ def test_hook_dlouha_jmena_nepretekaji(orientation):
     text = " ".join(b["text"].split())
     assert "PN 2376, 2377 a další · Jan Novák-Dlouhý" in text and "PN 2379 · Gabriela Svárovská" in text, text
     assert "Činčila" not in text and text.endswith("a další"), text
+
+
+# ---------- F4: nejdelší popisky klubů v pruzích (rozprava s-r-kdo, autoři PN s-p-kolik) ----------
+
+KBAR_JS = """(id) => {
+  const sc = document.getElementById(id);
+  sc.style.display = 'block';
+  return {used: window.sceneIds().includes(id), chips: [...sc.querySelectorAll('.kbar .klub')].map(k => ({
+    text: k.textContent, scroll: k.scrollWidth, client: k.clientWidth, width: k.getBoundingClientRect().width,
+    size: getComputedStyle(k).fontSize, nar: k.parentNode.classList.contains('nar')}))};
+}"""
+
+
+@pytest.mark.render
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+def test_kbar_dlouhe_kluby_se_vejdou(orientation):
+    # data MCP nesou kódy psp.cz (MS, Nezařaz); popisky MOTORISTÉ a NEZAŘAZENÍ se nesmí oříznout
+    roz = copy.deepcopy(load_fixture("v3-rozprava-311.json"))
+    roz["rozprava"]["kluby"] = [{"klub": "Nezařaz", "projevu": 9}, {"klub": "MS", "projevu": 7},
+                                {"klub": "ANO2011", "projevu": 5}, {"klub": "KDU-ČSL", "projevu": 2}]
+    pn = copy.deepcopy(load_fixture("v3-pn-311.json"))
+    pn["pn"]["autori"] = [{"jmeno": "Jan Novák", "klub": "Nezařaz", "count": 9},
+                          {"jmeno": "Gabriela Svárovská", "klub": "MS", "count": 5},
+                          {"jmeno": "Marian Jurečka", "klub": "KDU-ČSL", "count": 4}]
+    for raw, scene, nar in ((roz, "s-r-kdo", False), (pn, "s-p-kolik", True)):
+        with _page(Card.from_json(raw), V3, orientation) as page:
+            res = page.evaluate(KBAR_JS, scene)
+        chips = res["chips"]
+        assert res["used"] and len(chips) >= 3, (scene, res)
+        assert {"nezařazení", "Motoristé"} <= {c["text"] for c in chips}, chips
+        for c in chips:
+            assert c["nar"] is nar, c
+            assert c["client"] > 0 and c["scroll"] <= c["client"], (scene, c)
+        # neutralita: v jednom seznamu stejná šířka i písmo štítku pro každý klub
+        assert len({c["width"] for c in chips}) == 1 and len({c["size"] for c in chips}) == 1, (scene, chips)

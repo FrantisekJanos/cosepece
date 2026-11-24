@@ -43,7 +43,7 @@ class Job:
     stage_at: datetime | None = None
     fail_kind: str | None = None  # content, timeout, env, infra, data, lease
     env_retries: int = 0  # návraty do fronty po chybě env/infra
-    detail: str | None = None  # podrobnost k fázi nebo chybě
+    detail: str | None = None  # JSON výsledku po variantách (vzniklé varianty, vynechané s důvody); zapisuje PHP result
     status_msg_id: int | None = None  # stavová zpráva v Telegramu
 
 

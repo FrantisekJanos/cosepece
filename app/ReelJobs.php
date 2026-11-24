@@ -25,6 +25,18 @@ final class ReelJobs
     public const PROGRESS_INTERVAL_S = 120;
     /** po tolika pokusech úloha skončí jako failed */
     public const MAX_ATTEMPTS = 3;
+    /** po tolika návratech do fronty kvůli prostředí (fail env/infra) úloha skončí jako failed */
+    public const ENV_MAX_RETRIES = 5;
+    /** odklad po fail env/infra v sekundách: výchozí, když worker retry_after_s nepošle, a povolený rozsah */
+    public const RETRY_DEFAULT_S = 900;
+    public const RETRY_MIN_S = 60;
+    public const RETRY_MAX_S = 21600;
+    /** fáze úlohy na PC, které worker hlásí v progress */
+    public const STAGES = ['model', 'kontrola', 'oprava', 'render', 'upload'];
+    /** druhy chyb, které posílá worker (data a lease zapisuje jen server) */
+    public const FAIL_KINDS = ['content', 'timeout', 'env', 'infra'];
+    /** důvody pozastavení workeru v heartbeat */
+    public const PAUSE_REASONS = ['limit', 'login', 'mcp', 'nastroje', 'env'];
     /** pořadí výdeje podle zdroje úlohy, uvnitř podle created_at */
     /** Nejvýš tolik už vydaných videí k tisku dostane generátor v claim (pole published). */
     private const PUBLISHED_LIMIT = 10;
@@ -107,7 +119,7 @@ final class ReelJobs
             $ct = $job['ct'] !== null ? (int)$job['ct'] : null;
             if ($ct === null) {
                 if ($job['source'] !== 'auto_pick') {
-                    $this->markFailed($id, 'úloha nemá číslo tisku');
+                    $this->markFailed($id, 'úloha nemá číslo tisku', 'data');
                     continue;
                 }
                 // souběžný požadavek může stejný nález přiřadit jiné úloze; pak se vybere znovu (ten už je obsazený)
@@ -117,7 +129,7 @@ final class ReelJobs
                     $assigned = $ct === null ? 'none' : $this->assignCt($id, $ct);
                 }
                 if ($assigned === 'none') {
-                    $this->markFailed($id, 'není nález bez videa');
+                    $this->markFailed($id, 'není nález bez videa', 'data');
                     continue;
                 }
                 if ($assigned !== 'ok') {
@@ -222,59 +234,110 @@ final class ReelJobs
 
     /**
      * Úloha hotová: sada variant má set_id = id úlohy. False, když token neplatí. $note = poznámka do sloupce
-     * error (např. které varianty nevznikly); úloha je přesto done.
+     * error (např. které varianty nevznikly); úloha je přesto done. $detail = výsledek po variantách
+     * ({"variants": [n…], "skipped": [{n, format, errors}]}) do sloupce detail jako JSON.
      */
-    public function finish(int $jobId, string $token, ?string $note = null): bool
+    public function finish(int $jobId, string $token, ?string $note = null, ?array $detail = null): bool
     {
         if (!$this->checkClaim($jobId, $token)) {
             return false;
         }
         $note = $note !== null && $note !== '' ? mb_substr($note, 0, 2000) : null;
+        $json = $detail !== null ? json_encode($detail, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : false;
         $done = $this->db->run(
-            "UPDATE reel_jobs SET status = 'done', finished_at = ?, set_id = id, error = ?
+            "UPDATE reel_jobs SET status = 'done', finished_at = ?, set_id = id, error = ?, detail = ?
               WHERE id = ? AND status = 'claimed' AND claim_token = ?",
-            [$this->stamp(($this->now)()), $note, $jobId, $token]
+            [$this->stamp(($this->now)()), $note, $json === false ? null : $json, $jobId, $token]
         );
         return $done->rowCount() > 0;
     }
 
     /**
-     * Worker hlásí chybu: do 3 pokusů úloha jde zpět do fronty, potom failed. Vrací nový stav,
-     * nebo 'conflict', když token neplatí (úloha mezitím vypršela, vrátila se nebo skončila) – nic se nemění.
+     * Worker hlásí chybu. Vrací nový stav ('queued' nebo 'failed'), nebo 'conflict', když token neplatí (úloha
+     * mezitím propadla, vrátila se, skončila nebo ji uživatel zrušil) – nic se nemění. Podle druhu ($kind):
+     * - content, timeout: failed hned (rozpočet oprav už vyčerpalo PC);
+     * - env, infra: pokus se vrací (attempts − 1, env_retries + 1), úloha čeká retry_after_s (výchozí 900 s,
+     *   rozsah 60–21600 s); wait_reason limit (env s důvodem limit), env, nebo retry (infra). Po ENV_MAX_RETRIES
+     *   návratech failed;
+     * - bez druhu nebo neznámý (starší worker): do 3 pokusů zpět do fronty bez odkladu, potom failed; fail_kind content.
      */
-    public function fail(int $jobId, string $token, string $error): string
+    public function fail(int $jobId, string $token, string $error, ?string $kind = null, ?int $retryAfterS = null, ?string $reason = null): string
     {
         if (!$this->checkClaim($jobId, $token)) {
             return 'conflict';
         }
+        $now = ($this->now)();
         $error = mb_substr($error, 0, 2000);
-        $attempts = (int)$this->db->value('SELECT attempts FROM reel_jobs WHERE id = ?', [$jobId]);
-        if ($attempts >= self::MAX_ATTEMPTS) {
-            $stmt = $this->db->run(
-                "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL
-                  WHERE id = ? AND status = 'claimed' AND claim_token = ?",
-                [$error, $this->stamp(($this->now)()), $jobId, $token]
-            );
-            $status = 'failed';
-        } else {
-            $stmt = $this->db->run(
-                "UPDATE reel_jobs SET status = 'queued', error = ?, claim_token = NULL, claimed_at = NULL
-                  WHERE id = ? AND status = 'claimed' AND claim_token = ?",
-                [$error, $jobId, $token]
-            );
-            $status = 'queued';
+        $kind = in_array($kind, self::FAIL_KINDS, true) ? $kind : null;
+        $where = "id = ? AND status = 'claimed' AND claim_token = ?";
+        $row = $this->db->one('SELECT attempts, env_retries FROM reel_jobs WHERE id = ?', [$jobId]);
+        if ($row === null) {
+            return 'conflict';
         }
-        return $stmt->rowCount() > 0 ? $status : 'conflict';
+
+        if ($kind === 'env' || $kind === 'infra') {
+            if ((int)$row['env_retries'] >= self::ENV_MAX_RETRIES) {
+                $stmt = $this->db->run(
+                    "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = ? WHERE $where",
+                    ['Zadání se ' . self::ENV_MAX_RETRIES . "× vrátilo kvůli prostředí (poslední: $error)", $this->stamp($now), $kind, $jobId, $token]
+                );
+                return $stmt->rowCount() > 0 ? 'failed' : 'conflict';
+            }
+            // chyba prostředí pokus nespotřebuje; úloha počká, ať se PC (limit, přihlášení, síť) vzpamatuje
+            $delay = max(self::RETRY_MIN_S, min(self::RETRY_MAX_S, $retryAfterS ?? self::RETRY_DEFAULT_S));
+            $wait = $kind === 'infra' ? 'retry' : ($reason === 'limit' ? 'limit' : 'env');
+            $stmt = $this->db->run(
+                "UPDATE reel_jobs SET status = 'queued', error = ?, fail_kind = ?, claim_token = NULL, claimed_at = NULL,
+                        lease_until = NULL, stage = NULL, stage_at = NULL, not_before = ?, wait_reason = ?,
+                        attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, env_retries = env_retries + 1
+                  WHERE $where",
+                [$error, $kind, $this->stamp($now + $delay), $wait, $jobId, $token]
+            );
+            return $stmt->rowCount() > 0 ? 'queued' : 'conflict';
+        }
+
+        // content a timeout jsou konečné; bez druhu (starší worker) do MAX_ATTEMPTS pokusů zpět do fronty bez odkladu
+        if ($kind !== null || (int)$row['attempts'] >= self::MAX_ATTEMPTS) {
+            $stmt = $this->db->run(
+                "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = ? WHERE $where",
+                [$error, $this->stamp($now), $kind ?? 'content', $jobId, $token]
+            );
+            return $stmt->rowCount() > 0 ? 'failed' : 'conflict';
+        }
+        $stmt = $this->db->run(
+            "UPDATE reel_jobs SET status = 'queued', error = ?, fail_kind = 'content', claim_token = NULL, claimed_at = NULL,
+                    lease_until = NULL, stage = NULL, stage_at = NULL
+              WHERE $where",
+            [$error, $jobId, $token]
+        );
+        return $stmt->rowCount() > 0 ? 'queued' : 'conflict';
     }
 
-    /** Worker se ozval (bot podle toho hlásí, že PC je dlouho offline). Bez ON CONFLICT: UPDATE, jinak INSERT. */
-    public function heartbeat(): void
+    /**
+     * Worker se ozval (bot podle toho hlásí, že PC je dlouho offline): reel_state.worker_seen_at. Se stavem
+     * ($state = {state: running|paused, reason?, detail?, until?}) navíc reel_state.worker_state jako JSON
+     * {"state", "reason" (z PAUSE_REASONS, jinak null), "detail" (nejvýš 200 znaků), "until" (ISO 8601), "at"}.
+     * Neplatný stav se nezapíše; bez $state (starší worker) zůstane worker_state, jak byl.
+     */
+    public function heartbeat(?array $state = null): void
     {
-        $key = $this->db->driver === 'mysql' ? '`key`' : 'key';
-        $value = date('c', ($this->now)());
-        $updated = $this->db->run("UPDATE reel_state SET value = ? WHERE $key = ?", [$value, 'worker_seen_at']);
-        if ($updated->rowCount() === 0) {
-            $this->db->run("INSERT INTO reel_state ($key, value) VALUES (?, ?)", ['worker_seen_at', $value]);
+        $now = ($this->now)();
+        $this->putState('worker_seen_at', date('c', $now));
+        if ($state === null || !in_array($state['state'] ?? null, ['running', 'paused'], true)) {
+            return;
+        }
+        $reason = $state['reason'] ?? null;
+        $detail = is_string($state['detail'] ?? null) ? trim($state['detail']) : '';
+        $until = is_string($state['until'] ?? null) && trim($state['until']) !== '' ? strtotime(trim($state['until'])) : false;
+        $value = json_encode([
+            'state' => $state['state'],
+            'reason' => in_array($reason, self::PAUSE_REASONS, true) ? $reason : null,
+            'detail' => $detail !== '' ? mb_substr($detail, 0, 200) : null,
+            'until' => $until !== false ? date('c', $until) : null,
+            'at' => date('c', $now),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($value !== false) {
+            $this->putState('worker_state', $value);
         }
     }
 
@@ -499,5 +562,60 @@ final class ReelJobs
             [$ct, ...$focus]
         );
         return $done < count(array_unique($focus));
+    }
+
+    /**
+     * Worker hlásí průběh vydané úlohy: vydání platí PROGRESS_LEASE_MIN minut od teď. Fáze z STAGES se zapíše,
+     * čas fáze (stage_at) jen při změně; jiná nebo chybějící fáze vydání jen prodlouží. Vrací 'ok', 'cancelled'
+     * (uživatel úlohu zrušil, worker běh ukončí) nebo 'conflict' (token neplatí, úloha patří jinému vydání).
+     * $note = poznámka k fázi pro událost průběhu (nejvýš 120 znaků).
+     */
+    public function progress(int $jobId, string $token, ?string $stage, ?string $note = null): string
+    {
+        $now = ($this->now)();
+        if (!$this->checkClaim($jobId, $token)) {
+            return $this->status($jobId) === 'cancelled' ? 'cancelled' : 'conflict';
+        }
+        $this->heartbeat(); // hlášení průběhu = worker se ozval (worker_seen_at), stav workeru se nemění
+        $stage = in_array($stage, self::STAGES, true) ? $stage : null;
+        $note = $note !== null && trim($note) !== '' ? mb_substr(trim($note), 0, 120) : null;
+        $lease = $this->stamp($now + self::PROGRESS_LEASE_MIN * 60);
+        $where = "id = ? AND status = 'claimed' AND claim_token = ?";
+        if ($stage !== null) {
+            $changed = $this->db->run(
+                "UPDATE reel_jobs SET lease_until = ?, stage = ?, stage_at = ? WHERE $where AND (stage IS NULL OR stage <> ?)",
+                [$lease, $stage, $this->stamp($now), $jobId, $token, $stage]
+            );
+            if ($changed->rowCount() > 0) {
+                return 'ok';
+            }
+        }
+        $extended = $this->db->run("UPDATE reel_jobs SET lease_until = ? WHERE $where", [$lease, $jobId, $token]);
+        // MySQL hlásí 0 řádků i u UPDATE beze změny (dvě hlášení v téže sekundě), proto při 0 ještě kontrola tokenu
+        if ($extended->rowCount() > 0 || $this->checkClaim($jobId, $token)) {
+            return 'ok';
+        }
+        return $this->status($jobId) === 'cancelled' ? 'cancelled' : 'conflict';
+    }
+
+    /** Stav úlohy (queued, claimed, done, failed, expired, cancelled), null = úloha neexistuje. */
+    public function status(int $jobId): ?string
+    {
+        $status = $this->db->value('SELECT status FROM reel_jobs WHERE id = ?', [$jobId]);
+        return $status !== null ? (string)$status : null;
+    }
+
+    /**
+     * Zápis do reel_state bez ON CONFLICT (přenositelnost): když řádek existuje UPDATE, jinak INSERT. Existence
+     * dotazem, ne podle rowCount: MySQL po UPDATE se stejnou hodnotou hlásí 0 řádků (viz ReelsSnapshot::write).
+     */
+    private function putState(string $name, string $value): void
+    {
+        $key = $this->db->driver === 'mysql' ? '`key`' : 'key';
+        if ($this->db->value("SELECT 1 FROM reel_state WHERE $key = ?", [$name]) !== null) {
+            $this->db->run("UPDATE reel_state SET value = ? WHERE $key = ?", [$value, $name]);
+        } else {
+            $this->db->run("INSERT INTO reel_state ($key, value) VALUES (?, ?)", [$name, $value]);
+        }
     }
 }

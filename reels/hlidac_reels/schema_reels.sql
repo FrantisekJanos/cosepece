@@ -99,7 +99,7 @@ ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS stage         text;         -- f�
 ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS stage_at      timestamptz;
 ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS fail_kind     text;         -- content, timeout, env, infra, data, lease
 ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS env_retries   integer NOT NULL DEFAULT 0;  -- návraty do fronty (env, infra)
-ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS detail        text;         -- podrobnost k fázi nebo chybě
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS detail        text;         -- JSON výsledku po variantách: {"variants": [n…], "skipped": [{n, format, errors}]}
 ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS status_msg_id bigint;       -- stavová zpráva v Telegramu
 
 -- Události úloh a workeru: historie a fronta zpráv do Telegramu.

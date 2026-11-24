@@ -2092,6 +2092,213 @@ db()->run('DELETE FROM pn_text WHERE id_dokument IN (99783, 99784)');
 db()->run('DELETE FROM pn WHERE id_dokument IN (99783, 99784)');
 $rjReset();
 
+// celý tisk s hotovým rozborem AI bez titulku (závažnost pod 4) nečeká, selže hned; řádek tisk_text 78 se vrátí
+$f3Bak78 = db()->all('SELECT * FROM tisk_text WHERE ct = 78');
+db()->run('DELETE FROM tisk_text WHERE ct = 78');
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, ai_score, ai_json, ai_model, fetched_at, ai_at) VALUES (78, 'Text návrhu.', 12, '{}', 2, ?, 'claude-haiku-5-5', ?, ?)",
+    [json_encode(['zavaznost' => 2]), date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+$f3Bill = $rjAdd('manual', 78);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3Bill);
+check('F3: tisk s hotovým rozborem AI bez titulku selže hned', [$f3C, $f3R['status'], $f3R['error'], $f3R['fail_kind'], $f3R['wait_reason']],
+    [null, 'failed', 'tisk nemá titulek z rozboru AI', 'data', null]);
+db()->run('DELETE FROM tisk_text WHERE ct = 78');
+foreach ($f3Bak78 as $rjRow) {
+    db()->insertMany('tisk_text', array_keys($rjRow), [$rjRow]);
+}
+
+// úloha bez čísla tisku a auto_pick bez volného nálezu: chyba dat
+$rjReset();
+$f3NoCt = $rjAdd('manual', null);
+foreach (Hlidac\ReelsSnapshot::findings(new Hlidac\Repo(db()), (int)Hlidac\Scorer::weights(config())['level_major']) as $f3T) {
+    $rjVideo((int)$f3T['ct']);
+}
+$f3NoFind = $rjAdd('auto_pick', null);
+$f3C = $jobs->claim();
+$f3Brief = fn(int $id): array => [$f3Row($id)['status'], $f3Row($id)['error'], $f3Row($id)['fail_kind']];
+check('F3: úloha bez čísla tisku a auto_pick bez nálezu → failed (data)', [$f3C, $f3Brief($f3NoCt), $f3Brief($f3NoFind)],
+    [null, ['failed', 'úloha nemá číslo tisku', 'data'], ['failed', 'není nález bez videa', 'data']]);
+
+// progress: vydání na 15 min od hlášení, fáze s časem změny
+$f3Col = fn(int $id, string $col) => db()->value("SELECT $col FROM reel_jobs WHERE id = ?", [$id]);
+$f3Claim = fn(): string => (string)($jobs->claim()['claim_token'] ?? '');
+$f3Lost = ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)'];
+$f3Gone = ['error' => 'Úloha byla zrušena', 'status' => 'cancelled'];
+$rjReset();
+$f3P = $rjAdd('manual', 221);
+$f3Tok = $f3Claim();
+$rjClock += 30;
+$f3First = $rjClock;
+$f3Res1 = $jobs->progress($f3P, $f3Tok, 'render');
+$f3Lease1 = $f3Ts($f3Row($f3P)['lease_until']);
+$rjClock += 120;
+$f3Res2 = $jobs->progress($f3P, $f3Tok, 'render', 'druhé hlášení');
+$f3R = $f3Row($f3P);
+check('F3: progress prodlouží vydání na 15 min a zapíše fázi',
+    [$f3Res1, $f3Lease1, $f3Res2, $f3Ts($f3R['lease_until']), $f3R['stage'], $f3Ts($f3Col($f3P, 'stage_at'))],
+    ['ok', $f3First + 900, 'ok', $rjClock + 900, 'render', $f3First]);
+$rjClock += 120;
+$f3UploadAt = $rjClock;
+$f3Res3 = $jobs->progress($f3P, $f3Tok, 'upload');
+$rjClock += 60;
+$f3Res4 = [$jobs->progress($f3P, $f3Tok, 'spim'), $jobs->progress($f3P, $f3Tok, null)];
+$f3R = $f3Row($f3P);
+check('F3: progress s novou fází změní stage_at, neznámá nebo chybějící fáze jen prodlouží',
+    [$f3Res3, $f3Res4, $f3R['stage'], $f3Ts($f3Col($f3P, 'stage_at')), $f3Ts($f3R['lease_until']), $f3R['status']],
+    ['ok', ['ok', 'ok'], 'upload', $f3UploadAt, $rjClock + 900, 'claimed']);
+check('F3: progress zapíše worker_seen_at', strtotime((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_seen_at'")), $rjClock);
+check('F3: progress s cizím tokenem v ReelJobs → conflict', [$jobs->progress($f3P, str_repeat('0', 32), 'model'), $f3Row($f3P)['stage']], ['conflict', 'upload']);
+$rjClock += 60;
+[$f3St, $f3Body] = $api->handle('POST', 'progress', [], $raJson(['job_id' => $f3P, 'stage' => 'model', 'note' => 'oprava popisku']), $raH($f3Tok));
+check('F3: progress přes API → 200, lease_s 900, fáze zapsána', [$f3St, $f3Body, $f3Row($f3P)['stage'], $f3Ts($f3Row($f3P)['lease_until'])],
+    [200, ['ok' => true, 'lease_s' => 900], 'model', $rjClock + 900]);
+[$f3St, $f3Body] = $api->handle('POST', 'progress', [], $raJson(['job_id' => $f3P, 'stage' => 'render']), $raH(str_repeat('0', 32)));
+check('F3: progress s cizím tokenem → 409', [$f3St, $f3Body, $f3Row($f3P)['stage']], [409, $f3Lost, 'model']);
+check('F3: progress bez job_id → 400, GET → 400', [$api->handle('POST', 'progress', [], '{}', $raH($f3Tok))[0], $api->handle('GET', 'progress', [], '', $raH($f3Tok))[0]], [400, 400]);
+// zrušená úloha: progress vrátí 409 cancelled (worker běh ukončí) a smaže složku úlohy v mezisložce
+@mkdir($raInbox . '/' . $f3P);
+file_put_contents($raInbox . '/' . $f3P . '/variant-1.mp4', $raMp4());
+$f3Set($f3P, ['status' => 'cancelled']);
+[$f3St, $f3Body] = $api->handle('POST', 'progress', [], $raJson(['job_id' => $f3P, 'stage' => 'render']), $raH($f3Tok));
+check('F3: progress zrušené úlohy → 409 cancelled', [$f3St, $f3Body, $jobs->progress($f3P, $f3Tok, 'render'), is_dir($raInbox . '/' . $f3P), $jobs->status($f3P), $jobs->status(999999)],
+    [409, $f3Gone, 'cancelled', false, 'cancelled', null]);
+
+// fail env/infra: pokus se vrací, odklad podle retry_after_s (60 s – 6 h, výchozí 15 min)
+$rjReset();
+$f3E = $rjAdd('manual', 221);
+$f3Tok = $f3Claim();
+$jobs->progress($f3E, $f3Tok, 'model');
+$f3Res = $jobs->fail($f3E, $f3Tok, 'chybí Chromium', 'env');
+$f3R = $f3Row($f3E);
+check('F3: fail env vrátí pokus a nastaví odklad',
+    [$f3Res, $f3R['status'], (int)$f3R['attempts'], (int)$f3Col($f3E, 'env_retries'), $f3Ts($f3R['not_before']), $f3R['wait_reason'], $f3R['fail_kind'],
+        $f3R['error'], $f3R['claim_token'], $f3Col($f3E, 'claimed_at'), $f3R['lease_until'], $f3R['stage']],
+    ['queued', 'queued', 0, 1, $rjClock + 900, 'env', 'env', 'chybí Chromium', null, null, null, null]);
+check('F3: úloha s odkladem se před jeho koncem nevydá', $jobs->claim(), null);
+$f3Wait = [];
+foreach ([['reason' => 'limit', 'retry_after_s' => 3600], ['retry_after_s' => 5], ['retry_after_s' => 100000], ['retry_after_s' => -5]] as $f3Extra) {
+    $rjClock += 21601;
+    $f3Tok = $f3Claim();
+    [$f3St, $f3Body] = $api->handle('POST', 'fail', [], $raJson(['job_id' => $f3E, 'error' => 'limit', 'kind' => 'env'] + $f3Extra), $raH($f3Tok));
+    $f3R = $f3Row($f3E);
+    $f3Wait[] = [$f3St, $f3Body['status'] ?? null, $f3R['wait_reason'], $f3Ts($f3R['not_before']) - $rjClock, (int)$f3R['attempts']];
+}
+check('F3: fail env přes API: limit a odklad 3600 s, 5 s → 60 s, 100000 s → 6 h, neplatný → 900 s', $f3Wait, [
+    [200, 'queued', 'limit', 3600, 0], [200, 'queued', 'env', 60, 0], [200, 'queued', 'env', 21600, 0], [200, 'queued', 'env', 900, 0],
+]);
+
+$rjReset();
+$f3E5 = $rjAdd('manual', 221);
+$f3Seq = [];
+for ($f3I = 1; $f3I <= 6; $f3I++) {
+    $f3C = $jobs->claim();
+    $f3Seq[] = $f3C === null ? 'nevydáno' : $jobs->fail($f3E5, (string)$f3C['claim_token'], "chyba $f3I", 'env');
+    $rjClock += 901;
+}
+$f3R = $f3Row($f3E5);
+check('F3: po 5 návratech env → failed', [$f3Seq, $f3R['status'], $f3R['fail_kind'], $f3R['error'], (int)$f3Col($f3E5, 'env_retries'), $f3R['claim_token']],
+    [['queued', 'queued', 'queued', 'queued', 'queued', 'failed'], 'failed', 'env', 'Zadání se 5× vrátilo kvůli prostředí (poslední: chyba 6)', 5, null]);
+
+$rjReset();
+$f3Inf = $rjAdd('manual', 221);
+$f3Tok = $f3Claim();
+$f3Res = $jobs->fail($f3Inf, $f3Tok, 'nahrávání selhalo', 'infra', 300, 'limit');
+$f3R = $f3Row($f3Inf);
+check('F3: fail infra → wait_reason retry', [$f3Res, $f3R['wait_reason'], $f3R['fail_kind'], $f3Ts($f3R['not_before']), (int)$f3R['attempts'], (int)$f3Col($f3Inf, 'env_retries')],
+    ['queued', 'retry', 'infra', $rjClock + 300, 0, 1]);
+
+// content a timeout: konečné, rozpočet oprav už vyčerpalo PC
+$rjReset();
+$f3Kc = $rjAdd('manual', 221);
+$f3Kt = $rjAdd('manual', 311);
+$f3TokC = $f3Claim();
+$f3TokT = $f3Claim();
+$f3Fin = fn(int $id): array => [$f3Row($id)['status'], $f3Row($id)['fail_kind'], (int)$f3Row($id)['attempts'], $f3Row($id)['not_before'], $f3Row($id)['claim_token']];
+check('F3: fail content je konečný', [$jobs->fail($f3Kc, $f3TokC, '0 platných variant', 'content'), $f3Fin($f3Kc)], ['failed', ['failed', 'content', 1, null, null]]);
+check('F3: fail timeout je konečný', [$jobs->fail($f3Kt, $f3TokT, 'timeout 20 min', 'timeout'), $f3Fin($f3Kt)], ['failed', ['failed', 'timeout', 1, null, null]]);
+
+// starý worker (fail bez kind) a neznámý kind: 3 pokusy bez odkladu jako dřív, fail_kind content
+foreach (['bez kind' => [], 'kind xyz' => ['kind' => 'xyz']] as $f3Label => $f3Extra) {
+    $rjReset();
+    $f3Ow = $rjAdd('manual', 221);
+    $f3Seq = [];
+    for ($f3I = 1; $f3I <= 3; $f3I++) {
+        $f3Tok = $f3Claim();
+        [$f3St, $f3Body] = $api->handle('POST', 'fail', [], $raJson(['job_id' => $f3Ow, 'error' => "pád $f3I"] + $f3Extra), $raH($f3Tok));
+        $f3Seq[] = [$f3Body['status'] ?? null, $f3Row($f3Ow)['fail_kind'], $f3Row($f3Ow)['not_before'], $f3Row($f3Ow)['wait_reason']];
+    }
+    check("F3: starý worker: fail $f3Label → 3 pokusy jako dnes", [$f3Seq, (int)$f3Row($f3Ow)['attempts'], (int)$f3Col($f3Ow, 'env_retries'), $f3Row($f3Ow)['error']], [[
+        ['queued', 'content', null, null], ['queued', 'content', null, null], ['failed', 'content', null, null],
+    ], 3, 0, 'pád 3']);
+}
+
+// result: 1 varianta stačí, 0 ne; detail = vzniklé varianty a vynechané (pročištěné skipped)
+$rjReset();
+$f3Rs = $rjAdd('manual', 221);
+$f3Tok = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$f3Rs, 'n' => '1'], $raMp4(), $raH($f3Tok));
+$f3St0 = $api->handle('POST', 'result', [], $raJson(['job_id' => $f3Rs, 'variants' => []]), $raH($f3Tok))[0];
+[$f3St1, $f3Body] = $api->handle('POST', 'result', [], $raJson(['job_id' => $f3Rs, 'variants' => [$raVariant(1)],
+    'skipped' => [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal']], ['n' => 7, 'errors' => ['x']]]]), $raH($f3Tok));
+check('F3: result s 1 variantou projde, s 0 ne', [$f3St0, $f3St1, $f3Body, $f3Row($f3Rs)['status']], [400, 200, ['ok' => true, 'variants' => 1], 'done']);
+check('F3: result zapíše detail', json_decode((string)$f3Col($f3Rs, 'detail'), true),
+    ['variants' => [1], 'skipped' => [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal']]]]);
+$rjReset();
+$f3Rs2 = $rjAdd('manual', 221);
+$f3Tok = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$f3Rs2, 'n' => '1'], $raMp4(), $raH($f3Tok));
+$api->handle('PUT', 'video', ['job_id' => (string)$f3Rs2, 'n' => '2'], $raMp4(), $raH($f3Tok));
+$api->handle('POST', 'result', [], $raJson(['job_id' => $f3Rs2, 'variants' => [$raVariant(2), $raVariant(1)]]), $raH($f3Tok));
+check('F3: result bez skipped: detail s prázdným skipped', json_decode((string)$f3Col($f3Rs2, 'detail'), true), ['variants' => [1, 2], 'skipped' => []]);
+$rjReset();
+$f3Fn = $rjAdd('manual', 221);
+$f3Tok = $f3Claim();
+check('F3: finish bez detail (starší volání) → detail NULL', [$jobs->finish($f3Fn, $f3Tok), $f3Col($f3Fn, 'detail'), $f3Row($f3Fn)['status']], [true, null, 'done']);
+
+// zrušená úloha: video, result i fail → 409 cancelled, složka úlohy zmizí, manifest nevznikne
+$rjReset();
+$f3X = $rjAdd('manual', 221);
+$f3Tok = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$f3XDir = $raInbox . '/' . $f3X;
+$f3V1 = $api->handle('PUT', 'video', ['job_id' => (string)$f3X, 'n' => '1'], $raMp4(), $raH($f3Tok))[0];
+$f3Set($f3X, ['status' => 'cancelled']);
+$f3V2 = $api->handle('PUT', 'video', ['job_id' => (string)$f3X, 'n' => '2'], $raMp4(), $raH($f3Tok));
+$f3DirAfterVideo = is_dir($f3XDir);
+// video dorazilo těsně před zrušením: složka znovu existuje, result ji musí smazat
+@mkdir($f3XDir);
+file_put_contents($f3XDir . '/variant-1.mp4', $raMp4());
+$f3Rx = $api->handle('POST', 'result', [], $raJson(['job_id' => $f3X, 'variants' => [$raVariant(1)]]), $raH($f3Tok));
+$f3DirAfterResult = [is_dir($f3XDir), is_file($f3XDir . '/manifest.json')];
+$f3Fx = $api->handle('POST', 'fail', [], $raJson(['job_id' => $f3X, 'error' => 'x', 'kind' => 'env']), $raH($f3Tok));
+check('F3: zrušená úloha odmítne video i result (409) a složka zmizí',
+    [$f3V1, $f3V2, $f3DirAfterVideo, $f3Rx, $f3DirAfterResult, $f3Fx, $f3Row($f3X)['status']],
+    [200, [409, $f3Gone], false, [409, $f3Gone], [false, false], [409, $f3Gone], 'cancelled']);
+
+// heartbeat se stavem workeru: uloží worker_state; prázdné tělo (starý worker) a neplatný stav ho nemění
+$rjClock += 60;
+$f3Until = '2026-11-20T15:00:00+00:00';
+$f3Hb = $api->handle('POST', 'heartbeat', [], $raJson(['state' => 'paused', 'reason' => 'limit', 'detail' => 'Limit předplatného', 'until' => $f3Until]), $raH());
+$f3WsAt = $rjClock;
+$f3Ws = (string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_state'");
+$rjClock += 60;
+$f3HbOld = $api->handle('POST', 'heartbeat', [], '', $raH());
+$api->handle('POST', 'heartbeat', [], $raJson(['state' => 'spim']), $raH());
+$jobs->heartbeat(['reason' => 'limit']);
+check('F3: heartbeat se stavem uloží worker_state, bez těla ho nemění',
+    [$f3Hb, $f3HbOld, json_decode($f3Ws, true), db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_state'"),
+        strtotime((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_seen_at'"))],
+    [[200, ['ok' => true]], [200, ['ok' => true]],
+        ['state' => 'paused', 'reason' => 'limit', 'detail' => 'Limit předplatného', 'until' => date('c', strtotime($f3Until)), 'at' => date('c', $f3WsAt)],
+        $f3Ws, $rjClock]);
+$jobs->heartbeat(['state' => 'running', 'reason' => 'neco', 'detail' => str_repeat('ž', 250), 'until' => 'nesmysl']);
+$f3Ws = json_decode((string)db()->value("SELECT value FROM reel_state WHERE $rjKey = 'worker_state'"), true);
+check('F3: worker_state: neznámý důvod a neplatné until → null, detail nejvýš 200 znaků',
+    [array_keys($f3Ws ?? []), $f3Ws['state'] ?? null, $f3Ws['reason'] ?? null, mb_strlen((string)($f3Ws['detail'] ?? '')), $f3Ws['until'] ?? null, $f3Ws['at'] ?? null],
+    [['state', 'reason', 'detail', 'until', 'at'], 'running', null, 200, null, date('c', $rjClock)]);
+check('F3: heartbeat: worker_seen_at a worker_state po jednom řádku',
+    (int)db()->value("SELECT COUNT(*) FROM reel_state WHERE $rjKey IN ('worker_seen_at', 'worker_state')"), 2);
+$rjReset();
+
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
 db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([
     ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],

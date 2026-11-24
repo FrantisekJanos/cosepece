@@ -1,0 +1,68 @@
+{
+  "ct": 324,
+  "nazev": "Vládní návrh zákona o státním rozpočtu na rok 2027",
+  "faze": "2. čtení",
+  "score": 15,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_large",
+      "points": 10,
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=324",
+  "data_date": "2026-11-24",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-30",
+  "kdo": "ministerstvo financí",
+  "format": "zmena",
+  "title": "Rozpočet 2027: PN 2439 přesouvá 800 milionů z obnovitelných zdrojů na zaměstnávání",
+  "perex": "Marian Jurečka podal 24. 11. 2026 pozměňovací návrh 2439 k rozpočtu na rok 2027. Podle shrnutí AI přesouvá 800 mil. Kč mezi dvěma kapitolami.",
+  "hook": {
+    "big": "800 mil. Kč",
+    "unit": "přesun mezi kapitolami",
+    "sub": "PN 2439 k rozpočtu 2027 (shrnutí AI)"
+  },
+  "pn": {
+    "cislo": 2439,
+    "autor": "Marian Jurečka",
+    "podano": "2026-11-24 13:50",
+    "url": "https://www.psp.cz/sqw/sd.sqw?cd=2439&o=10"
+  },
+  "zmena": {
+    "ai_oznaceno": true,
+    "body": [
+      {
+        "kde": "kapitola 322 – Ministerstvo hospodářství",
+        "co": "Výdaje, včetně dotace na obnovitelné zdroje energie (shrnutí AI)",
+        "bez_pred": "znění textu PN zatím v datech není",
+        "po": "snižují se o 800 mil. Kč",
+        "zdroj": "PN 2439, shrnutí AI",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2439&o=10"
+      },
+      {
+        "kde": "kapitola 313 – Ministerstvo práce a sociálních věcí",
+        "co": "Výdaje, včetně příspěvku na zaměstnávání osob se zdravotním postižením (shrnutí AI)",
+        "bez_pred": "znění textu PN zatím v datech není",
+        "po": "zvyšují se o stejných 800 mil. Kč",
+        "zdroj": "PN 2439, shrnutí AI",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2439&o=10"
+      }
+    ],
+    "proc": null,
+    "pozor": {
+      "lab": "Na co se dívat",
+      "text": "Jde o přesun uvnitř rozpočtu, tedy v rámci předmětu návrhu. Podle shrnutí AI bez zpětné účinnosti a bez zkrácení lhůt. Text PN zatím není dostupný, doslovná citace tedy není ověřená.",
+      "zdroj": "shrnutí AI, cosepece.cz"
+    }
+  },
+  "zdroje": "Zdroj: psp.cz, PN 2439 k tisku 324, data k 24. 11. 2026; shrnutí AI"
+}

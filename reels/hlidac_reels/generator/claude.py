@@ -1,6 +1,7 @@
 """Spuštění `claude -p` (Claude Code CLI na předplatném) se zúženými nástroji a prompty generátoru."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -23,6 +24,35 @@ class ClaudeRun:
     returncode: int | None
     timed_out: bool
     log_path: Path
+    kind: str = "ok"  # "ok", "env" (rc ≠ 0 nebo is_error: limit, přihlášení…), "timeout"
+    result: str = ""  # prvních RESULT_MAX znaků pole result z JSON výstupu
+
+
+class EnvError(Exception):
+    """Běh claude -p selhal kvůli prostředí (limit, přihlášení…) a nic nezapsal; oprava nemá smysl."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+RESULT_MAX = 500
+
+
+def parse_output(out: str) -> tuple[bool, str]:
+    """Z výstupu `--output-format json` vrátí (is_error, result[:RESULT_MAX]); nečitelný výstup = (False, "").
+
+    Výstup je jeden objekt; seznam událostí (starší verze CLI) se čte od konce po prvním objektu s is_error.
+    """
+    try:
+        data = json.loads((out or "").strip())
+    except ValueError:
+        return False, ""
+    if isinstance(data, list):
+        data = next((d for d in reversed(data) if isinstance(d, dict) and "is_error" in d), {})
+    if not isinstance(data, dict):
+        return False, ""
+    return data.get("is_error") is True, str(data.get("result") or "")[:RESULT_MAX]
 
 
 def _ct_of(path: Path) -> int:
@@ -118,18 +148,19 @@ def _task_line(n: int, fmt: str | None) -> str:
 
 
 def build_prompt(*, ct: int, formats: list[str], workdir: Path, repair: dict[int, list[str]] | None = None) -> str:
-    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2 a 3 = v3 ve formátech `formats`; `repair` = jen opravy."""
-    plan = {1: None, 2: formats[0], 3: formats[1]}
-    numbers = sorted(repair) if repair else [1, 2, 3]
+    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2, 3… = v3 ve formátech `formats`; `repair` = jen opravy."""
+    plan: dict[int, str | None] = {1: None, **{i: f for i, f in enumerate(formats, 2)}}
+    numbers = sorted(repair) if repair else sorted(plan)
     tasks = "\n".join(_task_line(n, plan[n]) for n in numbers)
     fix = ""
     if repair:
         lines = [f"- variant-{n}/: " + "; ".join(errs) for n, errs in sorted(repair.items())]
         fix = ("\nOPRAVA: kontrola našla v těchto variantách chyby. Subagent má přečíst svůj návod, "
-               "opravit soubory ve své složce a chyby odstranit:\n" + "\n".join(lines) + "\n")
+               "opravit soubory ve své složce a chyby odstranit. Soubory card.json a caption.txt oprav "
+               "nástrojem Edit, nebo je přepiš celé nástrojem Write. Chyby:\n" + "\n".join(lines) + "\n")
     text = (HERE / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
     text = text.replace("{ct}", str(ct)).replace("{tasks}", tasks).replace("{repair}", fix)
-    if repair:
+    if repair or len(numbers) != 3:
         text = text.replace("tři subagenty", f"tolik subagentů, kolik je níže variant ({len(numbers)})")
     return text
 
@@ -176,4 +207,8 @@ def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEF
     with log_path.open("a", encoding="utf-8") as log:  # oprava variant běží podruhé, první log zůstane
         log.write(f"=== běh ===\n{out or ''}\n--- stderr ---\n{err or ''}\n" + ("--- timeout ---\n" if timed_out else ""))
     rc = None if timed_out else proc.returncode
-    return ClaudeRun(ok=not timed_out and rc == 0, returncode=rc, timed_out=timed_out, log_path=log_path)
+    is_error, result = parse_output(out)
+    # druh běhu jen z návratového kódu a is_error; text hlášky se mezi verzemi CLI mění
+    kind = "timeout" if timed_out else ("env" if rc != 0 or is_error else "ok")
+    return ClaudeRun(ok=kind == "ok", returncode=rc, timed_out=timed_out, log_path=log_path,
+                     kind=kind, result=result)

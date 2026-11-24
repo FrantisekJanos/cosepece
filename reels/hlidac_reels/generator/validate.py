@@ -29,13 +29,15 @@ def _v3_block(card: dict, fmt: str) -> list[str]:
     if fmt == "pn" and _empty(block.get("count")):
         errs.append("pn: chybí count")
     if fmt == "zmena":
+        # body bez citace vynechá normalizace (normalize.py); chyba je až bez jediné citace
         body = block.get("body") or []
         if not body:
             errs.append("zmena: chybí body")
+        elif all(_empty(b.get("citace")) for b in body):
+            errs.append("zmena: žádný bod nemá citaci")
         for i, b in enumerate(body, 1):
-            for key in ("citace", "zdroj"):
-                if _empty(b.get(key)):
-                    errs.append(f"zmena: bod {i} nemá {key}")
+            if _empty(b.get("zdroj")):
+                errs.append(f"zmena: bod {i} nemá zdroj")
     if fmt == "rozprava":
         for side in ("pro", "namitky", "odpovedi"):
             for i, b in enumerate((block.get(side) or {}).get("body") or [], 1):
@@ -101,6 +103,14 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
     return errs
 
 
+def _overflow_text(box: dict) -> str:
+    """„přetéká o 3 px (hook.unit 7 znaků, title 41 znaků)“: o kolik a která pole karty to způsobují."""
+    px = box.get("overflow_px") or 0
+    text = f"přetéká o {px} px" if px > 0 else "text přetéká"
+    fields = [f"{o['m']} {o['len']} znaků" for o in box.get("over") or []]
+    return f"{text} ({', '.join(fields)})" if fields else text
+
+
 def check_layout(card: dict, template: str) -> list[str]:
     """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium)."""
     from ..render import measure_blocks
@@ -111,7 +121,7 @@ def check_layout(card: dict, template: str) -> list[str]:
         if not name.startswith("scene:"):
             continue
         if b.get("overflow"):
-            errs.append(f"{name}: text přetéká")
+            errs.append(f"{name}: {_overflow_text(b)}")
         if b.get("cut_mid_word"):
             errs.append(f"{name}: text useknutý uprostřed slova")
         if b["top"] < SAFE["top"] or b["bottom"] > SAFE["bottom"] or b["left"] < SAFE["left"] or b["right"] > SAFE["right"]:

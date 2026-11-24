@@ -13,10 +13,17 @@ import pytest
 
 from hlidac_reels.generator import worker
 from hlidac_reels.generator.api import ApiError, ReelsApi
+from hlidac_reels.generator.claude import EnvError
 from hlidac_reels.generator.generate import GenResult, Variant
 
 JOB = {"job_id": 7, "claim_token": "c" * 32, "ct": 221, "source": "manual", "format_hint": None,
        "reason_keys": ["retro"], "has_amendments": True, "card_v2": {"ct": 221}}
+
+
+@pytest.fixture(autouse=True)
+def _tools_ok(monkeypatch):
+    """Testy smyčky nemají záviset na nástrojích PC; test kontroly si ji podvrhne sám."""
+    monkeypatch.setattr(worker, "check_tools", lambda mcp_config: [])
 
 
 class FakeApi:
@@ -514,3 +521,134 @@ def test_process_preda_vydana_videa(tmp_path):
     worker.process(FakeApi(), job, root=tmp_path, mcp_config=tmp_path / "mcp.json", model="m",
                    generate=fake_generate({1, 2, 3}, seen))
     assert seen["published"] == job["published"]
+
+
+# --- chyba prostředí, kontrola nástrojů, opakované nahrávání (F2) ---
+
+class _Stop(BaseException):
+    """Ukončí nekonečnou smyčku run() v testu (Exception by smyčka spolkla)."""
+
+
+def _env_generate(**kw):
+    raise EnvError("You've hit your limit")
+
+
+def test_limit_nespali_frontu(tmp_path, monkeypatch):
+    api = FakeApi(job=dict(JOB))
+    monkeypatch.setattr(worker, "generate", _env_generate)
+    answers = iter([False, False, True])
+
+    def probe(model):
+        ok = next(answers)
+        api.calls.append(("probe", ok))
+        return ok
+
+    def sleep(s):
+        api.calls.append(("sleep", s))
+        if api.names().count("claim") >= 2:
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep, probe=probe)
+    fails = [c for c in api.calls if c[0] == "fail"]
+    assert fails[0][3].startswith("prostředí: ") and "limit" in fails[0][3]
+    seq = [c for c in api.calls if c[0] in ("claim", "fail", "probe", "sleep")]
+    # po prvním fail: odstup 900 → sonda ne → 3600 → sonda ne → 10800 → sonda ano → teprve pak claim
+    assert seq[:9] == [("claim",), fails[0], ("sleep", 900), ("probe", False), ("sleep", 3600), ("probe", False),
+                       ("sleep", 10800), ("probe", True), ("claim",)]
+    # po úspěšné sondě a další chybě prostředí začíná odstup znovu od 900 s
+    assert seq[9][0] == "fail" and seq[10] == ("sleep", 900)
+
+
+def test_limit_sonda_drzi_posledni_krok(tmp_path, monkeypatch):
+    api = FakeApi(job=dict(JOB))
+    monkeypatch.setattr(worker, "generate", _env_generate)
+    sleeps: list = []
+
+    def sleep(s):
+        sleeps.append(s)
+        if len(sleeps) >= 5:
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep,
+                   probe=lambda m: False)
+    assert sleeps == [900, 3600, 10800, 10800, 10800]
+    assert api.names().count("claim") == 1
+
+
+def test_chybi_nastroj_nebere_ulohy(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "check_tools", lambda mcp_config: ["ffmpeg"])
+    api = FakeApi(job=dict(JOB))
+    sleeps: list = []
+    worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleeps.append, once=True)
+    assert "claim" not in api.names()
+    assert sleeps == [300]
+
+
+def test_check_tools(tmp_path, monkeypatch):
+    monkeypatch.undo()  # skutečná check_tools, podvržené jen hledání programů a Chromia
+    monkeypatch.delenv("CLAUDE_BIN", raising=False)
+    found = {"claude", "ffmpeg", "ffprobe"}
+    monkeypatch.setattr(worker.shutil, "which", lambda name: f"/bin/{name}" if name in found else None)
+    monkeypatch.setattr(worker, "_chromium_ok", lambda: True)
+    mcp = tmp_path / "mcp.json"
+    mcp.write_text("{}", encoding="utf-8")
+    assert worker.check_tools(mcp) == []
+    found.discard("ffprobe")
+    monkeypatch.setattr(worker, "_chromium_ok", lambda: False)
+    missing = worker.check_tools(tmp_path / "chybi.json")
+    assert any("ffprobe" in m for m in missing) and any("Chromium" in m for m in missing)
+    assert any("chybi.json" in m for m in missing) and not any("ffmpeg" == m for m in missing)
+
+
+def test_nahravani_zkusi_znovu(tmp_path):
+    class Api(FakeApi):
+        failed = False
+
+        def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+            if not Api.failed:
+                Api.failed = True
+                self.calls.append(("upload_error",))
+                raise OSError("spojení přerušeno")
+            return super().upload_video(job_id, claim_token, n, path, orientation)
+
+    api = Api()
+    sleeps: list = []
+    assert worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=fake_generate({1, 2, 3}), sleep=sleeps.append) is True
+    assert "fail" not in api.names()
+    assert api.names() == ["upload_error"] + ["upload_video"] * 3 + ["result"]
+    assert sleeps == [60]
+
+
+def test_nahravani_vzda_po_trech(tmp_path):
+    class Api(FakeApi):
+        def result(self, job_id, claim_token, variants):
+            self.calls.append(("result",))
+            raise ApiError(502, "Bad Gateway")
+
+    api = Api()
+    sleeps: list = []
+    assert worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=fake_generate({1, 2, 3}), sleep=sleeps.append) is False
+    assert api.names().count("result") == 4 and api.names()[-1] == "fail"
+    assert sleeps == [60, 300, 900]
+
+
+def test_nahravani_409_neopakuje(tmp_path):
+    api = FakeApi(conflict_on="upload")
+    sleeps: list = []
+    assert worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=fake_generate({1, 2, 3}), sleep=sleeps.append) is False
+    assert api.names() == ["upload_video"] and sleeps == []
+
+
+def test_sirka_opakuje_pri_vypadku(tmp_path):
+    api = FakeApi(conflict_on=ApiError(503, "unavailable"))
+    sleeps: list = []
+    assert worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=fake_generate({1, 2}, land_ns={1}), sleep=sleeps.append) is True
+    # šířka selže i po třech opakováních → jen varování, výška a sada projdou
+    assert api.names() == ["upload_landscape"] * 4 + ["upload_video", "upload_video", "result"]
+    assert sleeps == [60, 300, 900]

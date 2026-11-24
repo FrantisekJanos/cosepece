@@ -1,0 +1,66 @@
+{
+  "ct": 324,
+  "nazev": "Vládní návrh zákona o státním rozpočtu ČR na rok 2027",
+  "faze": "2. čtení",
+  "score": 15,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_large",
+      "points": 10,
+      "label": "Rozsáhlá nová úprava zavedená pozměňovacím návrhem"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk.php?ct=324",
+  "data_date": "2026-11-24",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-30",
+  "kdo": "ministerstvo financí",
+  "format": "zmena",
+  "title": "PN 2395: 600 milionů korun z důchodových dávek na rekvalifikace",
+  "perex": "Pozměňovací návrh 2395 k rozpočtu na rok 2027 podala Pavla Pivoňka Vaňková spolu s Eliškou Olšákovou. Přesouvá 600 mil. Kč uvnitř kapitoly Ministerstva práce a sociálních věcí.",
+  "hook": {
+    "big": "600 mil. Kč",
+    "unit": "z dávek na rekvalifikace",
+    "sub": "pozměňovací návrh 2395 k rozpočtu 2027"
+  },
+  "zmena": {
+    "body": [
+      {
+        "kde": "kapitola 313 – Ministerstvo práce a sociálních věcí",
+        "co": "Výdaje na aktivní politiku zaměstnanosti (rekvalifikace)",
+        "bez_pred": "výdaje podle vládního návrhu",
+        "po": "o 600 mil. Kč víc",
+        "citace": "se zvyšují výdaje specifického ukazatele „Aktivní politika zaměstnanosti celkem“ o částku 600 000 000 Kč, a to s určením na podporu rekvalifikací uchazečů a zájemců o zaměstnání",
+        "zdroj": "PN 2395 k tisku 324",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2395&o=10"
+      },
+      {
+        "kde": "kapitola 313 – Ministerstvo práce a sociálních věcí",
+        "co": "Výdaje na dávky důchodového pojištění",
+        "bez_pred": "výdaje podle vládního návrhu",
+        "po": "o 600 mil. Kč méně",
+        "citace": "se snižují výdaje specifického ukazatele „Dávky důchodového pojištění“ o částku 600 000 000 Kč",
+        "zdroj": "PN 2395 k tisku 324",
+        "url": "https://www.psp.cz/sqw/sd.sqw?cd=2395&o=10"
+      }
+    ],
+    "proc": {
+      "text": "Podle odůvodnění návrh rozpočtu snižuje prostředky na aktivní politiku zaměstnanosti o 487 mil. Kč (o 18,5 %) a 600 mil. Kč tento pokles kompenzuje. Snížení dávek má podle předkladatelek pokrýt rezerva ve výdajích na důchody, kterou zmiňuje Národní rozpočtová rada, a nemá dopadnout na zákonné nároky.",
+      "zdroj": "odůvodnění PN 2395"
+    },
+    "pozor": {
+      "lab": "Na co se dívat",
+      "text": "Jde o přesun v rámci jednoho rozpočtu, celkové výdaje kapitoly se nemění. Že rezerva na důchody snížení pokryje, je předpoklad předkladatelek, v textu PN to doloženo není. O PN se hlasuje až ve 3. čtení.",
+      "zdroj": "shrnutí AI (cosepece.cz) · odůvodnění PN 2395"
+    }
+  },
+  "zdroje": "Zdroj: PN 2395 a odůvodnění, psp.cz, tisk 324, stav k 24. 11. 2026"
+}

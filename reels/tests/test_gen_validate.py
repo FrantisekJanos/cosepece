@@ -55,9 +55,13 @@ def test_v3_bez_zdroju():
 
 
 def test_zmena_bod_bez_citace_nebo_zdroje():
+    # bod bez citace normalizace vynechá; kontrola ho proto snese, chyba je až bez jediné citace
     card = load_fixture("v3-zmena-221.json")
     card["zmena"]["body"][0]["citace"] = ""
-    assert _check(card)
+    assert _check(card) == []
+    for b in card["zmena"]["body"]:
+        b["citace"] = ""
+    assert any("žádný bod nemá citaci" in e for e in _check(card))
     card = load_fixture("v3-zmena-221.json")
     card["zmena"]["body"][0]["zdroj"] = ""
     assert _check(card)
@@ -92,6 +96,20 @@ def test_v2_bez_titulku_nebo_citace():
 @pytest.mark.render
 def test_layout_fixtura_projde():
     assert check_layout(load_fixture("v3-cesta-311.json"), "template_v3") == []
+
+
+@pytest.mark.render
+def test_check_layout_rika_o_kolik_a_co():
+    # šablona titulek zkrátí na celé slovo a řádek háčku zmenší nejvýš na 60 %; scénu proto rozbije jen jednotka
+    # háčku z jediného dlouhého slova (nezalomí se ani zmenšená); chyba musí říct, o kolik px scéna přetéká
+    # a která pole (s délkou) se na ní podílejí
+    card = copy.deepcopy(load_fixture("v3-pn-115.json"))
+    card["title"] = ("Pozměňovací návrhy k novele trestního zákoníku sahají do dalších zákonů " * 3)[:120]
+    card["hook"] = dict(card["hook"], unit="pozměňovacíchnávrhůadalšíchpět")
+    errs = [e for e in check_layout(card, "template_v3") if e.startswith("scene:s-hook:")]
+    over = [e for e in errs if "přetéká o" in e]
+    assert over, errs
+    assert "px" in over[0] and "title 120 znaků" in over[0] and "hook.unit 30 znaků" in over[0], over[0]
 
 
 def test_layout_preteceni_neprojde(monkeypatch):

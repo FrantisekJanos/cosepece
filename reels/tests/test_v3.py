@@ -42,6 +42,8 @@ def _assert_safe(boxes: dict, safe: dict = SAFE) -> None:
     assert scenes
     for name, b in scenes.items():
         assert not b["overflow"], name
+        # přesná zpětná vazba pro generátor: bez přetečení 0 px
+        assert b["overflow_px"] == 0, (name, b)
         assert not b["cut_mid_word"], name
         assert b["top"] >= safe["top"] and b["bottom"] <= safe["bottom"], (name, b)
         assert b["left"] >= safe["left"] and b["right"] <= safe["right"], (name, b)
@@ -193,9 +195,12 @@ def test_long_texts_stay_in_safe_zone(name):
     card, fmt = _long_card(name)
     boxes = measure_blocks(card, V3)
     _assert_safe(boxes)
-    # dlouhý text se buď zmenší, nebo zkrátí; zkrácení jen na celé slovo
-    if fmt in ("cesta", "pn"):
-        assert boxes["title"]["truncated"] or boxes["perex"]["truncated"]
+    # dlouhý text se buď zmenší, nebo zkrátí; zkrácení jen na celé slovo. Od vměstnání podtitulku a meta háčku
+    # se titulek 170 znaků vejde zmenšený celý: nezkrácený text musí být vidět celý (nic se neztratí potichu)
+    raw = card.to_dict()
+    for key, full in (("title", raw["title"]), ("perex", raw["perex"])):
+        b = boxes[key]
+        assert b["truncated"] or " ".join(b["text"].split()) == " ".join(full.split()), (key, b["text"])
     assert not boxes["title"]["cut_mid_word"] and not boxes["perex"]["cut_mid_word"]
 
 
@@ -278,3 +283,33 @@ def test_v3_seek_is_deterministic():
         page.evaluate("window.seek(3.1)")
         page.evaluate("window.seek(12.4)")
         assert page.screenshot(type="png") == a
+
+
+# ---------- regrese: skutečné karty generátoru, které v háčku přetékaly ----------
+
+REGRESE = sorted((FIXTURES.parent / "regrese").glob("*.json"))
+# karta z Review Focus 4: dlouhá částka s mezerou a jméno se spojovníkem a klubem v podtitulku háčku
+HOOK_LONG = {"big": "2 000", "unit": "mil. Kč", "sub": "podal Jan Novák-Dlouhý (ANO2011) 24. 11. 2026 v 9:46"}
+
+
+def _regrese_cards() -> list:
+    cards = [pytest.param(json.loads(p.read_text(encoding="utf-8")), id=p.stem) for p in REGRESE]
+    hook = copy.deepcopy(json.loads(REGRESE[0].read_text(encoding="utf-8")))
+    hook["hook"] = HOOK_LONG
+    return cards + [pytest.param(hook, id="hook-2000-mil")]
+
+
+def test_regrese_cards_exist():
+    assert len(REGRESE) == 4
+
+
+@pytest.mark.render
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+@pytest.mark.parametrize("raw", _regrese_cards())
+def test_regresni_karty_bez_preteceni(raw, orientation):
+    from hlidac_reels.generator.validate import check_layout
+
+    if orientation == "portrait":
+        assert check_layout(raw, V3) == []
+    else:
+        _assert_safe(measure_blocks(Card.from_json(raw), V3, "landscape"), SAFE_LAND)

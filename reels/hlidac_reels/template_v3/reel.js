@@ -291,13 +291,14 @@
     var a = A('s-hook', lim((c.title || '').length / 40, 0.8, 2));
     $('hk-rub').textContent = RUBRIKA[c.format] || 'Hlídač zákonů';
     $('hk-row').style.display = h ? '' : 'none';
-    setOpt($('hk-sub'), h ? h.sub : '');
+    // podtitulek a meta se vměstnávají přes fit() jako ostatní texty (dlouhé jméno, datum a čas podání)
+    fillPlain($('hk-sub'), h ? h.sub : '');
     fill($('hk-title'), c.title || c.nazev || '', function (t) { setWords($('hk-title'), t, true); });
     $('hk-faze').textContent = 'Fáze: ' + c.faze;
     var meta = [];
     if (c.typ_navrhu) meta.push(String(c.typ_navrhu));
     if (c.predlozeno) meta.push('předloženo ' + czDate(c.predlozeno));
-    setOpt($('hk-meta'), meta.join(' · '));
+    fillPlain($('hk-meta'), meta.join(' · '));
 
     a.show($('hk-rub').parentNode, 0, -30, 0);
     a.bg(function (L) { $('hk-sq').style.opacity = Math.floor(Math.max(0, L) * 2.5) % 2 ? 0.25 : 1; });
@@ -871,6 +872,22 @@
     return false;
   }
 
+  function fitRows(body) {
+    // řádky [data-fit-row] (háček: velké číslo + jednotka) zmenšuje po 4 % (nejvýš na 60 %), dokud se jejich
+    // obsah nevejde do šířky sloupce; děti mají vlastní velikost písma, zmenšují se všechny stejným poměrem
+    Array.prototype.forEach.call(body.querySelectorAll('[data-fit-row]'), function (row) {
+      if (row.offsetParent === null) return;
+      var kids = Array.prototype.slice.call(row.children);
+      kids.forEach(function (k) {
+        k.style.fontSize = '';
+        k.dataset.base = parseFloat(getComputedStyle(k).fontSize);
+      });
+      for (var step = 1; step <= 10 && row.scrollWidth > row.clientWidth + 1; step++) {
+        kids.forEach(function (k) { k.style.fontSize = (k.dataset.base * (1 - 0.04 * step)) + 'px'; });
+      }
+    });
+  }
+
   window.fit = function () {
     // každou scénu zmenšuje po 4 % (nejvýš na 60 %), potom zkracuje texty od konce na celá slova
     scenes.forEach(function (s, si) {
@@ -888,6 +905,7 @@
         el.style.fontSize = '';
         el.dataset.base = parseFloat(getComputedStyle(el).fontSize);
       });
+      fitRows(body);
       var scale = 1;
       while (overflows(body) && scale > 0.6) {
         scale -= 0.04;
@@ -916,6 +934,37 @@
     return next !== '' && !/[\s,;:.–-]/.test(next);
   }
 
+  // Kolik px scéna přetéká a které textové prvky za to můžou (pro zpětnou vazbu generátoru).
+  // Bezpečná zóna opisuje SAFE z generator/validate.py (na výšku) a LANDSCAPE_SAFE z render.py (na šířku).
+  function overflowInfo(body) {
+    // rozdíl do 1 px je zaokrouhlení, stejně jako v overflows()
+    function excess(d) { return d > 1 ? d : 0; }
+    var px = Math.max(excess(body.scrollHeight - body.clientHeight), excess(body.scrollWidth - body.clientWidth));
+    for (var i = 0; LAND && i < body.children.length; i++) {
+      var k = body.children[i];
+      if (/^side-/.test(k.className) && k.clientWidth) px = Math.max(px, excess(k.scrollWidth - k.clientWidth));
+    }
+    var b = body.getBoundingClientRect();
+    var safe = LAND ? { top: 60, left: 60, bottom: window.innerHeight - 60, right: window.innerWidth - 60 }
+                    : { top: 150, left: 60, bottom: 1920 - 340, right: 1020 };
+    var lim = { top: Math.max(b.top, safe.top), left: Math.max(b.left, safe.left),
+                bottom: Math.min(b.bottom, safe.bottom), right: Math.min(b.right, safe.right) };
+    var over = [], seen = {};
+    // přesahující prvky a prvky, které fit() musel zkrátit (podílejí se na nedostatku místa);
+    // jméno = data-m (pole karty), jinak id; délka = celý text karty, ne zkrácený
+    Array.prototype.forEach.call(body.querySelectorAll('[data-m],[data-fit]'), function (el) {
+      var name = el.dataset.m || el.id;
+      if (!name || seen[name] || el.offsetParent === null) return;
+      var r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      var out = r.top < lim.top - 1 || r.left < lim.left - 1 || r.bottom > lim.bottom + 1 || r.right > lim.right + 1;
+      if (!out && el.dataset.truncated !== '1') return;
+      seen[name] = true;
+      over.push({ m: name, len: (el.dataset.full || el.textContent || '').trim().length });
+    });
+    return { px: Math.ceil(px), over: over };
+  }
+
   window.measureBlocks = function () {
     // Ustálený stav každé scény (po náběhu, před stěrkou): obdélníky prvků s data-m a obálka celé scény
     // (klíč "scene:<id>": sjednocení všech viditelných prvků těla, přetečení těla, zkrácení uprostřed slova).
@@ -937,8 +986,9 @@
             visible: +getComputedStyle(el).opacity > 0.99, text: el.textContent, truncated: el.dataset.truncated === '1' };
         }
       });
+      var info = overflowInfo(body);
       out['scene:' + s.id] = { top: u.top, bottom: u.bottom, left: u.left, right: u.right, cut_mid_word: cut,
-        overflow: overflows(body) };
+        overflow: overflows(body), overflow_px: info.px, over: info.over };
     });
     window.seek(0);
     return out;

@@ -162,3 +162,30 @@ def test_navody_ctou_publikovano():
     from hlidac_reels.generator import claude
     for name in ("v2.md", "v3.md"):
         assert "publikovano.md" in (claude.HERE / "prompts" / name).read_text(encoding="utf-8")
+
+
+def test_kind_z_json(tmp_path, monkeypatch):
+    # druh běhu z návratového kódu a pole is_error, ne z textu hlášky
+    from hlidac_reels.generator.claude import parse_output
+    _fake(monkeypatch, "ok")
+    r = run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
+    assert r.kind == "ok" and r.result == "ok"
+    monkeypatch.setenv("FAKE_CLAUDE_ERROR", "1")
+    r = run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
+    assert r.kind == "env" and not r.ok and r.returncode == 1 and "limit" in r.result
+    monkeypatch.delenv("FAKE_CLAUDE_ERROR")
+    _fake(monkeypatch, "fail")  # rc ≠ 0 bez JSON
+    assert run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30).kind == "env"
+    _fake(monkeypatch, "sleep")
+    assert run_claude("x", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=2).kind == "timeout"
+    # is_error: true i při rc 0 je chyba prostředí; text hlášky nerozhoduje
+    assert parse_output('{"is_error": true, "result": "cokoli"}') == (True, "cokoli")
+    assert parse_output('{"is_error": false, "result": "' + "x" * 900 + '"}') == (False, "x" * 500)
+    assert parse_output("není json") == (False, "")
+    assert parse_output('[{"type": "system"}, {"type": "result", "is_error": true, "result": "r"}]') == (True, "r")
+
+
+def test_opravny_prompt_zmini_edit_a_write(tmp_path):
+    p = build_prompt(ct=311, formats=["cesta", "pn"], workdir=tmp_path, repair={3: ["chybí pole zdroje"]})
+    assert "Soubory card.json a caption.txt oprav nástrojem Edit, nebo je přepiš celé nástrojem Write." in p
+    assert "nástrojem Edit" not in build_prompt(ct=311, formats=["cesta", "pn"], workdir=tmp_path)

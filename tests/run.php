@@ -1623,7 +1623,8 @@ if (db()->driver !== 'mysql') {
 }
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
     video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', format VARCHAR(40),
-    created_at $rjTs, published_at $rjTs, autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
+    created_at $rjTs, published_at $rjTs, autopilot BOOLEAN NOT NULL DEFAULT FALSE,
+    send_attempts INTEGER NOT NULL DEFAULT 0, send_error TEXT, next_send_at $rjTs, picked_at $rjTs)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
 
 // tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí

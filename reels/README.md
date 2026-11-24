@@ -78,8 +78,9 @@ Bot posílá do nastaveného chatu video ke schválení s popiskem a tlačítky:
 
 Příkazy:
 
-- `/fronta`: počty položek podle stavů, k čekajícím znovu náhled s tlačítky, k neúspěšným tlačítko Zkusit znovu,
-  schválené čekající na restart a zveřejňování starší 15 minut jen vypíše,
+- `/fronta`: přehled po oddílech (co na co čeká, u odložených a `held` kdy a proč), k čekajícím znovu náhled
+  s tlačítky, k neúspěšným tlačítko Zkusit znovu, pod přehledem tlačítko „Poslat tlačítka znovu“ (obnoví ztracená
+  tlačítka), schválené čekající na restart a zveřejňování starší 15 minut jen vypíše,
 - `/dalsi`: pošle další video ze fronty ke schválení.
 
 Nově zařazené video bot pošle sám do minuty. Video, které Telegram odmítne (např. přes 50 MB) nebo jehož soubor chybí,
@@ -223,7 +224,8 @@ pošle variantě vlastní náhled se Schválit / Upravit popisek / Zamítnout (j
 jen o její tlačítko, takže jde vybrat víc variant. Hotovo zamítne zbylé nevybrané varianty (před výběrem celou sadu);
 starší zprávy sad s tlačítkem Zamítnout vše fungují stejně. Schválit ani úprava popisku nejde u nevybrané varianty,
 odpověď na zprávu sady nemění žádnou. `/fronta` pošle znovu zprávu sady se zbylými variantami a náhledy vybraných.
-Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco čeká (výběr nebo schválení).
+Po rozhodnutí poslední vybrané varianty bot napíše „Zbývá varianta N“ (co ještě čeká na výběr). Sada s jedinou
+variantou se bere jako samostatné video.
 
 **Limity:**
 
@@ -234,11 +236,25 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
   `fresh` za den (Europe/Prague), zbylé nálezy přijdou na řadu další dny; první běh detektoru jen uloží výchozí stav,
 - vydaná úloha bez výsledku se po 60 minutách vrátí do fronty, po 3 pokusech skončí `failed`; `fresh` starší než
   7 dní se už nevydá (`expired`),
-- do Telegramu jdou nejvýš 2 automatické sady (`fresh`, `auto_pick`) denně (Europe/Prague) a najednou nejvýš
-  1 nevyřízená jednotka; sady ručních úloh (`/video`, `/pn`) denní limit neomezuje a nepočítají se do něj, `/dalsi` limit
-  obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
-- nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
-  zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+- pravidla doručení: vyžádané jednotky (`manual`, `auto_pick`, `ukazka`, tedy `/video`, `/pn`, `/vyber`) odejdou
+  hned a bez ohledu na jiné nerozhodnuté jednotky, denní limit na ně neplatí; automatická (`fresh`) smí denně
+  nejvýš 2 sady (Europe/Prague) a nejdéle 12 h ji brzdí jiná nedotčená automatická sada; `/dalsi` limit i brzdu
+  obchází; za jeden 50s cyklus odejde nejvýš jedna jednotka; když automatická sada čeká, bot to jednou ohlásí
+  (s odkazem na `/dalsi`),
+- přechodná chyba odeslání (Telegram 5xx, 429, výpadek sítě) jednotku odloží s prodlevou 1, 5, 15, 60 min; po
+  5 pokusech přejde do stavu `held` a bot nabídne Zkusit znovu / Zahodit; chyba obsahu (soubor chybí, příliš velké
+  video) se automaticky neopakuje a položka se vyřadí (`rejected`). Výjimka při publikaci položku označí `unknown`
+  s tlačítkem Zkusit znovu; uvízlé `approved` a `publishing` bot obnoví každý cyklus,
+- každé čekání má lhůtu (`queue.expire`, jednou za hodinu) a vypršení bot ohlásí zprávou a odebere tlačítka; lhůty běží
+  od odeslání do Telegramu (`sent_at`), neodeslaná sada nevyprší, autopilot se nepočítá:
+  nedotčená automatická sada (`fresh`) 7 dní, nedotčená vyžádaná (`manual`, `auto_pick`, `ukazka`) 14 dní,
+  vybraná nerozhodnutá varianta 14 dní od výběru (`picked_at`), nevybrané varianty dotčené sady 24 h od posledního
+  rozhodnutí (dokud žádná vybraná nečeká na schválení) → `expired`; `held` 7 dní od posledního pokusu → `rejected`.
+  Vypršení jen zamítá, nikdy neschvaluje. Nedotčená automatická sada po 12 h přestane brzdit další a přijde jedna
+  připomínka (`reel_state` `reminded:<set_id>`),
+- sada `fresh` nebo `auto_pick` bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne (`withdrawn`, `fresh.retire`).
+- denní souhrn (8:00) má oddíl „Fronta Reels“ (`queue.summary_lines`): vypršelé nevybrané varianty a stažené sady za
+  24 h a vybrané varianty, kterým lhůta vyprší zítra.
 
 ## Autopilot (`/pn` bez schválení)
 

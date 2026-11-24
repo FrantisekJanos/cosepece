@@ -167,3 +167,7 @@ def autopilot_text(on: bool) -> str:
         return ("Autopilot zapnut: PN vybraná v /pn se zveřejní bez schválení (2 videa na PN). "
                 "Vypnout: /autopilot off")
     return "Autopilot vypnut: sady jdou ke schválení."
+
+
+AUTOPILOT_QUEUED = " Autopilot: po vygenerování se rovnou zveřejní."
+AUTOPILOT_PN_LIST_HEADER = "Autopilot zapnut: vybrané PN se zveřejní bez schválení."

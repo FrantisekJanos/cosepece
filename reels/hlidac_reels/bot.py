@@ -38,7 +38,7 @@ import psycopg
 from . import db, fresh, hlidani, inbox, jobs, publish, queue
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
-from .messages import (approval_buttons, autopilot_text, preview_parts, preview_text, result_text,  # noqa: F401
+from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_text, preview_parts, preview_text, result_text,  # noqa: F401
                        retry_buttons, set_buttons, set_text, set_video_caption, video_caption)
 from .meta import Meta
 from .queue import Reel
@@ -513,15 +513,18 @@ class Bot:
             return
         self._add_job("manual", ct, hint)
 
-    def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None) -> None:
+    def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None,
+                 autopilot: bool = False) -> None:
         what = _job_what(ct, focus_pn)
         try:
-            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn)
+            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn,
+                           autopilot=autopilot)
         except jobs.ActiveJobExists:
             self._say(f"{_pn_label(focus_pn)} (tisk {ct}) už ve frontě je." if focus_pn
                       else f"Tisk {ct} už ve frontě je.")
             return
-        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.")
+        note = AUTOPILOT_QUEUED if autopilot else ""
+        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.{note}")
 
     def _cmd_pn(self, rest: str) -> None:
         """/pn: seznam PN za 48 h; /pn 2376 2377 = dvě úlohy; /pn 2376+2377 = jedno video z obou."""
@@ -561,7 +564,8 @@ class Bot:
             self._say(f"{', '.join(parts[:-1])} a {parts[-1]} patří k různým tiskům. "
                       "Jedno video jde jen z PN téhož tisku, zadej je zvlášť (mezerou místo +).")
             return
-        self._add_job("manual", tisky[0], None, focus_pn=pns)
+        # autopilot platí jen pro /pn (příkaz i tlačítko); /video a /vyber ho nenastavují
+        self._add_job("manual", tisky[0], None, focus_pn=pns, autopilot=self._autopilot_on())
 
     def _pn_list(self) -> None:
         """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""

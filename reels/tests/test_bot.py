@@ -2688,3 +2688,61 @@ def test_autopilot_prepinac(bot, conn, api):
     # nápověda zmiňuje přepínač
     bot.handle(_msg("/neznamy"))
     assert "/autopilot" in api.texts()[-1]
+
+
+# --- /pn a autopilot -----------------------------------------------------------
+
+@pg
+def test_pn_s_autopilotem_zalozi_priznak(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (job,) = jobs.pending(conn)
+    assert job.autopilot is True
+    assert api.texts()[-1] == (f"Zadání #{job.id} (PN 2376, tisk 300) je 1. ve frontě. "
+                               "Autopilot: po vygenerování se rovnou zveřejní.")
+
+
+@pg
+def test_pn_bez_autopilota_bez_priznaku(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn 2376"))
+    (job,) = jobs.pending(conn)
+    assert job.autopilot is False
+    assert "Autopilot" not in api.texts()[-1]
+
+
+@pg
+def test_pn_dvakrat_stejne(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_cb("pn:2376"))
+    bot.handle(_msg("/pn 2376"))
+    assert len(jobs.pending(conn)) == 1
+    assert api.texts()[-1] == "PN 2376 (tisk 300) už ve frontě je."
+
+
+@pg
+def test_video_a_vyber_nikdy_autopilot(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/video 300"))
+    assert [j.autopilot for j in jobs.pending(conn)] == [False]
+    assert "Autopilot" not in api.texts()[-1]
+    bot._add_job("auto_pick", None, None)
+    assert all(j.autopilot is False for j in jobs.pending(conn))
+
+
+@pg
+def test_pn_seznam_hlavicka_autopilota(bot, conn, api):
+    _pn_bot(bot)
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn"))
+    assert "Autopilot zapnut" not in api.texts()[-1]
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn"))
+    assert api.texts()[-1].startswith("PN za posledních 48 h:\nAutopilot zapnut: vybrané PN se zveřejní bez schválení.")

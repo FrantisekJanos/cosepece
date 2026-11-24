@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class FakeApi:
         # odpověď nového serveru; starší server orientation nevrací
         self.landscape_reply = {"ok": True, "orientation": "landscape"} if landscape_reply is None else landscape_reply
         self.calls: list[tuple] = []
+        self.heartbeats: list = []  # stav workeru z každého heartbeat (None = prázdné tělo)
         # progress (z vlákna Progress) se zapisuje zvlášť, ať pořadí v calls nezávisí na rychlosti vlákna
         self.progress_error = progress_error  # ApiError, kterou progress vyhodí (409 zrušeno, 400 starý server)
         self.progress_calls: list[tuple] = []  # (fáze, poznámka) v pořadí odeslání
@@ -57,8 +59,9 @@ class FakeApi:
         with self._progress_cv:
             assert self._progress_cv.wait_for(lambda: pred(self.stages), timeout), self.stages
 
-    def heartbeat(self):
+    def heartbeat(self, state=None):
         self.calls.append(("heartbeat",))
+        self.heartbeats.append(state)
 
     def claim(self):
         self.calls.append(("claim",))
@@ -313,7 +316,7 @@ def test_run_bez_ulohy_ceka(tmp_path):
 
 def test_run_chyba_site_ceka(tmp_path):
     class Api(FakeApi):
-        def heartbeat(self):
+        def heartbeat(self, state=None):
             raise OSError("síť nejede")
     api = Api()
     sleeps: list[float] = []
@@ -992,3 +995,164 @@ def test_fail_druhy(tmp_path, case):
     assert len(fails) == 1
     assert (fails[0][4]["kind"], fails[0][4]["retry_after_s"]) == (kind, retry)
     assert worker.RETRY_INFRA_S == 900
+
+
+# --- stav workeru v heartbeat, důvod pozastavení, čas obnovení limitu (F3) ---
+
+TZ = timezone(timedelta(hours=1))  # místní čas PC (zimní čas)
+NOW = datetime(2026, 11, 25, 13, 10, tzinfo=TZ)
+
+
+def test_pause_reason():
+    assert worker.pause_reason("You've hit your limit") == "limit"
+    assert worker.pause_reason("Please run /login") == "login"
+    assert worker.pause_reason("MCP server cosepece failed") == "mcp"
+    assert worker.pause_reason("Segmentation fault") == "env"
+    # další vzory ze seznamu PAUSE_PATTERNS, bez ohledu na velikost písmen
+    assert worker.pause_reason("Claude AI usage limit reached|1764000000") == "limit"
+    assert worker.pause_reason("API Error: 429 Too Many Requests") == "limit"
+    assert worker.pause_reason("QUOTA exceeded") == "limit"
+    assert worker.pause_reason("Invalid API key · Please run /login") == "login"
+    assert worker.pause_reason("OAuth token has expired") == "login"
+    assert worker.pause_reason('API Error: 401 {"type":"error"}') == "login"
+    assert worker.pause_reason("You are logged out") == "login"
+    assert worker.pause_reason("") == "env"
+    # číslo uvnitř jiného čísla (PID, velikost) ani slovo končící na „log“ důvod neurčí
+    assert worker.pause_reason("proces 14290 skončil s kódem 1") == "env"
+    assert worker.pause_reason("chyba v catalog index") == "env"
+    # odmítnutí požadavku (Usage Policy) není limit předplatného
+    assert worker.pause_reason("API Error: request appears to violate our Usage Policy") == "env"
+    assert worker.pause_reason("Monthly usage exceeded") == "limit"
+
+
+def test_reset_at():
+    epoch = 1764000000
+    before = datetime.fromtimestamp(epoch - 600, TZ)
+    assert worker.reset_at(f"limit reached|{epoch}", before) == datetime.fromtimestamp(epoch, TZ)
+    assert worker.reset_at(f"Claude AI usage limit reached|{epoch}", before) == datetime.fromtimestamp(epoch, TZ)
+    # hodina v místním čase now: nejbližší budoucí výskyt
+    assert worker.reset_at("resets 3pm", NOW) == datetime(2026, 11, 25, 15, 0, tzinfo=TZ)
+    assert worker.reset_at("resets 3pm", NOW.replace(hour=16, minute=0)) == datetime(2026, 11, 26, 15, 0, tzinfo=TZ)
+    assert (worker.reset_at("You've hit your limit · resets 3pm (Europe/Prague)", NOW)
+            == datetime(2026, 11, 25, 15, 0, tzinfo=TZ))
+    assert worker.reset_at("resets at 9:30 am", NOW) == datetime(2026, 11, 26, 9, 30, tzinfo=TZ)
+    assert worker.reset_at("Resets at 9:30 AM", NOW.replace(hour=8)) == datetime(2026, 11, 25, 9, 30, tzinfo=TZ)
+    assert worker.reset_at("limit resets 12am", NOW) == datetime(2026, 11, 26, 0, 0, tzinfo=TZ)
+    assert worker.reset_at("reset 12pm", NOW.replace(hour=11)) == datetime(2026, 11, 25, 12, 0, tzinfo=TZ)
+    assert worker.reset_at("resets 17:45", NOW) == datetime(2026, 11, 25, 17, 45, tzinfo=TZ)
+    assert worker.reset_at("resets 3pm", NOW).utcoffset() == timedelta(hours=1)
+    # ISO čas s pásmem
+    assert worker.reset_at("limit, reset 2026-11-25T14:00:00Z", NOW) == datetime(2026, 11, 25, 15, 0, tzinfo=TZ)
+    assert worker.reset_at("reset 2026-11-25 16:30+01:00", NOW) == datetime(2026, 11, 25, 16, 30, tzinfo=TZ)
+    # bez času, v minulosti, nečitelné → None
+    assert worker.reset_at("You've hit your limit", NOW) is None
+    assert worker.reset_at(f"limit reached|{epoch}", NOW) is None  # epocha z roku 2025 = minulost
+    assert worker.reset_at("reset 2026-11-24T10:00:00+01:00", NOW) is None
+    assert worker.reset_at("reset 2026-13-45T10:00:00+01:00", NOW) is None
+    assert worker.reset_at("resets 13pm", NOW) is None
+    assert worker.reset_at("resets 25:00", NOW) is None
+    assert worker.reset_at("resets 9:75 am", NOW) is None
+    assert worker.reset_at("resets in 2 hours", NOW) is None
+    assert worker.reset_at("", NOW) is None
+
+
+def test_pause_wait_cas_obnoveni():
+    ts = int(NOW.timestamp())
+    assert worker.pause_wait(f"limit reached|{ts + 3000}", NOW, 0) == 3000  # reset za 50 min
+    assert worker.pause_wait(f"limit reached|{ts + 10 * 3600}", NOW, 0) == 21600 == worker.MAX_RESET_WAIT_S
+    assert worker.pause_wait("You've hit your limit", NOW, 1) == 3600  # bez času: krok PAUSE_STEPS
+    assert worker.pause_wait("You've hit your limit", NOW, 0) == 900
+    assert worker.pause_wait("You've hit your limit", NOW, 7) == 10800  # poslední krok se opakuje
+    assert worker.pause_wait(f"limit reached|{ts + 10}", NOW, 0) == 60  # nejméně minuta
+    assert worker.pause_wait("resets 3pm", NOW, 2) == 6600  # čas obnovení má přednost před krokem
+    assert worker.pause_wait(f"limit reached|{ts - 60}", NOW, 0) == 900  # čas v minulosti = krok
+
+
+def _env_at(text: str):
+    def gen(**kw):
+        raise EnvError(text)
+    return gen
+
+
+def test_heartbeat_se_stavem(tmp_path, monkeypatch):
+    api = FakeApi(job=dict(JOB))
+    text = f"limit reached|{int(NOW.timestamp()) + 3000}"
+    monkeypatch.setattr(worker, "generate", _env_at(text))
+    probes: list = []
+    sleeps: list = []
+
+    def probe(model):
+        probes.append(len(api.heartbeats))
+        return True
+
+    def sleep(s):
+        sleeps.append(s)
+        if api.names().count("claim") >= 2:
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep, probe=probe,
+                   now=lambda: NOW)
+    hb = api.heartbeats
+    assert hb[0] == {"state": "running"}
+    assert hb[1] == {"state": "paused", "reason": "limit", "detail": text, "until": "2026-11-25T14:00:00+01:00"}
+    assert probes[0] == 2 and hb[2] == {"state": "running"}  # po úspěšné sondě hned zpět running, pak claim
+    assert sleeps[0] == 3000  # čeká do obnovení limitu, ne 900
+    fail = [c for c in api.calls if c[0] == "fail"][0]
+    assert fail[4] == {"kind": "env", "retry_after_s": 3000, "reason": "limit"}
+
+
+def test_heartbeat_po_neuspesne_sonde(tmp_path, monkeypatch):
+    # „resets 3pm“ ve 13:10: první odstup do 15:00, po neúspěšné sondě kroky PAUSE_STEPS (ne zítřejších 15:00)
+    api = FakeApi(job=dict(JOB))
+    clock = [NOW]
+    monkeypatch.setattr(worker, "generate", _env_at("You've hit your limit · resets 3pm (Europe/Prague)"))
+    sleeps: list = []
+
+    def sleep(s):
+        sleeps.append(s)
+        clock[0] += timedelta(seconds=s)
+        if len(sleeps) >= 3:
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep,
+                   probe=lambda m: False, now=lambda: clock[0])
+    assert sleeps == [6600, 3600, 10800]
+    assert [h.get("until") for h in api.heartbeats[1:]] == [
+        "2026-11-25T15:00:00+01:00", "2026-11-25T16:00:00+01:00", "2026-11-25T19:00:00+01:00"]
+    assert {h["reason"] for h in api.heartbeats[1:]} == {"limit"}
+    assert api.names().count("claim") == 1
+
+
+def test_heartbeat_duvod_prihlaseni(tmp_path, monkeypatch):
+    api = FakeApi(job=dict(JOB))
+    monkeypatch.setattr(worker, "generate", _env_at(f"Please run /login {tmp_path}"))
+
+    def sleep(s):
+        raise _Stop
+
+    with pytest.raises(_Stop):
+        worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep,
+                   probe=lambda m: False, now=lambda: NOW)
+    paused = api.heartbeats[1]
+    assert paused["reason"] == "login" and paused["until"] == "2026-11-25T13:25:00+01:00"
+    assert str(tmp_path) not in paused["detail"] and len(paused["detail"]) <= 200  # bez cest k PC
+
+
+def test_heartbeat_chybi_nastroje(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "check_tools", lambda mcp_config: ["ffmpeg", "ffprobe"])
+    api = FakeApi(job=dict(JOB))
+    worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=lambda s: None, once=True,
+               now=lambda: NOW)
+    assert len(api.heartbeats) == 1
+    hb = api.heartbeats[0]
+    assert {k: hb[k] for k in ("state", "reason")} == {"state": "paused", "reason": "nastroje"}
+    assert "ffmpeg" in hb["detail"]
+    assert "claim" not in api.names()
+
+
+def test_heartbeat_bezi(tmp_path):
+    api = FakeApi(job=None)
+    worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=lambda s: None, once=True)
+    assert api.heartbeats == [{"state": "running"}]

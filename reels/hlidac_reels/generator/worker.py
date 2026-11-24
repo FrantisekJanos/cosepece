@@ -5,9 +5,17 @@ result. Video na šířku 16:9 se nahraje před videem na výšku: server, kter�
 ignoruje), ho tak přepíše videem na výšku a sada projde bez šířky. Chyba šířky variantu nevyřadí. Bez úlohy nebo při chybě sítě čeká 5 minut. Vždy jen jedna úloha a jedna instance (zámek root/worker.lock),
 naplánovaná úloha při přihlášení a ruční spuštění se tak nepotkají.
 
-Chyba prostředí (EnvError: vyčerpaný limit předplatného, odhlášení) úlohu nahlásí jako chybu a worker se pozastaví
-s odstupy PAUSE_STEPS; další úlohu vezme až po úspěšné sondě (krátký claude -p). Bez nástrojů (claude, Chromium,
-ffmpeg/ffprobe, konfigurace MCP) úlohy nebere vůbec. Výpadek sítě nebo 5xx při nahrávání se opakuje (RETRY_DELAYS).
+Chyba prostředí (EnvError: vyčerpaný limit předplatného, odhlášení) úlohu nahlásí jako chybu a worker se pozastaví;
+další úlohu vezme až po úspěšné sondě (krátký claude -p). Důvod pozastavení určí pause_reason() podle vzorů
+PAUSE_PATTERNS (limit, login, mcp, jinak env). První odstup: když hláška uvádí čas obnovení limitu (epocha za
+svislítkem, ISO čas s pásmem, „resets 3pm“ v místním čase PC), čeká do něj (pause_wait, 60 s až MAX_RESET_WAIT_S),
+jinak PAUSE_STEPS[0]; po neúspěšné sondě další kroky PAUSE_STEPS. Bez nástrojů (claude, Chromium, ffmpeg/ffprobe,
+konfigurace MCP) úlohy nebere vůbec. Výpadek sítě nebo 5xx při nahrávání se opakuje (RETRY_DELAYS).
+
+Stav workeru: každý průchod smyčky pošle heartbeat se stavem {"state": "running"}, pozastavený worker
+{"state": "paused", "reason", "detail" (text chyby bez cest k PC, nejvýš 200 znaků), "until" (konec odstupu, ISO
+s pásmem)}, bez nástrojů {"state": "paused", "reason": "nastroje", "detail": seznam}. Po úspěšné sondě pošle running
+hned, ještě před claim. Server stav ukládá do reel_state.worker_state.
 
 Průběh: během úlohy běží vlákno Progress a posílá serveru `progress` hned po startu, při každé změně fáze
 (model, kontrola, oprava, render, upload) a každých PROGRESS_S s; server tím prodlužuje vydání o 15 min.
@@ -26,7 +34,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +44,8 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .api import ApiError, ReelsApi
@@ -53,8 +65,83 @@ PROBE_PROMPT = "odpověz OK"
 RETRY_DELAYS = (60, 300, 900)  # s: opakování nahrávání a result při výpadku sítě nebo 5xx
 PROGRESS_S = 120  # s: opakování progress bez změny fáze (server po hlášení drží vydání 15 min)
 RETRY_INFRA_S = 900  # s: odklad úlohy po chybě infra (síť nebo 5xx i po opakováních)
+MIN_RESET_WAIT_S = 60  # s: nejkratší čekání do obnovení limitu (čas těsně před chvílí nebo za pár sekund)
+MAX_RESET_WAIT_S = 21600  # s: nejdelší čekání do obnovení limitu (6 h, pak stejně sonda)
+STATE_DETAIL_LIMIT = 200  # znaků popisu stavu v heartbeat (server delší ořízne)
+
+# Důvod pozastavení podle hlášky claude -p: první skupina, jejíž vzor se najde (bez ohledu na velikost písmen),
+# jinak "env". Nové hlášky stačí doplnit sem. Čísla a „log in“ s hranicí slova (PID, epocha, „catalog index“),
+# „usage“ bez „Usage Policy“ (odmítnutí požadavku není limit).
+PAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("limit", (r"limit", r"usage(?! polic)", r"quota", r"rate.?limit", r"too many requests", r"\b429\b")),
+    ("login", (r"\blog ?in", r"logged out", r"authenticat", r"\b401\b", r"credential", r"oauth")),
+    ("mcp", (r"\bmcp\b",)),
+)
+
+# čas obnovení limitu v hlášce: epocha za svislítkem, ISO čas s pásmem, hodina („resets 3pm“, „resets at 9:30 am“)
+_RESET_EPOCH_RE = re.compile(r"\|\s*(\d{9,11})(?!\d)")
+_RESET_ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})(?![\d:])")
+_RESET_CLOCK_RE = re.compile(r"\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 
 _chromium_path: str | None = None  # nalezené Chromium Playwrightu (driver se pak už nespouští)
+
+
+def _local_now() -> datetime:
+    """Místní čas PC s časovým pásmem (čas obnovení limitu, until v heartbeat)."""
+    return datetime.now().astimezone()
+
+
+def pause_reason(text: str) -> str:
+    """Důvod pozastavení po chybě prostředí: limit, login, mcp (PAUSE_PATTERNS), jinak env."""
+    text = text or ""
+    for reason, patterns in PAUSE_PATTERNS:
+        if any(re.search(p, text, re.IGNORECASE) for p in patterns):
+            return reason
+    return "env"
+
+
+def _clock_reset(m: re.Match, now: datetime) -> datetime | None:
+    """„resets 3pm“ / „resets at 9:30 am“ / „resets 17:45“: nejbližší budoucí výskyt v časovém pásmu now."""
+    hour, minute, ampm = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+    if ampm:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if ampm == "pm" else 0)
+    elif hour > 23:
+        return None
+    if minute > 59:
+        return None
+    at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return at if at > now else at + timedelta(days=1)
+
+
+def reset_at(text: str, now: datetime) -> datetime | None:
+    """Čas obnovení limitu z hlášky claude -p; None = hláška ho neuvádí, je nečitelný nebo v minulosti.
+
+    Pořadí: epocha za svislítkem („Claude AI usage limit reached|1764000000“), ISO čas s pásmem, hodina
+    („resets 3pm“, „resets at 9:30 am“) v časovém pásmu `now` (místní čas PC). Rozhoduje první nalezený tvar.
+    """
+    text = text or ""
+    try:
+        if m := _RESET_EPOCH_RE.search(text):
+            at = datetime.fromtimestamp(int(m.group(1)), now.tzinfo)
+        elif m := _RESET_ISO_RE.search(text):
+            at = datetime.fromisoformat(m.group(0))
+        elif m := _RESET_CLOCK_RE.search(text):
+            at = _clock_reset(m, now)
+        else:
+            return None
+        return at if at is not None and at > now else None
+    except (ValueError, OverflowError, OSError, TypeError):  # nečitelné datum, mimo rozsah, naivní now proti pásmu
+        return None
+
+
+def pause_wait(text: str, now: datetime, step: int) -> int:
+    """Odstup pozastaveného workeru v s: do obnovení limitu (60 s až MAX_RESET_WAIT_S), jinak krok PAUSE_STEPS."""
+    at = reset_at(text, now)
+    if at is not None:
+        return max(MIN_RESET_WAIT_S, min(MAX_RESET_WAIT_S, math.ceil((at - now).total_seconds())))
+    return PAUSE_STEPS[min(max(step, 0), len(PAUSE_STEPS) - 1)]
 
 
 def _chromium_ok() -> bool:
@@ -297,14 +384,15 @@ def _gone(job_id: int) -> bool:
 
 
 def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate,
-            sleep=time.sleep) -> bool:
+            sleep=time.sleep, now: Callable[[], datetime] = _local_now) -> bool:
     """Zpracuje jednu vydanou úlohu; True, když server sadu přijal.
 
     Po celou dobu běží vlákno Progress (fáze ze generate() přes on_stage, před nahráváním „upload“). Když server
     progress odmítne (409), generate() skončí na nejbližší kontrole (Cancelled) nebo doběhne; potom ani před
     žádným dalším nahráním se nic nenahraje, fail se nevolá a práce zůstane ve složce pro příští vydání.
-    Chybu prostředí (EnvError) nahlásí jako env (úloha se vrátí do fronty) a vyhodí dál: smyčka se podle ní
-    pozastaví. `sleep` čeká mezi opakováními nahrávání.
+    Chybu prostředí (EnvError) nahlásí jako env s důvodem pause_reason() a odkladem pause_wait() (úloha se vrátí
+    do fronty po stejném odstupu, jaký čeká worker) a vyhodí dál: smyčka se podle ní pozastaví. `sleep` čeká mezi
+    opakováními nahrávání, `now` dává místní čas pro čas obnovení limitu.
     """
     root = Path(root)
     try:
@@ -391,9 +479,10 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
             return _gone(job_id)
         except EnvError as e:
             if not gone():
-                # druh důvodu a čekání podle hlášky doplní pozastavení workeru (F3, Task 5); zatím obecné env
-                _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root, kind="env", reason="env",
-                             retry_after_s=PAUSE_STEPS[0])
+                # důvod a odklad z hlášky bez cest k PC (cesta nesmí důvod ani čas ovlivnit)
+                text = clean_error(e.reason, root)
+                _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root, kind="env",
+                             reason=pause_reason(text), retry_after_s=pause_wait(text, now(), 0))
             raise
         except ApiError as e:
             if e.status == 409:
@@ -417,38 +506,54 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
 
 
 def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once: bool = False,
-        probe=None) -> None:
+        probe=None, now: Callable[[], datetime] = _local_now) -> None:
     """Smyčka workeru; once=True = jeden průchod (i s čekáním, když nic není).
 
-    Bez nástrojů (check_tools) úlohy nebere. Po chybě prostředí je pozastavený: před dalším claim počká krok
-    z PAUSE_STEPS a pustí sondu; neúspěch = delší odstup, úspěch = odstup se nuluje a worker bere úlohy.
-    `probe` jde podvrhnout v testech (výchozí = skutečná sonda).
+    Každý průchod pošle heartbeat se stavem workeru (running, paused s důvodem). Bez nástrojů (check_tools)
+    úlohy nebere. Po chybě prostředí je pozastavený: před dalším claim počká odstup a pustí sondu. První odstup
+    je do času obnovení limitu z hlášky (pause_wait), jinak PAUSE_STEPS[0]; neúspěšná sonda = další krok
+    PAUSE_STEPS (čas z hlášky už prošel), úspěch = heartbeat running, odstup se nuluje a worker bere úlohy.
+    `probe` a `now` (místní čas s pásmem) jde podvrhnout v testech (výchozí = skutečná sonda a hodiny PC).
     """
     probe = probe or globals()["probe"]
     pause: int | None = None  # index do PAUSE_STEPS, None = worker není pozastavený
+    paused: dict = {}  # důvod a popis posledního pozastavení po chybě prostředí
+    wait = PAUSE_STEPS[0]  # s: nejbližší odstup pozastaveného workeru
     while True:
         try:
-            api.heartbeat()
             missing = check_tools(mcp_config)
+            if missing:
+                state = {"state": "paused", "reason": "nastroje", "detail": ", ".join(missing)[:STATE_DETAIL_LIMIT]}
+            elif pause is not None:
+                until = now() + timedelta(seconds=wait)
+                state = {"state": "paused", **paused, "until": until.isoformat(timespec="seconds")}
+            else:
+                state = {"state": "running"}
+            api.heartbeat(state)
             if missing:
                 log.error("chybí nástroje, úlohy neberu: %s", ", ".join(missing))
                 sleep(IDLE_S)
-            elif pause is not None and not _resume(pause, model, sleep, probe):
+            elif pause is not None and not _resume(wait, model, sleep, probe):
                 pause = min(pause + 1, len(PAUSE_STEPS) - 1)
+                wait = PAUSE_STEPS[pause]
             else:
                 if pause is not None:
                     log.info("sonda prošla, pozastavení končí")
                     pause = None
+                    api.heartbeat({"state": "running"})  # bot obnovení ohlásí hned, ne až po celé úloze
                 job = api.claim()
                 if job is None:
                     log.debug("žádná úloha")
                     sleep(IDLE_S)
                 elif not process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate,
-                                 sleep=sleep):
+                                 sleep=sleep, now=now):
                     sleep(FAIL_PAUSE_S)
         except EnvError as e:
+            text = clean_error(e.reason, root)  # bez cest k PC: jde na server a cesta nesmí určit důvod
             pause = 0
-            log.error("chyba prostředí (%s), pozastavuji, sonda za %s s", e.reason, PAUSE_STEPS[0])
+            wait = pause_wait(text, now(), 0)
+            paused = {"reason": pause_reason(text), "detail": text[:STATE_DETAIL_LIMIT]}
+            log.error("chyba prostředí (%s: %s), pozastavuji, sonda za %s s", paused["reason"], text, wait)
         except (ApiError, OSError) as e:  # URLError a timeout jsou OSError
             log.error("API nedostupné: %s", e)
             sleep(IDLE_S)
@@ -459,10 +564,10 @@ def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once
             return
 
 
-def _resume(step: int, model: str, sleep, probe) -> bool:
-    """Pozastavený worker: počká odstup PAUSE_STEPS[step] a pustí sondu; True = může zase brát úlohy."""
-    log.info("pozastaveno po chybě prostředí, čekám %s s, pak sonda", PAUSE_STEPS[step])
-    sleep(PAUSE_STEPS[step])
+def _resume(wait: int, model: str, sleep, probe) -> bool:
+    """Pozastavený worker: počká odstup `wait` s a pustí sondu; True = může zase brát úlohy."""
+    log.info("pozastaveno po chybě prostředí, čekám %s s, pak sonda", wait)
+    sleep(wait)
     ok = probe(model)
     if not ok:
         log.warning("sonda neprošla, pozastavení pokračuje")

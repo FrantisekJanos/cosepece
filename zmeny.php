@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-24', 'Hlavní nálezy mají datum posledního dění',
+        'Na kartách hlavních nálezů na úvodní stránce je nově datum, kdy se u tisku naposledy něco stalo, a zda šlo o nový pozměňovací návrh, nebo o krok v projednávání. U dnešních návrhů je i čas. Podle stejného data se nálezy řadí při volbě „Nejnovější dění“.',
+        [0], false],
     ['2026-11-24', 'U jmen poslanců je poslanecký klub',
         'U předkladatelů pozměňovacích návrhů teď v závorce uvádíme poslanecký klub, například „Jan Novák (ODS)“: na stránce tisku, na stránce zákona a v přehledu nejaktivnějších předkladatelů. Jde o klub ke dni podání návrhu, takže poslanec, který klub změnil, je u starších návrhů veden pod původním. Údaj je z otevřených dat Sněmovny a slouží jen k orientaci. Skóre se nemění a nadále nezávisí na straně ani na jménu předkladatele.',
         [86], false],

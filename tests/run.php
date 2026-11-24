@@ -1534,12 +1534,14 @@ echo "Reels: fronta úloh generátoru (ReelJobs)\n";
 $rjId = match (db()->driver) { 'pgsql' => 'SERIAL PRIMARY KEY', 'mysql' => 'INTEGER PRIMARY KEY AUTO_INCREMENT', default => 'INTEGER PRIMARY KEY' };
 $rjTs = db()->driver === 'pgsql' ? 'TIMESTAMPTZ' : 'VARCHAR(40)';
 $rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
+// focus_pn: v PostgreSQL integer[] jako v produkci, jinde text ve tvaru pole PostgreSQL ('{2312,2313}')
+$rjPnType = db()->driver === 'pgsql' ? 'INTEGER[]' : 'TEXT';
 db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
-    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs)");
-// pro jeden tisk nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
+    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType)");
+// pro jeden tisk a množinu PN nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
 if (db()->driver !== 'mysql') {
-    db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
+    db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALESCE(focus_pn, '{}')) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
 }
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
     video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', format VARCHAR(40),
@@ -1683,6 +1685,54 @@ check('has_amendments bez „nahrazuje se“', $jobs->claim()['has_amendments'] 
 check('karta v2 bez titulku → null', $jobs->cardV2(78), null);
 $rjNo = $rjAdd('manual', 78);
 check('úloha k tisku bez titulku se nevydá → failed', [$jobs->claim(), $rjStatus($rjNo)['status']], [null, 'failed']);
+
+// úloha k vybraným PN (/pn): claim vrací focus_pn a údaje PN pro zadání generátoru
+$rjReset();
+$rjAdd('manual', 311);
+$rjC = $jobs->claim();
+check('claim úlohy k celému tisku: focus_pn null', [array_key_exists('focus_pn', $rjC ?? []), $rjC['focus_pn'] ?? null, $rjC['focus_pn_info'] ?? 'x'], [true, null, []]);
+// texty PN 2312 a 2313: chybějící řádek se vloží (a na konci smaže), existujícímu se vrátí ai_json
+$rjAiBak = db()->all('SELECT id_dokument, ai_json FROM pn_text WHERE id_dokument IN (31312, 31313)');
+$rjAiNew = array_values(array_diff([31312, 31313], array_map('intval', array_column($rjAiBak, 'id_dokument'))));
+foreach ($rjAiNew as $rjIdd) {
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score) VALUES (?, 311, ?, 'x', 1, 0)", [$rjIdd, $rjIdd - 29000]);
+}
+db()->run('UPDATE pn_text SET ai_json = ? WHERE id_dokument = 31312', [json_encode(['souvisi_s_predmetem' => false])]);
+db()->run('UPDATE pn_text SET ai_json = ? WHERE id_dokument = 31313', [json_encode(['titulek' => 'Titulek PN 2313'], JSON_UNESCAPED_UNICODE)]);
+$rjReset();
+$rjPnJob = $rjAdd('manual', 311);
+db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{2312,2313}', $rjPnJob]);
+// stejný tisk bez PN a s jinou množinou PN běží vedle sebe, stejná množina je duplicita
+if (db()->driver !== 'mysql') {
+    $rjOther = $rjAdd('manual', 311, ['status' => 'done']);
+    $rjDup = null;
+    try {
+        db()->run("UPDATE reel_jobs SET status = 'queued', focus_pn = ? WHERE id = ?", ['{2312,2313}', $rjOther]);
+    } catch (\PDOException $e) {
+        $rjDup = 'duplicita';
+    }
+    check('stejná množina PN k tisku je duplicita', $rjDup, 'duplicita');
+    db()->run('DELETE FROM reel_jobs WHERE id = ?', [$rjOther]);
+    $rjWhole = $rjAdd('manual', 311, ['age' => 30]);
+    check('úloha k celému tisku vedle úlohy k PN', (int)db()->value("SELECT COUNT(*) FROM reel_jobs WHERE ct = 311 AND status = 'queued'"), 2);
+    db()->run('DELETE FROM reel_jobs WHERE id = ?', [$rjWhole]);
+}
+$rjC = $jobs->claim();
+check('claim úlohy k PN: focus_pn jako pole čísel', [$rjC['job_id'] ?? null, $rjC['focus_pn'] ?? null], [$rjPnJob, [2312, 2313]]);
+check('claim úlohy k PN: údaje PN', $rjC['focus_pn_info'] ?? null, [
+    ['cislo' => 2312, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:44:24', 'titulek' => null,
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10'],
+    ['cislo' => 2313, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:45:15', 'titulek' => 'Titulek PN 2313',
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10'],
+]);
+check('pole PostgreSQL → čísla', [Hlidac\ReelJobs::parsePnArray('{2376,2377}'), Hlidac\ReelJobs::parsePnArray(null), Hlidac\ReelJobs::parsePnArray('{}'), Hlidac\ReelJobs::parsePnArray('x')],
+    [[2376, 2377], null, null, null]);
+foreach ($rjAiBak as $rjRow) {
+    db()->run('UPDATE pn_text SET ai_json = ? WHERE id_dokument = ?', [$rjRow['ai_json'], $rjRow['id_dokument']]);
+}
+foreach ($rjAiNew as $rjIdd) {
+    db()->run('DELETE FROM pn_text WHERE id_dokument = ?', [$rjIdd]);
+}
 
 // heartbeat: vložení i přepsání bez ON CONFLICT
 $jobs->heartbeat();

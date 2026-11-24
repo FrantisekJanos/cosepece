@@ -136,3 +136,45 @@ def test_migrace_dvakrat(conn):
         rows = cur.fetchall()
     conn.commit()
     assert rows == [("reel_jobs", "NO", "false"), ("reel_queue", "NO", "false")]
+
+
+def test_schema_f3(conn):
+    """F3: nové sloupce úloh (odklad, vydání, fáze, druh chyby) a tabulka událostí reel_events."""
+    import psycopg
+    from hlidac_reels import db, jobs
+    db.migrate(conn)
+    db.migrate(conn)  # idempotentní i s novými sloupci a tabulkou
+    new_cols = {"not_before", "wait_reason", "lease_until", "stage", "stage_at", "fail_kind",
+                "env_retries", "detail", "status_msg_id"}
+    with conn.cursor() as cur:
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'reel_jobs'")
+        cols = {r[0] for r in cur.fetchall()}
+        cur.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'reel_events' "
+                    "AND indexname IN ('reel_events_unsent_idx', 'reel_events_job_idx')")
+        idx = sorted(r[0] for r in cur.fetchall())
+        cur.execute("TRUNCATE reel_events RESTART IDENTITY")
+    conn.commit()
+    assert new_cols - cols == set()
+    assert idx == ["reel_events_job_idx", "reel_events_unsent_idx"]
+
+    # dedupe je unikátní, NULL se neomezuje
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_events (kind, job_id, dedupe) VALUES ('failed', 1, 'job:1:failed')")
+    conn.commit()
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO reel_events (kind, job_id, dedupe) VALUES ('failed', 1, 'job:1:failed')")
+    conn.rollback()
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_events (kind, job_id) VALUES ('stage', 1)")
+        cur.execute("INSERT INTO reel_events (kind, job_id) VALUES ('stage', 1)")
+        cur.execute("SELECT count(*), count(dedupe), min(urgency), count(notified_at), count(at) FROM reel_events")
+        assert cur.fetchone() == (3, 1, 0, 0, 3)
+    conn.commit()
+
+    # nová úloha: env_retries 0, ostatní nová pole prázdná
+    i = jobs.add(conn, source="manual", ct=7)
+    (job,) = jobs.pending(conn)
+    assert job.id == i and job.env_retries == 0
+    assert (job.not_before, job.wait_reason, job.lease_until, job.stage, job.stage_at,
+            job.fail_kind, job.detail, job.status_msg_id) == (None,) * 8

@@ -1613,10 +1613,21 @@ $rjTs = db()->driver === 'pgsql' ? 'TIMESTAMPTZ' : 'VARCHAR(40)';
 $rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
 // focus_pn: v PostgreSQL integer[] jako v produkci, jinde text ve tvaru pole PostgreSQL ('{2312,2313}')
 $rjPnType = db()->driver === 'pgsql' ? 'INTEGER[]' : 'TEXT';
+// protokol úloh (F3): odklad, vydání, fáze, druh chyby, stavová zpráva (pořadí jako v schema_reels.sql)
+$rjF3Cols = ['not_before' => $rjTs, 'wait_reason' => 'VARCHAR(40)', 'lease_until' => $rjTs, 'stage' => 'VARCHAR(20)',
+    'stage_at' => $rjTs, 'fail_kind' => 'VARCHAR(20)', 'env_retries' => 'INTEGER NOT NULL DEFAULT 0', 'detail' => 'TEXT',
+    'status_msg_id' => 'BIGINT'];
+$rjF3Ddl = implode(', ', array_map(fn(string $c, string $t) => "$c $t", array_keys($rjF3Cols), $rjF3Cols));
 db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
     set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType,
-    autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
+    autopilot BOOLEAN NOT NULL DEFAULT FALSE, $rjF3Ddl)");
+// starší tabulka ve sdílené databázi PostgreSQL: nové sloupce doplnit
+if (db()->driver === 'pgsql') {
+    foreach ($rjF3Cols as $rjCol => $rjType) {
+        db()->run("ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS $rjCol $rjType");
+    }
+}
 // pro jeden tisk a množinu PN nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
 if (db()->driver !== 'mysql') {
     db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALESCE(focus_pn, '{}')) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
@@ -1626,6 +1637,9 @@ db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) N
     created_at $rjTs, published_at $rjTs, autopilot BOOLEAN NOT NULL DEFAULT FALSE,
     send_attempts INTEGER NOT NULL DEFAULT 0, send_error TEXT, next_send_at $rjTs, picked_at $rjTs)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
+// události úloh a workeru (F3); dedupe unikátní, NULL se neomezuje
+db()->run("CREATE TABLE IF NOT EXISTS reel_events (id $rjId, at $rjTs NOT NULL, kind VARCHAR(60) NOT NULL, job_id BIGINT, set_id BIGINT,
+    reel_id BIGINT, detail TEXT, dedupe VARCHAR(190) UNIQUE, urgency SMALLINT NOT NULL DEFAULT 0, notified_at $rjTs)");
 
 // tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí
 $rjTextBak = db()->all('SELECT * FROM tisk_text WHERE ct IN (90, 221, 311)');

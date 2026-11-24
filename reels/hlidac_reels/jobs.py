@@ -35,6 +35,16 @@ class Job:
     notified_at: datetime | None
     focus_pn: list[int] | None = None  # video jen o těchto PN (seřazené); None = celý tisk
     autopilot: bool = False  # zadáno se zapnutým autopilotem: videa se zveřejní bez schválení
+    # protokol úloh (F3): stejné pořadí jako sloupce v schema_reels.sql
+    not_before: datetime | None = None  # úloha se nevydá dřív (odklad)
+    wait_reason: str | None = None  # proč čeká (např. titulek AI)
+    lease_until: datetime | None = None  # vydání platí do; None = claimed_at + 60 min
+    stage: str | None = None  # fáze: model, kontrola, oprava, render, upload
+    stage_at: datetime | None = None
+    fail_kind: str | None = None  # content, timeout, env, infra, data, lease
+    env_retries: int = 0  # návraty do fronty po chybě env/infra
+    detail: str | None = None  # podrobnost k fázi nebo chybě
+    status_msg_id: int | None = None  # stavová zpráva v Telegramu
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Job))

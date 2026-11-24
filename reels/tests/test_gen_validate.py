@@ -94,6 +94,19 @@ def test_layout_fixtura_projde():
     assert check_layout(load_fixture("v3-cesta-311.json"), "template_v3") == []
 
 
+@pytest.mark.render
+def test_check_layout_rika_o_kolik_a_co():
+    # šablona samotný titulek zkrátí na celé slovo, scénu proto rozbije dlouhá jednotka háčku (nezalamuje se);
+    # chyba musí říct, o kolik px scéna přetéká a která pole (s délkou) se na ní podílejí
+    card = copy.deepcopy(load_fixture("v3-pn-115.json"))
+    card["title"] = ("Pozměňovací návrhy k novele trestního zákoníku sahají do dalších zákonů " * 3)[:120]
+    card["hook"] = dict(card["hook"], unit="pozměňovacích návrhů a dalších")
+    errs = [e for e in check_layout(card, "template_v3") if e.startswith("scene:s-hook:")]
+    over = [e for e in errs if "přetéká o" in e]
+    assert over, errs
+    assert "px" in over[0] and "title 120 znaků" in over[0] and "hook.unit 30 znaků" in over[0], over[0]
+
+
 def test_layout_preteceni_neprojde(monkeypatch):
     # šablony samy zkracují na celé slovo (ani 3000 znaků nepřeteče), proto se pojistka zkouší podvrženým měřením
     import hlidac_reels.render as render

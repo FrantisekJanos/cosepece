@@ -42,6 +42,8 @@ def _assert_safe(boxes: dict, safe: dict = SAFE) -> None:
     assert scenes
     for name, b in scenes.items():
         assert not b["overflow"], name
+        # přesná zpětná vazba pro generátor: bez přetečení 0 px
+        assert b["overflow_px"] == 0, (name, b)
         assert not b["cut_mid_word"], name
         assert b["top"] >= safe["top"] and b["bottom"] <= safe["bottom"], (name, b)
         assert b["left"] >= safe["left"] and b["right"] <= safe["right"], (name, b)

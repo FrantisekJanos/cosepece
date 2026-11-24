@@ -101,6 +101,14 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
     return errs
 
 
+def _overflow_text(box: dict) -> str:
+    """„přetéká o 3 px (hook.unit 7 znaků, title 41 znaků)“: o kolik a která pole karty to způsobují."""
+    px = box.get("overflow_px") or 0
+    text = f"přetéká o {px} px" if px > 0 else "text přetéká"
+    fields = [f"{o['m']} {o['len']} znaků" for o in box.get("over") or []]
+    return f"{text} ({', '.join(fields)})" if fields else text
+
+
 def check_layout(card: dict, template: str) -> list[str]:
     """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium)."""
     from ..render import measure_blocks
@@ -111,7 +119,7 @@ def check_layout(card: dict, template: str) -> list[str]:
         if not name.startswith("scene:"):
             continue
         if b.get("overflow"):
-            errs.append(f"{name}: text přetéká")
+            errs.append(f"{name}: {_overflow_text(b)}")
         if b.get("cut_mid_word"):
             errs.append(f"{name}: text useknutý uprostřed slova")
         if b["top"] < SAFE["top"] or b["bottom"] > SAFE["bottom"] or b["left"] < SAFE["left"] or b["right"] > SAFE["right"]:

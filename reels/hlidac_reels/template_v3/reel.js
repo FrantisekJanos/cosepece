@@ -916,6 +916,37 @@
     return next !== '' && !/[\s,;:.–-]/.test(next);
   }
 
+  // Kolik px scéna přetéká a které textové prvky za to můžou (pro zpětnou vazbu generátoru).
+  // Bezpečná zóna opisuje SAFE z generator/validate.py (na výšku) a LANDSCAPE_SAFE z render.py (na šířku).
+  function overflowInfo(body) {
+    // rozdíl do 1 px je zaokrouhlení, stejně jako v overflows()
+    function excess(d) { return d > 1 ? d : 0; }
+    var px = Math.max(excess(body.scrollHeight - body.clientHeight), excess(body.scrollWidth - body.clientWidth));
+    for (var i = 0; LAND && i < body.children.length; i++) {
+      var k = body.children[i];
+      if (/^side-/.test(k.className) && k.clientWidth) px = Math.max(px, excess(k.scrollWidth - k.clientWidth));
+    }
+    var b = body.getBoundingClientRect();
+    var safe = LAND ? { top: 60, left: 60, bottom: window.innerHeight - 60, right: window.innerWidth - 60 }
+                    : { top: 150, left: 60, bottom: 1920 - 340, right: 1020 };
+    var lim = { top: Math.max(b.top, safe.top), left: Math.max(b.left, safe.left),
+                bottom: Math.min(b.bottom, safe.bottom), right: Math.min(b.right, safe.right) };
+    var over = [], seen = {};
+    // přesahující prvky a prvky, které fit() musel zkrátit (podílejí se na nedostatku místa);
+    // jméno = data-m (pole karty), jinak id; délka = celý text karty, ne zkrácený
+    Array.prototype.forEach.call(body.querySelectorAll('[data-m],[data-fit]'), function (el) {
+      var name = el.dataset.m || el.id;
+      if (!name || seen[name] || el.offsetParent === null) return;
+      var r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      var out = r.top < lim.top - 1 || r.left < lim.left - 1 || r.bottom > lim.bottom + 1 || r.right > lim.right + 1;
+      if (!out && el.dataset.truncated !== '1') return;
+      seen[name] = true;
+      over.push({ m: name, len: (el.dataset.full || el.textContent || '').trim().length });
+    });
+    return { px: Math.ceil(px), over: over };
+  }
+
   window.measureBlocks = function () {
     // Ustálený stav každé scény (po náběhu, před stěrkou): obdélníky prvků s data-m a obálka celé scény
     // (klíč "scene:<id>": sjednocení všech viditelných prvků těla, přetečení těla, zkrácení uprostřed slova).
@@ -937,8 +968,9 @@
             visible: +getComputedStyle(el).opacity > 0.99, text: el.textContent, truncated: el.dataset.truncated === '1' };
         }
       });
+      var info = overflowInfo(body);
       out['scene:' + s.id] = { top: u.top, bottom: u.bottom, left: u.left, right: u.right, cut_mid_word: cut,
-        overflow: overflows(body) };
+        overflow: overflows(body), overflow_px: info.px, over: info.over };
     });
     window.seek(0);
     return out;

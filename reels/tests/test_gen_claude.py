@@ -170,6 +170,11 @@ def test_zadani_md_klub(tmp_path):
     text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
     assert "- autor: Test Poslanec (klub v datech Sněmovny ke dni podání není, klub neuváděj)" in text
     assert "klub ANO" not in text
+    # klub bez dne (server pošle klub_ke_dni null, když chybí čas podání): klub bez data
+    no_day = [dict(info[0], klub_ke_dni=None)]
+    write_focus(tmp_path, [9801], no_day)
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "- autor: Test Poslanec (klub ANO ke dni podání)\n" in text
     # bez jména autora
     write_focus(tmp_path, [9803], [])
     text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
@@ -180,9 +185,12 @@ def test_navody_klub_jen_ze_zadani():
     from hlidac_reels.generator import claude
     for name in ("v2.md", "v3.md"):
         text = (claude.HERE / "prompts" / name).read_text(encoding="utf-8")
-        assert "Klub autora ber jen ze zadání" in text, name
-        assert "klub v závorce" in text, name
-    assert "hook.sub" in (claude.HERE / "prompts" / "v3.md").read_text(encoding="utf-8")
+        # pravidlo platí jen pro autora zadaného PN; kluby v pn.autori (formát pn) jsou dál z najdi_osobu
+        assert "Klub autora zadaného PN ber jen ze zadání" in text, name
+        assert "klub v závorce, když ho zadání uvádí" in text, name
+    v3 = (claude.HERE / "prompts" / "v3.md").read_text(encoding="utf-8")
+    assert "hook.sub" in v3
+    assert "ne z `najdi_osobu` (ta vrací poslední klub)" in v3
 
 
 def test_navody_ctou_zadani():

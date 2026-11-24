@@ -67,7 +67,7 @@ final class ReelJobs
 
         // 3.–4. první úloha ve frontě; při souběhu nebo nepoužitelné úloze se zkusí další
         $queued = $this->db->all(
-            "SELECT id, source, ct, format_hint FROM reel_jobs WHERE status = 'queued' ORDER BY " . self::SOURCE_ORDER . ', created_at, id'
+            "SELECT id, source, ct, format_hint, focus_pn FROM reel_jobs WHERE status = 'queued' ORDER BY " . self::SOURCE_ORDER . ', created_at, id'
         );
         foreach ($queued as $job) {
             $id = (int)$job['id'];
@@ -105,6 +105,7 @@ final class ReelJobs
             if ($claimed->rowCount() === 0) {
                 continue;
             }
+            $focus = self::parsePnArray($job['focus_pn'] ?? null);
             return [
                 'job_id' => $id,
                 'claim_token' => $token,
@@ -115,9 +116,49 @@ final class ReelJobs
                 'has_amendments' => $this->hasAmendments($ct),
                 'card_v2' => $card,
                 'published' => $this->published($ct),
+                // video jen o těchto PN (/pn); null = celý tisk. Starší worker pole ignoruje.
+                'focus_pn' => $focus,
+                'focus_pn_info' => $focus !== null ? $this->pnInfo($ct, $focus) : [],
             ];
         }
         return null;
+    }
+
+    /**
+     * Sloupec focus_pn: PostgreSQL integer[] přijde z PDO jako text '{2376,2377}' (v testech nad SQLite stejný
+     * text). Vrací seřazená čísla, nebo null (NULL, prázdné nebo neplatné pole = celý tisk).
+     */
+    public static function parsePnArray(mixed $value): ?array
+    {
+        if (!is_string($value) || !preg_match('~^\{\s*(\d+(?:\s*,\s*\d+)*)\s*\}$~', trim($value), $m)) {
+            return null;
+        }
+        $nums = array_values(array_unique(array_map('intval', explode(',', $m[1]))));
+        sort($nums);
+        return $nums;
+    }
+
+    /** Údaje vybraných PN tisku pro zadání generátoru: číslo, autor, čas podání, titulek rozboru AI, odkaz na psp.cz. */
+    private function pnInfo(int $ct, array $pns): array
+    {
+        $obdobi = (new Repo($this->db))->obdobi();
+        $marks = implode(', ', array_fill(0, count($pns), '?'));
+        $rows = $this->db->all(
+            "SELECT p.cislo, p.osoba, p.cas, x.ai_json FROM pn p LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
+              WHERE p.ct = ? AND p.cislo IN ($marks) ORDER BY p.cislo",
+            [$ct, ...$pns]
+        );
+        return array_map(function (array $r) use ($obdobi): array {
+            $ai = json_decode((string)($r['ai_json'] ?? ''), true);
+            $title = is_array($ai) ? trim((string)($ai['titulek'] ?? '')) : '';
+            return [
+                'cislo' => (int)$r['cislo'],
+                'osoba' => $r['osoba'] !== null ? (string)$r['osoba'] : null,
+                'cas' => $r['cas'] !== null ? (string)$r['cas'] : null,
+                'titulek' => $title !== '' ? $title : null,
+                'url_psp' => View::pspSdUrl((int)$r['cislo'], $obdobi),
+            ];
+        }, $rows);
     }
 
     /** Platí token pro vydanou úlohu? (po vrácení do fronty nebo novém výdeji starý token neplatí) */
@@ -294,7 +335,7 @@ final class ReelJobs
 
     /**
      * Přiřadí auto_pick úloze tisk: 'ok', 'taken' (úloha už není queued bez ct) nebo 'conflict', když tisk
-     * mezitím dostala jiná aktivní úloha (v PostgreSQL unikátní index reel_jobs_active_ct vyhodí výjimku).
+     * mezitím dostala jiná aktivní úloha k celému tisku (v PostgreSQL unikátní index reel_jobs_active_ct_pn vyhodí výjimku).
      */
     private function assignCt(int $id, int $ct): string
     {

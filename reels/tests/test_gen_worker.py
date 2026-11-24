@@ -64,10 +64,11 @@ class FakeApi:
 def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] = frozenset()):
     """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné, z land_ns mají šířku."""
     def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s,
-            published=None):
+            published=None, focus_pn=None, focus_info=None):
         if seen is not None:
             seen.update(ct=ct, out=Path(out), model=model, hint=hint, mcp_config=mcp_config,
-                        reason_keys=reason_keys, has_amendments=has_amendments, published=published)
+                        reason_keys=reason_keys, has_amendments=has_amendments, published=published,
+                        focus_pn=focus_pn, focus_info=focus_info)
         out = Path(out)
         variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", "cesta"),
                     Variant(3, "template_v3", "pn")]
@@ -106,6 +107,18 @@ def test_process_odesle_sadu(tmp_path):
                            "card": {"ct": 221, "n": 1}}
     assert [v["format"] for v in variants] == [None, "cesta", "pn"]
     assert [v["template"] for v in variants] == ["template_v2", "template_v3", "template_v3"]
+
+
+def test_process_preda_focus_pn(tmp_path):
+    seen: dict = {}
+    _process(FakeApi(), tmp_path, fake_generate({1, 2, 3}, seen))
+    assert seen["focus_pn"] is None and seen["focus_info"] == []
+    info = [{"cislo": 2376, "osoba": "Jana Malá", "cas": "2026-11-23 20:09:00", "titulek": "T",
+             "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=2376&o=10"}]
+    job = dict(JOB, focus_pn=[2376], focus_pn_info=info)
+    assert worker.process(FakeApi(), job, root=tmp_path, mcp_config=tmp_path / "mcp.json", model="m",
+                          generate=fake_generate({1, 2, 3}, seen)) is True
+    assert seen["focus_pn"] == [2376] and seen["focus_info"] == info
 
 
 def test_process_dve_platne(tmp_path):

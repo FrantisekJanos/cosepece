@@ -1,6 +1,8 @@
 """Kontrola karty a popisku od modelu, než se video vyrenderuje (pravidla obsahu z runbooku)."""
 from __future__ import annotations
 
+import re
+
 from ..card import Card
 from ..enqueue import CAPTION_LIMIT
 
@@ -42,9 +44,34 @@ def _v3_block(card: dict, fmt: str) -> list[str]:
     return errs
 
 
+def _mentions(value, nums: set[int]) -> bool:
+    """Zmiňuje hodnota (i vnořená) některé z čísel PN: pole s číslem, nebo samostatné číslo v textu?"""
+    if isinstance(value, dict):
+        return any(_mentions(v, nums) for v in value.values())
+    if isinstance(value, list):
+        return any(_mentions(v, nums) for v in value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value in nums
+    if isinstance(value, str):
+        return any(int(m) in nums for m in re.findall(r"(?<!\d)\d+(?!\d)", value))
+    return False
+
+
+def _focus_errors(card: dict, caption: str, focus_pn: list[int]) -> list[str]:
+    """Video k vybraným PN: karta i popisek musí zmínit číslo aspoň jednoho z nich."""
+    nums = set(focus_pn)
+    which = ", ".join(str(n) for n in sorted(nums))
+    errs = []
+    if not _mentions(card, nums):
+        errs.append(f"karta nezmiňuje zadaný PN ({which}): video má být o něm")
+    if not _mentions(caption, nums):
+        errs.append(f"popisek nezmiňuje číslo zadaného PN ({which})")
+    return errs
+
+
 def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason_keys: list[str],
-                     fmt: str | None) -> list[str]:
-    """Chyby karty a popisku česky; prázdný seznam = v pořádku."""
+                     fmt: str | None, focus_pn: list[int] | None = None) -> list[str]:
+    """Chyby karty a popisku česky; prázdný seznam = v pořádku. focus_pn = video k vybraným PN (/pn)."""
     errs: list[str] = []
     is_v3 = template == "template_v3"
     for key in V3_REQUIRED if is_v3 else V2_REQUIRED:
@@ -69,6 +96,8 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
         errs.append(f"popisek má {len(caption)} znaků, limit je {CAPTION_LIMIT}")
     if CLOSING not in caption:
         errs.append(f"popisek nemá větu „{CLOSING}“")
+    if focus_pn:
+        errs += _focus_errors(card, caption, focus_pn)
     return errs
 
 

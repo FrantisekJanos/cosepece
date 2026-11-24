@@ -131,6 +131,33 @@ def test_publikovano_md(tmp_path):
     assert not (tmp_path / "podklady" / "publikovano.md").exists()
 
 
+def test_zadani_md(tmp_path):
+    from hlidac_reels.generator.claude import write_focus
+    prepare_workdir(tmp_path, 300)
+    write_focus(tmp_path, [2376, 2377], [
+        {"cislo": 2376, "osoba": "Jana Malá", "cas": "2026-11-23 20:09:00", "titulek": "Mění daň",
+         "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=2376&o=10"},
+        {"cislo": 2377, "osoba": None, "cas": None, "titulek": None,
+         "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=2377&o=10"}])
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    for part in ("PN 2376", "PN 2377", "Jana Malá", "23. 11. 2026 20:09", "Mění daň (shrnutí AI)",
+                 "https://www.psp.cz/sqw/sd.sqw?cd=2376&o=10", "https://www.psp.cz/sqw/sd.sqw?cd=2377&o=10"):
+        assert part in text, part
+    assert "jen o těchto" in text
+    # PN bez údajů od serveru (starší server) má aspoň číslo a odkaz
+    write_focus(tmp_path, [2378], [])
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "PN 2378" in text and "PN 2376" not in text and "cd=2378&o=10" in text
+    write_focus(tmp_path, None, [])
+    assert not (tmp_path / "podklady" / "zadani.md").exists()
+
+
+def test_navody_ctou_zadani():
+    from hlidac_reels.generator import claude
+    for name in ("orchestrator.md", "v2.md", "v3.md"):
+        assert "zadani.md" in (claude.HERE / "prompts" / name).read_text(encoding="utf-8"), name
+
+
 def test_navody_ctou_publikovano():
     from hlidac_reels.generator import claude
     for name in ("v2.md", "v3.md"):

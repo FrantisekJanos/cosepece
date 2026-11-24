@@ -119,19 +119,33 @@ def conn():
     with c.cursor() as cur:
         cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; "
                     "TRUNCATE reel_jobs RESTART IDENTITY")
-        cur.execute("SELECT to_regclass('tisky') IS NOT NULL")
-        had_tisky = cur.fetchone()[0]
-        if not had_tisky:
-            cur.execute("CREATE TABLE tisky (ct integer)")
+        created = []
+        for name, ddl in _PHP_TABLES.items():
+            cur.execute("SELECT to_regclass(%s) IS NOT NULL", (name,))
+            if not cur.fetchone()[0]:
+                cur.execute(ddl)
+                created.append(name)
     c.commit()
     yield c
-    if not had_tisky and not c.closed:
-        # minimální tabulka jen pro testy (v produkci ji vlastní PHP)
+    if created:
+        # minimální tabulky jen pro testy (v produkci je vlastní PHP); test mohl spojení zavřít
+        if c.closed:
+            c = db.connect()
         c.rollback()
         with c.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS tisky")
+            for name in created:
+                cur.execute(f"DROP TABLE IF EXISTS {name}")
         c.commit()
     c.close()
+
+
+_PHP_TABLES = {
+    "tisky": "CREATE TABLE tisky (ct integer)",
+    "pn": "CREATE TABLE pn (id_dokument integer PRIMARY KEY, cislo integer NOT NULL, ct integer NOT NULL, "
+          "id_osoba integer, osoba varchar(120), cas varchar(19))",
+    "pn_text": "CREATE TABLE pn_text (id_dokument integer PRIMARY KEY, ct integer NOT NULL, cislo integer NOT NULL, "
+               "ai_json text)",
+}
 
 
 @pytest.fixture
@@ -2057,6 +2071,188 @@ def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
     bot.handle(_msg("/video 221", chat=OTHER_CHAT))
     bot.handle(_msg("/vyber", chat=OTHER_CHAT))
     assert api.calls == [] and jobs.pending(conn) == []
+
+
+# --- /pn: video k vybraným PN -------------------------------------------------
+
+def _pn(conn, cislo: int, ct: int, osoba: str = "Jan Novák", cas: str = "2026-11-23 20:09:00",
+        titulek: str | None = None) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (%s,%s,%s,%s,%s)",
+                    (30000 + cislo, cislo, ct, osoba, cas))
+        if titulek is not None:
+            cur.execute("INSERT INTO pn_text (id_dokument, ct, cislo, ai_json) VALUES (%s,%s,%s,%s)",
+                        (30000 + cislo, ct, cislo, json.dumps({"titulek": titulek}, ensure_ascii=False)))
+    conn.commit()
+
+
+def _pn_bot(bot):
+    from datetime import datetime, timezone
+    # 24. 11. 2026 10:00 UTC = 11:00 v Praze; okno 48 h sahá do 22. 11. 11:00
+    bot.now = lambda: datetime(2026, 11, 24, 10, 0, tzinfo=timezone.utc)
+    return bot
+
+
+@pg
+def test_pn_jedno(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn 2376"))
+    (job,) = jobs.pending(conn)
+    assert (job.source, job.ct, job.focus_pn, job.format_hint) == ("manual", 300, [2376], None)
+    assert api.texts()[-1] == f"Zadání #{job.id} (PN 2376, tisk 300) je 1. ve frontě."
+
+
+@pg
+def test_pn_vic_samostatnych(bot, conn, api):
+    from hlidac_reels import jobs
+    for n in (2376, 2377, 2378):
+        _pn(conn, n, 300)
+    bot.handle(_msg("/pn 2376 2377 2378"))
+    assert [j.focus_pn for j in jobs.pending(conn)] == [[2376], [2377], [2378]]
+    assert len([t for t in api.texts() if t.startswith("Zadání #")]) == 3
+
+
+@pg
+def test_pn_jedno_video_z_vic(bot, conn, api):
+    from hlidac_reels import jobs
+    for n in (2376, 2377, 2378):
+        _pn(conn, n, 300)
+    bot.handle(_msg("/pn 2378+2376"))
+    (job,) = jobs.pending(conn)
+    assert job.focus_pn == [2376, 2378] and job.ct == 300
+    assert api.texts()[-1] == f"Zadání #{job.id} (PN 2376+2378, tisk 300) je 1. ve frontě."
+    # mezery kolem + nevadí; jiná množina je nová úloha
+    bot.handle(_msg("/pn 2376 + 2377"))
+    assert [j.focus_pn for j in jobs.pending(conn)] == [[2376, 2378], [2376, 2377]]
+
+
+@pg
+def test_pn_neznamy(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn 9999"))
+    assert api.texts()[-1] == "PN 9999 zatím neznám (sync běží každou hodinu)."
+    bot.handle(_msg("/pn 2376+9999"))
+    assert api.texts()[-1] == "PN 9999 zatím neznám (sync běží každou hodinu)."
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_pn_ruzne_tisky(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    _pn(conn, 2100, 250)
+    bot.handle(_msg("/pn 2376+2100"))
+    assert "různým tiskům" in api.texts()[-1] and "tisk 300" in api.texts()[-1] and "tisk 250" in api.texts()[-1]
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_pn_nejvys_pet(bot, conn, api):
+    from hlidac_reels import jobs
+    for n in range(2370, 2376):
+        _pn(conn, n, 300)
+    bot.handle(_msg("/pn 2370+2371+2372+2373+2374+2375"))
+    assert api.texts()[-1] == "Do jednoho videa nejvýš 5 PN."
+    assert jobs.pending(conn) == []
+    bot.handle(_msg("/pn 2370+2371+2372+2373+2374"))
+    assert jobs.pending(conn)[0].focus_pn == [2370, 2371, 2372, 2373, 2374]
+
+
+@pg
+def test_pn_spatne_cislo(bot, conn, api):
+    from hlidac_reels import jobs
+    for text in ("/pn abc", "/pn 2376+", "/pn 0", "/pn 99999999999", "/pn " + " ".join(["1"] * 11)):
+        bot.handle(_msg(text))
+        assert api.texts()[-1].startswith("Použití: /pn"), text
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_pn_duplicitni(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    _pn(conn, 2377, 300)
+    bot.handle(_msg("/pn 2376+2377"))
+    bot.handle(_msg("/pn 2377+2376"))
+    assert api.texts()[-1] == "PN 2376+2377 (tisk 300) už ve frontě je."
+    # úloha k celému tisku a k jinému PN jdou vedle
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO tisky (ct) VALUES (300)")
+    conn.commit()
+    bot.handle(_msg("/video 300"))
+    bot.handle(_msg("/pn 2376"))
+    assert len(jobs.pending(conn)) == 3
+
+
+@pg
+def test_pn_seznam_48h(bot, conn, api):
+    _pn_bot(bot)
+    _pn(conn, 2376, 300, osoba="Jana Malá", cas="2026-11-23 20:09:00", titulek="Mění daň z nemovitostí")
+    _pn(conn, 2377, 300, cas="2026-11-23 21:00:00")
+    _pn(conn, 2378, 300, cas="2026-11-23 22:20:00")
+    _pn(conn, 2380, 310, cas="2026-11-24 09:00:00")
+    _pn(conn, 2300, 300, cas="2026-11-22 10:59:00")  # mimo okno 48 h
+    bot.handle(_msg("/pn"))
+    body = api.sent()[-1]
+    text = body["text"]
+    assert text.index("PN 2380") < text.index("PN 2378") < text.index("PN 2377") < text.index("PN 2376")
+    assert "PN 2300" not in text
+    assert "PN 2376 · tisk 300 · Jana Malá · 23. 11. 20:09" in text
+    assert "Mění daň z nemovitostí" in text
+    assert _buttons(body) == ["pn:2380", "pn:2378", "pn:2377", "pn:2376", "pn:2376+2377+2378"]
+    labels = [b["text"] for row in body["reply_markup"]["inline_keyboard"] for b in row]
+    assert labels[0] == "Video k PN 2380" and labels[-1] == "Jedno video ze všech (2376+2377+2378)"
+
+
+@pg
+def test_pn_seznam_prazdny(bot, conn, api):
+    _pn_bot(bot)
+    _pn(conn, 2300, 300, cas="2026-11-20 10:00:00")
+    bot.handle(_msg("/pn"))
+    assert api.texts()[-1] == "Za posledních 48 h žádný nový PN."
+
+
+@pg
+def test_pn_seznam_nejvys_10_a_skupina_nejvys_5(bot, conn, api):
+    _pn_bot(bot)
+    for k in range(12):
+        _pn(conn, 2400 + k, 300, cas=f"2026-11-24 0{k // 6}:{k % 6}0:00")  # 00:00 až 01:50
+    bot.handle(_msg("/pn"))
+    body = api.sent()[-1]
+    buttons = _buttons(body)
+    assert buttons[:10] == [f"pn:{2411 - k}" for k in range(10)]
+    # skupina z nejnovějších 5 PN tisku (limit jednoho videa)
+    assert buttons[10:] == ["pn:2407+2408+2409+2410+2411"]
+
+
+@pg
+def test_pn_tlacitko(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    _pn(conn, 2377, 300)
+    bot.handle(_cb("pn:2376"))
+    bot.handle(_cb("pn:2376+2377"))
+    assert [j.focus_pn for j in jobs.pending(conn)] == [[2376], [2376, 2377]]
+    assert api.methods().count("answerCallbackQuery") == 2
+    bot.handle(_cb("pn:abc"))
+    assert jobs.pending(conn)[-1].focus_pn == [2376, 2377] and len(jobs.pending(conn)) == 2
+
+
+@pg
+def test_pn_v_napovede_fronte_a_chybe(bot, conn, api):
+    from hlidac_reels import jobs
+    bot.handle(_msg("/neco"))
+    assert "/pn" in api.texts()[-1]
+    j = jobs.add(conn, source="manual", ct=300, focus_pn=[2377, 2376])
+    bot.handle(_msg("/fronta"))
+    assert f"#{j} manual 300 PN 2376+2377 queued" in api.texts()[-1]
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', error='x' WHERE id=%s", (j,))
+    conn.commit()
+    bot.maybe_notify_failed()
+    assert api.texts()[-1] == f"Zadání #{j} (PN 2376+2377, tisk 300) se nepodařilo: x"
 
 
 # --- video na šířku (16:9) ---------------------------------------------------

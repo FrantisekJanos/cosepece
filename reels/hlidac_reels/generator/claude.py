@@ -73,6 +73,44 @@ def write_published(workdir: Path, published: list[dict]) -> None:
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
+PSP_PN_URL = "https://www.psp.cz/sqw/sd.sqw?cd={cislo}&o=10"  # záloha, když server odkaz nepošle (10. období)
+
+
+def _pn_time(cas) -> str:
+    """„2026-11-23 20:09:00“ → „23. 11. 2026 20:09“; jiný tvar beze změny."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})", str(cas or ""))
+    return f"{int(m[3])}. {int(m[2])}. {m[1]} {m[4]}" if m else str(cas or "")
+
+
+def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict]) -> None:
+    """Zapíše `podklady/zadani.md` pro video k vybraným PN (/pn); bez focus_pn soubor smaže.
+
+    Návody orchestrátoru, v2 a v3 soubor čtou: hlavní fakt, titulek a háček všech variant jsou o těchto PN.
+    """
+    path = Path(workdir) / "podklady" / "zadani.md"
+    if not focus_pn:
+        path.unlink(missing_ok=True)
+        return
+    by_num = {int(i["cislo"]): i for i in info if isinstance(i, dict) and str(i.get("cislo", "")).isdigit()}
+    which = ", ".join(f"PN {n}" for n in focus_pn)
+    parts = ["# Zadání: video k vybraným pozměňovacím návrhům",
+             f"Video je jen o těchto PN: {which}. Hlavní fakt, titulek i háček jsou o nich, tisk je jen kontext.",
+             "Data o PN zjisti přes MCP: `get_pn(cislo)`, `osnova_textu(pn=…)`, `get_cel(pn=…)`, citace ověř přes "
+             "`over_citaci` s `pn`. Titulek níže je shrnutí AI, ne fakt.", ""]
+    for n in focus_pn:
+        i = by_num.get(n, {})
+        parts.append(f"## PN {n}")
+        parts.append(f"- autor: {i.get('osoba') or 'zjisti přes get_pn'}")
+        if i.get("cas"):
+            parts.append(f"- podáno: {_pn_time(i['cas'])}")
+        if i.get("titulek"):
+            parts.append(f"- titulek: {i['titulek']} (shrnutí AI)")
+        parts.append(f"- url_psp: {i.get('url_psp') or PSP_PN_URL.format(cislo=n)}")
+        parts.append("")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(parts), encoding="utf-8")
+
+
 def _task_line(n: int, fmt: str | None) -> str:
     if fmt is None:
         return f"- varianta {n}: „Přečti podklady/v2.md a postupuj podle něj. Výstup do variant-{n}/.“"

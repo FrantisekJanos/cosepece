@@ -15,7 +15,7 @@ náhled se Schválit / Upravit / Zamítnout jako samostatnému videu (fáze 1) a
 ostatní varianty jdou vybrat dál. Hotovo (i dřívější noset) zamítne nevybrané varianty.
 Hlídání dat (hlidani.py): každou hodinu výstraha při novém problému a zpráva „obnoveno“, v 8:00 Europe/Prague
 denní souhrn, /stav na požádání.
-Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague); sady ručních úloh (/video)
+Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague); sady ručních úloh (/video, /pn)
 limit neomezují a nepočítají se do něj, /dalsi limit obchází. Čekání na limit bot ohlásí jednou za sadu. Smyčka
 každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
 """
@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import dataclasses
 import html
+import json
 import logging
+import re
 import os
 import sys
 import time
@@ -67,9 +69,16 @@ THREADS_REFRESH_RETRY = timedelta(days=1)
 PREVIEW_THREADS_KEY = "preview_has_threads"
 MAX_CT = 999_999  # nejvyšší číslo tisku, které /video přijme
 VIDEO_USAGE = "Použití: /video <číslo tisku> [cesta|pn|zmena|rozprava]"
+MAX_PN = 999_999  # nejvyšší číslo PN, které /pn přijme (větší by v PostgreSQL přeteklo integer)
+PN_PER_VIDEO = 5  # nejvýš PN v jednom videu (/pn 1+2+…)
+PN_ARGS = 10  # nejvýš samostatných zadání v jednom /pn
+PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
+PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
+            f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
+        "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
         "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
@@ -118,6 +127,44 @@ def _failed_mark(reel: Reel) -> str:
 def _num(n: int) -> str:
     """Číslo s mezerou mezi tisíci (2 120)."""
     return f"{n:,}".replace(",", " ")
+
+
+def _pn_label(pns) -> str:
+    return "PN " + "+".join(str(n) for n in pns)
+
+
+def _job_what(ct: int | None, focus_pn) -> str:
+    """Popis zadání do zpráv: „PN 2376+2377, tisk 300“, „tisk 300“, nebo „automatický výběr“."""
+    if ct is None:
+        return "automatický výběr"
+    return f"{_pn_label(focus_pn)}, tisk {ct}" if focus_pn else f"tisk {ct}"
+
+
+def _parse_pn_group(token: str) -> list[int] | None:
+    """„2376“ nebo „2376+2377“ → seřazená čísla bez duplicit; None = neplatný zápis."""
+    nums = []
+    for part in token.split("+"):
+        if not part.isdigit() or not 1 <= int(part) <= MAX_PN:
+            return None
+        nums.append(int(part))
+    return sorted(set(nums))
+
+
+def _pn_time(cas: str | None) -> str:
+    """„2026-11-23 20:09:00“ → „23. 11. 20:09“ (pn.cas je text v pražském čase)."""
+    try:
+        t = datetime.strptime((cas or "")[:16], "%Y-%m-%d %H:%M")
+    except ValueError:
+        return cas or "?"
+    return f"{t.day}. {t.month}. {t:%H:%M}"
+
+
+def _ai_title(ai_json: str | None) -> str:
+    try:
+        ai = json.loads(ai_json) if ai_json else None
+    except (ValueError, TypeError):
+        return ""
+    return str(ai.get("titulek") or "").strip() if isinstance(ai, dict) else ""
 
 
 # --- bot --------------------------------------------------------------------
@@ -189,6 +236,14 @@ class Bot:
     def _on_callback(self, cq: dict, msg_id: int | None) -> None:
         action, _, raw_id = str(cq.get("data") or "").partition(":")
         cb_id = cq.get("id")
+        if action == "pn":  # tlačítka seznamu /pn: „pn:2376“ nebo „pn:2376+2377“
+            self._answered = False
+            try:
+                self._pn_request(raw_id)
+            finally:
+                if not self._answered:
+                    self._answer(cb_id)
+            return
         try:
             reel_id = int(raw_id)
         except ValueError:
@@ -395,6 +450,8 @@ class Bot:
             self._cmd_video((text or "").split()[1:])
         elif command == "/vyber":
             self._add_job("auto_pick", None, None)
+        elif command == "/pn":
+            self._cmd_pn((text or "").strip().partition(" ")[2])
         elif command == "/stav":
             self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
         else:
@@ -423,14 +480,84 @@ class Bot:
             return
         self._add_job("manual", ct, hint)
 
-    def _add_job(self, source: str, ct: int | None, hint: str | None) -> None:
-        what = f"tisk {ct}" if ct is not None else "automatický výběr"
+    def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None) -> None:
+        what = _job_what(ct, focus_pn)
         try:
-            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint)
+            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn)
         except jobs.ActiveJobExists:
-            self._say(f"Tisk {ct} už ve frontě je.")
+            self._say(f"{_pn_label(focus_pn)} (tisk {ct}) už ve frontě je." if focus_pn
+                      else f"Tisk {ct} už ve frontě je.")
             return
         self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.")
+
+    def _cmd_pn(self, rest: str) -> None:
+        """/pn: seznam PN za 48 h; /pn 2376 2377 = dvě úlohy; /pn 2376+2377 = jedno video z obou."""
+        rest = re.sub(r"\s*\+\s*", "+", rest.strip())  # „2376 + 2377“ = „2376+2377“
+        if not rest:
+            self._pn_list()
+            return
+        tokens = rest.split()
+        groups = [_parse_pn_group(t) for t in tokens]
+        if len(tokens) > PN_ARGS or any(g is None for g in groups):
+            self._say(PN_USAGE)
+            return
+        for token in tokens:
+            self._pn_request(token)
+
+    def _pn_request(self, token: str) -> None:
+        """Jedno zadání z „2376“ nebo „2376+2377“ (příkaz i tlačítko): ověří PN a založí úlohu."""
+        pns = _parse_pn_group(token)
+        if pns is None:
+            self._say(PN_USAGE)
+            return
+        if len(pns) > PN_PER_VIDEO:
+            self._say(f"Do jednoho videa nejvýš {PN_PER_VIDEO} PN.")
+            return
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT ON (cislo) cislo, ct FROM pn WHERE cislo = ANY(%s) ORDER BY cislo, ct",
+                        (pns,))
+            found = dict(cur.fetchall())
+        self.conn.commit()
+        unknown = [n for n in pns if n not in found]
+        if unknown:
+            self._say(f"PN {unknown[0]} zatím neznám (sync běží každou hodinu).")
+            return
+        tisky = sorted({found[n] for n in pns})
+        if len(tisky) > 1:
+            parts = [f"PN {n} (tisk {found[n]})" for n in pns]
+            self._say(f"{', '.join(parts[:-1])} a {parts[-1]} patří k různým tiskům. "
+                      "Jedno video jde jen z PN téhož tisku, zadej je zvlášť (mezerou místo +).")
+            return
+        self._add_job("manual", tisky[0], None, focus_pn=pns)
+
+    def _pn_list(self) -> None:
+        """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT p.cislo, p.ct, p.osoba, p.cas, x.ai_json FROM pn p "
+                "LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
+                "WHERE p.cas >= to_char((%s::timestamptz AT TIME ZONE 'Europe/Prague') - interval '48 hours', "
+                "'YYYY-MM-DD HH24:MI:SS') ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
+                (self.now(), PN_LIST))
+            rows = cur.fetchall()
+        self.conn.commit()
+        if not rows:
+            self._say("Za posledních 48 h žádný nový PN.")
+            return
+        lines, buttons = [], []
+        by_ct: dict[int, list[int]] = {}
+        for cislo, ct, osoba, cas, ai_json in rows:
+            line = f"PN {cislo} · tisk {ct} · {osoba or 'autor neznámý'} · {_pn_time(cas)}"
+            title = _ai_title(ai_json)
+            lines.append(line + (f"\n{title} (shrnutí AI)" if title else ""))
+            buttons.append((f"Video k PN {cislo}", f"pn:{cislo}"))
+            by_ct.setdefault(ct, []).append(cislo)
+        for ct, nums in by_ct.items():
+            if len(nums) >= 2:
+                # nejnovějších nejvýš PN_PER_VIDEO PN tisku (víc jedno video neunese)
+                group = "+".join(str(n) for n in sorted(nums[:PN_PER_VIDEO]))
+                buttons.append((f"Jedno video ze všech ({group})", f"pn:{group}"))
+        self._say(self._clip("PN za posledních 48 h:\n\n" + "\n\n".join(lines)), buttons)
 
     def _worker_seen(self) -> str:
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
@@ -455,7 +582,7 @@ class Bot:
     def _notify_failed(self) -> None:
         for job in jobs.failed_unnotified(self.conn):
             error = self._scrub(job.error or "")[:300]
-            what = f"tisk {job.ct}" if job.ct is not None else "automatický výběr"
+            what = _job_what(job.ct, job.focus_pn)
             if self._say(f"Zadání #{job.id} ({what}) se nepodařilo: {error}"):
                 jobs.mark_notified(self.conn, job.id)
 
@@ -468,7 +595,8 @@ class Bot:
         counts = queue.counts(self.conn)
         lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
         head = "Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná."
-        job_lines = [f"#{j.id} {j.source} {j.ct if j.ct is not None else '-'} {j.status}"
+        job_lines = [f"#{j.id} {j.source} {j.ct if j.ct is not None else '-'}"
+                     f"{' ' + _pn_label(j.focus_pn) if j.focus_pn else ''} {j.status}"
                      for j in jobs.pending(self.conn)]
         if job_lines:
             head += "\n\nZadání:\n" + "\n".join(job_lines)

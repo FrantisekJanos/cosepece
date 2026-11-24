@@ -112,12 +112,16 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
         log.error("neplatná úloha od serveru (%s: %s), přeskakuji", type(e).__name__, e)
         return False
     workdir = root / str(job_id)
-    log.info("úloha %s: tisk %s (%s), generuji", job_id, job.get("ct"), job.get("source"))
+    log.info("úloha %s: tisk %s%s (%s), generuji", job_id, job.get("ct"),
+             f", PN {job['focus_pn']}" if job.get("focus_pn") else "", job.get("source"))
     try:
         res = generate(ct=int(job["ct"]), card_v2=job["card_v2"], reason_keys=list(job.get("reason_keys") or []),
                        has_amendments=bool(job.get("has_amendments")), out=workdir, mcp_config=Path(mcp_config),
                        model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S,
-                       published=list(job.get("published") or []))
+                       published=list(job.get("published") or []),
+                       # video k vybraným PN (/pn); starší server pole neposílá = celý tisk
+                       focus_pn=[int(n) for n in job.get("focus_pn") or []] or None,
+                       focus_info=list(job.get("focus_pn_info") or []))
         good = []
         for v in res.variants:
             if not (v.ok and v.video):

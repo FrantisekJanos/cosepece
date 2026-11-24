@@ -109,3 +109,21 @@ def test_v3_bez_poli_karty(key):
     card = load_fixture("v3-cesta-311.json")
     del card[key]
     assert any(key in e for e in _check(card))
+
+
+def test_video_k_pn_karta_zminuje_pn():
+    card = load_fixture("v3-pn-115.json")
+    caption = CAPTION_OK.replace("Na mimořádnou", "PN 1418 na mimořádnou")
+    # číslo v poli karty (pn.top[].cislo) i v textu popisku stačí
+    assert _check(card, caption, focus_pn=[1418, 9999]) == []
+    errs = _check(card, caption, focus_pn=[9999])
+    assert any("karta nezmiňuje" in e and "9999" in e for e in errs)
+    assert any("popisek nezmiňuje" in e for e in errs)
+    # číslo jako součást delšího čísla se nepočítá
+    v2 = load_fixture("card-1-v2.json")
+    v2["title"] = "PN 14180 mění zákon"
+    assert any("karta nezmiňuje" in e for e in _check(v2, focus_pn=[1418]))
+    v2["title"] = "PN č. 1418 mění zákon"
+    assert not any("karta nezmiňuje" in e for e in _check(v2, focus_pn=[1418]))
+    # bez zadání PN se nic nekontroluje
+    assert _check(load_fixture("card-1-v2.json")) == []

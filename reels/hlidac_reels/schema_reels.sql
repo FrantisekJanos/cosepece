@@ -65,8 +65,12 @@ CREATE TABLE IF NOT EXISTS reel_jobs (
     finished_at   timestamptz,
     notified_at   timestamptz
 );
--- Pro jeden tisk nejvýš jedna aktivní úloha.
-CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct ON reel_jobs (ct)
+-- Video k vybraným PN (/pn, 2026-11-24): čísla PN seřazená a bez duplicit; NULL = celý tisk.
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS focus_pn integer[];
+-- Pro jeden tisk a jednu množinu PN nejvýš jedna aktivní úloha (úloha k celému tisku a k jeho PN běží vedle sebe).
+-- Původní index jen nad ct se ruší.
+DROP INDEX IF EXISTS reel_jobs_active_ct;
+CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALESCE(focus_pn, '{}'::integer[]))
     WHERE status IN ('queued','claimed') AND ct IS NOT NULL;
 
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS set_id   bigint;  -- reel_jobs.id

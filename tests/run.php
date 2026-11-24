@@ -907,6 +907,35 @@ ob_start();
 $revHtml = (string)ob_get_clean();
 check('detail tisku odkazuje na historii textu', str_contains($revHtml, 'revize.php?druh=tisk&amp;id=221') && str_contains($revHtml, 'Historie (' . Hlidac\Revisions::versionsLabel(3 + $revTotal('ai_revize', 'tisk', 221)) . ')'), true);
 check('detail tisku odkazuje na historii PN', str_contains($revHtml, 'revize.php?druh=pn&amp;id=' . $revPn), true);
+// pozměňovací návrhy na detailu tisku: hned pod důvody skóre, v široké části stránky, s odkazem z dlaždice
+$pnPos = strpos($revHtml, 'id="pozmenovaci-navrhy"');
+check('detail tisku: pozměňovací návrhy jsou před rozborem textu a průběhem', $pnPos !== false
+    && $pnPos > strpos($revHtml, 'Proč skóre') && $pnPos < strpos($revHtml, '<h2>Rozbor textu návrhu</h2>') && $pnPos < strpos($revHtml, '<h2>Průběh projednávání</h2>'), true);
+check('detail tisku: seznam PN je v široké části, předkladatelé vedle', [str_contains($revHtml, 'main-col" aria-label="Pozměňovací návrhy"'),
+    (bool)preg_match('~<aside class="side-col">\s*<section class="card pad">\s*<h2>Předkladatelé PN</h2>~', $revHtml),
+    str_contains($revHtml, 'href="#pozmenovaci-navrhy"')], [true, true, true]);
+// označený návrh (AI od 6/10) má nad seznamem odkaz na svou kotvu
+$pnFlagRow = db()->one('SELECT x.ai_score, p.cislo FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument WHERE x.id_dokument = ?', [$revPn]);
+db()->run('UPDATE pn_text SET ai_score = 7 WHERE id_dokument = ?', [$revPn]);
+$_GET = ['ct' => '221'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$pnFlagHtml = (string)ob_get_clean();
+db()->run('UPDATE pn_text SET ai_score = ? WHERE id_dokument = ?', [$pnFlagRow['ai_score'], $revPn]);
+check('detail tisku: odkaz na označený pozměňovací návrh', (bool)preg_match('~class="chip chip-cut" href="#pn-' . (int)$pnFlagRow['cislo'] . '">č\. ' . (int)$pnFlagRow['cislo'] . ' · AI 7/10</a>~u', $pnFlagHtml)
+    && str_contains($pnFlagHtml, 'id="pn-' . (int)$pnFlagRow['cislo'] . '"'), true);
+// tisk bez pozměňovacích návrhů blok nemá (ani prázdnou kartu)
+$noPnCt = (int)db()->value('SELECT t.ct FROM tisky t WHERE NOT EXISTS (SELECT 1 FROM pn p WHERE p.ct = t.ct) ORDER BY t.ct LIMIT 1');
+$_GET = ['ct' => (string)$noPnCt];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$noPnHtml = (string)ob_get_clean();
+check('detail tisku bez PN: žádný blok pozměňovacích návrhů', [$noPnCt > 0, str_contains($noPnHtml, 'pozmenovaci-navrhy'), str_contains($noPnHtml, 'Předkladatelé PN'),
+    str_contains($noPnHtml, '<h2>Průběh projednávání</h2>')], [true, false, false, true]);
 $_GET = ['druh' => 'tisk', 'id' => '221', 'a' => '1', 'b' => '2'];
 ob_start();
 (function (string $file): void {

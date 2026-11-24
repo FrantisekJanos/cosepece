@@ -43,6 +43,30 @@ foreach ($steps as $k) {
 // počty uložených verzí textu a rozborů (odkaz „Historie“ jen u víc než jedné verze)
 $billRev = Revisions::counts(db(), 'tisk', null, $ct)[$ct] ?? ['text' => 0, 'ai' => 0];
 $pnRev = Revisions::counts(db(), 'pn', null, $ct);
+// Označené pozměňovací návrhy (štítek přílepek, rozsáhlý, lhůta se zpětným použitím nebo AI od 6/10): nad seznamem
+// na ně vedou odkazy, od nejzávažnějšího (nejvýš 10). Seznam sám zůstává od nejnovějšího, aby byly nové návrhy
+// vidět hned; prvních 10 je vidět rovnou, zbytek je pod odkazem „Další pozměňovací návrhy“. Skóre se tím nemění.
+$pnVisible = 10;
+$pnFlagged = [];
+foreach ($pn as $p) {
+    $x = $texts[(int)$p['id_dokument']] ?? null;
+    if ($x === null) {
+        continue;
+    }
+    $ai = $x['ai_score'] !== null ? (int)$x['ai_score'] : null;
+    $label = match (true) {
+        $ai !== null && $ai >= 6 => 'AI ' . $ai . '/10',
+        !empty($x['signals']['other_laws']) => 'přílepek',
+        !empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline']) => 'lhůta a zpětné použití',
+        !empty($x['signals']['large']) => 'rozsáhlý',
+        default => null,
+    };
+    if ($label !== null) {
+        $pnFlagged[] = ['cislo' => (int)$p['cislo'], 'ai' => $ai ?? -1, 'label' => $label, 'serious' => $label !== 'rozsáhlý'];
+    }
+}
+// od nejzávažnějšího; při shodě zůstává pořadí seznamu (od nejnovějšího)
+usort($pnFlagged, static fn(array $a, array $b): int => [$b['serious'], $b['ai']] <=> [$a['serious'], $a['ai']]);
 $laws = array_filter(explode(',', (string)$t['zakony']));
 
 // délka projednávání od předložení po poslední krok
@@ -90,7 +114,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <div class="card kpi">
     <div class="kpi-label">Pozměňovací návrhy</div>
     <div class="kpi-value"><?= count($pn) ?></div>
-    <div class="kpi-note">od <?= count($authors) ?> <?= count($authors) === 1 ? 'poslance' : 'poslanců' ?></div>
+    <div class="kpi-note">od <?= count($authors) ?> <?= count($authors) === 1 ? 'poslance' : 'poslanců' ?><?php if ($pn !== []): ?> · <a href="#pozmenovaci-navrhy">zobrazit</a><?php endif; ?></div>
   </div>
   <div class="card kpi">
     <div class="kpi-label">Fáze</div>
@@ -122,6 +146,78 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <?php endif; ?>
   <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
 </section>
+
+<?php if ($pn !== []): ?>
+<div class="split" id="pozmenovaci-navrhy">
+  <section class="card pad main-col" aria-label="Pozměňovací návrhy">
+    <h2>Pozměňovací návrhy <span class="muted">(<?= count($pn) ?>)</span></h2>
+    <?php if ($pnFlagged !== []): ?>
+      <?php $n = count($pnFlagged); ?>
+      <p class="small pn-flagged"><strong><?= $n ?> <?= $n === 1 ? 'označený návrh' : ($n < 5 ? 'označené návrhy' : 'označených návrhů') ?></strong> (přílepek, rozsáhlá změna, lhůta se zpětným použitím nebo závažnost od 6/10)<?= $n > 10 ? ', 10 nejzávažnějších' : '' ?>:
+        <?php foreach (array_slice($pnFlagged, 0, 10) as $f): ?>
+          <a class="chip <?= $f['serious'] ? 'chip-cut' : 'chip-surge' ?>" href="#pn-<?= $f['cislo'] ?>">č. <?= $f['cislo'] ?> · <?= e($f['label']) ?></a>
+        <?php endforeach; ?>
+      </p>
+    <?php endif; ?>
+    <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
+    <?php if ($pnOutcomes !== []): ?>
+      <p class="muted small">Výsledek ve 3. čtení (přijat, zamítnut…) bereme ze souhrnu pozměňovacích návrhů, stenozáznamu a hlasování, bez AI. Kde hlasování nejde přiřadit jednoznačně, uvádíme „nelze určit“. Senát a prezident mohou znění ještě změnit.</p>
+    <?php endif; ?>
+    <?php if (!empty($t['souhrn_pn'])): ?>
+      <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o=<?= (int)$obdobi ?>&amp;ct=<?= $ct ?>&amp;ct1=<?= (int)$t['souhrn_pn'] ?>">Souhrn platně podaných pozměňovacích návrhů (tisk <?= $ct ?>/<?= (int)$t['souhrn_pn'] ?>)</a> <span class="muted">rozeslán <?= e(formatDate((string)$t['souhrn_pn_at'] . ':00', true)) ?></span></p>
+    <?php endif; ?>
+    <ul class="plain-list">
+      <?php foreach ($pn as $i => $p): ?>
+        <?php if ($i === $pnVisible): ?></ul><details class="pn-more"><summary>Další pozměňovací návrhy (<?= count($pn) - $pnVisible ?>)</summary><ul class="plain-list"><?php endif; ?>
+        <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>
+        <li class="pn-item" id="pn-<?= (int)$p['cislo'] ?>">
+          <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= e($p['osoba']) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
+          <?php if (isset($pnOutcomes[(int)$p['cislo']])): ?><span class="pn-outcome"><?= View::pnOutcome($pnOutcomes[(int)$p['cislo']]) ?></span><?php endif; ?>
+          <?php if ($x !== null): ?>
+            <span class="chips">
+              <?php if (!empty($x['signals']['other_laws'])): ?><span class="chip chip-cut">Přílepek: <?= e(implode(', ', $x['signals']['other_laws'])) ?></span><?php endif; ?>
+              <?php if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])): ?><span class="chip chip-cut">Lhůta a zpětné použití</span><?php endif; ?>
+              <?php if (!empty($x['signals']['large'])): ?><span class="chip chip-surge">Rozsáhlý</span><?php endif; ?>
+              <?php if ($x['ai_score'] !== null): ?><span class="chip <?= (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' ?>">AI <?= (int)$x['ai_score'] ?>/10</span><?php endif; ?>
+            </span>
+            <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
+            <?= View::aiRounds($x) ?>
+            <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
+            <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
+            <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
+          <?php endif; ?>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+    <?php if (count($pn) > $pnVisible): ?></details>
+    <script>
+    // odkaz na konkrétní PN (#pn-123, např. z hledání): rozbalit skryté a posunout se na něj;
+    // i při změně kotvy na téže stránce (výběr z našeptávače stránku znovu nenačte)
+    (function () {
+      function show() {
+        var el = location.hash.indexOf('#pn-') === 0 ? document.getElementById(location.hash.slice(1)) : null;
+        var box = el && el.closest('details');
+        if (box && !box.open) { box.open = true; el.scrollIntoView(); }
+      }
+      show();
+      window.addEventListener('hashchange', show);
+    })();
+    </script>
+    <?php endif; ?>
+  </section>
+
+  <aside class="side-col">
+    <section class="card pad">
+      <h2>Předkladatelé PN</h2>
+      <ul class="plain-list">
+        <?php foreach ($authors as $a): ?>
+          <li><span><?= e($a['osoba']) ?></span><span class="strong"><?= (int)$a['n'] ?></span></li>
+        <?php endforeach; ?>
+      </ul>
+    </section>
+  </aside>
+</div>
+<?php endif; ?>
 
 <?php if ($prep !== null): ?>
 <?php
@@ -195,81 +291,19 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
 </section>
 <?php endif; ?>
 
-<div class="split">
-  <section class="card pad main-col" aria-label="Průběh projednávání">
-    <h2>Průběh projednávání</h2>
-    <?php if ($steps === []): ?><p class="muted">Historie zatím není k dispozici.</p><?php endif; ?>
-    <ol class="timeline">
-      <?php foreach ($steps as $k): ?>
-        <li>
-          <span class="tl-date"><?= e(formatDate($k['datum'])) ?></span>
-          <span class="tl-dot <?= $dotClass($k) ?>" aria-hidden="true"></span>
-          <span class="tl-text"><strong><?= e($k['stav']) ?></strong><?= $k['akce'] !== '' ? ' – ' . e($k['akce']) : '' ?></span>
-        </li>
-      <?php endforeach; ?>
-    </ol>
-  </section>
-
-  <aside class="side-col">
-    <section class="card pad">
-      <h2>Předkladatelé PN</h2>
-      <?php if ($authors === []): ?><p class="muted">K tisku nebyl podán žádný písemný pozměňovací návrh.</p><?php endif; ?>
-      <ul class="plain-list">
-        <?php foreach ($authors as $a): ?>
-          <li><span><?= e($a['osoba']) ?></span><span class="strong"><?= (int)$a['n'] ?></span></li>
-        <?php endforeach; ?>
-      </ul>
-    </section>
-    <section class="card pad">
-      <h2>Pozměňovací návrhy</h2>
-      <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
-      <?php if ($pnOutcomes !== []): ?>
-        <p class="muted small">Výsledek ve 3. čtení (přijat, zamítnut…) bereme ze souhrnu pozměňovacích návrhů, stenozáznamu a hlasování, bez AI. Kde hlasování nejde přiřadit jednoznačně, uvádíme „nelze určit“. Senát a prezident mohou znění ještě změnit.</p>
-      <?php endif; ?>
-      <?php if (!empty($t['souhrn_pn'])): ?>
-        <p class="small"><a href="https://www.psp.cz/sqw/text/tiskt.sqw?o=<?= (int)$obdobi ?>&amp;ct=<?= $ct ?>&amp;ct1=<?= (int)$t['souhrn_pn'] ?>">Souhrn platně podaných pozměňovacích návrhů (tisk <?= $ct ?>/<?= (int)$t['souhrn_pn'] ?>)</a> <span class="muted">rozeslán <?= e(formatDate((string)$t['souhrn_pn_at'] . ':00', true)) ?></span></p>
-      <?php endif; ?>
-      <ul class="plain-list">
-        <?php foreach ($pn as $i => $p): ?>
-          <?php if ($i === 30): ?></ul><details class="pn-more"><summary>Další pozměňovací návrhy (<?= count($pn) - 30 ?>)</summary><ul class="plain-list"><?php endif; ?>
-          <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>
-          <li class="pn-item" id="pn-<?= (int)$p['cislo'] ?>">
-            <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= e($p['osoba']) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
-            <?php if (isset($pnOutcomes[(int)$p['cislo']])): ?><span class="pn-outcome"><?= View::pnOutcome($pnOutcomes[(int)$p['cislo']]) ?></span><?php endif; ?>
-            <?php if ($x !== null): ?>
-              <span class="chips">
-                <?php if (!empty($x['signals']['other_laws'])): ?><span class="chip chip-cut">Přílepek: <?= e(implode(', ', $x['signals']['other_laws'])) ?></span><?php endif; ?>
-                <?php if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])): ?><span class="chip chip-cut">Lhůta a zpětné použití</span><?php endif; ?>
-                <?php if (!empty($x['signals']['large'])): ?><span class="chip chip-surge">Rozsáhlý</span><?php endif; ?>
-                <?php if ($x['ai_score'] !== null): ?><span class="chip <?= (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' ?>">AI <?= (int)$x['ai_score'] ?>/10</span><?php endif; ?>
-              </span>
-              <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
-              <?= View::aiRounds($x) ?>
-              <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
-              <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
-              <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
-            <?php endif; ?>
-          </li>
-        <?php endforeach; ?>
-      </ul>
-      <?php if (count($pn) > 30): ?></details>
-      <script>
-      // odkaz na konkrétní PN (#pn-123, např. z hledání): rozbalit skryté a posunout se na něj;
-      // i při změně kotvy na téže stránce (výběr z našeptávače stránku znovu nenačte)
-      (function () {
-        function show() {
-          var el = location.hash.indexOf('#pn-') === 0 ? document.getElementById(location.hash.slice(1)) : null;
-          var box = el && el.closest('details');
-          if (box && !box.open) { box.open = true; el.scrollIntoView(); }
-        }
-        show();
-        window.addEventListener('hashchange', show);
-      })();
-      </script>
-      <?php endif; ?>
-    </section>
-  </aside>
-</div>
+<section class="card pad" aria-label="Průběh projednávání">
+  <h2>Průběh projednávání</h2>
+  <?php if ($steps === []): ?><p class="muted">Historie zatím není k dispozici.</p><?php endif; ?>
+  <ol class="timeline">
+    <?php foreach ($steps as $k): ?>
+      <li>
+        <span class="tl-date"><?= e(formatDate($k['datum'])) ?></span>
+        <span class="tl-dot <?= $dotClass($k) ?>" aria-hidden="true"></span>
+        <span class="tl-text"><strong><?= e($k['stav']) ?></strong><?= $k['akce'] !== '' ? ' – ' . e($k['akce']) : '' ?></span>
+      </li>
+    <?php endforeach; ?>
+  </ol>
+</section>
 
 <?php if ($votes !== []): ?>
 <section class="card pad" aria-label="Hlasování">

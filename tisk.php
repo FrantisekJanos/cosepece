@@ -18,7 +18,7 @@ $t = $ct > 0 ? $repo->bill($ct) : null;
 if ($t === null) {
     http_response_code(404);
     View::header('Tisk nenalezen', 'tisky');
-    echo '<section class="card pad"><h1>Tisk nenalezen</h1><p><a href="tisky.php">Zpět na seznam tisků</a></p></section>';
+    echo '<section class="card pad"><h1>Tisk nenalezen</h1><p><a href="' . e(url('tisky')) . '">Zpět na seznam tisků</a></p></section>';
     View::footer();
     exit;
 }
@@ -94,13 +94,13 @@ $dotClass = function (array $k): string {
 $ogCard = OgCard::forBill($t, config());
 $ogDesc = 'Skóre závažnosti postupu ' . (int)$t['score'] . '/100. ' . $ogCard['text'] . ' ' . $t['uplny_nazev'];
 View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 0, 300), [
-    'url' => 'tisk.php?ct=' . $ct,
+    'url' => Hlidac\Url::path('tisk', ['ct' => $ct]),
     'image' => 'og.php?ct=' . $ct . '&v=' . OgCard::cacheKey($ogCard),
     'title' => 'Tisk ' . $ct . ': ' . OgCard::cleanTitle((string)($t['uplny_nazev'] ?: $t['nazev'])),
     'alt' => 'Tisk ' . $ct . ', skóre ' . (int)$t['score'] . ' ze 100. ' . $ogCard['text'],
 ]);
 ?>
-<p class="crumbs"><a href="tisky.php">Tisky</a> › Tisk <?= $ct ?></p>
+<p class="crumbs"><a href="<?= e(url('tisky')) ?>">Tisky</a> › Tisk <?= $ct ?></p>
 <section class="detail-head">
   <span class="chips"><?= View::scoreBadge((int)$t['score']) ?><?= View::chips($t['flags']) ?></span>
   <h1><?= e($t['uplny_nazev'] ?: $t['nazev']) ?></h1>
@@ -145,7 +145,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <?php if ($review['total'] > 0 && $review['done'] < $review['total']): ?>
     <p class="small"><strong>Rozbor textů není úplný:</strong> posouzeno <?= (int)$review['done'] ?> z <?= (int)$review['total'] ?> textů (návrh zákona a pozměňovací návrhy). Neposouzené texty do skóre zatím nepřispívají, nízké skóre proto neznamená „bez problému“.</p>
   <?php endif; ?>
-  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="metodika.php">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
+  <p class="muted small">Skóre hodnotí postup projednávání a formu pozměňovacích návrhů, ne politický obsah zákona. <a href="<?= e(url('metodika')) ?>">Jak skóre počítáme.</a> <a href="<?= e((string)config('issues_url', '')) ?>">Nesouhlasíte? Napište nám.</a></p>
 </section>
 
 <?php if ($pn !== []): ?>

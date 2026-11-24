@@ -5,6 +5,10 @@ return [
     // veřejná adresa webu (bez lomítka na konci) – používá se v odkazech v příspěvcích
     'site_url' => 'https://hlidac.example.cz',
 
+    // hezké adresy bez .php (/tisk/221, /zakon/159/2006, /tisky…); potřebují Apache s mod_rewrite a .htaccess.
+    // Na hostingu bez mod_rewrite nastavte false: web pak používá adresy s .php (tisk.php?ct=221).
+    'pretty_urls' => true,
+
     // databáze: SQLite (výchozí, nic nenastavujete), PostgreSQL nebo MySQL/MariaDB
     'db_dsn' => 'sqlite:' . __DIR__ . '/data/hlidac.sqlite',
     // 'db_dsn' => 'pgsql:host=localhost;dbname=hlidac',

@@ -130,7 +130,7 @@ final class Laws
 
     public static function url(string $law): string
     {
-        return 'zakon.php?z=' . rawurlencode($law);
+        return url('zakon', ['z' => $law]);
     }
 
     private static function sortKey(string $law): int

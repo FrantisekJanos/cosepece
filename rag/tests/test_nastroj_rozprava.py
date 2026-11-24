@@ -93,7 +93,7 @@ def test_prehled_hlavicka_a_kompaktni_radky():
     conn = _conn(rows)
     r = rozprava(conn, 76)
     assert r["ct"] == 76 and r["nazev"] == NAZEV[0]["nazev"]
-    assert r["url_psp"].endswith("t=76") and r["url_web"].endswith("ct=76")
+    assert r["url_psp"].endswith("t=76") and r["url_web"].endswith("/tisk/76")
     assert r["format"] == "prehled" and r["celkem"] == 3 and r["znaku_celkem"] == 1500
     assert r["od_poradi"] == 1 and r["dalsi_od_poradi"] is None
     assert "odvozené automaticky" in r["poznamka"] and "ověřujte" in r["poznamka"]

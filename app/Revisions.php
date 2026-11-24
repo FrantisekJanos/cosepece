@@ -228,6 +228,6 @@ final class Revisions
 
     public static function url(string $kind, int $id): string
     {
-        return 'revize.php?druh=' . $kind . '&id=' . $id;
+        return url('revize', ['druh' => $kind, 'id' => $id]);
     }
 }

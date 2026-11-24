@@ -21,7 +21,8 @@ Data pocházejí z otevřených dat Poslanecké sněmovny; písmo Noto Sans v `a
 ## Požadavky
 
 - PHP 8.1+ s rozšířeními `pdo_sqlite` (nebo `pdo_mysql`), `zip`, `curl`, `iconv`, `mbstring`
-- Apache s `.htaccess` (běžný sdílený hosting)
+- Apache s `.htaccess` (běžný sdílený hosting); pro adresy bez `.php` navíc `mod_rewrite`
+  (bez něj nastavte v `config.php` `pretty_urls` na `false`)
 - hosting musí umět stahovat z `https://www.psp.cz` (odchozí HTTPS)
 - cron (stačí i externí webcron)
 
@@ -128,6 +129,8 @@ Filtry: `since=YYYY-MM-DD` (poslední změna / datum upozornění), `min_score=0
 
 ```
 index.php, tisky.php, tisk.php, upozorneni.php, rss.php   veřejné stránky
+app/Url.php, .htaccess                                     hezké adresy bez .php (/tisk/221, /zakon/159/2006)
+bin/router.php                                             místní náhled: php -S 127.0.0.1:8099 bin/router.php
 cron.php                                                   webcron (chráněno tokenem)
 bin/sync.php                                               synchronizace z příkazové řádky
 app/Source.php      stažení a čtení ZIP/UNL z psp.cz

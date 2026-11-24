@@ -355,7 +355,7 @@
     logo.innerHTML = '';
     'cosepece.cz'.split('').forEach(function (ch) { logo.appendChild(mk('span', '', ch)); });
     $('end-ct').textContent = 'Tisk ' + c.ct + ' · ' + c.faze;
-    $('end-url').textContent = String(c.url || ('cosepece.cz/tisk.php?ct=' + c.ct)).replace(/^https?:\/\//, '');
+    $('end-url').textContent = String(c.url || ('cosepece.cz/tisk/' + c.ct)).replace(/^https?:\/\//, '');
     $('ai-note').textContent = aiNote(c);
     setOpt($('end-src'), c.zdroje || 'Zdroj: psp.cz, historie tisku a stenozáznamy');
     a.show($('s-end').querySelector('.lab'), 0, 0, 30);

@@ -95,7 +95,7 @@ vezme tlačítka, aby Schválit nezveřejnil text, který vlastník neviděl (`r
 (nový náhled, starý bez tlačítek) dělá `/fronta`.
 
 **Text pro Threads** (limit 500 znaků): první odstavec popisku (do prázdného řádku), zkrácený na celou větu do 440 znaků
-(když věta nestačí, na slovo a „…“), za ním `Celý rozbor: https://cosepece.cz/tisk.php?ct=N` (bez čísla tisku jen
+(když věta nestačí, na slovo a „…“), za ním `Celý rozbor: https://cosepece.cz/tisk/N` (bez čísla tisku jen
 `https://cosepece.cz`). FB a IG dostávají celý popisek beze změny. Úprava popisku změní i text pro Threads.
 
 **Token:** dlouhodobý uživatelský token účtu Threads (60 dní) z jednorázového přihlášení OAuth. Do `docker/.env` patří

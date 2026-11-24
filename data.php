@@ -183,7 +183,7 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
   <div class="docs-body">
     <section class="card pad" id="zaklady">
       <h2>Základy</h2>
-      <p>Rychlý start: <a href="api.php?limit=5"><code>api.php?limit=5</code></a> vrátí pět naposledy změněných tisků.</p>
+      <p>Rychlý start: <a href="<?= e(asset('api.php?limit=5')) ?>"><code>api.php?limit=5</code></a> vrátí pět naposledy změněných tisků.</p>
       <dl class="docs-dl">
         <dt>Adresa</dt><dd><code><?= e($base) ?></code></dd>
         <dt>Metoda</dt><dd>jen <code>GET</code>, jen čtení</dd>
@@ -200,7 +200,7 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
   "aktualizovano": "2026-11-19 15:01:06",  // poslední synchronizace dat
   "tisky": [ … ]                           // nebo "tisk", "upozorneni", "pripravovane"
 }</code></pre>
-      <p class="muted small"><strong>Stabilita:</strong> v rámci verze <?= Api::VERSION ?> můžeme přidávat nová pole, ale existující neodebereme ani nepřejmenujeme. Nekompatibilní změnu označíme novou verzí a oznámíme ji v <a href="zmeny.php">přehledu změn</a>. Neznámá pole proto ignorujte.</p>
+      <p class="muted small"><strong>Stabilita:</strong> v rámci verze <?= Api::VERSION ?> můžeme přidávat nová pole, ale existující neodebereme ani nepřejmenujeme. Nekompatibilní změnu označíme novou verzí a oznámíme ji v <a href="<?= e(url('zmeny')) ?>">přehledu změn</a>. Neznámá pole proto ignorujte.</p>
     </section>
 
     <section class="card pad" id="adresy">
@@ -211,7 +211,7 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
           <h3><span class="method">GET</span> <code><?= e($path) ?></code></h3>
           <p><strong><?= e($label) ?>.</strong> <?= e($desc) ?></p>
           <?php if ($params !== []): ?><p class="small">Filtry: <?= implode(', ', array_map(fn(string $p) => '<a href="#filtry"><code>' . e($p) . '</code></a>', $params)) ?></p><?php endif; ?>
-          <p class="small">Vyzkoušet: <a href="<?= e($exampleUrl) ?>"><code><?= e($exampleUrl) ?></code></a></p>
+          <p class="small">Vyzkoušet: <a href="<?= e(asset($exampleUrl)) ?>"><code><?= e($exampleUrl) ?></code></a></p>
           <details>
             <summary>Ukázka odpovědi (zkrácená, živá data)</summary>
             <pre class="code"><code><?= e($example($query)) ?></code></pre>
@@ -222,7 +222,7 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
 
     <section class="card pad" id="filtry">
       <h2>Filtry</h2>
-      <p>Parametry v adrese, lze je kombinovat (např. <a href="api.php?zakon=159/2006&amp;min_score=25"><code>api.php?zakon=159/2006&amp;min_score=25</code></a>). Stejné filtry platí pro RSS.</p>
+      <p>Parametry v adrese, lze je kombinovat (např. <a href="<?= e(asset('api.php?zakon=159/2006&min_score=25')) ?>"><code>api.php?zakon=159/2006&amp;min_score=25</code></a>). Stejné filtry platí pro RSS.</p>
       <div class="table-wrap"><table class="docs-table">
         <thead><tr><th>Parametr</th><th>Hodnota</th><th>Význam</th><th>Příklad</th></tr></thead>
         <tbody>
@@ -251,7 +251,7 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
     <section class="card pad" id="ciselniky">
       <h2>Číselníky</h2>
       <h3>Klíče důvodů skóre (<code>duvody[].klic</code>)</h3>
-      <p class="small muted">Body a podmínky jednotlivých signálů popisuje stránka <a href="metodika.php">Jak hodnotíme</a>.</p>
+      <p class="small muted">Body a podmínky jednotlivých signálů popisuje stránka <a href="<?= e(url('metodika')) ?>">Jak hodnotíme</a>.</p>
       <div class="table-wrap"><table class="docs-table">
         <tbody>
           <?php foreach (View::REASON_SHORT as $key => $label): ?>
@@ -299,17 +299,17 @@ View::header('Data a API', 'data', 'Jak stáhnout data Hlídače zákonů: JSON 
 
     <section class="card pad" id="mcp">
       <h2>Pro AI asistenty (MCP)</h2>
-      <p>Pro Claude a další AI asistenty je k dispozici MCP server s 21 nástroji nad návrhy zákonů, jejich texty, pozměňovacími návrhy, rozpravami ve Sněmovně a hlasováním. Návod k připojení a přehled nástrojů je na stránce <a href="mcp.php">Pro AI asistenty (MCP)</a>.</p>
+      <p>Pro Claude a další AI asistenty je k dispozici MCP server s 21 nástroji nad návrhy zákonů, jejich texty, pozměňovacími návrhy, rozpravami ve Sněmovně a hlasováním. Návod k připojení a přehled nástrojů je na stránce <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a>.</p>
     </section>
 
     <section class="card pad" id="rss">
       <h2>RSS</h2>
-      <p><a href="rss.php"><code><?= e(siteUrl('rss.php')) ?></code></a> – upozornění od úrovně „Pozor“, nejnovější nahoře, nejvýš 50 (parametrem <code>limit</code> až 100).</p>
+      <p><a href="<?= e(url('rss')) ?>"><code><?= e(siteUrl('rss.php')) ?></code></a> – upozornění od úrovně „Pozor“, nejnovější nahoře, nejvýš 50 (parametrem <code>limit</code> až 100).</p>
       <ul>
-        <li><a href="rss.php?zakon=159/2006"><code>rss.php?zakon=159/2006</code></a> – jen tisky měnící daný zákon</li>
-        <li><a href="rss.php?ct=221"><code>rss.php?ct=221</code></a> – jen jeden tisk (všechna jeho upozornění)</li>
-        <li><a href="rss.php?min_score=60"><code>rss.php?min_score=60</code></a> – jen to nejzávažnější</li>
-        <li><a href="rss.php?vse=1"><code>rss.php?vse=1</code></a> – včetně běžné agendy</li>
+        <li><a href="<?= e(asset('rss.php?zakon=159/2006')) ?>"><code>rss.php?zakon=159/2006</code></a> – jen tisky měnící daný zákon</li>
+        <li><a href="<?= e(asset('rss.php?ct=221')) ?>"><code>rss.php?ct=221</code></a> – jen jeden tisk (všechna jeho upozornění)</li>
+        <li><a href="<?= e(asset('rss.php?min_score=60')) ?>"><code>rss.php?min_score=60</code></a> – jen to nejzávažnější</li>
+        <li><a href="<?= e(asset('rss.php?vse=1')) ?>"><code>rss.php?vse=1</code></a> – včetně běžné agendy</li>
       </ul>
     </section>
 
@@ -335,7 +335,7 @@ for d in tisk['duvody']:
       <h2>Zdroje a podmínky</h2>
       <ul>
         <li>Data o tiscích, krocích, pozměňovacích návrzích a hlasování pocházejí z <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřených dat Poslanecké sněmovny</a>, příprava u vlády z <a href="https://odok.gov.cz/portal/katalog/stranky/opendata/">otevřených dat Úřadu vlády</a>.</li>
-        <li>Skóre, důvody a upozornění počítá tento web automaticky podle <a href="metodika.php">veřejné metodiky</a>; rozbory textů dělá jazykový model a mohou se mýlit. Hodnotíme postup a formu, ne politický obsah.</li>
+        <li>Skóre, důvody a upozornění počítá tento web automaticky podle <a href="<?= e(url('metodika')) ?>">veřejné metodiky</a>; rozbory textů dělá jazykový model a mohou se mýlit. Hodnotíme postup a formu, ne politický obsah.</li>
         <li>Při dalším použití uveďte zdroj (Hlídač zákonů, <?= e(parse_url(siteUrl(), PHP_URL_HOST) ?: siteUrl()) ?>) a u přebíraných údajů i původní zdroj.</li>
         <li>Zdrojový kód je <a href="https://github.com/FrantisekJanos/cosepece">na GitHubu</a> pod licencí AGPL-3.0. Chyby a nápady na nová data: <a href="<?= e((string)config('issues_url', '')) ?>">GitHub issues</a>.</li>
       </ul>

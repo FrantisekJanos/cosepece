@@ -1,4 +1,4 @@
-// Našeptávač vyhledávání: index (hledat.php?index=1) se stáhne jednou při prvním použití pole
+// Našeptávač vyhledávání: index (adresa v data-search formuláře) se stáhne jednou při prvním použití pole
 // a hledá se přímo v prohlížeči stejným postupem jako app/SearchIndex.php (bez diakritiky,
 // začátky slov, jeden překlep u slov od 5 písmen i u slova v jiném tvaru). Dotazy se nikam neposílají.
 // Ovládání: šipky, Enter, Esc; klávesa „/“ skočí do vyhledávání.
@@ -100,7 +100,7 @@
   function loadIndex(url) {
     if (!indexPromise) {
       // adresa obsahuje otisk poslední synchronizace, takže se po aktualizaci dat stáhne nový index
-      indexPromise = fetch(url || 'hledat.php?index=1', { credentials: 'same-origin' })
+      indexPromise = fetch(url, { credentials: 'same-origin' })
         .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
         .then(function (idx) {
           (idx.items || []).forEach(function (it) {
@@ -141,6 +141,10 @@
     var list = form.querySelector('.suggest');
     if (!input || !list) return;
     var active = -1, timer = null, seq = 0;
+    // adresy stránek webu jsou v indexu od kořene webu bez úvodního lomítka, kořen je v data-base;
+    // cizí adresy (VeKLEP) jsou celé (stejně jako SearchIndex::href v PHP)
+    var base = form.getAttribute('data-base') || '/';
+    function href(u) { return /^https?:\/\//.test(u) ? u : base + u; }
 
     function options() { return list.querySelectorAll('[role="option"]'); }
     function close() {
@@ -164,12 +168,12 @@
         html += '<li class="suggest-group" role="presentation">' + esc(KINDS[g[0]] || g[0]) + '</li>';
         g[1].forEach(function (it) {
           var badge = it.k === 'tisk' ? '<span class="suggest-score s' + (it.w >= 50 ? 'major' : (it.w >= 25 ? 'watch' : 'normal')) + '">' + it.w + '</span>' : '';
-          html += '<li role="option" id="' + id + '-' + (n++) + '" data-href="' + esc(it.u) + '"><a href="' + esc(it.u) + '" tabindex="-1">' + badge
+          html += '<li role="option" id="' + id + '-' + (n++) + '" data-href="' + esc(href(it.u)) + '"><a href="' + esc(href(it.u)) + '" tabindex="-1">' + badge
             + '<span class="suggest-text"><span class="suggest-title">' + highlight(it.t, toks) + '</span>'
             + '<span class="suggest-sub">' + esc(it.s) + (it.d ? ' · ' + highlight(it.d, toks) : '') + '</span></span></a></li>';
         });
       });
-      var all = 'hledat.php?q=' + encodeURIComponent(q);
+      var all = form.getAttribute('action') + '?q=' + encodeURIComponent(q);
       html += groups.length
         ? '<li role="option" id="' + id + '-' + n + '" class="suggest-all" data-href="' + esc(all) + '"><a href="' + esc(all) + '" tabindex="-1">Všechny výsledky pro „' + esc(q) + '“ →</a></li>'
         : '<li class="suggest-empty" role="presentation">Nic jsme nenašli. Zkuste začátek slova, číslo tisku nebo zákona.</li>';

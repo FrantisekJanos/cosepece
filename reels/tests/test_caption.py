@@ -8,7 +8,7 @@ from hlidac_reels import caption
 
 def test_caption_fb_s_ct():
     assert caption.for_network("Text", 221, "fb") == (
-        "Text\n\nCelý rozbor: https://cosepece.cz/tisk.php?ct=221"
+        "Text\n\nCelý rozbor: https://cosepece.cz/tisk/221"
     )
 
 
@@ -31,19 +31,19 @@ def test_caption_neznama_sit():
 def test_threads_text_prvni_odstavec_a_odkaz():
     text = "První odstavec. Druhá věta.\n\nDruhý odstavec se nepoužije.\n\n#hashtag"
     assert caption.for_network(text, 221, "threads") == (
-        "První odstavec. Druhá věta.\n\nCelý rozbor: https://cosepece.cz/tisk.php?ct=221"
+        "První odstavec. Druhá věta.\n\nCelý rozbor: https://cosepece.cz/tisk/221"
     )
     # prázdný řádek s mezerami také odděluje odstavce, okraje se ořežou
     assert caption.for_network("  Úvod.  \n  \nDál", 5, "threads") == (
-        "Úvod.\n\nCelý rozbor: https://cosepece.cz/tisk.php?ct=5"
+        "Úvod.\n\nCelý rozbor: https://cosepece.cz/tisk/5"
     )
     # FB a IG beze změny
-    assert caption.for_network(text, 221, "fb") == text + "\n\nCelý rozbor: https://cosepece.cz/tisk.php?ct=221"
+    assert caption.for_network(text, 221, "fb") == text + "\n\nCelý rozbor: https://cosepece.cz/tisk/221"
     assert caption.for_network(text, 221, "ig") == text + "\n\nOdkaz na celý rozbor v profilu."
 
 
 def test_threads_text_dlouha_veta_do_500():
-    ending = "\n\nCelý rozbor: https://cosepece.cz/tisk.php?ct=12345"
+    ending = "\n\nCelý rozbor: https://cosepece.cz/tisk/12345"
     # přesně 440 znaků zůstane celé
     exact = "a" * 439 + "."
     assert caption.for_network(exact, 12345, "threads") == exact + ending

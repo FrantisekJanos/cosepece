@@ -181,7 +181,7 @@ check('2 nová upozornění', $r3['alerts_new'], 2);
 check('tisk 221 se zkrácenou lhůtou (45)', $sc(221), 45);
 check('odesláno jen nad prahem (dry run): zkrácení 55, PN 45 čeká', [$r3['posts']['sent'], $r3['posts']['held']], [1, 1]);
 $log = (string)@file_get_contents($tmp . '/posts.log');
-check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisk.php?ct=221'), true);
+check('příspěvek obsahuje odkaz', str_contains($log, 'https://hlidac.test/tisk/221'), true);
 check('příspěvek o zkrácené lhůtě', str_contains($log, 'Zkrácená lhůta: Novela z. o střetu zájmů'), true);
 @unlink($tmp . '/posts.log');
 
@@ -539,7 +539,7 @@ check('strop pojistky platí i po mediánu opakovaných běhů', [(int)$st['ai_s
 db()->run('DELETE FROM tisk_text WHERE ct = 311');
 db()->run("DELETE FROM ai_revize WHERE druh = 'tisk' AND ref_id = 311");
 
-$bskyUrl = 'https://hlidac.test/tisk.php?ct=221';
+$bskyUrl = 'https://hlidac.test/tisk/221';
 $fitted = Hlidac\Notifier\Bluesky::fit(str_repeat('á', 300), $bskyUrl);
 check('Bluesky: text i s odkazem do 300 znaků', mb_strlen($fitted . "\n" . $bskyUrl) <= 300 && str_ends_with($fitted, '…'), true);
 check('Bluesky: krátký text beze změny', Hlidac\Notifier\Bluesky::fit('Krátce', $bskyUrl), 'Krátce');
@@ -814,7 +814,7 @@ ob_start();
 })(APP_ROOT . '/rss.php');
 $rssXml = (string)ob_get_clean();
 $rssItems = substr_count($rssXml, '<item>');
-check('RSS filtrované podle zákona má jen položky tisku 311', $rssItems > 0 && !str_contains($rssXml, 'tisk.php?ct=78<') && !str_contains($rssXml, 'tisk.php?ct=221<'), true);
+check('RSS filtrované podle zákona má jen položky tisku 311', $rssItems > 0 && str_contains($rssXml, '/tisk/311<') && !str_contains($rssXml, '/tisk/78<') && !str_contains($rssXml, '/tisk/221<'), true);
 $_GET = [];
 
 
@@ -915,8 +915,8 @@ ob_start();
     require $file;
 })(APP_ROOT . '/tisk.php');
 $revHtml = (string)ob_get_clean();
-check('detail tisku odkazuje na historii textu', str_contains($revHtml, 'revize.php?druh=tisk&amp;id=221') && str_contains($revHtml, 'Historie (' . Hlidac\Revisions::versionsLabel(3 + $revTotal('ai_revize', 'tisk', 221)) . ')'), true);
-check('detail tisku odkazuje na historii PN', str_contains($revHtml, 'revize.php?druh=pn&amp;id=' . $revPn), true);
+check('detail tisku odkazuje na historii textu', str_contains($revHtml, 'href="/revize?druh=tisk&amp;id=221"') && str_contains($revHtml, 'Historie (' . Hlidac\Revisions::versionsLabel(3 + $revTotal('ai_revize', 'tisk', 221)) . ')'), true);
+check('detail tisku odkazuje na historii PN', str_contains($revHtml, 'href="/revize?druh=pn&amp;id=' . $revPn . '"'), true);
 // pozměňovací návrhy na detailu tisku: hned pod důvody skóre, v široké části stránky, s odkazem z dlaždice
 $pnPos = strpos($revHtml, 'id="pozmenovaci-navrhy"');
 check('detail tisku: pozměňovací návrhy jsou před rozborem textu a průběhem', $pnPos !== false
@@ -1107,15 +1107,19 @@ ob_start();
 $nvHtml = (string)ob_get_clean();
 $_GET = [];
 check('stránka nařízení vlády', [str_contains($nvHtml, '<h1>Připravovaná nařízení vlády</h1>'), str_contains($nvHtml, 'Připomínky 7 dní (obvykle 3 týdny)'),
-    str_contains($nvHtml, 'id="prep-KORNNV000001"'), str_contains($nvHtml, 'KORNUP000001'), str_contains($upHtml, 'pripravovane.php?druh=narizeni')],
+    str_contains($nvHtml, 'id="prep-KORNNV000001"'), str_contains($nvHtml, 'KORNUP000001'), str_contains($upHtml, 'href="/pripravovane?druh=narizeni"')],
     [true, true, true, false, true]);
 // hlavní menu: všechny stěžejní stránky, každá jednou, cíle existují a aktuální stránka je označená
 preg_match('~<nav id="site-nav".*?</nav>~s', $nvHtml, $navM);
 preg_match_all('~<a href="([^"]+)"( class="active" aria-current="page")?>([^<]+)</a>~', $navM[0] ?? '', $navLinks, PREG_SET_ORDER);
 check('hlavní menu: stránky a pořadí', array_column($navLinks, 1),
-    ['index.php', 'tisky.php', 'zakon.php', 'upozorneni.php', 'pripravovane.php', 'metodika.php', 'data.php', 'mcp.php', 'zmeny.php', 'rss.php']);
-check('hlavní menu: cíle existují', array_values(array_filter(array_column($navLinks, 1), static fn(string $f): bool => !is_file(APP_ROOT . '/' . $f))), []);
-check('hlavní menu: označená je jen aktuální stránka', array_column(array_values(array_filter($navLinks, static fn(array $l): bool => ($l[2] ?? '') !== '')), 1), ['pripravovane.php']);
+    ['/', '/tisky', '/zakony', '/upozorneni', '/pripravovane', '/metodika', '/data-a-api', '/mcp', '/zmeny', '/rss.php']);
+// cíl existuje: hezká adresa vede na skript (Url::route), strojová adresa je přímo soubor
+check('hlavní menu: cíle existují', array_values(array_filter(array_column($navLinks, 1), static function (string $href): bool {
+    $file = Hlidac\Url::route($href)[0] ?? ltrim($href, '/');
+    return !is_file(APP_ROOT . '/' . $file);
+})), []);
+check('hlavní menu: označená je jen aktuální stránka', array_column(array_values(array_filter($navLinks, static fn(array $l): bool => ($l[2] ?? '') !== '')), 1), ['/pripravovane']);
 [$nvCode, $nvBody] = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->handle(['pripravovane' => '1', 'druh' => 'narizeni']);
 check('API: nařízení jen s druh=narizeni, výchozí zůstávají zákony', [$nvCode, array_column($nvBody['pripravovane'], 'druh'), array_unique(array_column($apiBody['pripravovane'], 'druh'))],
     [200, ['narizeni', 'narizeni', 'narizeni'], ['zakon']]);
@@ -1196,7 +1200,7 @@ ob_start();
     require $file;
 })(APP_ROOT . '/hledat.php');
 $sh = (string)ob_get_clean();
-check('stránka výsledků: skupiny a odkaz na tisk', str_contains($sh, 'výsledků pro „střet zájmů“') && str_contains($sh, 'href="tisk.php?ct=221"') && str_contains($sh, 'data-search'), true);
+check('stránka výsledků: skupiny a odkaz na tisk', str_contains($sh, 'výsledků pro „střet zájmů“') && str_contains($sh, 'href="/tisk/221"') && str_contains($sh, 'data-search="/hledat?index=') && str_contains($sh, 'action="/hledat"') && str_contains($sh, 'data-base="/"'), true);
 $_GET = ['q' => '<script>alert(1)</script>'];
 ob_start();
 (function (string $file): void {
@@ -1221,8 +1225,8 @@ foreach ([['z' => '159/2006'], []] as $get) {
     })(APP_ROOT . '/zakon.php');
     $zh = (string)ob_get_clean();
     check($get === [] ? 'přehled zákonů' : 'stránka zákona 159/2006', $get === []
-        ? str_contains($zh, 'href="zakon.php?z=159%2F2006"') && str_contains($zh, 'o střetu zájmů')
-        : str_contains($zh, 'Zákon č. 159/2006 Sb., o střetu zájmů') && str_contains($zh, 'href="tisk.php?ct=221"') && str_contains($zh, 'rss.php?zakon=159%2F2006'), true);
+        ? str_contains($zh, 'href="/zakon/159/2006"') && str_contains($zh, 'o střetu zájmů')
+        : str_contains($zh, 'Zákon č. 159/2006 Sb., o střetu zájmů') && str_contains($zh, 'href="/tisk/221"') && str_contains($zh, 'href="/rss.php?zakon=159%2F2006"') && str_contains($zh, 'href="/zakony"'), true);
 }
 $_GET = [];
 
@@ -1508,7 +1512,7 @@ db()->run("UPDATE pripravovane SET pid = 'KORNUP000009', pidy = 'KORNUP000009,KO
 Hlidac\View::forgetUpcoming();
 check('nová verze materiálu upozornění neopakuje', [(new Hlidac\AlertBuilder(db(), config()))->run(),
     (int)db()->value("SELECT COUNT(*) FROM alerts WHERE alert_key LIKE 'prep_%:KORNUP000009'"), Hlidac\View::alertUrl($pa)],
-    [0, 0, 'pripravovane.php#prep-KORNUP000009']);
+    [0, 0, '/pripravovane#prep-KORNUP000009']);
 db()->run("UPDATE pripravovane SET pid = 'KORNUP000003', pidy = 'KORNUP000003,KORNUP000002' WHERE pid = 'KORNUP000009'");
 Hlidac\View::forgetUpcoming();
 $prepIds = function (string $law): array {
@@ -1525,11 +1529,11 @@ check('upozornění na krátké připomínky k nařízení vlády (Pozor, první
         str_starts_with((string)($nvAlert['title'] ?? ''), 'Připomínky k nařízení vlády jen 7 dní: Nařízení vlády, kterým se mění nařízení vlády č. 222/2010 Sb.')],
     ['prep_narizeni', 30, 2, 0, true]);
 check('jen jedno upozornění na nařízení (delší připomínky a schválení se nehlásí)', (int)db()->value("SELECT COUNT(*) FROM alerts WHERE kind = 'prep_narizeni' AND alert_key NOT LIKE '%/%'"), 1);
-check('odkaz upozornění vede na přehled nařízení vlády', Hlidac\View::alertUrl($nvAlert), 'pripravovane.php?druh=narizeni#prep-KORNNV000001');
+check('odkaz upozornění vede na přehled nařízení vlády', Hlidac\View::alertUrl($nvAlert), '/pripravovane?druh=narizeni#prep-KORNNV000001');
 check('filtr podle zákona nařízení nevrací (číslo nařízení není číslo zákona)', $prepIds('222/2010'), []);
 check('odkaz na připravovaný zákon, po odchodu do Sněmovny do VeKLEP', [Hlidac\View::alertUrl($pa),
     (function () use ($pa) { db()->run("DELETE FROM pripravovane WHERE pid = 'KORNUP000003'"); Hlidac\View::forgetUpcoming(); return Hlidac\View::alertUrl($pa); })()],
-    ['pripravovane.php#prep-KORNUP000003', 'https://odok.gov.cz/portal/veklep/material/KORNUP000003/']);
+    ['/pripravovane#prep-KORNUP000003', 'https://odok.gov.cz/portal/veklep/material/KORNUP000003/']);
 check('zákon se pozná z titulku upozornění, i když materiál už mezi připravovanými není', count($prepIds('300/2013')), 3);
 $apiPrep = array_values(array_filter((new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->alerts(Hlidac\Api::filters(['since' => '2026-09-29', 'min_score' => '50', 'limit' => '500'])),
     fn($a) => $a['id'] === 'prep_review:KORNUP000003'));
@@ -1545,6 +1549,11 @@ foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.ph
         })(APP_ROOT . '/' . $page);
         $html = ob_get_clean();
         check("$page se vyrenderuje", strlen($html) > 500 && !str_contains($html, 'Warning') && !str_contains($html, 'Fatal'), true);
+        // odkazy, styly a skripty musí být od kořene webu (nebo jen dotaz či kotva): na /tisk/221 by se relativní rozbily
+        if (!in_array($page, ['rss.php', 'api.php'], true)) {
+            preg_match_all('~\s(?:href|src|action)="(?!/|\#|\?|https?://|mailto:)([^"]*)"~', $html, $relLinks);
+            check("$page nemá odkazy relativní ke stránce", $relLinks[1], []);
+        }
         file_put_contents($tmp . '/' . str_replace('.php', '.html', $page), $html);
     } catch (Throwable $ex) {
         ob_end_clean();
@@ -1556,7 +1565,8 @@ echo "Náhledy pro sociální sítě\n";
 $tiskHtml = (string)@file_get_contents($tmp . '/tisk.html');
 check('tisk má og:image s vlastním obrázkem', (bool)preg_match('~<meta property="og:image" content="[^"]*og\.php\?ct=90&amp;v=[0-9a-f]{16}"~', $tiskHtml), true);
 check('tisk má twitter:card pro velký obrázek', str_contains($tiskHtml, '<meta name="twitter:card" content="summary_large_image">'), true);
-check('tisk má og:url na detail', (bool)preg_match('~<meta property="og:url" content="[^"]*tisk\.php\?ct=90"~', $tiskHtml), true);
+check('tisk má og:url a kanonickou adresu na detail', [(bool)preg_match('~<meta property="og:url" content="https://hlidac\.test/tisk/90"~', $tiskHtml),
+    str_contains($tiskHtml, '<link rel="canonical" href="https://hlidac.test/tisk/90">')], [true, true]);
 check('přehled má obrázek stránky', str_contains((string)@file_get_contents($tmp . '/index.html'), 'og.php?p=prehled'), true);
 check('název bez výčtu předkladatelů',
     Hlidac\OgCard::cleanTitle('Návrh poslanců Radka Vondráčka, Davida Pražáka a Filipa Turka na vydání zákona, kterým se mění zákon č. 159/2006 Sb., o střetu zájmů, ve znění pozdějších předpisů'),
@@ -1722,7 +1732,7 @@ check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_
 check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
     [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
 check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
-check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk.php?ct=221', '2026-11-20']);
+check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk/221', '2026-11-20']);
 check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
 check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
 check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
@@ -2104,6 +2114,139 @@ try {
     $wdOther = $ex->getMessage();
 }
 check('čekání na DB: jiné chyby než spojení nepolyká', $wdOther, 'jiná chyba');
+
+// hezké adresy bez .php (app/Url.php): skládání, rozpoznání, shoda s .htaccess a přesměrování starých adres
+echo "Hezké adresy\n";
+check('adresy: tisk a zákon mají číslo v cestě, ostatní parametry v dotazu', [
+    Hlidac\Url::path('tisk', ['ct' => 221], 'pn-5'), Hlidac\Url::path('tisk', ['ct' => '221', 'x' => '1']), Hlidac\Url::path('tisk', ['ct' => 'abc']),
+    Hlidac\Url::path('zakon', ['z' => '159/2006']), Hlidac\Url::path('zakon'), Hlidac\Url::path('zakon', ['z' => 'střet']),
+    Hlidac\Url::path('index'), Hlidac\Url::path('index', ['druh' => 'prilepky'], 'nalezy'), Hlidac\Url::path('data', [], 'limity'),
+    Hlidac\Url::path('tisky', ['f' => 'p90', 'q' => 'daň z příjmů']),
+], ['tisk/221#pn-5', 'tisk/221?x=1', 'tisk?ct=abc', 'zakon/159/2006', 'zakony', 'zakony?z=st%C5%99et', '', '?druh=prilepky#nalezy', 'data-a-api#limity',
+    'tisky?f=p90&q=da%C5%88%20z%20p%C5%99%C3%ADjm%C5%AF']);
+check('adresy: strojové výstupy zůstávají s .php', [Hlidac\Url::path('rss', ['zakon' => '159/2006']), Hlidac\Url::path('api', ['tisk' => 221]), Hlidac\Url::path('og', ['ct' => 221])],
+    ['rss.php?zakon=159%2F2006', 'api.php?tisk=221', 'og.php?ct=221']);
+check('adresy: odkazy v HTML od kořene webu, v příspěvcích celé', [url(), url('tisk', ['ct' => 221]), absUrl('tisk', ['ct' => 221]), absUrl(), asset('assets/style.css'), Hlidac\Laws::url('159/2006')],
+    ['/', '/tisk/221', 'https://hlidac.test/tisk/221', 'https://hlidac.test/', '/assets/style.css', '/zakon/159/2006']);
+// každá stránka z tabulky: adresa → skript a zpět
+$urlRound = [];
+foreach (array_keys(Hlidac\Url::PAGES) as $urlPage) {
+    $urlRound[$urlPage] = Hlidac\Url::route(Hlidac\Url::path($urlPage))[0] ?? null;
+}
+check('adresy: každá stránka vede na svůj skript', $urlRound, array_combine(array_keys(Hlidac\Url::PAGES), array_map(static fn(string $n): string => $n . '.php', array_keys(Hlidac\Url::PAGES))));
+check('adresy: každý skript z tabulky existuje', array_values(array_filter(array_keys(Hlidac\Url::PAGES), static fn(string $n): bool => !is_file(APP_ROOT . '/' . $n . '.php'))), []);
+check('adresy: rozpoznání cesty', [Hlidac\Url::route('tisk/221'), Hlidac\Url::route('/tisk/221/'), Hlidac\Url::route('zakon/159/2006'), Hlidac\Url::route('zakony'),
+    Hlidac\Url::route('data-a-api'), Hlidac\Url::route('data'), Hlidac\Url::route('tisk/abc'), Hlidac\Url::route('zakon/159/06'), Hlidac\Url::route('index'), Hlidac\Url::route('tisky//')],
+    [['tisk.php', ['ct' => '221']], ['tisk.php', ['ct' => '221']], ['zakon.php', ['z' => '159/2006']], ['zakon.php', []], ['data.php', []], null, null, null, null, null]);
+
+// pravidla v .htaccess musí dát totéž co Url::route() (Apache a místní router se nesmějí rozejít)
+preg_match_all('~^\s*RewriteRule\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]~m', (string)file_get_contents(APP_ROOT . '/.htaccess'), $htRules, PREG_SET_ORDER);
+$htRoute = static function (string $path) use ($htRules): ?array {
+    foreach ($htRules as [, $pattern, $target, $flags]) {
+        if (!preg_match('~' . $pattern . '~', $path, $m)) {
+            continue;
+        }
+        if ($target === '-') {
+            return null; // zakázaná cesta [F]
+        }
+        if (!str_contains($flags, 'QSA') || !str_contains($flags, 'L')) {
+            return ['pravidlo bez [L,QSA]', []];
+        }
+        $target = preg_replace_callback('~\$(\d)~', static fn(array $g): string => $m[(int)$g[1]] ?? '', $target);
+        [$script, $query] = explode('?', $target, 2) + [1 => ''];
+        parse_str($query, $params);
+        return [$script, $params];
+    }
+    return null;
+};
+$htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
+    'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx'];
+$htDiff = [];
+foreach ($htSamples as $sample) {
+    if ($htRoute($sample) !== Hlidac\Url::route($sample)) {
+        $htDiff[$sample] = [$htRoute($sample), Hlidac\Url::route($sample)];
+    }
+}
+check('.htaccess má pravidla pro hezké adresy', count($htRules) >= 7, true);
+check('.htaccess a Url::route() se shodují', $htDiff, []);
+foreach (array_keys(Hlidac\Url::PAGES) as $urlPage) {
+    if ($urlPage !== 'index' && ($htRoute(Hlidac\Url::path($urlPage))[0] ?? null) !== $urlPage . '.php') {
+        $htDiff[$urlPage] = $htRoute(Hlidac\Url::path($urlPage));
+    }
+}
+check('.htaccess: každá stránka z tabulky má pravidlo', $htDiff, []);
+
+// přesměrování na kanonickou adresu: [skript, adresa požadavku, parametry, kořen webu] => cíl
+$redirects = [
+    [['tisk.php', '/tisk.php?ct=221', ['ct' => '221'], ''], '/tisk/221'],
+    [['tisk.php', '/tisk/221', ['ct' => '221'], ''], null],
+    [['tisk.php', '/tisk/221?ct=300', ['ct' => '300'], ''], '/tisk/300'],
+    [['tisk.php', '/tisk/0221', ['ct' => '0221'], ''], '/tisk/221'],
+    [['tisk.php', '/tisk.php?ct=abc', ['ct' => 'abc'], ''], '/tisk?ct=abc'],
+    [['tisk.php', '/tisk?ct=abc', ['ct' => 'abc'], ''], null],
+    [['index.php', '/index.php', [], ''], '/'],
+    [['index.php', '/', [], ''], null],
+    [['index.php', '/?druh=prilepky', ['druh' => 'prilepky'], ''], null],
+    [['index.php', '/index.php?druh=prilepky', ['druh' => 'prilepky'], ''], '/?druh=prilepky'],
+    [['tisky.php', '/tisky/', [], ''], '/tisky'],
+    [['tisky.php', '/tisky.php?f=p90&q=dan', ['f' => 'p90', 'q' => 'dan'], ''], '/tisky?f=p90&q=dan'],
+    [['tisky.php', '/tisky?f=p90', ['f' => 'p90'], ''], null],
+    [['zakon.php', '/zakon.php?z=159%2F2006', ['z' => '159/2006'], ''], '/zakon/159/2006'],
+    [['zakon.php', '/zakon/159/2006', ['z' => '159/2006'], ''], null],
+    [['zakon.php', '/zakon.php?z=nesmysl', ['z' => 'nesmysl'], ''], '/zakony?z=nesmysl'],
+    [['zakon.php', '/zakony?z=nesmysl', ['z' => 'nesmysl'], ''], null],
+    [['zakon.php', '/zakon.php', [], ''], '/zakony'],
+    [['data.php', '/data.php', [], ''], '/data-a-api'],
+    [['mcp.php', '/mcp.php', [], ''], '/mcp'],
+    [['hledat.php', '/hledat.php?q=st%C5%99et', ['q' => 'střet'], ''], '/hledat?q=st%C5%99et'],
+    [['revize.php', '/revize.php?druh=tisk&id=221', ['druh' => 'tisk', 'id' => '221'], ''], '/revize?druh=tisk&id=221'],
+    // strojové adresy se nepřesměrovávají
+    [['api.php', '/api.php?tisk=221', ['tisk' => '221'], ''], null],
+    [['rss.php', '/rss.php', [], ''], null],
+    [['og.php', '/og.php?ct=221', ['ct' => '221'], ''], null],
+    [['ai_api.php', '/ai_api.php?action=queue', ['action' => 'queue'], ''], null],
+    [['cron.php', '/cron.php', [], ''], null],
+    // web v podadresáři
+    [['tisk.php', '/hlidac/tisk.php?ct=5', ['ct' => '5'], '/hlidac'], '/hlidac/tisk/5'],
+    [['tisk.php', '/hlidac/tisk/5', ['ct' => '5'], '/hlidac'], null],
+    [['index.php', '/hlidac/', [], '/hlidac'], null],
+    // adresa požadavku není k dispozici nebo neleží pod kořenem webu: raději nic než smyčka
+    [['tisky.php', '', [], ''], null],
+    [['tisky.php', '/jinde/tisky.php', [], '/hlidac'], null],
+];
+$redirectDiff = [];
+$redirectLoops = [];
+foreach ($redirects as [$args, $expected]) {
+    $target = Hlidac\Url::redirectTarget(...$args);
+    if ($target !== $expected) {
+        $redirectDiff[$args[1]] = $target;
+    }
+    if ($target !== null) {
+        // po přesměrování musí adresa vést na stejný skript a být kanonická
+        [$targetPath, $targetQuery] = explode('?', $target, 2) + [1 => ''];
+        $route = Hlidac\Url::route(substr($targetPath, strlen($args[3])));
+        parse_str($targetQuery, $targetGet);
+        if ($route === null || $route[0] !== $args[0] || Hlidac\Url::redirectTarget($route[0], $target, array_merge($route[1], $targetGet), $args[3]) !== null) {
+            $redirectLoops[] = $args[1];
+        }
+    }
+}
+check('přesměrování starých adres na hezké', $redirectDiff, []);
+check('přesměrování: cíl je kanonický (žádná smyčka)', $redirectLoops, []);
+// hosting bez mod_rewrite: pretty_urls = false vrátí adresy s .php a nic nepřesměrovává
+Hlidac\Url::$pretty = false;
+check('vypnuté hezké adresy: odkazy s .php, bez přesměrování', [url('tisk', ['ct' => 221], 'pn-5'), url('zakon', ['z' => '159/2006']), url('data'), url(), url('rss'),
+    Hlidac\Url::redirectTarget('tisk.php', '/tisk.php?ct=221', ['ct' => '221'], '')],
+    ['/tisk.php?ct=221#pn-5', '/zakon.php?z=159%2F2006', '/data.php', '/', '/rss.php', null]);
+Hlidac\Url::$pretty = null;
+// našeptávač: adresy v indexu jsou od kořene webu bez lomítka, cizí adresy celé; otisk indexu závisí i na verzi
+$urlIndex = (new Hlidac\SearchIndex(db()))->build();
+$urlIndexU = array_column($urlIndex['items'], 'u');
+check('index hledání: hezké adresy bez úvodního lomítka', [in_array('tisk/221', $urlIndexU, true), in_array('zakon/159/2006', $urlIndexU, true), in_array('metodika', $urlIndexU, true),
+    array_values(array_filter($urlIndexU, static fn(string $u): bool => str_contains($u, '.php') || str_starts_with($u, '/'))), $urlIndex['v']],
+    [true, true, true, [], 2]);
+check('index hledání: odkaz z položky', [Hlidac\SearchIndex::href('tisk/221#pn-5'), Hlidac\SearchIndex::href('https://odok.gov.cz/portal/veklep/material/X/')],
+    ['/tisk/221#pn-5', 'https://odok.gov.cz/portal/veklep/material/X/']);
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

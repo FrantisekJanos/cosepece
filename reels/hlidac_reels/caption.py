@@ -16,7 +16,7 @@ _PARAGRAPH_RE = re.compile(r"\n[ \t\r]*\n")
 def _link_ending(ct: int | None) -> str:
     if ct is None:
         return f"\n\n{SITE}"
-    return f"\n\nCelý rozbor: {SITE}/tisk.php?ct={ct}"
+    return f"\n\nCelý rozbor: {SITE}/tisk/{ct}"
 
 
 def _shorten(text: str, limit: int = THREADS_FIRST_MAX) -> str:

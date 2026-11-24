@@ -374,7 +374,7 @@ def test_nahled_obsahuje_konec_fb_i_ig(bot, conn, api, media_dir):
     assert "Instagram" in text and IG_ENDING.strip() in text
     assert text.index("Facebook:") < text.index("Instagram")
     # FB odkaz se v IG části neopakuje
-    assert text.count("tisk.php?ct=221") == 1
+    assert text.count("/tisk/221") == 1
 
     # dlouhý náhled: dvě zprávy, tlačítka u druhé
     long_id = _add(conn, media_dir, 2, caption="z" * 4000)

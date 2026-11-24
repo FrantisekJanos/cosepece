@@ -39,15 +39,15 @@ $missing = count(array_filter($items, fn(array $u) => $u['dni'] === null && $u['
 View::header($regulation ? 'Připravovaná nařízení vlády' : 'Připravované zákony', 'pripravovane', $regulation
     ? 'Návrhy nařízení vlády, která ministerstva připravují: připomínkové řízení, jeho délka a schválení vládou.'
     : 'Návrhy zákonů, které vláda připravuje a do Sněmovny ještě nedorazily: připomínkové řízení, jeho délka a schválení vládou.',
-    $regulation ? ['url' => 'pripravovane.php?druh=narizeni'] : []);
+    $regulation ? ['url' => Hlidac\Url::path('pripravovane', ['druh' => 'narizeni'])] : []);
 ?>
 <section class="hero">
   <div>
     <h1><?= $regulation ? 'Připravovaná nařízení vlády' : 'Připravované zákony' ?></h1>
     <p class="lead"><?= count($items) ?> <?= $regulation ? 'návrhů nařízení vlády, která ministerstva připravují nebo je vláda v posledních 30 dnech schválila' : 'návrhů zákonů, které ministerstva připravují a Sněmovna je ještě nedostala' ?><?= $items !== [] ? ': ' . implode(', ', array_map(fn(string $k) => count($byPhase[$k]) . ' ' . mb_strtolower($phases[$k][0]), array_filter(array_keys($phases), fn(string $k) => $byPhase[$k] !== []))) : '' ?>.</p>
     <div class="control-row" role="group" aria-label="Druh předpisu">
-      <a class="pill<?= $regulation ? '' : ' active' ?>" href="pripravovane.php"<?= $regulation ? '' : ' aria-current="true"' ?>>Zákony <span class="pill-count"><?= (int)$counts['zakon'] ?></span></a>
-      <a class="pill<?= $regulation ? ' active' : '' ?>" href="pripravovane.php?druh=narizeni"<?= $regulation ? ' aria-current="true"' : '' ?>>Nařízení vlády <span class="pill-count"><?= (int)$counts['narizeni'] ?></span></a>
+      <a class="pill<?= $regulation ? '' : ' active' ?>" href="<?= e(url('pripravovane')) ?>"<?= $regulation ? '' : ' aria-current="true"' ?>>Zákony <span class="pill-count"><?= (int)$counts['zakon'] ?></span></a>
+      <a class="pill<?= $regulation ? ' active' : '' ?>" href="<?= e(url('pripravovane', ['druh' => 'narizeni'])) ?>"<?= $regulation ? ' aria-current="true"' : '' ?>>Nařízení vlády <span class="pill-count"><?= (int)$counts['narizeni'] ?></span></a>
     </div>
   </div>
 </section>
@@ -56,7 +56,7 @@ View::header($regulation ? 'Připravovaná nařízení vlády' : 'Připravované
 <?php if ($regulation): ?>
   <p>Nařízení vlády neprochází Parlamentem: po meziresortním připomínkovém řízení ho schválí jen vláda. Připomínky trvají obvykle kolem 3 týdnů; kratší řízení a chybějící připomínky označujeme<?= $short + $missing > 0 ? ' (teď ' . ($short > 0 ? $short . '× kratší než ' . ($regulation ? '15 dní' : '3 týdny') : '') . ($short > 0 && $missing > 0 ? ', ' : '') . ($missing > 0 ? $missing . '× nedohledáno' : '') . ')' : '' ?>. Schválené nařízení tu zůstává 30 dní, vyhlášení ve Sbírce data Úřadu vlády neuvádějí.</p>
 <?php else: ?>
-  <p>Vládní návrh zákona projde před Sněmovnou meziresortním připomínkovým řízením, obvykle na 4 týdny. Kratší řízení a chybějící připomínky označujeme stejně jako u tisků ve Sněmovně<?= $short + $missing > 0 ? ' (teď ' . ($short > 0 ? $short . '× kratší než ' . ($regulation ? '15 dní' : '3 týdny') : '') . ($short > 0 && $missing > 0 ? ', ' : '') . ($missing > 0 ? $missing . '× nedohledáno' : '') . ')' : '' ?>. Jakmile návrh dostane číslo sněmovního tisku, zmizí odsud a najdete ho mezi <a href="tisky.php">tisky</a> i s celou přípravou.</p>
+  <p>Vládní návrh zákona projde před Sněmovnou meziresortním připomínkovým řízením, obvykle na 4 týdny. Kratší řízení a chybějící připomínky označujeme stejně jako u tisků ve Sněmovně<?= $short + $missing > 0 ? ' (teď ' . ($short > 0 ? $short . '× kratší než ' . ($regulation ? '15 dní' : '3 týdny') : '') . ($short > 0 && $missing > 0 ? ', ' : '') . ($missing > 0 ? $missing . '× nedohledáno' : '') . ')' : '' ?>. Jakmile návrh dostane číslo sněmovního tisku, zmizí odsud a najdete ho mezi <a href="<?= e(url('tisky')) ?>">tisky</a> i s celou přípravou.</p>
 <?php endif; ?>
   <p class="muted small">Zdroj: otevřená data Úřadu vlády (portál ODok/VeKLEP), aktualizují se denně. Hodnotíme jen postup, ne obsah. Do skóre nevstupuje.</p>
 </section>

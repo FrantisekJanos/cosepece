@@ -379,7 +379,7 @@
     logo.innerHTML = '';
     'cosepece.cz'.split('').forEach(function (ch) { logo.appendChild(mk('span', '', ch)); });
     $('end-ct').textContent = 'Tisk ' + c.ct + ' · ' + c.faze;
-    $('end-url').textContent = String(c.url || ('cosepece.cz/tisk.php?ct=' + c.ct)).replace(/^https?:\/\//, '');
+    $('end-url').textContent = String(c.url || ('cosepece.cz/tisk/' + c.ct)).replace(/^https?:\/\//, '');
     $('ai-note').textContent = 'Shrnutí AI, doloženo citací' + (c.verified ? ', ověřeno druhým modelem' : '');
 
     // časová osa

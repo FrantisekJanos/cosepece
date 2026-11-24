@@ -140,6 +140,18 @@ def next_autopilot(conn) -> Reel | None:
     return r
 
 
+def autopilot_to_approval(conn) -> list[int]:
+    """Vypnutý autopilot: dosud nezveřejněné položky autopilota (jen approved) jdou ke schválení jako běžné.
+
+    Položka, která se už zveřejňuje (publishing), zůstane beze změny.
+    """
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET status='queued', autopilot=false, sent_at=NULL, decided_at=NULL "
+                    "WHERE status='approved' AND autopilot RETURNING id")
+        ids = sorted(r[0] for r in cur.fetchall())
+    return ids
+
+
 def by_telegram_msg(conn, msg_id: int) -> Reel | None:
     """Položka, k níž patří zpráva v Telegramu (video nebo náhled s tlačítky)."""
     with conn.cursor() as cur:

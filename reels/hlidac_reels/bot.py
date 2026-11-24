@@ -497,9 +497,29 @@ class Bot:
     def _cmd_autopilot(self, arg: str) -> None:
         """/autopilot on|off: přepne autopilota; bez argumentu (nebo s jiným) vypíše stav."""
         arg = arg.strip().lower()
+        moved: list[int] = []
         if arg in ("on", "off"):
             queue.set_state(self.conn, AUTOPILOT_KEY, "1" if arg == "on" else "0")
-        self._say(autopilot_text(self._autopilot_on()))
+        if arg == "off":
+            # vypnutí platí hned i pro převzaté sady: nezveřejněné položky jdou ke schválení (send_next)
+            moved = queue.autopilot_to_approval(self.conn)
+        text = autopilot_text(self._autopilot_on(), len(moved))
+        if arg == "off":
+            # hlášení nevzniklých variant se pošle hned s odpovědí (autopilot je už nezveřejní)
+            notes = [self._pop_skipped(key) for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY)]
+            text = "\n\n".join([text, *(n for n in notes if n)])
+        self._say(self._scrub(text)[:TELEGRAM_TEXT_LIMIT])
+        if moved:
+            self._safe_send_next()
+
+    def _pop_skipped(self, key: str) -> str:
+        """Text hlášení nevzniklých variant z klíče reel_state a klíč smaže (vadný obsah = prázdný text)."""
+        raw = queue.get_state(self.conn, key)
+        queue.delete_state(self.conn, key)
+        try:
+            return autopilot_skipped(json.loads(raw)) if raw else ""
+        except (ValueError, TypeError, AttributeError):
+            return ""
 
     def _cmd_video(self, args: list[str]) -> None:
         """/video <ct> [formát]: ruční zadání generátoru."""
@@ -929,6 +949,9 @@ class Bot:
         self._guard("zveřejnění autopilota", self._autopublish)
 
     def _autopublish(self) -> None:
+        # vypnutý přepínač: nezveřejní se nic (převzaté položky už /autopilot off vrátil ke schválení)
+        if not self._autopilot_on():
+            return
         reel = queue.next_autopilot(self.conn)
         if reel is not None:
             # publish.run sám přejde approved → publishing; chyba skončí failed/unknown se Zkusit znovu
@@ -936,7 +959,13 @@ class Bot:
             self._publish(reel.id, publish.run, auto=True)
         # nevzniklé varianty sad, které už nemají co zveřejnit (i hlášení, které minule neodešlo)
         for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY):
-            self._announce_skipped(int(key[len(AUTOPILOT_SKIPPED_KEY):]))
+            suffix = key[len(AUTOPILOT_SKIPPED_KEY):]
+            if not suffix.isdigit():
+                # vadný klíč by chybu hlásil každý cyklus: smazat
+                log.warning("vadný klíč %s smazán", key)
+                queue.delete_state(self.conn, key)
+                continue
+            self._announce_skipped(int(suffix))
 
     def _announce_skipped(self, set_id: int) -> None:
         """Po poslední položce sady (žádná už nečeká ani se nezveřejňuje) ohlásí nevzniklé varianty jednou."""

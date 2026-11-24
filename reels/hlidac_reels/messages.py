@@ -127,6 +127,17 @@ def retry_buttons(reel_id: int) -> list[tuple[str, str]]:
     return [("Zkusit znovu", f"retry:{reel_id}")]
 
 
+def interrupted_text(reel_id: int) -> str:
+    """Schválená položka, u které publikace nezačala (pád, restart nebo uvíznutí za běhu)."""
+    return f"#{reel_id}: zveřejnění bylo přerušeno před začátkem publikace."
+
+
+def stuck_publishing_text(reel_id: int, restart: bool) -> str:
+    """Publikace přerušená restartem nebo uvízlá déle než STALE_PUBLISHING: výsledek je nejistý."""
+    why = "publikaci přerušil restart" if restart else "zveřejňování uvízlo"
+    return f"#{reel_id}: {why}, výsledek je nejistý. Zkusit znovu nejdřív dohledá, co už na sítích je."
+
+
 def _unit_label(reel: Reel) -> str:
     """Jednotka v textu zprávy: sada podle set_id, samostatné video podle id."""
     return f"Sada #{reel.set_id}" if reel.set_id is not None else f"#{reel.id}"

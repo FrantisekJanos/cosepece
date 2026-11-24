@@ -817,7 +817,7 @@ def test_fronta_znovu_posle_nahled_a_vypise_ostatni(bot, conn, api, media_dir):
     assert len(pend) == 1
     assert _get(conn, p).telegram_msg_id not in (None, old_preview)
     appr = [b for b in msgs if f"#{a} " in b["text"]]
-    assert len(appr) == 1 and "čeká na restart" in appr[0]["text"] and not _buttons(appr[0])
+    assert len(appr) == 1 and "čeká na zveřejnění" in appr[0]["text"] and not _buttons(appr[0])
     pubm = [b for b in msgs if f"#{pub} " in b["text"]]
     assert len(pubm) == 1 and "možná přerušeno" in pubm[0]["text"] and not _buttons(pubm[0])
     assert not [b for b in msgs if f"#{fresh} " in b["text"]]
@@ -3577,3 +3577,103 @@ def test_neodeslana_zprava_o_vyprseni_do_logu(bot, conn, api, media_dir, caplog)
         bot.maybe_fresh()
     assert {_get(conn, i).status for i in ids} == {"expired"}
     assert "zpráva o vypršení" in caplog.text
+
+
+# --- Task 6 (F1): výjimka publikace, uvízlé položky za běhu, jediná instance ----
+
+@pg
+def test_publish_vyjimka_na_unknown(bot, conn, api, meta, media_dir, monkeypatch):
+    from hlidac_reels import publish, queue
+
+    def boom(c, m, reel_id, **kw):
+        assert queue.transition(c, reel_id, "approved", "publishing")
+        raise RuntimeError(f"spadlo s tokenem {TOKEN}")
+
+    monkeypatch.setattr(publish, "run", boom)
+    rid = _add(conn, media_dir)
+    bot.send_next()
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{rid}"))
+    r = _get(conn, rid)
+    assert r.status == "unknown"
+    assert "RuntimeError" in r.error and "spadlo" in r.error and TOKEN not in r.error
+    msg = [b for b in api.sent() if f"retry:{rid}" in _buttons(b)]
+    assert len(msg) == 1 and "nejistý" in msg[0]["text"] and TOKEN not in msg[0]["text"]
+
+    # výjimka ještě před začátkem publikace (položka zůstala approved) skončí stejně
+    monkeypatch.setattr(publish, "run", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
+    rid2 = _add(conn, media_dir, 2)
+    bot.send_next()
+    bot.handle(_cb(f"ok:{rid2}"))
+    assert _get(conn, rid2).status == "unknown"
+    assert any(f"retry:{rid2}" in _buttons(b) for b in api.sent())
+
+
+@pg
+def test_publish_vyjimka_autopilot(conn, api, meta, media_dir, monkeypatch):
+    from hlidac_reels import publish
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 21, n=1)
+    monkeypatch.setattr(publish, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("síť")))
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "unknown"
+    assert any(f"retry:{ids[0]}" in _buttons(b) for b in api.sent())
+
+
+@pg
+def test_uvizle_publishing_za_behu(conn, api, meta, media_dir):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    from hlidac_reels.bot import SEND_INTERVAL
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    old = datetime.now(timezone.utc) - timedelta(minutes=20)
+    new = datetime.now(timezone.utc)
+    pub_old = _add(conn, media_dir, 1)
+    queue.transition(conn, pub_old, "queued", "publishing", decided_at=old)
+    pub_new = _add(conn, media_dir, 2)
+    queue.transition(conn, pub_new, "queued", "publishing", decided_at=new)
+    appr_old = _add(conn, media_dir, 3)
+    queue.transition(conn, appr_old, "queued", "approved", decided_at=old)
+    appr_new = _add(conn, media_dir, 4)
+    queue.transition(conn, appr_new, "queued", "approved", decided_at=new)
+    auto = _autopilot_set(conn, media_dir, 22, n=1)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET decided_at=%s WHERE id=%s", (old, auto[0]))
+    conn.commit()
+    bot.maybe_send_next()
+    assert _get(conn, pub_old).status == "unknown"
+    assert _get(conn, pub_new).status == "publishing"
+    r = _get(conn, appr_old)
+    assert r.status == "failed" and r.error == "přerušeno před zveřejněním"
+    assert _get(conn, appr_new).status == "approved"
+    # approved autopilota zveřejní maybe_autopublish, ne převod na failed
+    assert _get(conn, auto[0]).status == "approved"
+    for rid in (pub_old, appr_old):
+        assert len([b for b in api.sent() if f"retry:{rid}" in _buttons(b)]) == 1
+    assert sum(meta.calls.values()) == 0
+    # další cyklus už nic znovu neohlásí
+    t[0] += SEND_INTERVAL
+    bot.maybe_send_next()
+    for rid in (pub_old, appr_old):
+        assert len([b for b in api.sent() if f"retry:{rid}" in _buttons(b)]) == 1
+
+
+@pg
+def test_druha_instance_skonci(bot, conn, api, meta, media_dir):
+    from hlidac_reels import db
+    from hlidac_reels.bot import Bot
+    from hlidac_reels.telegram import Telegram
+    bot.start()
+    api2 = FakeTelegramApi()
+    c2 = db.connect()
+    try:
+        tg2 = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api2)))
+        bot2 = Bot(c2, tg2, meta, CHAT, str(media_dir), PUBLIC_BASE)
+        with pytest.raises(SystemExit) as e:
+            bot2.start()
+        assert e.value.code == 0
+        assert api2.calls == []
+        # opakovaný start téže instance zámek znovu získá
+        bot.start()
+    finally:
+        c2.close()

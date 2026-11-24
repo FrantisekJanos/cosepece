@@ -44,7 +44,8 @@ from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
                        autopilot_skipped, autopilot_text, preview_parts, preview_text, result_text,  # noqa: F401
-                       retry_buttons, set_buttons, set_text, set_video_caption, video_caption)
+                       interrupted_text, retry_buttons, set_buttons, set_text, set_video_caption,
+                       stuck_publishing_text, video_caption)
 from .meta import Meta
 from .queue import Reel
 from .telegram import Telegram, TelegramError
@@ -64,6 +65,8 @@ LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot
 STALE_PUBLISHING = timedelta(minutes=15)
 DB_LOST_EXIT = 3
 INTERRUPTED = "přerušeno před zveřejněním"
+# pg_try_advisory_lock: druhá instance bota by publikovala a odpovídala na tlačítka podruhé ("reel")
+REELS_BOT_LOCK = 0x7265656C
 EDIT_HINT = "Uprav a pošli jako odpověď na tuto zprávu."
 THREADS_TOKEN_KEY = "threads_token"
 THREADS_REFRESHED_KEY = "threads_token_refreshed_at"
@@ -342,8 +345,13 @@ class Bot:
     def _publish(self, reel_id: int, fn: Callable[..., Reel], auto: bool = False) -> Reel:
         """auto=True: položka autopilota, úspěch se ohlásí zprávou autopilota s odkazy."""
         self._say("Zveřejňuji…")
-        reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base,
-                  threads=self.threads)
+        try:
+            reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base,
+                      threads=self.threads)
+        except Exception as e:  # noqa: BLE001 – položka nesmí zůstat viset v approved/publishing
+            if self._db_lost(e):
+                raise
+            reel = self._publish_crashed(reel_id, e)
         buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
         if auto and reel.status == "published":
             text = autopilot_done(reel, jobs.focus_pn(self.conn, reel.set_id) if reel.set_id else None)
@@ -352,6 +360,14 @@ class Bot:
         self._say(self._scrub(text), buttons)
         self._safe_send_next()
         return reel
+
+    def _publish_crashed(self, reel_id: int, exc: Exception) -> Reel:
+        """Výjimka uprostřed publikace: výsledek na sítích je nejistý → unknown (Zkusit znovu nejdřív dohledá)."""
+        error = self._safe(exc)[:500]
+        log.error("publikace #%s spadla: %s", reel_id, error)
+        self._rollback()
+        queue.transition(self.conn, reel_id, ("approved", "publishing"), "unknown", error=error)
+        return queue.get(self.conn, reel_id)
 
     def _reject(self, reel_id: int, cb_id, msg_id) -> None:
         if not queue.transition(self.conn, reel_id, "pending", "rejected", decided_at=_now()):
@@ -743,7 +759,7 @@ class Bot:
         """Počty podle stavů; tlačítka, která se mohla ztratit (výpadek Telegramu, smazané zprávy), znovu.
 
         pending → nový náhled s tlačítky schválení; held → Zkusit znovu / Zahodit; failed/unknown → Zkusit
-        znovu; approved a dlouho běžící publishing jen textem (vyřeší je restart bota).
+        znovu; approved a dlouho běžící publishing jen textem (vyřeší je smyčka, _recover_stuck).
         """
         counts = queue.counts(self.conn)
         lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
@@ -775,11 +791,11 @@ class Bot:
             elif reel.status == "approved" and reel.autopilot:
                 self._say(f"{head} · čeká na automatické zveřejnění")
             elif reel.status == "approved":
-                self._say(f"{head} · čeká na restart bota")
+                self._say(f"{head} · čeká na zveřejnění (po 15 min bez publikace dostane Zkusit znovu)")
             elif reel.status == "publishing":
                 started = reel.decided_at or reel.sent_at or reel.created_at
                 if started < stale_before:
-                    self._say(f"{head} · zveřejňování možná přerušeno — restart bota je převede na nejisté")
+                    self._say(f"{head} · zveřejňování možná přerušeno — bot ho brzy převede na nejisté")
             else:
                 error = (reel.error or "")[:300]
                 self._say(head + (f"\nChyba: {error}" if error else ""), retry_buttons(reel.id))
@@ -1215,6 +1231,7 @@ class Bot:
             log.warning("odeslání videa na šířku selhalo: %s", self._safe(e))
             self._rollback()
         self._guard("doplnění ztracených zpráv", self._repair_messages)
+        self._guard("obnova uvízlých položek", self._recover_stuck)
         self._safe_send_next()
 
     # --- smyčka ----------------------------------------------------------
@@ -1266,22 +1283,39 @@ class Bot:
         queue.set_state(self.conn, THREADS_REFRESHED_KEY, now.isoformat())
         log.info("token Threads prodloužen, platnost %d dní", expires_in // 86400)
 
+    def _recover_stuck(self, restart: bool = False) -> None:
+        """Uvízlé položky dostanou tlačítko Zkusit znovu (retry nejdřív dohledá, co už na sítích je).
+
+        restart=True (start bota): všechny bez ohledu na stáří, předchozí proces skončil. Za běhu jen starší
+        než STALE_PUBLISHING: approved bez autopilota → failed (publikace nezačala), publishing → unknown.
+        Schválené položky autopilota zveřejní maybe_autopublish (publikace u nich ještě nezačala).
+        """
+        stale_before = None if restart else _now() - STALE_PUBLISHING
+        for reel in queue.by_status(self.conn, ("approved", "publishing")):
+            started = reel.decided_at or reel.sent_at or reel.created_at
+            if stale_before is not None and started >= stale_before:
+                continue
+            if reel.status == "publishing":
+                if queue.transition(self.conn, reel.id, "publishing", "unknown"):
+                    self._say(stuck_publishing_text(reel.id, restart), retry_buttons(reel.id))
+            elif not reel.autopilot:
+                # pád mezi schválením a publish.run: bez tlačítka by položka uvízla
+                if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
+                    self._say(interrupted_text(reel.id), retry_buttons(reel.id))
+
     def start(self) -> None:
+        # jediná instance: zámek drží spojení bota po celý běh (uvolní ho až ukončení procesu)
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (REELS_BOT_LOCK,))
+            locked = cur.fetchone()[0]
+        self.conn.commit()
+        if not locked:
+            log.error("jiná instance bota už běží (advisory lock %s), končím", REELS_BOT_LOCK)
+            raise SystemExit(0)
         db.migrate(self.conn)
         if self.threads is not None and seed_threads_token(self.conn, self.threads_env_token, self.now()):
             log.info("token Threads převzat z THREADS_TOKEN")
-        for reel_id in queue.recover_after_restart(self.conn):
-            self._say(f"#{reel_id}: publikaci přerušil restart, výsledek je nejistý. "
-                      "Zkusit znovu nejdřív dohledá, co už na sítích je.", retry_buttons(reel_id))
-        # schválené, ale publikace nezačala (pád mezi schválením a publish.run): bez tlačítka by uvízly;
-        # failed + Zkusit znovu je bezpečné, retry nejdřív dohledá, co už na sítích je
-        # schválené položky autopilota zveřejní maybe_autopublish (publikace u nich ještě nezačala)
-        for reel in queue.by_status(self.conn, ("approved",)):
-            if reel.autopilot:
-                continue
-            if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
-                self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
-                          retry_buttons(reel.id))
+        self._recover_stuck(restart=True)
         self._refresh_previews_for_threads()
         self._clean_public()
         # odeslání ke schválení až ve smyčce (maybe_send_next): start by jinak přidal jednotku navíc (R3)

@@ -68,6 +68,16 @@ check('tisk 221: poslanecký', $t(221)['typ_navrhu'], 'poslanecký');
 check('tisk 221: fáze', $t(221)['faze'], '1. čtení');
 check('tisk 221: zákon v názvu', $t(221)['zakony'], '159/2006');
 check('autor PN', db()->value('SELECT osoba FROM pn WHERE cislo = 2312'), 'Marian Jurečka');
+// poslanecký klub předkladatele ke dni podání PN (app/Clubs.php): Jakob podal PN 771 jako člen ODS, PN 2015 už za Piráty
+check('klub předkladatele PN ke dni podání', array_column(db()->all('SELECT cislo, klub FROM pn WHERE cislo IN (771, 2015, 2312) ORDER BY cislo'), 'klub', 'cislo'),
+    [771 => 'ODS', 2015 => 'Piráti', 2312 => 'KDU-ČSL']);
+$clubs = new Hlidac\Clubs(new Hlidac\Source('', $tmp . '/cache-clubs', $tmp . '/src'), 174);
+check('klub k danému dni, neznámá osoba a den před vznikem klubu', [$clubs->at(6687, '2026-06-30'), $clubs->at(6687, '2026-07-01'), $clubs->at(999999, '2026-07-01'), $clubs->at(6205, '2025-10-07')],
+    ['ODS', 'Piráti', null, null]);
+check('zkratky klubů pro zobrazení', array_map([Hlidac\Clubs::class, 'label'], ['ANO2011', 'TOP09', 'MS', 'Nezařaz', 'KDU-ČSL', null]),
+    ['ANO', 'TOP 09', 'Motoristé', 'nezařazení', 'KDU-ČSL', '']);
+check('jméno s klubem a bez klubu', [Hlidac\View::person('Jan <Jakob>', 'ODS'), Hlidac\View::person('Vít Rakušan', null)],
+    ['Jan &lt;Jakob&gt; <span class="club">(ODS)</span>', 'Vít Rakušan']);
 check('bootstrap nic neposlal', (int)db()->value('SELECT COUNT(*) FROM alerts WHERE posted <> 2'), 0);
 check('upozornění vytvořena', (int)db()->value('SELECT COUNT(*) FROM alerts') > 5, true);
 check('tisk 221 sledovaný', (int)db()->value("SELECT watched FROM alerts WHERE alert_key = 'newbill:221'"), 1);
@@ -781,7 +791,7 @@ ob_start();
 })(APP_ROOT . '/tisk.php');
 $voteHtml = (string)ob_get_clean();
 check('detail tisku ukazuje hlasování s klubem a odkazem na psp.cz', str_contains($voteHtml, 'Hlasování ve Sněmovně')
-    && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, 'ANO2011'), true);
+    && str_contains($voteHtml, 'hlasy.sqw?g=87174') && str_contains($voteHtml, '<td>ANO</td>') && !str_contains($voteHtml, 'ANO2011'), true);
 
 echo "JSON API a filtry RSS (#28)\n";
 $api = new Hlidac\Api(db(), new Hlidac\Repo(db()), config());
@@ -926,6 +936,15 @@ $pnFlagHtml = (string)ob_get_clean();
 db()->run('UPDATE pn_text SET ai_score = ? WHERE id_dokument = ?', [$pnFlagRow['ai_score'], $revPn]);
 check('detail tisku: odkaz na označený pozměňovací návrh', (bool)preg_match('~class="chip chip-cut" href="#pn-' . (int)$pnFlagRow['cislo'] . '">č\. ' . (int)$pnFlagRow['cislo'] . ' · AI 7/10</a>~u', $pnFlagHtml)
     && str_contains($pnFlagHtml, 'id="pn-' . (int)$pnFlagRow['cislo'] . '"'), true);
+// u jmen předkladatelů je poslanecký klub (seznam návrhů i přehled předkladatelů)
+$_GET = ['ct' => '311'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$clubHtml = (string)ob_get_clean();
+check('detail tisku: klub u předkladatelů PN', [substr_count($clubHtml, 'Marian Jurečka <span class="club">(KDU-ČSL)</span>') >= 2,
+    str_contains($clubHtml, 'Jan Jakob <span class="club">(Piráti)</span>')], [true, true]);
 // tisk bez pozměňovacích návrhů blok nemá (ani prázdnou kartu)
 $noPnCt = (int)db()->value('SELECT t.ct FROM tisky t WHERE NOT EXISTS (SELECT 1 FROM pn p WHERE p.ct = t.ct) ORDER BY t.ct LIMIT 1');
 $_GET = ['ct' => (string)$noPnCt];

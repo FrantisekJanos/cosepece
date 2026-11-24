@@ -97,7 +97,7 @@ final class Laws
     {
         $own = array_flip(array_map(fn(array $t) => (int)$t['ct'], $this->bills($law)));
         $rows = [];
-        foreach ($this->db->all('SELECT x.id_dokument, x.cislo, x.ct, x.laws, x.ai_score, x.ai_json, p.osoba, p.cas, t.nazev
+        foreach ($this->db->all('SELECT x.id_dokument, x.cislo, x.ct, x.laws, x.ai_score, x.ai_json, p.osoba, p.klub, p.cas, t.nazev
             FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument JOIN tisky t ON t.ct = x.ct
             WHERE x.laws IS NOT NULL ORDER BY p.cas DESC') as $r) {
             if (!isset($own[(int)$r['ct']]) && in_array($law, array_map('trim', explode(',', (string)$r['laws'])), true)) {

@@ -114,7 +114,8 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
   <div class="card kpi">
     <div class="kpi-label">Pozměňovací návrhy</div>
     <div class="kpi-value"><?= count($pn) ?></div>
-    <div class="kpi-note">od <?= count($authors) ?> <?= count($authors) === 1 ? 'poslance' : 'poslanců' ?><?php if ($pn !== []): ?> · <a href="#pozmenovaci-navrhy">zobrazit</a><?php endif; ?></div>
+    <?php $authorCount = count(array_unique(array_column($authors, 'osoba'))); ?>
+    <div class="kpi-note">od <?= $authorCount ?> <?= $authorCount === 1 ? 'poslance' : 'poslanců' ?><?php if ($pn !== []): ?> · <a href="#pozmenovaci-navrhy">zobrazit</a><?php endif; ?></div>
   </div>
   <div class="card kpi">
     <div class="kpi-label">Fáze</div>
@@ -171,7 +172,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
         <?php if ($i === $pnVisible): ?></ul><details class="pn-more"><summary>Další pozměňovací návrhy (<?= count($pn) - $pnVisible ?>)</summary><ul class="plain-list"><?php endif; ?>
         <?php $x = $texts[(int)$p['id_dokument']] ?? null; ?>
         <li class="pn-item" id="pn-<?= (int)$p['cislo'] ?>">
-          <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= e($p['osoba']) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
+          <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= View::person($p['osoba'], $p['klub'] ?? null) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
           <?php if (isset($pnOutcomes[(int)$p['cislo']])): ?><span class="pn-outcome"><?= View::pnOutcome($pnOutcomes[(int)$p['cislo']]) ?></span><?php endif; ?>
           <?php if ($x !== null): ?>
             <span class="chips">
@@ -211,7 +212,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
       <h2>Předkladatelé PN</h2>
       <ul class="plain-list">
         <?php foreach ($authors as $a): ?>
-          <li><span><?= e($a['osoba']) ?></span><span class="strong"><?= (int)$a['n'] ?></span></li>
+          <li><span><?= View::person($a['osoba'], $a['klub']) ?></span><span class="strong"><?= (int)$a['n'] ?></span></li>
         <?php endforeach; ?>
       </ul>
     </section>
@@ -324,7 +325,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <thead><tr><th>Klub</th><th>Pro</th><th>Proti</th><th>Zdržel se / nehlasoval</th><th>Nepřítomen</th></tr></thead>
             <tbody>
               <?php foreach ($v['kluby'] as $c): ?>
-                <tr><td><?= e($c['klub']) ?></td><td><?= (int)$c['pro'] ?></td><td><?= (int)$c['proti'] ?></td><td><?= (int)$c['zdrzel'] ?></td><td><?= (int)$c['nepritomen'] ?></td></tr>
+                <tr><td><?= e(Hlidac\Clubs::label($c['klub'])) ?></td><td><?= (int)$c['pro'] ?></td><td><?= (int)$c['proti'] ?></td><td><?= (int)$c['zdrzel'] ?></td><td><?= (int)$c['nepritomen'] ?></td></tr>
               <?php endforeach; ?>
             </tbody>
           </table></div>

@@ -205,6 +205,16 @@ final class View
         return e(implode(', ', self::reasonShortLabels($reasons, $max)));
     }
 
+    /**
+     * Jméno poslance s poslaneckým klubem v závorce, např. „Jan Novák (ODS)“. Klub je ke dni podání návrhu
+     * (pn.klub); bez klubu jen jméno. Vrací hotové HTML.
+     */
+    public static function person(?string $name, ?string $club): string
+    {
+        $label = Clubs::label($club);
+        return e((string)$name) . ($label !== '' ? ' <span class="club">(' . e($label) . ')</span>' : '');
+    }
+
     public static function chips(array $flags): string
     {
         $out = '';

@@ -27,6 +27,12 @@ final class Importer
         $pn = $this->loadPn($obdobiId, $osoby);
         // kroky a PN ze stránek historie tisku (HistoryHtml), které noční otevřená data ještě nemají
         [$kroky, $pn, $html] = $this->mergeHtml($tisky, $kroky, $pn, $osoby);
+        // poslanecký klub předkladatele ke dni podání PN (jen k zobrazení)
+        $clubs = new Clubs($this->source, $obdobiId);
+        foreach ($pn as $i => $row) {
+            $club = $row['id_osoba'] ? $clubs->at((int)$row['id_osoba'], substr((string)$row['cas'], 0, 10)) : null;
+            $pn[$i]['klub'] = $club !== null ? mb_substr($club, 0, 40) : null;
+        }
 
         // agregace PN podle čísla tisku
         $pnByCt = [];
@@ -90,7 +96,7 @@ final class Importer
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce', 'id_hlasovani',
             ], $kroky);
-            $this->db->insertMany('pn', ['id_dokument', 'cislo', 'ct', 'id_osoba', 'osoba', 'cas'], $pn);
+            $this->db->insertMany('pn', ['id_dokument', 'cislo', 'ct', 'id_osoba', 'osoba', 'cas', 'klub'], $pn);
             $this->db->setMeta('obdobi_id', (string)$obdobiId);
             $this->db->setMeta('obdobi_cislo', (string)$obdobiCislo);
             $this->db->setMeta('last_sync', date('Y-m-d H:i:s'));

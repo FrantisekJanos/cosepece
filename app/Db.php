@@ -310,6 +310,8 @@ final class Db
         // verze promptu, podle které rozbor vznikl (NULL = starší než verze 2)
         $this->addColumn('tisk_text', 'ai_prompt', 'INTEGER');
         $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
+        // poslanecký klub předkladatele ke dni podání PN (app/Clubs.php); jen se zobrazuje, do skóre nevstupuje
+        $this->addColumn('pn', 'klub', 'VARCHAR(40)');
         // výsledek 1. kola zůstane uložený i po ověření silnějším modelem (#2 bod 4)
         foreach (['tisk_text', 'pn_text'] as $table) {
             $this->addColumn($table, 'ai_prev_json', $text);

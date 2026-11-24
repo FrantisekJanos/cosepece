@@ -167,7 +167,7 @@ View::header('Přehled', 'prehled');
       <?php if ($authors === []): ?><p class="muted">Žádné nové návrhy.</p><?php endif; ?>
       <?php foreach ($authors as $a): ?>
         <div class="bar-row">
-          <span class="bar-name"><?= e($a['osoba']) ?></span>
+          <span class="bar-name"><?= View::person($a['osoba'], $a['klub']) ?></span>
           <span class="bar"><span style="width: <?= round($a['n'] / $maxAuthor * 100) ?>%"></span></span>
           <span class="bar-n"><?= (int)$a['n'] ?></span>
         </div>

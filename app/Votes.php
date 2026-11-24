@@ -101,7 +101,7 @@ final class Votes
         }
 
         // rozdělení podle klubů (klub poslance ke dni hlasování)
-        $clubs = $this->clubs($obdobiId);
+        $clubs = new Clubs($this->source, $obdobiId);
         $poslanci = $this->deputies($obdobiId);
         $perClub = [];
         // hlasování, jejichž hlasy poslanců už jsou uložené (hlas se po hlasování nemění)
@@ -118,7 +118,7 @@ final class Votes
                         continue;
                     }
                     $osoba = $poslanci[(int)$c[0]] ?? null;
-                    $club = $osoba !== null ? $this->clubAt($clubs['member'][$osoba] ?? [], substr($votes[$id]['datum'], 0, 10)) : null;
+                    $club = $osoba !== null ? $clubs->at($osoba, substr($votes[$id]['datum'], 0, 10)) : null;
                     $code = substr((string)($c[2] ?? ''), 0, 1);
                     $col = self::VOTE[$code] ?? 'nepritomen';
                     $perClub[$id][$club ?? 'Nezařazení'][$col] = ($perClub[$id][$club ?? 'Nezařazení'][$col] ?? 0) + 1;
@@ -218,34 +218,5 @@ final class Votes
             }
         }
         return $out;
-    }
-
-    private function clubs(int $obdobiId): array
-    {
-        // poslanecké kluby období (organy typu 1 pod orgánem období) a členství osob s daty
-        $names = [];
-        foreach ($this->source->rows('poslanci', 'organy.unl') as $c) {
-            if ((int)($c[1] ?? 0) === $obdobiId && (int)($c[2] ?? 0) === 1) {
-                $names[(int)$c[0]] = trim($c[3] ?? '');
-            }
-        }
-        $member = [];
-        foreach ($this->source->rows('poslanci', 'zarazeni.unl') as $c) {
-            $of = (int)($c[1] ?? 0);
-            if (isset($names[$of]) && (int)($c[2] ?? 1) === 0) {
-                $member[(int)$c[0]][] = [$names[$of], substr(trim($c[3] ?? ''), 0, 10), substr(trim($c[4] ?? ''), 0, 10)];
-            }
-        }
-        return ['names' => $names, 'member' => $member];
-    }
-
-    private function clubAt(array $memberships, string $day): ?string
-    {
-        foreach ($memberships as [$club, $from, $to]) {
-            if (($from === '' || $from <= $day) && ($to === '' || $to >= $day)) {
-                return $club;
-            }
-        }
-        return null;
     }
 }

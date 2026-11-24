@@ -12,7 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 DEFAULT_MODEL = "claude-sonnet-5-5"
 # model čte cizí texty z psp.cz: žádné spouštění příkazů ani web, soubory jen v pracovní složce (--restricted)
-ALLOWED_TOOLS = ["mcp__cosepece__*", "Read", "Write", "Agent"]
+ALLOWED_TOOLS = ["mcp__cosepece__*", "Read", "Write", "Edit", "Agent"]  # Edit: oprava variant (D1)
 DISALLOWED_TOOLS = ["Bash", "PowerShell", "WebFetch", "WebSearch"]
 V3_FORMATS = ("cesta", "pn", "zmena", "rozprava")
 

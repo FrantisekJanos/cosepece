@@ -26,7 +26,7 @@ def test_argv_zuzene_nastroje(tmp_path):
     disallowed = argv[argv.index("--disallowedTools") + 1]
     assert "mcp__cosepece__*" in allowed and "Bash" not in allowed
     assert "Bash" in disallowed and "WebFetch" in disallowed
-    assert set(ALLOWED_TOOLS) >= {"Read", "Write", "Agent"} and "Bash" in DISALLOWED_TOOLS
+    assert set(ALLOWED_TOOLS) >= {"Read", "Write", "Edit", "Agent"} and "Bash" in DISALLOWED_TOOLS
 
 
 def test_prompt_obsahuje_ct_formaty(tmp_path):

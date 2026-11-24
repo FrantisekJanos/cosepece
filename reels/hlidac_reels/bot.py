@@ -332,9 +332,12 @@ class Bot:
         try:
             self._publish(reel_id, publish.run)
         finally:
-            # připomínka zbylé varianty nezávisí na výsledku publikace
+            # připomínka zbylé varianty nezávisí na výsledku publikace a jde hned po rozhodnutí,
+            # dřív než cokoli dalšího (jinak by „zbývá varianta“ přišla pod videa jiné sady)
             if reel is not None:
                 self._offer_remaining(reel.set_id)
+        # tlačítko posune frontu jako ostatní rozhodnutí (Zamítnout, Hotovo); až po připomínce
+        self._safe_send_next()
 
     def _retry(self, reel_id: int, cb_id, msg_id) -> None:
         reel = queue.get(self.conn, reel_id)
@@ -344,6 +347,7 @@ class Bot:
         self._answer(cb_id, "Zkouším znovu")
         self._drop_buttons(msg_id)
         self._publish(reel_id, publish.retry)
+        self._safe_send_next()
 
     def _publish(self, reel_id: int, fn: Callable[..., Reel], auto: bool = False) -> Reel:
         """auto=True: položka autopilota, úspěch se ohlásí zprávou autopilota s odkazy."""
@@ -361,7 +365,8 @@ class Bot:
         else:
             text = result_text(reel, threads=self.threads is not None)
         self._say(self._scrub(text), buttons)
-        self._safe_send_next()
+        # další jednotku fronty tady neposílat: _autopublish volá _publish v každém cyklu hned po
+        # maybe_send_next a odešly by dvě jednotky za cyklus (R3); tlačítka posílají další sama
         return reel
 
     def _publish_crashed(self, reel_id: int, exc: Exception) -> Reel:
@@ -921,6 +926,13 @@ class Bot:
             if e.rejected:
                 raise
             self._defer(reel, e)
+        except Exception as e:  # noqa: BLE001 – vadná data nebo divná odpověď API nesmí ucpat frontu
+            if self._db_lost(e):
+                raise
+            # jinak by jednotka zůstala nejstarší a blokovala frontu každý cyklus: odložit jako R4
+            log.error("odeslání #%s spadlo: %s", reel.id, self._safe(e))
+            self._rollback()
+            self._defer(reel, e)
 
     def _send_solo(self, reel: Reel) -> None:
         """Samostatné video: videa (už odeslaná se přeskočí), pending, náhled s tlačítky.
@@ -951,8 +963,8 @@ class Bot:
         if queue.transition(self.conn, reel.id, "queued", "pending", sent_at=self.now()):
             self._resend_preview(queue.get(self.conn, reel.id))
 
-    def _defer(self, reel: Reel, exc: TelegramError) -> None:
-        """Přechodná chyba odeslání: jednotka se odloží, po SEND_MAX_ATTEMPTS pokusech held a jedna zpráva."""
+    def _defer(self, reel: Reel, exc: Exception) -> None:
+        """Chyba odeslání (přechodná nebo nečekaná): jednotka se odloží, po SEND_MAX_ATTEMPTS pokusech held."""
         # odkládá se queued položka jednotky (varianta sady mohla být mezitím vyřazena odmítnutím)
         unit = queue.set_items(self.conn, reel.set_id) if reel.set_id is not None else [queue.get(self.conn, reel.id)]
         target = next((r for r in unit if r is not None and r.status == "queued"), None)

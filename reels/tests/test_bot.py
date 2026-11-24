@@ -3799,3 +3799,77 @@ def test_fronta_odlozene_po_chybe(bot, conn, api, media_dir):
     bot.now = lambda: datetime(2026, 11, 24, 13, 0, 30, tzinfo=timezone.utc)
     bot.handle(_msg("/fronta"))
     assert f"#{rid} tisk 221 · odloženo do 14:01 (chyba odeslání, pokus 1)" in api.texts()[0]
+
+
+# --- závěrečná revize F1: R3 u autopilota, pořadí připomínky, nečekaná chyba odeslání ----------
+
+@pg
+def test_autopilot_a_fronta_jedna_jednotka_za_cyklus(conn, api, meta, media_dir):
+    """R3: zveřejnění autopilota v témže cyklu nepošle další jednotku navíc."""
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    auto = _autopilot_set(conn, media_dir, 20, n=1)
+    a = _add_set(conn, media_dir, 21, n=2, source="manual")
+    b = _add_set(conn, media_dir, 22, n=2, source="manual")
+    api.calls.clear()
+    # jeden cyklus smyčky se stojícími hodinami
+    bot.maybe_send_next()
+    bot.maybe_autopublish()
+    assert _get(conn, auto[0]).status == "published"
+    assert len(_set_offers(api)) == 1
+    sent_sets = {s for s in (20, 21, 22) for v in api.sent("sendVideo") if f"#{s} ·" in v["_multipart"]}
+    assert sent_sets == {21}
+    assert _statuses(conn, a) == ["pending", "pending"]
+    assert _statuses(conn, b) == ["queued", "queued"]
+    # další jednotka až v dalším cyklu
+    from hlidac_reels.bot import SEND_INTERVAL
+    t[0] += SEND_INTERVAL
+    bot.maybe_send_next()
+    assert _statuses(conn, b) == ["pending", "pending"]
+
+
+@pg
+def test_zbyva_prijde_hned_po_schvaleni_pred_dalsi_sadou(bot, conn, api, meta, media_dir):
+    """Připomínka zbylé varianty přijde hned po zveřejnění, ne pod videi jiné sady."""
+    ids = _add_set(conn, media_dir, 6, n=2, source="manual")
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    other = _add_set(conn, media_dir, 8, n=2, source="manual")
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "published"
+    sends = [(m, b) for m, b in api.calls if m in ("sendMessage", "sendVideo")]
+    texts = [b.get("text", "") for _, b in sends]
+    assert texts[0] == "Zveřejňuji…"
+    assert "https://www.facebook.com/reel/V1" in texts[1]
+    # hned po výsledku publikace připomínka téže sady, žádné video jiné sady mezi tím
+    assert sends[2][0] == "sendMessage" and "Sada #6: zbývá varianta 1" in texts[2]
+    # tlačítko pak frontu posune jako ostatní rozhodnutí
+    assert any(m == "sendVideo" and "#8 ·" in b["_multipart"] for m, b in sends[3:])
+    assert _statuses(conn, other) == ["pending", "pending"]
+
+
+@pg
+def test_necekana_chyba_odeslani_odlozi_jednotku(bot, conn, api, media_dir, monkeypatch):
+    """Výjimka mimo TelegramError (vadná data) jednotku odloží, fronta jde dál."""
+    from hlidac_reels import queue
+    a = _add_set(conn, media_dir, 30, n=2, source="manual")
+    b = _add_set(conn, media_dir, 31, n=2, source="manual")
+    orig = bot._send_set
+
+    def broken(set_id):
+        if set_id == 30:
+            raise ValueError("vadná data sady")
+        return orig(set_id)
+
+    monkeypatch.setattr(bot, "_send_set", broken)
+    bot.send_next()
+    ra = _get(conn, a[0])
+    assert ra.status == "queued" and ra.send_attempts == 1 and ra.next_send_at is not None
+    assert "ValueError" in (ra.send_error or "")
+    assert _statuses(conn, b) == ["queued", "queued"]
+    # další cyklus: odložená A nepřekáží, odejde B
+    bot.send_next()
+    assert _statuses(conn, b) == ["pending", "pending"]
+    assert _get(conn, a[0]).status == "queued"
+    assert queue.get(conn, a[1]).send_attempts == 1

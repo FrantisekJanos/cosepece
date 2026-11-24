@@ -417,8 +417,9 @@
     // každou scénu zmenšuje po 4 % (nejvýš na 60 %), potom zkracuje text na celá slova
     scenes.forEach(function (s, si) {
       var body = s.el.querySelector('.body');
-      // na šířku se měří ustálený stav scény: počítadla mají konečnou hodnotu, a tím i konečnou šířku sloupce
-      if (LAND) window.seek(si === scenes.length - 1 ? total - 0.05 : s.end - WIPE - 0.1);
+      // měří se ustálený stav scény (i na výšku): počítadla mají konečnou hodnotu („800 mil. Kč“, ne „0“),
+      // a tím i konečnou šířku; v čase 0 by hotová scéna přetekla
+      window.seek(si === scenes.length - 1 ? total - 0.05 : s.end - WIPE - 0.1);
       s.el.style.display = 'block';
       // měří se bez animačních posunů (transformace by zkreslily scrollHeight)
       Array.prototype.forEach.call(s.el.querySelectorAll('*'), function (e) { if (e.style) e.style.transform = ''; });

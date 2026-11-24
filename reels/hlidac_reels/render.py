@@ -77,9 +77,9 @@ def _page(card: Card, template: str = "template", orientation: Orientation = "po
             page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
             page.goto(_template_path(template).as_uri())
             page.evaluate("document.fonts.ready.then(() => true)")
-            if orientation == "landscape":
-                # šířka sloupců závisí na sazbě: všechny řezy písma se načtou dřív, než fit() začne měřit
-                page.evaluate("Promise.all([...document.fonts].map(f => f.load())).then(() => true)")
+            # všechny řezy písma (i české znaky) se načtou dřív, než fit() začne měřit; jinak se měří
+            # záložní písmo a po načtení skutečného text přeteče (na šířku i na výšku)
+            page.evaluate("Promise.all([...document.fonts].map(f => f.load())).then(() => true)")
             page.evaluate("([c, o]) => { window.loadCard(c, o); window.fit(); }", [card.to_dict(), orientation])
             yield page
         finally:

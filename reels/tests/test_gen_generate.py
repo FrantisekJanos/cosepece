@@ -568,3 +568,39 @@ def test_platna_bez_renderu_se_pri_renderu_zkontroluje(tmp_path, fake, monkeypat
     monkeypatch.setattr(gen, "check_layout", lambda card, template: checked.append(template) or [])
     r = _run(tmp_path)
     assert len(fake["calls"]) == 1 and len(checked) == 3 and r.ok and all(v.video for v in r.variants)
+
+
+# --- F3: fáze práce (on_stage) a zrušení (should_stop) ---
+
+def test_generate_hlasi_faze(tmp_path, fake):
+    # varianty 2 a 3 chybí: tři cílené běhy nad oběma, varianta 1 se vyrenderuje hned po první kontrole
+    fake["prepare"] = lambda wd: (shutil.rmtree(wd / "variant-2"), shutil.rmtree(wd / "variant-3"))
+    stages: list = []
+    _run(tmp_path, on_stage=lambda s, n: stages.append((s, n)), should_stop=lambda: False)
+    assert stages == [("model", None), ("kontrola", None), ("render", "varianta 1")] + \
+        [("oprava", "varianty 2, 3"), ("kontrola", None)] * 3
+    # jedna vadná varianta: číslo v jednotném čísle
+    fake["prepare"] = lambda wd: shutil.rmtree(wd / "variant-3")
+    stages.clear()
+    _run(tmp_path, out=tmp_path / "o2", render=False, on_stage=lambda s, n: stages.append((s, n)))
+    assert stages == [("model", None), ("kontrola", None)] + [("oprava", "varianta 3"), ("kontrola", None)] * 3
+
+
+def test_generate_cancelled_pred_renderem(tmp_path, fake):
+    stages: list = []
+    with pytest.raises(gen.Cancelled):
+        _run(tmp_path, on_stage=lambda s, n: stages.append((s, n)), should_stop=lambda: len(fake["calls"]) >= 1)
+    assert fake["renders"] == [] and fake["landscape"] == []
+    st = _state(tmp_path)
+    assert st["model_runs"] == 1 and [st["variants"][k]["state"] for k in ("1", "2", "3")] == ["platna"] * 3
+    assert stages == [("model", None), ("kontrola", None)]
+    assert not (tmp_path / "out" / "vysledek.json").exists()
+    # další vydání téže úlohy pokračuje ze state.json: bez běhu modelu jen render
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 1 and r.ok and fake["renders"] == ["template_v2", "template_v3", "template_v3"]
+
+
+def test_generate_cancelled_pred_modelem(tmp_path, fake):
+    with pytest.raises(gen.Cancelled):
+        _run(tmp_path, should_stop=lambda: True)
+    assert fake["calls"] == [] and _state(tmp_path)["model_runs"] == 0

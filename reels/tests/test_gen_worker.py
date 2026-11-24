@@ -6,11 +6,13 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
+from hlidac_reels.generator import generate as gen_mod
 from hlidac_reels.generator import worker
 from hlidac_reels.generator.api import ApiError, ReelsApi
 from hlidac_reels.generator.claude import EnvError
@@ -27,12 +29,33 @@ def _tools_ok(monkeypatch):
 
 
 class FakeApi:
-    def __init__(self, job=None, conflict_on=None, landscape_reply: dict | None = None):
+    def __init__(self, job=None, conflict_on=None, landscape_reply: dict | None = None, progress_error=None):
         self.job = job
         self.conflict_on = conflict_on  # "upload" | "result" | "landscape" (409) | ApiError při nahrání šířky
         # odpověď nového serveru; starší server orientation nevrací
         self.landscape_reply = {"ok": True, "orientation": "landscape"} if landscape_reply is None else landscape_reply
         self.calls: list[tuple] = []
+        # progress (z vlákna Progress) se zapisuje zvlášť, ať pořadí v calls nezávisí na rychlosti vlákna
+        self.progress_error = progress_error  # ApiError, kterou progress vyhodí (409 zrušeno, 400 starý server)
+        self.progress_calls: list[tuple] = []  # (fáze, poznámka) v pořadí odeslání
+        self._progress_cv = threading.Condition()
+
+    @property
+    def stages(self) -> list:
+        return [stage for stage, _ in self.progress_calls]
+
+    def progress(self, job_id, claim_token, stage, note=None):
+        with self._progress_cv:
+            self.progress_calls.append((stage, note))
+            self._progress_cv.notify_all()
+        if self.progress_error is not None:
+            raise self.progress_error
+        return {"ok": True, "lease_s": 900}
+
+    def wait_progress(self, pred, timeout: float = 5.0) -> None:
+        """Počká, až vlákno Progress pošle, co test čeká (pred nad seznamem fází)."""
+        with self._progress_cv:
+            assert self._progress_cv.wait_for(lambda: pred(self.stages), timeout), self.stages
 
     def heartbeat(self):
         self.calls.append(("heartbeat",))
@@ -61,8 +84,9 @@ class FakeApi:
         if self.conflict_on == "result":
             raise ApiError(409, '{"error": "claim"}')
 
-    def fail(self, job_id, claim_token, error):
-        self.calls.append(("fail", job_id, claim_token, error))
+    def fail(self, job_id, claim_token, error, kind=None, retry_after_s=None, reason=None):
+        self.calls.append(("fail", job_id, claim_token, error,
+                           {"kind": kind, "retry_after_s": retry_after_s, "reason": reason}))
         return "queued"
 
     def names(self):
@@ -72,7 +96,7 @@ class FakeApi:
 def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] = frozenset()):
     """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné, z land_ns mají šířku."""
     def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s,
-            published=None, focus_pn=None, focus_info=None, autopilot=False):
+            published=None, focus_pn=None, focus_info=None, autopilot=False, **kw):
         if seen is not None:
             seen.update(ct=ct, out=Path(out), model=model, hint=hint, mcp_config=mcp_config,
                         reason_keys=reason_keys, has_amendments=has_amendments, published=published,
@@ -453,6 +477,36 @@ def test_api_pozadavky(server, tmp_path):
     assert "X-Claim-Token" not in reqs[6]["headers"]
 
 
+def test_api_progress_druh_chyby_a_stav(server):
+    api = _api(server)
+    server.response = (200, "application/json", b'{"ok": true, "lease_s": 900}')
+    assert api.progress(7, "claim-x", None) == {"ok": True, "lease_s": 900}
+    api.progress(7, "claim-x", "oprava", "varianty 2, 3")
+    server.response = (200, "application/json", b'{"status": "queued"}')
+    assert api.fail(7, "claim-x", "síť", kind="infra", retry_after_s=900) == "queued"
+    api.fail(7, "claim-x", "prostředí: limit", kind="env", retry_after_s=900, reason="limit")
+    server.response = (200, "application/json", b'{"ok": true}')
+    api.heartbeat({"state": "paused", "reason": "limit"})
+    api.heartbeat()
+
+    reqs = server.requests
+    assert [(r["method"], r["path"]) for r in reqs] == (
+        [("POST", "/reels_api.php?action=progress")] * 2 + [("POST", "/reels_api.php?action=fail")] * 2
+        + [("POST", "/reels_api.php?action=heartbeat")] * 2)
+    # pole jen když nejsou None: starý server je nedostane, fail bez kind = dnešní chování
+    assert [json.loads(r["body"]) if r["body"] else None for r in reqs] == [
+        {"job_id": 7}, {"job_id": 7, "stage": "oprava", "note": "varianty 2, 3"},
+        {"job_id": 7, "error": "síť", "kind": "infra", "retry_after_s": 900},
+        {"job_id": 7, "error": "prostředí: limit", "kind": "env", "retry_after_s": 900, "reason": "limit"},
+        {"state": "paused", "reason": "limit"}, None]
+    assert all(r["headers"]["X-Claim-Token"] == "claim-x" for r in reqs[:4])
+    assert all("X-Claim-Token" not in r["headers"] for r in reqs[4:])
+    server.response = (409, "application/json", b'{"error": "claim", "status": "cancelled"}')
+    with pytest.raises(ApiError) as ei:
+        api.progress(7, "claim-x", "render", "varianta 1")
+    assert ei.value.status == 409 and "cancelled" in ei.value.snippet
+
+
 def test_api_nesleduje_presmerovani(server):
     server.response = (302, "text/html", b"<a>jinam</a>", {"Location": "/jinam.php"})
     with pytest.raises(ApiError) as ei:
@@ -586,6 +640,7 @@ def test_limit_nespali_frontu(tmp_path, monkeypatch):
         worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleep, probe=probe)
     fails = [c for c in api.calls if c[0] == "fail"]
     assert fails[0][3].startswith("prostředí: ") and "limit" in fails[0][3]
+    assert fails[0][4]["kind"] == "env"  # pokus se vrací, úloha čeká ve frontě
     seq = [c for c in api.calls if c[0] in ("claim", "fail", "probe", "sleep")]
     # po prvním fail: odstup 900 → sonda ne → 3600 → sonda ne → 10800 → sonda ano → teprve pak claim
     assert seq[:9] == [("claim",), fails[0], ("sleep", 900), ("probe", False), ("sleep", 3600), ("probe", False),
@@ -686,3 +741,240 @@ def test_sirka_opakuje_pri_vypadku(tmp_path):
     # šířka selže i po třech opakováních → jen varování, výška a sada projdou
     assert api.names() == ["upload_landscape"] * 4 + ["upload_video", "upload_video", "result"]
     assert sleeps == [60, 300, 900]
+
+
+# --- F3: průběh z vlákna (progress), druh chyby ve fail, konec při 409 ---
+
+def _collapse(items: list) -> list:
+    """Sloučí opakované hlášení téže fáze (vlákno ji posílá znovu každých PROGRESS_S)."""
+    out: list = []
+    for x in items:
+        if not out or out[-1] != x:
+            out.append(x)
+    return out
+
+
+def _wait_stop(kw) -> None:
+    """Falešný generate() čeká jako kontrola v generate(), dokud should_stop() nevrátí True (409 na progress)."""
+    deadline = time.monotonic() + 5
+    while not kw["should_stop"]():
+        assert time.monotonic() < deadline, "should_stop() nevrátil True"
+        time.sleep(0.001)
+
+
+class _UploadWaitsApi(FakeApi):
+    """Nahrání počká, až vlákno ohlásí fázi upload (pořadí v testu nesmí záviset na rychlosti vlákna)."""
+
+    def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+        self.wait_progress(lambda s: "upload" in s)
+        return super().upload_video(job_id, claim_token, n, path, orientation)
+
+
+def test_progress_z_vlakna_a_faze(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "PROGRESS_S", 0.01)
+    api = _UploadWaitsApi()
+    inner = fake_generate({1, 2, 3})
+
+    def gen(**kw):
+        api.wait_progress(lambda s: len(s) >= 1)  # první progress hned po startu vlákna
+        kw["on_stage"]("model", None)
+        api.wait_progress(lambda s: "model" in s)
+        kw["on_stage"]("render", "varianta 1")
+        api.wait_progress(lambda s: "render" in s)
+        return inner(**kw)
+
+    assert _process(api, tmp_path, gen) is True
+    assert _collapse(api.stages) == [None, "model", "render", "upload"]
+    assert ("render", "varianta 1") in api.progress_calls
+    assert api.names() == ["upload_video"] * 3 + ["result"]
+
+
+def test_progress_opakuje_a_neztrati_zmenu():
+    # krátký interval: bez změny fáze se progress opakuje (prodlužuje vydání)
+    api = FakeApi()
+    with worker.Progress(api, 7, "c" * 32, interval=0.01):
+        api.wait_progress(lambda s: len(s) >= 3)
+    assert set(api.stages) == {None}
+    # dlouhý interval: změny jdou hned po set() a všechny v pořadí, nic se neslučuje
+    api = FakeApi()
+    with worker.Progress(api, 7, "c" * 32, interval=60) as prog:
+        prog.set("model")
+        prog.set("kontrola")
+        prog.set("oprava", "varianty 2, 3")
+        api.wait_progress(lambda s: len(s) >= 4)
+    assert api.progress_calls == [(None, None), ("model", None), ("kontrola", None), ("oprava", "varianty 2, 3")]
+    assert not prog.cancelled.is_set() and not prog.unsupported
+
+
+def test_vlakno_progress_skonci_s_ulohou(tmp_path):
+    def alive() -> bool:
+        return any(t.name == "reels-progress-7" for t in threading.enumerate())
+
+    seen: list[bool] = []
+    inner = fake_generate({1, 2, 3})
+
+    def ok(**kw):
+        seen.append(alive())  # vlákno běží během generování
+        return inner(**kw)
+
+    def boom(**kw):
+        seen.append(alive())
+        raise RuntimeError("generování spadlo")
+
+    def env(**kw):
+        seen.append(alive())
+        raise EnvError("You've hit your limit")
+
+    assert _process(FakeApi(), tmp_path, ok) is True
+    assert not alive()
+    assert _process(FakeApi(), tmp_path, boom) is False
+    assert not alive()
+    with pytest.raises(EnvError):
+        _process(FakeApi(), tmp_path, env)
+    assert not alive()
+    assert seen == [True, True, True]
+
+
+def test_progress_409_zastavi_bez_fail(tmp_path, monkeypatch, caplog):
+    # Review Focus 1: vydání propadlo a úloha odešla jinému vydání (nebo ji uživatel zrušil)
+    monkeypatch.setattr(worker, "PROGRESS_S", 0.01)
+    api = FakeApi(progress_error=ApiError(409, '{"error": "Úloha už workeru nepatří", "status": "cancelled"}'))
+    inner = fake_generate({1, 2, 3})
+
+    def gen(**kw):
+        inner(**kw)  # varianty jsou ve složce
+        _wait_stop(kw)
+        raise gen_mod.Cancelled()
+
+    with caplog.at_level("WARNING", logger="hlidac_reels.worker"):
+        assert _process(api, tmp_path, gen) is False
+    assert api.names() == []  # žádné upload_video, result ani fail
+    assert api.stages == [None]  # po 409 vlákno další progress neposílá
+    assert (tmp_path / "7" / "variant-1" / "card.json").is_file()
+    assert "úloha 7: zrušena nebo propadla (409), práce zůstává ve složce" in caplog.text
+
+
+def test_progress_409_po_generovani_nic_nenahraje(tmp_path, monkeypatch):
+    # zrušení přišlo po poslední kontrole v generate(): sada je hotová, ale nenahraje se
+    monkeypatch.setattr(worker, "PROGRESS_S", 0.01)
+    api = FakeApi(progress_error=ApiError(409, '{"error": "claim"}'))
+    inner = fake_generate({1, 2, 3})
+
+    def gen(**kw):
+        res = inner(**kw)
+        _wait_stop(kw)
+        return res
+
+    assert _process(api, tmp_path, gen) is False
+    assert api.names() == []
+    assert (tmp_path / "7" / "variant-1" / "card.json").is_file()
+
+
+def test_progress_409_pri_nahravani(tmp_path, monkeypatch):
+    created: list = []
+
+    class Prog(worker.Progress):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            created.append(self)
+
+    monkeypatch.setattr(worker, "Progress", Prog)
+
+    class Api(FakeApi):
+        def __init__(self):
+            super().__init__()
+            self.uploaded = threading.Event()
+
+        def progress(self, job_id, claim_token, stage, note=None):
+            if stage == "upload":  # uživatel úlohu zrušil, zatímco se nahrává první video
+                assert self.uploaded.wait(5)
+                raise ApiError(409, '{"error": "claim", "status": "cancelled"}')
+            return super().progress(job_id, claim_token, stage, note)
+
+        def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+            r = super().upload_video(job_id, claim_token, n, path, orientation)
+            self.uploaded.set()
+            assert created[0].cancelled.wait(5)
+            return r
+
+    api = Api()
+    assert _process(api, tmp_path, fake_generate({1, 2, 3})) is False
+    assert api.names() == ["upload_video"]  # další videa, result ani fail už ne
+
+
+def test_novy_worker_stary_server(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(worker, "PROGRESS_S", 0.01)
+    api = FakeApi(progress_error=ApiError(400, '{"error": "Neznámá akce"}'))
+    inner = fake_generate({1, 2, 3})
+
+    def gen(**kw):
+        api.wait_progress(lambda s: len(s) >= 1)
+        kw["on_stage"]("model", None)
+        kw["on_stage"]("render", "varianta 1")
+        assert not kw["should_stop"]()
+        return inner(**kw)
+
+    with caplog.at_level("INFO", logger="hlidac_reels.worker"):
+        assert _process(api, tmp_path, gen) is True
+    assert api.stages == [None]  # progress jen jednou, pak už ne
+    assert "result" in api.names() and "fail" not in api.names()
+    assert caplog.text.count("server progress neumí") == 1
+
+
+def _gen_timeout(**kw):
+    res = fake_generate(set())(**kw)
+    res.runs = [{"ok": True, "timed_out": False}, {"ok": False, "timed_out": True}]
+    return res
+
+
+def _gen_keyerror(**kw):
+    raise KeyError("card_v2")
+
+
+class _Api503(FakeApi):
+    def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+        self.calls.append(("upload_error",))
+        raise ApiError(503, "Service Unavailable")
+
+
+class _ApiOffline(FakeApi):
+    def result(self, job_id, claim_token, variants, skipped=None):
+        self.calls.append(("result_error",))
+        raise OSError("síť nejede")
+
+
+class _Api403(FakeApi):
+    def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+        raise ApiError(403, "<!DOCTYPE html><title>Just a moment...</title>")
+
+
+_FAIL_CASES = {
+    # případ: (generate, třída API, druh, odklad)
+    "0-platnych": (fake_generate(set()), FakeApi, "content", None),
+    "0-platnych-timeout": (_gen_timeout, FakeApi, "timeout", None),
+    "nahravani-stale-503": (fake_generate({1, 2, 3}), _Api503, "infra", 900),
+    "sit-pri-result": (fake_generate({1, 2, 3}), _ApiOffline, "infra", 900),
+    "403-pri-nahravani": (fake_generate({1, 2, 3}), _Api403, "content", None),
+    "keyerror-z-generate": (_gen_keyerror, FakeApi, None, None),
+}
+
+
+@pytest.mark.parametrize("case", [*_FAIL_CASES, "enverror"])
+def test_fail_druhy(tmp_path, case):
+    if case == "enverror":
+        api = FakeApi()
+        with pytest.raises(EnvError):
+            worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                           generate=_env_generate, sleep=lambda s: None)
+        kw = [c for c in api.calls if c[0] == "fail"][0][4]
+        assert kw["kind"] == "env" and isinstance(kw["retry_after_s"], int) and kw["retry_after_s"] > 0
+        assert kw["reason"] in {"limit", "login", "mcp", "nastroje", "env"}
+        return
+    gen, api_cls, kind, retry = _FAIL_CASES[case]
+    api = api_cls()
+    assert worker.process(api, dict(JOB), root=tmp_path, mcp_config=tmp_path / "m.json", model="m",
+                          generate=gen, sleep=lambda s: None) is False
+    fails = [c for c in api.calls if c[0] == "fail"]
+    assert len(fails) == 1
+    assert (fails[0][4]["kind"], fails[0][4]["retry_after_s"]) == (kind, retry)
+    assert worker.RETRY_INFRA_S == 900

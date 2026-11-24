@@ -60,7 +60,8 @@ class Reel:
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
-_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id", "status"}
+# autopilot nastavuje jen add (převzetí sady) a autopilot_to_approval, set_fields ho změnit nesmí
+_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id", "status", "autopilot"}
 
 
 @contextmanager
@@ -76,7 +77,7 @@ def _tx(conn):
 
 def _check(fields: dict) -> None:
     # názvy sloupců se vkládají do SQL, proto jen ze seznamu polí Reel;
-    # status se mění jen přes transition (podmíněný přechod)
+    # status se mění jen přes transition (podmíněný přechod), autopilot jen přes add a autopilot_to_approval
     bad = set(fields) - _ALLOWED
     if bad:
         raise ValueError(f"neznámá pole: {sorted(bad)}")

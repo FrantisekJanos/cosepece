@@ -2705,6 +2705,46 @@ def test_autopilot_prepinac(bot, conn, api):
     assert "/autopilot" in api.texts()[-1]
 
 
+@pg
+def test_autopilot_off_smaze_priznak_rozpracovanych_uloh(bot, conn, api, tmp_path, monkeypatch):
+    # on -> /pn X -> off (PC offline) -> on -> sada X se převezme: nesmí se zveřejnit bez schválení
+    import json as _json
+    from hlidac_reels import inbox, jobs, media, messages, queue
+    from hlidac_reels.media import VideoInfo
+    bot.handle(_msg("/autopilot on"))
+    jid = jobs.add(conn, source="manual", ct=311, focus_pn=[2376], autopilot=True)
+    done = jobs.add(conn, source="manual", ct=312, autopilot=True)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (done,))
+    conn.commit()
+    bot.handle(_msg("/autopilot off"))
+    assert api.texts()[-1] == messages.autopilot_text(False, 0, 1)
+    assert "Rozpracované úlohy autopilota (1)" in api.texts()[-1]
+    by_id = {j.id: j for j in jobs.pending(conn)}
+    assert by_id[jid].autopilot is False
+    with conn.cursor() as cur:
+        cur.execute("SELECT autopilot FROM reel_jobs WHERE id=%s", (done,))
+        assert cur.fetchone()[0] is True  # hotová úloha se nemění
+    conn.commit()
+    bot.handle(_msg("/autopilot on"))
+    # worker úlohu dokončil a sadu odevzdal do mezisložky
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (jid,))
+    conn.commit()
+    folder = tmp_path / "inbox" / str(jid)
+    folder.mkdir(parents=True)
+    variants = []
+    for n in (1, 2):
+        (folder / f"variant-{n}.mp4").write_bytes(f"ok-{n}".encode())
+        variants.append({"n": n, "template": "template_v3", "format": "pn", "caption": f"Popisek {n}", "card": {}})
+    (folder / "manifest.json").write_text(
+        _json.dumps({"job_id": jid, "ct": 311, "source": "manual", "variants": variants}), encoding="utf-8")
+    monkeypatch.setattr(media, "probe", lambda path: VideoInfo("h264", "aac", 1080, 1920, 30.0, 10))
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=bot._autopilot_on())
+    assert res[0].ok and res[0].autopilot is False
+    assert [(r.status, r.autopilot) for r in queue.set_items(conn, jid)] == [("queued", False)] * 2
+
+
 # --- /pn a autopilot -----------------------------------------------------------
 
 @pg

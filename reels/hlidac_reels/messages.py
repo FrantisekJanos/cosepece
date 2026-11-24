@@ -161,14 +161,17 @@ def result_text(reel: Reel, threads: bool = False) -> str:
     return "\n".join(lines)
 
 
-def autopilot_text(on: bool, to_approval: int = 0) -> str:
-    """Odpověď na /autopilot: stav přepínače; to_approval = kolik videí autopilota vypnutí vrátilo ke schválení."""
+def autopilot_text(on: bool, to_approval: int = 0, jobs_to_approval: int = 0) -> str:
+    """Odpověď na /autopilot: stav přepínače; to_approval = kolik videí autopilota vypnutí vrátilo ke schválení,
+    jobs_to_approval = kolika rozpracovaným úlohám autopilota vypnutí smazalo příznak."""
     if on:
         return ("Autopilot zapnut: PN vybraná v /pn se zveřejní bez schválení (2 videa na PN). "
                 "Vypnout: /autopilot off")
     text = "Autopilot vypnut: sady jdou ke schválení."
     if to_approval:
         text += f" Dosud nezveřejněná videa autopilota ({to_approval}) půjdou ke schválení."
+    if jobs_to_approval:
+        text += f" Rozpracované úlohy autopilota ({jobs_to_approval}) půjdou ke schválení i po novém zapnutí."
     return text
 
 

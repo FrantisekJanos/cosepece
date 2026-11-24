@@ -252,8 +252,14 @@ Přepínač `autopilot` (tabulka `reel_state`, výchozí vypnuto) mění jen cho
 - Bot zveřejní v jednom cyklu nejvýš jednu položku autopilota a pošle odkazy na FB, IG a Threads. Selhání dostane
   tlačítko Zkusit znovu.
 - `/autopilot off` zastaví zveřejňování hned a ještě nezveřejněné položky autopilota přesune do běžného schvalování.
+  Zároveň smaže příznak úlohám, které ještě čekají ve frontě nebo je má worker (`queued`, `claimed`): jejich sady
+  půjdou ke schválení, i když se autopilot před převzetím sady znovu zapne. Odpověď uvede počty videí i úloh.
 - `/video`, `/vyber` a `fresh` autopilot nikdy nepoužijí.
 - Pořadí nasazení: nejdřív server (web a bot společně přes redeploy), potom worker na PC.
+- **Autopilot nezapínat, dokud není aktualizovaný worker na PC.** Starý worker pole `autopilot` v claimu ignoruje
+  a vygeneruje 3 varianty včetně formátu `zmena`, které by pak šly ven bez schválení.
+- Hned po redeployi serveru může API workeru několik sekund vracet 500, dokud bot nevytvoří nové sloupce
+  (`autopilot` v `reel_jobs` a `reel_queue`). Worker počká a zkusí to znovu, zásah není potřeba.
 
 ## Hlídání dat
 

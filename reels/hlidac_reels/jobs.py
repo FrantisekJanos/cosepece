@@ -61,6 +61,19 @@ def add(conn, *, source: str, ct: int | None = None, format_hint: str | None = N
         raise ActiveJobExists(ct) from e
 
 
+def autopilot_off(conn) -> int:
+    """Vypnutý autopilot: aktivním úlohám (queued, claimed) smaže příznak, jejich sady půjdou ke schválení.
+
+    Bez toho by úloha zadaná se zapnutým autopilotem a převzatá až po jeho opětovném zapnutí
+    (PC mezitím offline) prošla bez schválení. Vrací počet dotčených úloh.
+    """
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET autopilot=false WHERE autopilot AND status IN ('queued','claimed')")
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 def pending(conn) -> list[Job]:
     """Aktivní úlohy (queued + claimed) v pořadí výdeje."""
     with conn.cursor() as cur:

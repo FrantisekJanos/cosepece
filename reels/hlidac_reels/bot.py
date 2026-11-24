@@ -498,12 +498,16 @@ class Bot:
         """/autopilot on|off: přepne autopilota; bez argumentu (nebo s jiným) vypíše stav."""
         arg = arg.strip().lower()
         moved: list[int] = []
+        held = 0
         if arg in ("on", "off"):
             queue.set_state(self.conn, AUTOPILOT_KEY, "1" if arg == "on" else "0")
         if arg == "off":
             # vypnutí platí hned i pro převzaté sady: nezveřejněné položky jdou ke schválení (send_next)
             moved = queue.autopilot_to_approval(self.conn)
-        text = autopilot_text(self._autopilot_on(), len(moved))
+            # i úlohy ve frontě nebo u workeru: jejich sada půjde ke schválení, i kdyby se autopilot
+            # před převzetím znovu zapnul (jinak by se zveřejnila bez schválení)
+            held = jobs.autopilot_off(self.conn)
+        text = autopilot_text(self._autopilot_on(), len(moved), held)
         if arg == "off":
             # hlášení nevzniklých variant se pošle hned s odpovědí (autopilot je už nezveřejní)
             notes = [self._pop_skipped(key) for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY)]

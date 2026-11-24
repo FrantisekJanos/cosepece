@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, fields as dc_fields
+from dataclasses import dataclass, field, fields as dc_fields
 from datetime import date, datetime, timedelta
 
 import psycopg
@@ -303,6 +303,134 @@ def auto_reminders(conn, now: datetime) -> list[int]:
         ids = [r[0] for r in cur.fetchall()]
     conn.commit()
     return ids
+
+
+@dataclass
+class Unit:
+    """Řádek přehledu /fronta: jednotka (sada nebo samostatné video), nebo její část v jednom stavu.
+
+    state říká, na co čeká:
+    - na vlastníka: approval (samostatné video), untouched (nedotčená sada), picked (vybrané varianty
+      čekají na schválení), remaining (zbylé nevybrané varianty dotčené sady),
+    - hotové: next (na řadě k odeslání), deferred (odloženo po chybě, note = HH:MM v Europe/Prague),
+      limit (note = „odeslané/limit“), blocked (nedotčená jiná automatická sada), autopilot, approved,
+      publishing,
+    - problémy: held (note = poslední chyba odeslání, attempts), failed a unknown (note = chyba
+      publikace), stale (zveřejňování uvízlo).
+    variants = čísla variant sady, kterých se řádek týká (u samostatného videa prázdné).
+    """
+    set_id: int | None
+    reel_ids: list[int]
+    source: str
+    ct: int | None
+    state: str
+    since: datetime
+    note: str | None = None
+    variants: list[int] = field(default_factory=list)
+    focus_pn: list[int] | None = None  # PN, o kterých je úloha sady (reel_jobs.focus_pn)
+    attempts: int = 0
+
+    @property
+    def label(self) -> int:
+        """Číslo v přehledu: sada podle set_id, samostatné video podle id."""
+        return self.set_id if self.set_id is not None else self.reel_ids[0]
+
+
+OPEN_STATUSES = ("queued", "pending", "approved", "publishing", "failed", "unknown", "held")
+
+
+def open_units(conn, now: datetime, per_day: int | None = None,
+               stale_publishing: timedelta = timedelta(minutes=15)) -> list[Unit]:
+    """Otevřené položky fronty seskupené do řádků přehledu /fronta (jeden dotaz na položky).
+
+    per_day = denní limit automatických sad: automatická queued jednotka nad limitem dostane stav
+    limit, brzděná nedotčenou automatickou sadou blocked (queue.auto_blocked). Řádky jsou seřazené
+    podle nejstarší položky.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT r.id, r.set_id, r.variant, r.source, r.ct, r.status, r.autopilot, r.created_at, "
+            "r.sent_at, r.decided_at, r.picked_at, r.next_send_at, "
+            "to_char(r.next_send_at AT TIME ZONE 'Europe/Prague', 'FMHH24:MI'), r.send_attempts, "
+            "r.send_error, r.error, j.focus_pn, s.value, "
+            # dotčenost sady: poslední výběr nebo rozhodnutí kterékoli varianty (i už uzavřené)
+            "(SELECT max(greatest(x.decided_at, x.picked_at)) FROM reel_queue x WHERE x.set_id = r.set_id) "
+            "FROM reel_queue r LEFT JOIN reel_jobs j ON j.id = r.set_id "
+            "LEFT JOIN reel_state s ON r.set_id IS NOT NULL AND s.key = concat(%s::text, r.set_id) "
+            "WHERE r.status = ANY(%s) ORDER BY r.id",
+            (PICKED_KEY, list(OPEN_STATUSES)),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+
+    names = ("id", "set_id", "variant", "source", "ct", "status", "autopilot", "created_at", "sent_at",
+             "decided_at", "picked_at", "next_send_at", "next_send_hhmm", "send_attempts", "send_error",
+             "error", "focus_pn", "picked", "touched_at")
+    groups: dict[tuple[int, str], list[dict]] = {}
+    for row in rows:
+        r = dict(zip(names, row))
+        if r["status"] == "pending":
+            if r["set_id"] is None:
+                state = "approval"
+            elif r["id"] in _parse_picked(r["picked"]):
+                state = "picked"
+            elif r["picked"] or r["touched_at"] is not None:
+                state = "remaining"
+            else:
+                state = "untouched"
+        elif r["status"] == "queued":
+            state = "deferred" if r["next_send_at"] is not None and r["next_send_at"] > now else "next"
+        elif r["status"] == "approved":
+            state = "autopilot" if r["autopilot"] else "approved"
+        elif r["status"] == "publishing":
+            started = r["decided_at"] or r["sent_at"] or r["created_at"]
+            state = "stale" if now - started >= stale_publishing else "publishing"
+        else:
+            state = r["status"]  # failed, unknown, held
+        key = r["set_id"] if r["set_id"] is not None else -r["id"]
+        groups.setdefault((key, state), []).append(r)
+
+    def first_of(items: list[dict], *cols: str) -> list[datetime]:
+        # pro každou položku první vyplněný čas z cols (created_at je vždy)
+        return [next(r[c] for c in (*cols, "created_at") if r[c] is not None) for r in items]
+
+    auto_wait: tuple[str, str | None] | None = None
+    out: list[Unit] = []
+    for (_key, state), items in groups.items():
+        first = items[0]
+        if state in ("approval", "untouched"):
+            since = min(first_of(items, "sent_at"))
+        elif state == "picked":
+            since = min(first_of(items, "picked_at", "sent_at"))
+        elif state == "remaining":
+            since = first["touched_at"] or min(first_of(items, "sent_at"))
+        elif state == "held":
+            since = max(first_of(items, "next_send_at"))
+        elif state in ("next", "deferred"):
+            since = min(first_of(items))
+        else:
+            since = min(first_of(items, "decided_at", "sent_at"))
+        note = {"deferred": first["next_send_hhmm"], "held": first["send_error"],
+                "failed": first["error"], "unknown": first["error"]}.get(state)
+        if state == "next" and first["source"] == AUTO_SOURCE and per_day is not None:
+            # automatická jednotka čeká na denní limit nebo na výběr z jiné automatické sady (R2)
+            if auto_wait is None:
+                sent_today = sets_sent_on(conn, local_date(conn, now))
+                if sent_today >= per_day:
+                    auto_wait = ("limit", f"{sent_today}/{per_day}")
+                elif auto_blocked(conn, now):
+                    auto_wait = ("blocked", None)
+                else:
+                    auto_wait = ("next", None)
+            state, note = auto_wait
+        set_id = first["set_id"]
+        out.append(Unit(set_id=set_id, reel_ids=[r["id"] for r in items], source=first["source"], ct=first["ct"],
+                        state=state, since=since, note=note,
+                        variants=[r["variant"] for r in items if set_id is not None and r["variant"] is not None],
+                        focus_pn=list(first["focus_pn"]) if first["focus_pn"] else None,
+                        attempts=max(r["send_attempts"] for r in items)))
+    out.sort(key=lambda u: min(u.reel_ids))
+    return out
 
 
 SUMMARY_WINDOW = timedelta(hours=24)

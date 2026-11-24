@@ -86,7 +86,7 @@ WORKER_SEEN_KEY = "worker_seen_at"
 AUTOPILOT_KEY = "autopilot"  # reel_state: "1" = PN z /pn se zveřejní bez schválení
 # reel_state autopilot_skipped:<set_id> = JSON nevzniklých variant sady autopilota; ohlásí se po její poslední položce
 AUTOPILOT_SKIPPED_KEY = "autopilot_skipped:"
-HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
+HELP = ("Příkazy: /fronta (přehled: na co která položka čeká), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
         "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
@@ -290,7 +290,8 @@ class Bot:
         handlers = {"ok": self._approve, "no": self._reject, "retry": self._retry, "edit": self._edit,
                     # noset: tlačítko zpráv sad odeslaných před výběrem více variant
                     "pick": self._pick, "doneset": self._reject_set, "noset": self._reject_set,
-                    "sendretry": self._send_retry, "drop": self._drop_held}
+                    "sendretry": self._send_retry, "drop": self._drop_held,
+                    "resend": self._resend_buttons}  # resend:0 pod přehledem /fronta
         handler = handlers.get(action)
         if handler is None:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
@@ -756,20 +757,24 @@ class Bot:
                 jobs.mark_notified(self.conn, job.id)
 
     def _show_queue(self) -> None:
-        """Počty podle stavů; tlačítka, která se mohla ztratit (výpadek Telegramu, smazané zprávy), znovu.
+        """/fronta: jedna zpráva s přehledem (na co která položka čeká), nic dalšího se samo neposílá.
 
-        pending → nový náhled s tlačítky schválení; held → Zkusit znovu / Zahodit; failed/unknown → Zkusit
-        znovu; approved a dlouho běžící publishing jen textem (vyřeší je smyčka, _recover_stuck).
+        Ztracená tlačítka obnoví až tlačítko Poslat tlačítka znovu pod přehledem (resend:0).
         """
-        counts = queue.counts(self.conn)
-        lines = [f"{s}: {counts[s]}" for s in queue.STATUSES if counts.get(s)]
-        head = "Fronta:\n" + "\n".join(lines) if lines else "Fronta je prázdná."
-        job_lines = [f"#{j.id} {j.source} {j.ct if j.ct is not None else '-'}"
-                     f"{' ' + _pn_label(j.focus_pn) if j.focus_pn else ''} {j.status}"
-                     for j in jobs.pending(self.conn)]
-        if job_lines:
-            head += "\n\nZadání:\n" + "\n".join(job_lines)
-        self._say(head + "\n" + self._worker_seen())
+        now = self.now()
+        units = queue.open_units(self.conn, now, per_day=SETS_PER_DAY, stale_publishing=STALE_PUBLISHING)
+        text = messages.queue_overview(units, jobs.pending(self.conn), self._worker_seen(), now)
+        self._say(self._scrub(text), messages.RESEND_BUTTONS)
+
+    def _resend_buttons(self, _id: int, cb_id, msg_id) -> None:
+        """Poslat tlačítka znovu (resend:0): tlačítka, která se mohla ztratit (výpadek Telegramu, smazané
+        zprávy), přijdou znovu.
+
+        pending → nový náhled s tlačítky schválení (sada bez výběru novou zprávou sady); held → Zkusit znovu /
+        Zahodit; failed/unknown → Zkusit znovu; approved a dlouho běžící publishing jen textem (vyřeší je
+        smyčka, _recover_stuck).
+        """
+        self._answer(cb_id)
         stale_before = _now() - STALE_PUBLISHING
         offered: set[int] = set()
         held_shown: set[int] = set()

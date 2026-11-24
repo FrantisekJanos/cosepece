@@ -438,8 +438,10 @@ def test_dalsi_posle_i_kdyz_ceka(bot, conn, api, media_dir):
     assert "Fronta je prázdná." in api.texts()[-1]
     api.calls.clear()
     bot.handle(_msg("/fronta"))
-    assert "pending: 2" in api.texts()[0]
-    # ke každé čekající položce znovu náhled s tlačítky
+    assert "Čeká na tebe (2)" in api.texts()[0]
+    # ke každé čekající položce znovu náhled s tlačítky (až po Poslat tlačítka znovu)
+    api.calls.clear()
+    bot.handle(_cb("resend:0"))
     assert len([b for b in api.sent() if _buttons(b)]) == 2
 
 
@@ -636,12 +638,15 @@ def test_fronta_ukaze_failed_unknown_s_tlacitkem(bot, conn, api, media_dir):
     queue.transition(conn, u, "publishing", "unknown", error="síťová chyba")
     api.calls.clear()
     bot.handle(_msg("/fronta"))
+    overview = api.texts()[0]
+    assert "Problémy (2)" in overview and "chybný parametr" in overview and "nejistý" in overview
+    api.calls.clear()
+    bot.handle(_cb("resend:0"))
     msgs = api.sent()
-    assert "failed: 1" in msgs[0]["text"] and "unknown: 1" in msgs[0]["text"]
-    by_btn = {tuple(_buttons(b)): b["text"] for b in msgs[1:]}
+    by_btn = {tuple(_buttons(b)): b["text"] for b in msgs}
     assert ("retry:%d" % f,) in by_btn and ("retry:%d" % u,) in by_btn
     assert "chybný parametr" in by_btn[("retry:%d" % f,)] and "tisk 221" in by_btn[("retry:%d" % f,)]
-    assert len(msgs) == 3
+    assert len(msgs) == 2
 
 
 @pg
@@ -811,7 +816,7 @@ def test_fronta_znovu_posle_nahled_a_vypise_ostatni(bot, conn, api, media_dir):
     fresh = _add(conn, media_dir, 4)
     queue.transition(conn, fresh, "queued", "publishing", decided_at=datetime.now(timezone.utc))
     api.calls.clear()
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     msgs = api.sent()
     pend = [b for b in msgs if _buttons(b) == [f"ok:{p}", f"edit:{p}", f"no:{p}"]]
     assert len(pend) == 1
@@ -1274,14 +1279,14 @@ def test_fronta_novy_nahled_vezme_staremu_tlacitka(bot, conn, api, media_dir):
     bot.send_next()
     old = _get(conn, rid).telegram_msg_id
     api.calls.clear()
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     new = _get(conn, rid).telegram_msg_id
     assert new not in (None, old)
     assert _dropped(api) == [old]
     # když se nový náhled nepošle, starý si tlačítka nechá
     api.calls.clear()
     api.fail["sendMessage"] = httpx.ConnectError("down")
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     assert _get(conn, rid).telegram_msg_id == new and _dropped(api) == []
 
 
@@ -1561,7 +1566,7 @@ def test_fronta_po_vyberu_nabidne_zbyle_varianty(bot, conn, api, media_dir):
     set_msg = _set_msg_id(conn, ids[0])
     bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
     api.calls.clear()
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     msgs = [_buttons(b) for b in api.sent() if _buttons(b)]
     assert [f"pick:{ids[0]}", f"pick:{ids[2]}", "doneset:7"] in msgs
     assert [f"ok:{ids[1]}", f"edit:{ids[1]}", f"no:{ids[1]}"] in msgs
@@ -2070,7 +2075,7 @@ def test_fronta_ukaze_held_s_tlacitky(bot, conn, api, media_dir):
     ids = _add_set(conn, media_dir, 7, n=2, source="manual")
     for i in ids:
         queue.transition(conn, i, "queued", "held", send_attempts=5)
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     held = [b for b in api.sent() if any(d.startswith("sendretry:") for d in _buttons(b))]
     assert len(held) == 1 and _buttons(held[0]) == [f"sendretry:{ids[0]}", f"drop:{ids[0]}"]
 
@@ -2086,7 +2091,7 @@ def test_fronta_obnovi_tlacitka_sady(bot, conn, api, media_dir):
     bot.send_next()  # čeká sada, nic dalšího se nepošle
     assert len(api.sent("sendVideo")) == 3
     api.calls.clear()
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     msgs = [b for b in api.sent() if _buttons(b)]
     # jen zpráva sady, žádné náhledy se Schválit
     assert len(msgs) == 1
@@ -2098,7 +2103,7 @@ def test_fronta_obnovi_tlacitka_sady(bot, conn, api, media_dir):
     assert [_get(conn, i).status for i in ids] == ["pending", "rejected", "rejected"]
     # po výběru a Hotovo /fronta ukáže jen náhled vybrané varianty
     api.calls.clear()
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     assert [_buttons(b) for b in api.sent() if _buttons(b)] == [
         [f"ok:{ids[0]}", f"edit:{ids[0]}", f"no:{ids[0]}"]]
 
@@ -2108,7 +2113,7 @@ def test_fronta_znovu_nabidne_sadu_a_stara_zprava_neplati(bot, conn, api, media_
     ids = _add_set(conn, media_dir, 7)
     bot.send_next()
     old = _set_msg_id(conn, ids[0])
-    bot.handle(_msg("/fronta"))
+    _fronta_resend(bot, api)
     new = _set_msg_id(conn, ids[0])
     assert new != old and old in _dropped(api)
     bot.handle(_cb(f"pick:{ids[0]}", msg_id=old))
@@ -2516,12 +2521,12 @@ def test_fronta_ukaze_ulohy_a_pc(bot, conn, api):
     from hlidac_reels import jobs, queue
     _tisk(conn, 221)
     bot.handle(_msg("/fronta"))
-    assert "PC zatím nebylo vidět" in api.texts()[-1]
+    assert "Fronta je prázdná." in api.texts()[-1] and "PC zatím nebylo vidět" in api.texts()[-1]
     a = jobs.add(conn, source="manual", ct=221)
     queue.set_state(conn, "worker_seen_at", "2026-11-20T14:05:00+01:00")
     bot.handle(_msg("/fronta"))
     text = api.texts()[-1]
-    assert f"#{a} manual 221 queued" in text
+    assert f"Ve frontě zadání (1)\n#{a} tisk 221 · 1. v pořadí" in text
     assert "PC naposledy: 20. 11. 14:05" in text
 
 
@@ -2761,7 +2766,7 @@ def test_pn_v_napovede_fronte_a_chybe(bot, conn, api):
     assert "/pn" in api.texts()[-1]
     j = jobs.add(conn, source="manual", ct=300, focus_pn=[2377, 2376])
     bot.handle(_msg("/fronta"))
-    assert f"#{j} manual 300 PN 2376+2377 queued" in api.texts()[-1]
+    assert f"#{j} PN 2376+2377 · 1. v pořadí" in api.texts()[-1]
     with conn.cursor() as cur:
         cur.execute("UPDATE reel_jobs SET status='failed', error='x' WHERE id=%s", (j,))
     conn.commit()
@@ -3424,8 +3429,9 @@ def test_fronta_autopilot_ceka_na_zverejneni(conn, api, meta, media_dir):
     bot, t = _autopilot_bot(conn, api, meta, media_dir)
     ids = _autopilot_set(conn, media_dir, 12, n=1)
     bot.handle(_msg("/fronta"))
-    line = [x for x in api.texts() if x.startswith(f"#{ids[0]} ")]
-    assert line and "čeká na automatické zveřejnění" in line[0] and "restart" not in line[0]
+    (text,) = api.texts()
+    assert "Čeká na tebe" not in text
+    assert "Hotové, čekají na odeslání (1)\n#12 tisk 300 · varianta 1 · čeká na automatické zveřejnění" in text
 
 
 @pg
@@ -3677,3 +3683,119 @@ def test_druha_instance_skonci(bot, conn, api, meta, media_dir):
         bot.start()
     finally:
         c2.close()
+
+
+# --- /fronta jako přehled (Task 7) -------------------------------------------
+
+def _fronta_resend(bot, api) -> None:
+    """/fronta a pod přehledem tlačítko Poslat tlačítka znovu (resend:0); zaznamenaná volání jsou jen z obnovy."""
+    bot.handle(_msg("/fronta"))
+    api.calls.clear()
+    bot.handle(_cb("resend:0"))
+
+
+def _sections(text: str) -> list[str]:
+    """Nadpisy sekcí přehledu (první řádek každého bloku kromě stavu PC)."""
+    return [b.splitlines()[0] for b in text.split("\n\n") if not b.startswith("PC")]
+
+
+@pg
+def test_fronta_prehled_sekce(bot, conn, api, media_dir):
+    from hlidac_reels import jobs, queue
+    # Čeká na tebe: nedotčená sada v Telegramu
+    mine = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    # Hotové, čekají na odeslání: samostatné video ve frontě
+    ready = _add(conn, media_dir, 1, ct=174)
+    # Problémy: sada, kterou nejde doručit
+    held = _add_set(conn, media_dir, 9, n=2, source="manual", ct=311)
+    for i in held:
+        queue.transition(conn, i, "queued", "held", send_attempts=5, send_error="Telegram timeout")
+    # Generuje se + Ve frontě zadání
+    gen = jobs.add(conn, source="manual", ct=300, focus_pn=[2377])
+    waiting = jobs.add(conn, source="manual", ct=90)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed', claimed_at=now() WHERE id=%s", (gen,))
+    conn.commit()
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    (msg,) = api.sent()
+    text = msg["text"]
+    assert _sections(text) == ["Čeká na tebe (1)", "Hotové, čekají na odeslání (1)", "Generuje se",
+                               "Ve frontě zadání (1)", "Problémy (1)"]
+    assert "#7 tisk 221 · nedotčená" in text
+    assert f"#{ready} tisk 174 · na řadě" in text
+    assert f"#{gen} PN 2377 · generuje se" in text
+    assert f"#{waiting} tisk 90 · 1. v pořadí" in text
+    assert "#9 tisk 311 · nejde doručit (Telegram timeout, 5×) · Zkusit znovu / Zahodit" in text
+    assert text.splitlines()[-1].startswith("PC ")
+    assert _buttons(msg) == ["resend:0"]
+    # prázdná sekce se vynechá
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (gen,))
+    conn.commit()
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    assert "Generuje se" not in _sections(api.texts()[0])
+
+
+@pg
+def test_fronta_neposila_tlacitka_sama(bot, conn, api, media_dir):
+    p = _add(conn, media_dir, 1)
+    bot.send_next()
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    assert len(api.sent()) == 1 and _buttons(api.sent()[0]) == ["resend:0"]
+    assert "editMessageReplyMarkup" not in api.methods()
+    api.calls.clear()
+    bot.handle(_cb("resend:0"))
+    btns = [_buttons(b) for b in api.sent() if _buttons(b)]
+    assert [f"ok:{p}", f"edit:{p}", f"no:{p}"] in btns
+    assert [f"pick:{i}" for i in ids] + ["doneset:7"] in btns
+    assert "answerCallbackQuery" in api.methods()
+
+
+@pg
+def test_fronta_ceka_na_tebe_radky(bot, conn, api, media_dir):
+    """Každý řádek říká, na co položka čeká: zbývá varianta, vybraná čeká na schválení, samostatné video."""
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    solo = _add(conn, media_dir, 1)
+    bot.send_next()
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[0]
+    assert "Čeká na tebe (3)" in text
+    assert "#7 tisk 221 · vybraná varianta 2 čeká na schválení" in text
+    assert "#7 tisk 221 · zbývají varianty 1, 3" in text and "Hotovo?" in text
+    assert f"#{solo} tisk 221 · čeká na schválení" in text
+
+
+@pg
+def test_fronta_automaticka_ceka_na_limit(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import bot as bot_mod
+    monkeypatch.setattr(bot_mod, "SETS_PER_DAY", 1)
+    first = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    bot.handle(_cb(f"pick:{first[0]}", msg_id=_set_msg_id(conn, first[0])))
+    _add_set(conn, media_dir, 8, ct=174)
+    api.calls.clear()
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[0]
+    assert "#8 tisk 174 (automatická) · čeká: denní limit 1/1 · /dalsi" in text
+
+
+@pg
+def test_fronta_odlozene_po_chybe(bot, conn, api, media_dir):
+    """Jednotka odložená po chybě odeslání: řádek řekne, do kdy (Europe/Prague) a kolikátý pokus."""
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir, 1)
+    queue.defer_send(conn, rid, "timeout", datetime(2026, 11, 24, 13, 0, tzinfo=timezone.utc))
+    bot.now = lambda: datetime(2026, 11, 24, 13, 0, 30, tzinfo=timezone.utc)
+    bot.handle(_msg("/fronta"))
+    assert f"#{rid} tisk 221 · odloženo do 14:01 (chyba odeslání, pokus 1)" in api.texts()[0]

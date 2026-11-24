@@ -5,9 +5,11 @@ a výsledek řádek Threads. Bez něj se o Threads nepíše nic.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from .caption import for_network
-from .queue import (AUTO_HOLD, AUTO_SET_MAX, HELD_MAX, PICKED_MAX, REQUESTED_SET_MAX,
-                    UNPICKED_AFTER_DECISION, Expired, Reel)
+from .queue import (AUTO_HOLD, AUTO_SET_MAX, AUTO_SOURCE, HELD_MAX, PICKED_MAX, REQUESTED_SET_MAX,
+                    UNPICKED_AFTER_DECISION, Expired, Reel, Unit)
 
 TEXT_LIMIT = 4096
 VIDEO_CAPTION_LIMIT = 1024
@@ -204,6 +206,118 @@ def expired_text(e: Expired) -> str:
 def reminder_text(set_id: int) -> str:
     """Nedotčená automatická sada čeká AUTO_HOLD h (už nebrzdí další automatickou)."""
     return f"Sada #{set_id} čeká {AUTO_HOLD} h. Vybrat, nebo Hotovo."
+
+
+# --- /fronta: přehled -----------------------------------------------------
+
+QUEUE_EMPTY = "Fronta je prázdná."
+RESEND_BUTTONS = [("Poslat tlačítka znovu", "resend:0")]
+_MINE = ("approval", "untouched", "picked", "remaining")
+_READY = ("next", "deferred", "limit", "blocked", "autopilot", "approved", "publishing")
+_PROBLEMS = ("held", "failed", "unknown", "stale")
+_PER_VARIANT = ("autopilot", "approved", "publishing", "stale", "failed", "unknown")
+
+
+def _age(since: datetime, now: datetime) -> str:
+    """Jak dlouho položka čeká: minuty do hodiny, hodiny do dvou dnů, pak dny."""
+    mins = max(int((now - since).total_seconds() // 60), 0)
+    if mins < 60:
+        return f"{mins} min"
+    if mins < 48 * 60:
+        return f"{mins // 60} h"
+    return f"{mins // (24 * 60)} d"
+
+
+def _what(ct: int | None, focus_pn) -> str:
+    """Předmět videa: PN, tisk, nebo automatický výběr (zadání bez tisku)."""
+    if focus_pn:
+        return "PN " + "+".join(str(n) for n in focus_pn)
+    return f"tisk {ct}" if ct is not None else "automatický výběr"
+
+
+def _variants(nums: list[int], one: str, many: str) -> str:
+    return f"{one} {nums[0]}" if len(nums) == 1 else f"{many} {', '.join(str(n) for n in nums)}"
+
+
+def _unit_line(u: Unit, now: datetime) -> str:
+    """Řádek přehledu: číslo, předmět a na co jednotka čeká."""
+    head = f"#{u.label} {_what(u.ct, u.focus_pn)}"
+    if u.state in ("next", "limit", "blocked", "deferred") and u.source == AUTO_SOURCE:
+        head += " (automatická)"
+    # u schválených a publikovaných variant sady: které (čekající, odkládané a held se týkají celé sady)
+    which = [_variants(u.variants, "varianta", "varianty")] if u.variants and u.state in _PER_VARIANT else []
+    age = _age(u.since, now)
+    if u.state == "approval":
+        parts = ["čeká na schválení", age]
+    elif u.state == "untouched":
+        parts = ["nedotčená", age]
+    elif u.state == "picked":
+        verb = "čeká" if len(u.variants) == 1 else "čekají"
+        parts = [f"{_variants(u.variants, 'vybraná varianta', 'vybrané varianty')} {verb} na schválení", age]
+    elif u.state == "remaining":
+        parts = [_variants(u.variants, "zbývá varianta", "zbývají varianty"), age, "Hotovo?"]
+    elif u.state == "next":
+        parts = ["na řadě"]
+    elif u.state == "deferred":
+        parts = [f"odloženo do {u.note} (chyba odeslání, pokus {u.attempts})"]
+    elif u.state == "limit":
+        parts = [f"čeká: denní limit {u.note}", "/dalsi"]
+    elif u.state == "blocked":
+        parts = [f"čeká na výběr z předchozí automatické sady (nejdéle {AUTO_HOLD} h)", "/dalsi"]
+    elif u.state == "autopilot":
+        parts = ["čeká na automatické zveřejnění"]
+    elif u.state == "approved":
+        parts = ["schváleno, čeká na zveřejnění", age]
+    elif u.state == "publishing":
+        parts = ["zveřejňuje se", age]
+    elif u.state == "stale":
+        parts = ["zveřejňování možná přerušeno, bot ho brzy převede na nejisté"]
+    elif u.state == "held":
+        error = (u.note or "")[:REASON_LIMIT]
+        parts = [f"nejde doručit ({error + ', ' if error else ''}{u.attempts}×)", "Zkusit znovu / Zahodit"]
+    elif u.state == "failed":
+        error = (u.note or "")[:REASON_LIMIT]
+        parts = [f"zveřejnění selhalo{': ' + error if error else ''}", "Zkusit znovu"]
+    elif u.state == "unknown":
+        parts = ["výsledek zveřejnění nejistý", "Zkusit znovu"]
+    else:
+        parts = [u.state]
+    return " · ".join([head, *which, *parts])
+
+
+def queue_overview(units: list[Unit], jobs: list, worker_line: str, now: datetime | None = None) -> str:
+    """Přehled /fronta (spec 4.2): sekce v pevném pořadí, prázdné se vynechají, poslední řádek stav PC.
+
+    units z queue.open_units, jobs = aktivní zadání generátoru (jobs.pending, v pořadí výdeje).
+    """
+    now = now or datetime.now(timezone.utc)
+    mine = [u for u in units if u.state in _MINE]
+    ready = [u for u in units if u.state in _READY]
+    problems = [u for u in units if u.state in _PROBLEMS]
+    generating = [j for j in jobs if j.status == "claimed"]
+    waiting = [j for j in jobs if j.status == "queued"]
+    blocks = []
+    if mine:
+        blocks.append([f"Čeká na tebe ({len(mine)})", *(_unit_line(u, now) for u in mine)])
+    if ready:
+        blocks.append([f"Hotové, čekají na odeslání ({len(ready)})", *(_unit_line(u, now) for u in ready)])
+    if generating:
+        blocks.append(["Generuje se", *(f"#{j.id} {_what(j.ct, j.focus_pn)} · generuje se · "
+                                        f"{_age(j.claimed_at or j.created_at, now)}" for j in generating)])
+    if waiting:
+        blocks.append([f"Ve frontě zadání ({len(waiting)})",
+                       *(f"#{j.id} {_what(j.ct, j.focus_pn)} · {n}. v pořadí" for n, j in enumerate(waiting, 1))])
+    if problems:
+        blocks.append([f"Problémy ({len(problems)})", *(_unit_line(u, now) for u in problems)])
+    if not blocks:
+        blocks.append([QUEUE_EMPTY])
+    blocks.append([worker_line])
+    text = "\n\n".join("\n".join(b) for b in blocks)
+    if len(text) > TEXT_LIMIT:
+        # dlouhý přehled: zkrátí se, stav PC zůstane na konci
+        tail = "\n…\n\n" + worker_line
+        text = text[:TEXT_LIMIT - len(tail)].rsplit("\n", 1)[0] + tail
+    return text
 
 
 NOTHING_READY = "Teď není co poslat: položky ve frontě jsou odložené po chybě odeslání, zkusím je znovu."

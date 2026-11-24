@@ -3,9 +3,11 @@
 Zásady: obsluhuje se jen chat REELS_TELEGRAM_CHAT_ID (cokoli jiného se zahodí bez volání API),
 nic se nezveřejní bez tlačítka Schválit (kromě položek autopilota: maybe_autopublish je zveřejní
 po jedné za SEND_INTERVAL a pošle odkazy), offset Telegramu se ukládá po každé zpracované zprávě, takže restart
-žádné tlačítko nezopakuje. Doručení ke schválení řídí pravidla R1–R4 (send_next): hotová jednotka (sada variant
-nebo samostatné video) odejde bez ohledu na nerozhodnuté položky jiných jednotek, za cyklus nejvýš jedna;
-co nejde poslat, se odloží a po opakovaných chybách čeká ve stavu held na Zkusit znovu / Zahodit.
+žádné tlačítko nezopakuje. Doručení ke schválení řídí pravidla R1–R4 (send_next): vyžádaná jednotka (manual,
+auto_pick, ukazka) odejde bez ohledu na nerozhodnuté položky jiných jednotek, automatická (fresh) podléhá limitu a
+brzdě (viz níže); za cyklus nejvýš jedna jednotka. Co nejde poslat kvůli přechodné chybě, se odloží (1/5/15/60 min)
+a po 5 pokusech čeká ve stavu held na Zkusit znovu / Zahodit. Videa a zpráva sady se ukládají hned po odeslání
+(žádné duplicity), ztracené zprávy sady a náhledy doplní opravná smyčka. Druhá instance bota skončí (advisory lock).
 Tokeny se nikam nevypisují.
 
 Threads je volitelné: bez THREADS_USER_ID je threads=None a bot o Threads nepíše. Token Threads

@@ -3552,3 +3552,28 @@ def test_autopilot_vadny_klic_nevznikle_smazan(conn, api, meta, media_dir):
     queue.set_state(conn, "autopilot_skipped:abc", "[]")
     bot.maybe_autopublish()
     assert queue.get_state(conn, "autopilot_skipped:abc") is None
+
+
+@pg
+def test_denni_souhrn_obsahuje_frontu(bot, conn, api, media_dir, monkeypatch):
+    from hlidac_reels import hlidani, queue
+    ids = _add_set(conn, media_dir, 5)
+    for i in ids:
+        queue.transition(conn, i, "queued", "withdrawn", decided_at=bot.now())
+    monkeypatch.setattr(hlidani, "summary_due", lambda c, now: "2026-11-24")
+    monkeypatch.setattr(hlidani, "summary_text", lambda c, now: "Stav dat")
+    bot._daily_summary()
+    text = api.texts()[-1]
+    assert text.startswith("Stav dat") and "Sada #5 stažena: nález už není mezi hlavními" in text
+
+
+@pg
+def test_neodeslana_zprava_o_vyprseni_do_logu(bot, conn, api, media_dir, caplog):
+    ids = _add_set(conn, media_dir, 1)
+    bot.send_next()
+    api.fail["sendMessage"] = httpx.Response(500, json={"ok": False, "description": "down"})
+    _later(bot, days=8)
+    with caplog.at_level(logging.WARNING):
+        bot.maybe_fresh()
+    assert {_get(conn, i).status for i in ids} == {"expired"}
+    assert "zpráva o vypršení" in caplog.text

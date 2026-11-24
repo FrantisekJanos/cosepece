@@ -163,7 +163,8 @@ def retire(conn, now: datetime) -> list[tuple[int, str]]:
             continue
         changed = False
         for reel in queue.set_items(conn, set_id):
-            if queue.transition(conn, reel.id, ("queued", "pending"), "withdrawn"):
+            # decided_at = čas stažení: podle něj stažení vypíše denní souhrn (queue.summary_lines)
+            if queue.transition(conn, reel.id, ("queued", "pending"), "withdrawn", decided_at=now):
                 changed = True
         if changed:
             out.append((set_id, "withdrawn"))

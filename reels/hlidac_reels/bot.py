@@ -1153,7 +1153,9 @@ class Bot:
         for e in queue.expire(self.conn, self.now()):
             for msg_id in e.msg_ids:
                 self._drop_buttons(msg_id)
-            self._say(messages.expired_text(e))
+            if not self._say(messages.expired_text(e)):
+                # stav se už změnil; ztracená zpráva aspoň v logu (a nevybrané varianty v denním souhrnu)
+                log.warning("zpráva o vypršení (%s, sada %s, položky %s) neodešla", e.kind, e.set_id, e.reel_ids)
 
     def _remind(self) -> None:
         """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště."""
@@ -1187,8 +1189,13 @@ class Bot:
         day = hlidani.summary_due(self.conn, self.now())
         if day is None:
             return
+        text = hlidani.summary_text(self.conn, self.now())
+        # fronta Reels jen v denním souhrnu (události za 24 h), /stav ukazuje jen čerstvost dat
+        lines = queue.summary_lines(self.conn, self.now())
+        if lines:
+            text += "\n\nFronta Reels:\n" + "\n".join(f"- {line}" for line in lines)
         # souhrn se nezapíše jako odeslaný, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL)
-        if self._say(self._clip(hlidani.summary_text(self.conn, self.now()))):
+        if self._say(self._clip(text)):
             hlidani.mark_summary(self.conn, day)
 
     def maybe_send_next(self) -> None:

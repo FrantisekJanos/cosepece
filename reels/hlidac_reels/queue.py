@@ -305,6 +305,60 @@ def auto_reminders(conn, now: datetime) -> list[int]:
     return ids
 
 
+SUMMARY_WINDOW = timedelta(hours=24)
+
+
+def summary_lines(conn, now: datetime) -> list[str]:
+    """Řádky fronty pro denní souhrn (spec 2.2), autopilot vyloučený.
+
+    - vypršelé nevybrané varianty sady za posledních SUMMARY_WINDOW (expired, decided_at v okně, nevybrané),
+    - stažené jednotky za posledních SUMMARY_WINDOW (withdrawn, decided_at v okně; i ty, které v Telegramu nebyly),
+    - vybrané nerozhodnuté varianty, kterým lhůta PICKED_MAX vyprší během příštích SUMMARY_WINDOW.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_COLS} FROM reel_queue WHERE NOT autopilot AND ("
+            "(status IN ('expired','withdrawn') AND decided_at > %(since)s AND decided_at <= %(now)s) "
+            "OR (status = 'pending' AND set_id IS NOT NULL AND sent_at IS NOT NULL)) ORDER BY id",
+            {"since": now - SUMMARY_WINDOW, "now": now},
+        )
+        rows = [Reel(*r) for r in cur.fetchall()]
+    conn.commit()
+    expired: dict[int, list[int]] = {}
+    withdrawn: list[str] = []
+    seen_withdrawn: set[int] = set()
+    soon: list[str] = []
+    chosen: dict[int, set[int]] = {}
+
+    def picks(set_id: int) -> set[int]:
+        if set_id not in chosen:
+            chosen[set_id] = picked(conn, set_id)
+        return chosen[set_id]
+
+    for r in rows:
+        if r.status == "withdrawn":
+            key = r.set_id if r.set_id is not None else -r.id
+            if key not in seen_withdrawn:
+                seen_withdrawn.add(key)
+                what = f"Sada #{r.set_id} stažena" if r.set_id is not None else f"#{r.id} staženo"
+                withdrawn.append(f"{what}: nález už není mezi hlavními")
+        elif r.status == "expired":
+            # nevybraná varianta dotčené sady: lhůtu jí spustilo dřívější rozhodnutí o jiné variantě
+            # (nedotčená sada vyprší celá najednou, vybraná varianta má vlastní zprávu)
+            if (r.set_id is not None and r.id not in picks(r.set_id)
+                    and any(o.decided_at is not None and o.decided_at < r.decided_at
+                            for o in set_items(conn, r.set_id))):
+                expired.setdefault(r.set_id, []).append(r.id)
+        elif r.id in picks(r.set_id):
+            deadline = (r.picked_at or r.sent_at) + PICKED_MAX
+            if now < deadline <= now + SUMMARY_WINDOW:
+                soon.append(f"Sada #{r.set_id}: vybraná varianta #{r.id} zítra vyprší "
+                            f"({PICKED_MAX.days} dní bez schválení)")
+    lines = [f"Sada #{sid}: vypršely nevybrané varianty " + ", ".join(f"#{i}" for i in ids)
+             for sid, ids in expired.items()]
+    return lines + withdrawn + soon
+
+
 def mark_reminded(conn, set_id: int) -> None:
     """Připomínka sady odešla, znovu se neposílá."""
     set_state(conn, f"{REMINDED_KEY}{set_id}", "1")

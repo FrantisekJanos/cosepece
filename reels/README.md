@@ -245,6 +245,8 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
   Vypršení jen zamítá, nikdy neschvaluje. Nedotčená automatická sada po 12 h přestane brzdit další a přijde jedna
   připomínka (`reel_state` `reminded:<set_id>`),
 - sada `fresh` nebo `auto_pick` bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne (`withdrawn`, `fresh.retire`).
+- denní souhrn (8:00) má oddíl „Fronta Reels“ (`queue.summary_lines`): vypršelé nevybrané varianty a stažené sady za
+  24 h a vybrané varianty, kterým lhůta vyprší zítra.
 
 ## Autopilot (`/pn` bez schválení)
 

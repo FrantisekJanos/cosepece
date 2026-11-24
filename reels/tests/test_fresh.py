@@ -163,6 +163,9 @@ def test_retire(conn):
     assert fresh.retire(conn, NOW) == [(gone, "withdrawn")]
     assert _statuses(conn, old) == ["pending", "pending"]
     assert _statuses(conn, gone) == ["withdrawn", "withdrawn"]
+    # stažení se zapíše jako rozhodnutí (řádek v denním souhrnu)
+    from hlidac_reels import queue
+    assert {r.decided_at for r in queue.set_items(conn, gone)} == {NOW}
     assert _statuses(conn, manual) == ["pending", "pending"]
     assert _statuses(conn, ok) == ["pending", "pending"]
     # podruhé už nic

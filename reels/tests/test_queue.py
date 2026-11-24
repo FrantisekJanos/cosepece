@@ -530,3 +530,46 @@ def test_pripominka_jednou(conn):
     assert queue.auto_reminders(conn, later) == [1]
     queue.mark_reminded(conn, 1)
     assert queue.auto_reminders(conn, later) == []
+
+
+# --- řádky denního souhrnu (queue.summary_lines) ---
+
+def test_souhrn_vyprsele_nevybrane(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, at=_now() - timedelta(days=3))
+    queue.mark_picked(conn, 1, ids[0])
+    queue.approve(conn, ids[0], _now() - timedelta(hours=25))
+    t = _now() - timedelta(minutes=30)
+    assert [e.kind for e in queue.expire(conn, t)] == ["unpicked"]
+    line = f"Sada #1: vypršely nevybrané varianty #{ids[1]}, #{ids[2]}"
+    assert line in queue.summary_lines(conn, _now())
+    # mimo okno 24 h už ne
+    assert not any(line in x for x in queue.summary_lines(conn, t + timedelta(hours=24, minutes=1)))
+
+
+def test_souhrn_stazene(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _set(conn, 1, source="fresh")
+    for i in ids:
+        queue.transition(conn, i, "queued", "withdrawn", decided_at=_now() - timedelta(hours=2))
+    line = "Sada #1 stažena: nález už není mezi hlavními"
+    assert line in queue.summary_lines(conn, _now())
+    assert line not in queue.summary_lines(conn, _now() + timedelta(hours=23))
+
+
+def test_souhrn_vybrana_zitra_vyprsi(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, at=_now() - timedelta(days=30))
+    queue.mark_picked(conn, 1, ids[0])
+    queue.set_fields(conn, ids[0], picked_at=_now() - timedelta(days=13, hours=1))
+    line = f"Sada #1: vybraná varianta #{ids[0]} zítra vyprší (14 dní bez schválení)"
+    assert line in queue.summary_lines(conn, _now())
+    # víc než den před lhůtou nic
+    assert line not in queue.summary_lines(conn, _now() - timedelta(hours=2))
+    # autopilot se nepočítá
+    ap = _add(conn, 901, source="fresh", set_id=4, variant=1, autopilot=True)
+    queue.transition(conn, ap, "queued", "withdrawn", decided_at=_now())
+    assert not any("#4" in x for x in queue.summary_lines(conn, _now()))

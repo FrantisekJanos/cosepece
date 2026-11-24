@@ -22,7 +22,7 @@ from .formats import pick_formats
 from .normalize import normalize
 from .validate import check_layout, validate_variant
 
-MIN_OK = 2
+MIN_OK = 1  # sada s jedinou platnou variantou se posílá (rozhodnutí vlastníka; nevzniklé jdou jako skipped)
 NOTHING_WRITTEN = "běh modelu nic nezapsal"
 BUDGET_RUNS = 4  # běhy modelu na úlohu přes všechna vydání: 1 generování + 3 cílené běhy
 STATE_FILE = "state.json"
@@ -231,8 +231,8 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
              timeout_s: int = 1200, landscape: bool = True,
              published: list[dict] | None = None, focus_pn: list[int] | None = None,
-             focus_info: list[dict] | None = None) -> GenResult:
-    """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN 2).
+             focus_info: list[dict] | None = None, autopilot: bool = False) -> GenResult:
+    """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN a u autopilota 2).
 
     focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
     Stav úlohy je v `out/state.json`. Další vydání se stejným otiskem vstupu pokračuje: hotová videa
@@ -246,7 +246,9 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
     # server has_text zatím neposílá; chybějící pole = text PN je k dispozici
     has_text = all(i.get("has_text", True) for i in focus_info or [] if isinstance(i, dict))
-    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text)
+    # formáty jsou v otisku vstupu: přepnutí autopilota úlohu správně začne znovu
+    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text,
+                           autopilot=autopilot)
     input_hash = _input_hash(card_v2, focus_pn, formats)
     st = _load_state(out, input_hash)
     if st is None:  # nový vstup: výstup minulého běhu se nesmí vydávat za nový (smaže i normalize.json)

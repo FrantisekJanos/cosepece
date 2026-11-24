@@ -20,7 +20,7 @@ from .generator.formats import FORMATS
 log = logging.getLogger(__name__)
 
 MAX_VIDEO_BYTES = 30 * 1024 * 1024
-MIN_VALID = 2
+MIN_VALID = 1  # sada s jedinou platnou variantou se převezme (stejně jako MIN_OK workeru)
 _SOURCES = ("manual", "auto_pick", "fresh")
 _TEMPLATES = ("template_v2", "template_v3")
 _ERROR_LIMIT = 500
@@ -219,7 +219,7 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
         for t in created:  # po rollbacku nezůstanou osiřelé soubory
             t.unlink(missing_ok=True)
         reasons = "; ".join(f"varianta {n}: {', '.join(e)}" for n, e in sorted(res.rejected.items()))
-        _fail_job(conn, job_id, f"méně než {MIN_VALID} platné varianty. {reasons}")
+        _fail_job(conn, job_id, f"méně platných variant než {MIN_VALID}. {reasons}")
     return res
 
 

@@ -111,12 +111,34 @@ def test_zrusena_uloha_smaze_slozku(conn, tmp_path):
     assert not folder.exists() and queue.set_items(conn, jid) == []
 
 
-def test_jedna_platna_varianta(conn, tmp_path):
+def test_sada_s_jednou_variantou_projde(conn, tmp_path):
     from hlidac_reels import inbox, queue
     jid = _job(conn)
-    folder = _set(tmp_path, jid, ["ok", "broken", "broken"])
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["skipped"] = [{"n": 2, "format": "pn", "errors": ["render selhal"]}]
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
     res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
-    assert len(res) == 1 and res[0].ok is False and set(res[0].rejected) == {2, 3}
+    assert len(res) == 1 and res[0].ok and not res[0].rejected and len(res[0].reel_ids) == 1
+    assert [r.variant for r in queue.set_items(conn, jid)] == [1]
+    assert not folder.exists()
+
+
+def test_jedna_platna_z_vadnych_projde(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok", "broken", "broken"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and set(res[0].rejected) == {2, 3}
+    assert [r.variant for r in queue.set_items(conn, jid)] == [1]
+
+
+def test_zadna_platna_varianta(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["broken", "broken", "broken"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert len(res) == 1 and res[0].ok is False and set(res[0].rejected) == {1, 2, 3}
     assert queue.set_items(conn, jid) == []
     with conn.cursor() as cur:
         cur.execute("SELECT status, error, notified_at FROM reel_jobs WHERE id=%s", (jid,))
@@ -183,7 +205,7 @@ def _rewrite(folder, jid, mutate):
 def test_format_v3_povinny_a_platny(conn, tmp_path):
     from hlidac_reels import inbox
     jid = _job(conn)
-    folder = _set(tmp_path, jid, ["ok", "ok", "ok", "ok"][:3])
+    folder = _set(tmp_path, jid, ["ok", "ok"])
 
     def mut(m):
         m["variants"][0]["format"] = None

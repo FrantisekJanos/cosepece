@@ -39,6 +39,14 @@ def test_focus_bez_textu_jen_pn():
     assert pick_formats([], True, has_text=False) == ["zmena", "pn"]
 
 
+def test_autopilot_dva_formaty():
+    # úloha autopilota (/pn): jen v3 pn, sada má 2 varianty (v2 z rozboru AI + v3 pn); hint ani text PN nerozhodují
+    assert pick_formats(["deadline_cut"], True, hint="cesta", focus=True, autopilot=True) == ["pn"]
+    assert pick_formats([], False, focus=True, has_text=False, autopilot=True) == ["pn"]
+    assert pick_formats([], True, autopilot=True) == ["pn"]
+    assert pick_formats([], True, focus=True, autopilot=False) == ["pn", "zmena"]
+
+
 def test_hint_je_prvni():
     assert pick_formats(["deadline_cut", "late_pn"], False, hint="zmena") == ["zmena", "cesta"]
 

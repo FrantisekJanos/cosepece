@@ -129,7 +129,10 @@ Server mu jen vydává úlohy a přebírá výsledky, sám nic negeneruje.
 
 Postup jedné úlohy: heartbeat → `claim` (úloha s kartou tisku) → `generate()` (`claude -p` napíše 3 varianty, render
 v2/v3, kontrola videa) → nahrání platných videí (`PUT`, každé nejvýš 30 MB; větší varianta vypadne) → `result`.
-Se 2 nebo 3 platnými variantami server sadu přijme, s méně worker nahlásí `fail`. Bez úlohy nebo po chybě sítě čeká
+Sada s 1–3 platnými variantami projde (i jediná platná se pošle), bez platné varianty worker nahlásí `fail`.
+Nevzniklé varianty jdou v `result` jako `skipped: [{n, format, errors}]`: server je zapíše do manifestu a jako
+poznámku do `reel_jobs.error` (úloha je přesto `done`). Úloha autopilota (`autopilot` v claimu, z `/pn`) má jen
+2 varianty: v2 a v3 `pn`. Bez úlohy nebo po chybě sítě čeká
 5 minut. Worker zpracuje vždy jen jednu úlohu a druhá instance (třeba naplánovaná úloha plus ruční spuštění) hned
 skončí se zprávou (zámek `worker.lock` v pracovní složce).
 
@@ -155,7 +158,7 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
   varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. „Stejný vstup“ je stejná karta z webu (bez `data_date`), takže hodinová synchronizace dat, která kartu změní, spustí úlohu znovu od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
   plus nejvýš 3 cílené opravy jen vadných variant, s doslovnými chybami); běh přerušený chybou prostředí se nepočítá.
   Hotové platné varianty se renderují hned, takže je pozdější chyba prostředí nezahodí.
-- Video k PN bez textu PN dostane jen formát `pn`, sada má pak 2 varianty a obě musí projít.
+- Video k PN bez textu PN a úloha autopilota dostanou jen formát `pn`, sada má pak 2 varianty.
 
 **Worker při chybě a výpadku:**
 

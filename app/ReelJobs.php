@@ -67,7 +67,7 @@ final class ReelJobs
 
         // 3.–4. první úloha ve frontě; při souběhu nebo nepoužitelné úloze se zkusí další
         $queued = $this->db->all(
-            "SELECT id, source, ct, format_hint, focus_pn FROM reel_jobs WHERE status = 'queued' ORDER BY " . self::SOURCE_ORDER . ', created_at, id'
+            "SELECT id, source, ct, format_hint, focus_pn, autopilot FROM reel_jobs WHERE status = 'queued' ORDER BY " . self::SOURCE_ORDER . ', created_at, id'
         );
         foreach ($queued as $job) {
             $id = (int)$job['id'];
@@ -119,9 +119,17 @@ final class ReelJobs
                 // video jen o těchto PN (/pn); null = celý tisk. Starší worker pole ignoruje.
                 'focus_pn' => $focus,
                 'focus_pn_info' => $focus !== null ? $this->pnInfo($ct, $focus) : [],
+                // úloha autopilota (/pn): worker dělá jen 2 varianty (v2 a v3 pn). Starší worker pole ignoruje.
+                'autopilot' => self::isTrue($job['autopilot'] ?? false),
             ];
         }
         return null;
+    }
+
+    /** Logická hodnota z DB: PostgreSQL vrací bool, SQLite a MySQL 0/1 (i jako text), PostgreSQL jako text 't'. */
+    private static function isTrue(mixed $value): bool
+    {
+        return in_array($value, [true, 1, '1', 't', 'true'], true);
     }
 
     /**
@@ -169,16 +177,20 @@ final class ReelJobs
             && hash_equals((string)$row['claim_token'], $token);
     }
 
-    /** Úloha hotová: sada variant má set_id = id úlohy. False, když token neplatí. */
-    public function finish(int $jobId, string $token): bool
+    /**
+     * Úloha hotová: sada variant má set_id = id úlohy. False, když token neplatí. $note = poznámka do sloupce
+     * error (např. které varianty nevznikly); úloha je přesto done.
+     */
+    public function finish(int $jobId, string $token, ?string $note = null): bool
     {
         if (!$this->checkClaim($jobId, $token)) {
             return false;
         }
+        $note = $note !== null && $note !== '' ? mb_substr($note, 0, 2000) : null;
         $done = $this->db->run(
-            "UPDATE reel_jobs SET status = 'done', finished_at = ?, set_id = id, error = NULL
+            "UPDATE reel_jobs SET status = 'done', finished_at = ?, set_id = id, error = ?
               WHERE id = ? AND status = 'claimed' AND claim_token = ?",
-            [$this->stamp(($this->now)()), $jobId, $token]
+            [$this->stamp(($this->now)()), $note, $jobId, $token]
         );
         return $done->rowCount() > 0;
     }

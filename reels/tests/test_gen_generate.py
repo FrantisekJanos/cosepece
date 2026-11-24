@@ -103,10 +103,38 @@ def test_oprava_nejvys_trikrat(tmp_path, fake):
     assert not r.variants[2].ok and r.ok
 
 
-def test_jedna_platna_je_chyba(tmp_path, fake):
+def test_sada_s_jednou_variantou_projde(tmp_path, fake):
+    # MIN_OK = 1: sada s jedinou platnou variantou se posílá (rozhodnutí vlastníka, platí pro všechny zdroje)
     fake["prepare"] = lambda wd: (shutil.rmtree(wd / "variant-2"), shutil.rmtree(wd / "variant-3"))
     r = _run(tmp_path)
-    assert not r.ok
+    assert gen.MIN_OK == 1
+    assert r.ok and [v.ok for v in r.variants] == [True, False, False]
+
+
+def test_zadna_platna_je_chyba(tmp_path, fake):
+    fake["skip"] = {"variant-1", "variant-2", "variant-3"}
+    r = _run(tmp_path, render=False)
+    assert not r.ok and not any(v.ok for v in r.variants)
+
+
+def test_autopilot_dve_varianty(tmp_path, fake):
+    r = _run(tmp_path, render=False, autopilot=True)
+    assert r.formats == ["pn"]
+    assert [(v.n, v.template, v.format) for v in r.variants] == [(1, "template_v2", None), (2, "template_v3", "pn")]
+    assert "variant-3" not in fake["calls"][0] and "formát F = pn" in fake["calls"][0]
+    assert json.loads((tmp_path / "out" / "tisk.json").read_text(encoding="utf-8"))["formats"] == ["pn"]
+
+
+def test_autopilot_zmeni_otisk_vstupu(tmp_path, fake):
+    # formáty jsou v otisku: přepnutí autopilota začne úlohu znovu (jiná sada variant)
+    _run(tmp_path, render=False)
+    calls = len(fake["calls"])
+    r = _run(tmp_path, render=False, autopilot=True)
+    # nové generování celé sady (ne pokračování s opravou), stav s jen dvěma variantami
+    assert "OPRAVA:" not in fake["calls"][calls]
+    assert r.formats == ["pn"] and len(r.variants) == 2
+    state = json.loads((tmp_path / "out" / "state.json").read_text(encoding="utf-8"))
+    assert sorted(state["variants"]) == ["1", "2"]
 
 
 def test_timeout_zachova_hotove(tmp_path, fake):
@@ -142,7 +170,7 @@ def test_main_navratovy_kod(tmp_path, fake, monkeypatch):
             "--mcp-config", str(tmp_path / "mcp.json"), "--out", str(tmp_path / "o")]
     assert gen.main(base) == 0
     fake["calls"].clear()
-    fake["prepare"] = lambda wd: (shutil.rmtree(wd / "variant-2"), shutil.rmtree(wd / "variant-3"))
+    fake["skip"] = {"variant-1", "variant-2", "variant-3"}
     assert gen.main(base[:-1] + [str(tmp_path / "o2")]) == 2
     assert gen.main(base[:2] + ["--card-v2", str(tmp_path / "neni.json")] + base[4:]) == 1
 

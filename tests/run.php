@@ -1538,14 +1538,15 @@ $rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
 $rjPnType = db()->driver === 'pgsql' ? 'INTEGER[]' : 'TEXT';
 db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
-    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType)");
+    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType,
+    autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
 // pro jeden tisk a množinu PN nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
 if (db()->driver !== 'mysql') {
     db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALESCE(focus_pn, '{}')) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
 }
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
     video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', format VARCHAR(40),
-    created_at $rjTs, published_at $rjTs)");
+    created_at $rjTs, published_at $rjTs, autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
 
 // tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí

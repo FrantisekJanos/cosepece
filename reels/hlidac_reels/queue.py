@@ -56,6 +56,7 @@ class Reel:
     set_id: int | None
     variant: int | None
     template: str | None
+    autopilot: bool = False  # z úlohy s autopilotem: zveřejní se bez schválení
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -91,16 +92,16 @@ def add(conn, *, video_path: str, video_sha256: str, caption: str,
         video_landscape_path: str | None = None,
         video_landscape_sha256: str | None = None,
         set_id: int | None = None, variant: int | None = None, template: str | None = None,
-        commit: bool = True) -> int:
+        autopilot: bool = False, commit: bool = True) -> int:
     """Vloží položku. commit=False nechá transakci otevřenou (volající commitne, při chybě rollback)."""
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, "
-                "video_landscape_path, video_landscape_sha256, set_id, variant, template) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                "video_landscape_path, video_landscape_sha256, set_id, variant, template, autopilot) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (source, ct, format, video_path, video_sha256, caption,
-                 video_landscape_path, video_landscape_sha256, set_id, variant, template),
+                 video_landscape_path, video_landscape_sha256, set_id, variant, template, bool(autopilot)),
             )
             new_id = cur.fetchone()[0]
         if commit:

@@ -159,3 +159,11 @@ def result_text(reel: Reel, threads: bool = False) -> str:
     if other:
         lines.append(f"Chyba: {'; '.join(other)}")
     return "\n".join(lines)
+
+
+def autopilot_text(on: bool) -> str:
+    """Odpověď na /autopilot: stav přepínače."""
+    if on:
+        return ("Autopilot zapnut: PN vybraná v /pn se zveřejní bez schválení (2 videa na PN). "
+                "Vypnout: /autopilot off")
+    return "Autopilot vypnut: sady jdou ke schválení."

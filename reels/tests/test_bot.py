@@ -2664,3 +2664,27 @@ def test_sirka_u_varianty_sady_az_po_vyberu(conn, api, meta, media_dir):
     assert _get(conn, ids[1]).telegram_msg_id == picked_preview
     bot.handle(_cb(f"ok:{ids[1]}", msg_id=picked_preview))
     assert _get(conn, ids[1]).status == "published"
+
+
+@pg
+def test_autopilot_prepinac(bot, conn, api):
+    from hlidac_reels import messages, queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    assert bot._autopilot_on() is False
+    bot.handle(_msg("/autopilot on"))
+    assert queue.get_state(conn, AUTOPILOT_KEY) == "1"
+    assert bot._autopilot_on() is True
+    assert api.texts()[-1] == messages.autopilot_text(True)
+    assert "bez schválení" in api.texts()[-1] and "/autopilot off" in api.texts()[-1]
+    # bez argumentu: jen stav
+    bot.handle(_msg("/autopilot"))
+    assert api.texts()[-1] == messages.autopilot_text(True)
+    bot.handle(_msg("/autopilot off"))
+    assert queue.get_state(conn, AUTOPILOT_KEY) == "0"
+    assert bot._autopilot_on() is False
+    assert api.texts()[-1] == "Autopilot vypnut: sady jdou ke schválení."
+    bot.handle(_msg("/autopilot"))
+    assert api.texts()[-1] == messages.autopilot_text(False)
+    # nápověda zmiňuje přepínač
+    bot.handle(_msg("/neznamy"))
+    assert "/autopilot" in api.texts()[-1]

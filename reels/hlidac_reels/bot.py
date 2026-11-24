@@ -38,7 +38,7 @@ import psycopg
 from . import db, fresh, hlidani, inbox, jobs, publish, queue
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
-from .messages import (approval_buttons, preview_parts, preview_text, result_text,  # noqa: F401
+from .messages import (approval_buttons, autopilot_text, preview_parts, preview_text, result_text,  # noqa: F401
                        retry_buttons, set_buttons, set_text, set_video_caption, video_caption)
 from .meta import Meta
 from .queue import Reel
@@ -76,10 +76,12 @@ PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
 PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
             f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
+AUTOPILOT_KEY = "autopilot"  # reel_state: "1" = PN z /pn se zveřejní bez schválení
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
-        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem).\n"
+        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
+        "/autopilot on|off (PN z /pn zveřejnit bez schválení; bez argumentu stav).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
@@ -473,8 +475,20 @@ class Bot:
             self._cmd_pn((text or "").strip().partition(" ")[2])
         elif command == "/stav":
             self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
+        elif command == "/autopilot":
+            self._cmd_autopilot((text or "").strip().partition(" ")[2])
         else:
             self._say(HELP)
+
+    def _autopilot_on(self) -> bool:
+        return queue.get_state(self.conn, AUTOPILOT_KEY) == "1"
+
+    def _cmd_autopilot(self, arg: str) -> None:
+        """/autopilot on|off: přepne autopilota; bez argumentu (nebo s jiným) vypíše stav."""
+        arg = arg.strip().lower()
+        if arg in ("on", "off"):
+            queue.set_state(self.conn, AUTOPILOT_KEY, "1" if arg == "on" else "0")
+        self._say(autopilot_text(self._autopilot_on()))
 
     def _cmd_video(self, args: list[str]) -> None:
         """/video <ct> [formát]: ruční zadání generátoru."""

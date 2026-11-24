@@ -34,22 +34,24 @@ class Job:
     finished_at: datetime | None
     notified_at: datetime | None
     focus_pn: list[int] | None = None  # video jen o těchto PN (seřazené); None = celý tisk
+    autopilot: bool = False  # zadáno se zapnutým autopilotem: videa se zveřejní bez schválení
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Job))
 
 
 def add(conn, *, source: str, ct: int | None = None, format_hint: str | None = None,
-        reason_keys: list[str] | None = None, focus_pn: list[int] | None = None) -> int:
+        reason_keys: list[str] | None = None, focus_pn: list[int] | None = None,
+        autopilot: bool = False) -> int:
     keys = json.dumps(reason_keys, ensure_ascii=False) if reason_keys is not None else None
     # seřazená množina, aby unikátní index poznal stejné zadání v jiném pořadí; prázdná = celý tisk
     pns = sorted({int(n) for n in focus_pn}) if focus_pn else None
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO reel_jobs (source, ct, format_hint, reason_keys, focus_pn) VALUES (%s,%s,%s,%s,%s) "
-                "RETURNING id",
-                (source, ct, format_hint, keys, pns),
+                "INSERT INTO reel_jobs (source, ct, format_hint, reason_keys, focus_pn, autopilot) "
+                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                (source, ct, format_hint, keys, pns, bool(autopilot)),
             )
             new_id = cur.fetchone()[0]
         conn.commit()

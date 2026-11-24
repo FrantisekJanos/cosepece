@@ -2380,6 +2380,7 @@ def test_nahled_rika_format_threads(conn, api, meta, media_dir):
 
 @pg
 def test_doplnena_sirka_u_pending_jednou(conn, api, meta, media_dir):
+    # šířka jde do chatu jednou a jen pro informaci: žádný nový náhled, původní tlačítka platí dál
     bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads())
     now = [1000.0]
     bot.clock = lambda: now[0]
@@ -2390,49 +2391,34 @@ def test_doplnena_sirka_u_pending_jednou(conn, api, meta, media_dir):
     api.calls.clear()
     bot.maybe_send_next()  # ještě v intervalu: nic
     assert api.calls == []
-    for _ in range(2):
+    for _ in range(3):
         now[0] += 60
         bot.maybe_send_next()
     caps = _video_captions(api)
     assert len(caps) == 1 and "na šířku (Threads)" in caps[0]
     r = _get(conn, rid)
-    assert r.telegram_landscape_msg_id is not None
-    assert r.telegram_msg_id not in (None, old) and r.telegram_msg_id > r.telegram_landscape_msg_id
-    previews = [b for b in api.sent() if _buttons(b) == [f"ok:{rid}", f"edit:{rid}", f"no:{rid}"]]
-    assert len(previews) == 1 and "Threads (video na šířku):" in previews[0]["text"]
-    assert _dropped(api) == [old]
+    assert r.telegram_landscape_msg_id is not None and r.telegram_msg_id == old
+    assert api.sent("sendMessage") == [] and _dropped(api) == []
 
 
 @pg
-def test_doplnena_sirka_selhani_nahledu_zkusi_jen_nahled(conn, api, meta, media_dir):
+def test_doplnena_sirka_vypadek_zkusi_znovu(conn, api, meta, media_dir):
     bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads())
     now = [1000.0]
     bot.clock = lambda: now[0]
     rid = _add(conn, media_dir)
     bot.maybe_send_next()
-    old = _get(conn, rid).telegram_msg_id
     _add_landscape(conn, media_dir, rid)
     api.calls.clear()
-    api.fail["sendMessage"] = httpx.ConnectError("down")
+    api.fail["sendVideo"] = httpx.ConnectError("down")
     now[0] += 60
     bot.maybe_send_next()
-    r = _get(conn, rid)
-    assert len(api.sent("sendVideo")) == 1
-    assert r.telegram_landscape_msg_id is not None and r.telegram_msg_id == old
-    assert _dropped(api) == []  # starý náhled si tlačítka nechá
-    # další obrátka: video se neopakuje, pošle se jen náhled
-    del api.fail["sendMessage"]
+    assert _get(conn, rid).telegram_landscape_msg_id is None
+    del api.fail["sendVideo"]
     now[0] += 60
     bot.maybe_send_next()
-    assert len(api.sent("sendVideo")) == 1
-    r = _get(conn, rid)
-    assert r.telegram_msg_id not in (None, old)
-    assert _dropped(api) == [old]
-    # a pak už nic
-    api.calls.clear()
-    now[0] += 60
-    bot.maybe_send_next()
-    assert api.calls == []
+    assert _get(conn, rid).telegram_landscape_msg_id is not None
+    assert api.sent("sendMessage") == []
 
 
 @pg
@@ -2465,8 +2451,8 @@ def test_odpoved_na_video_na_sirku_meni_popisek(bot, conn, api, media_dir):
 
 
 @pg
-def test_schvalit_stary_nahled_po_doplneni_sirky_nepublikuje(conn, api, meta, media_dir):
-    from hlidac_reels.bot import LANDSCAPE_NOT_SENT
+def test_schvalit_plati_i_pro_doplnenou_sirku(conn, api, meta, media_dir):
+    # rozhodnutí 2026-11-24: šířka se znovu neschvaluje, ani když dorazí po náhledu
     bot = _make_bot(conn, api, meta, media_dir, threads=FakeThreads(media_dir))
     now = [1000.0]
     bot.clock = lambda: now[0]
@@ -2476,25 +2462,8 @@ def test_schvalit_stary_nahled_po_doplneni_sirky_nepublikuje(conn, api, meta, me
     _add_landscape(conn, media_dir, rid)
     api.calls.clear()
     bot.handle(_cb(f"ok:{rid}", msg_id=old))
-    assert _get(conn, rid).status == "pending"
-    assert sum(meta.calls.values()) == 0
-    answers = [b.get("text") for b in api.sent("answerCallbackQuery")]
-    assert answers == [LANDSCAPE_NOT_SENT]
-    assert any(LANDSCAPE_NOT_SENT in t for t in api.texts())
-    # náhled se nepošle: Schválit ze starého náhledu dál nic nezveřejní
-    api.fail["sendMessage"] = httpx.ConnectError("down")
-    now[0] += 60
-    bot.maybe_send_next()
-    assert _get(conn, rid).telegram_landscape_msg_id is not None
-    bot.handle(_cb(f"ok:{rid}", msg_id=old))
-    assert _get(conn, rid).status == "pending" and sum(meta.calls.values()) == 0
-    # po novém náhledu schválení projde
-    del api.fail["sendMessage"]
-    now[0] += 60
-    bot.maybe_send_next()
-    new = _get(conn, rid).telegram_msg_id
-    bot.handle(_cb(f"ok:{rid}", msg_id=new))
     assert _get(conn, rid).status == "published"
+    assert [b.get("text") for b in api.sent("answerCallbackQuery")] == ["Schváleno"]
 
 
 def _count_video_requests(bot, api, reject: list[bool]):
@@ -2560,13 +2529,11 @@ def test_doplnena_sirka_chybi_soubor_ohlasi_jednou(conn, api, meta, media_dir):
 # --- finální kontrola větve: otisk odeslané šířky ----------------------------
 
 @pg
-def test_sirka_vymenena_behem_send_next_neschvali_nevidenou(conn, api, meta, media_dir):
+def test_sirka_vymenena_behem_send_next_schvaleni_projde(conn, api, meta, media_dir):
     from hlidac_reels import queue
     from hlidac_reels.telegram import Telegram
     th = FakeThreads(media_dir)
     bot = _make_bot(conn, api, meta, media_dir, threads=th)
-    now = [1000.0]
-    bot.clock = lambda: now[0]
     rid = _add(conn, media_dir)
     _add_landscape(conn, media_dir, rid, n=1)
     second = media_dir / "videos" / "w2.mp4"
@@ -2584,19 +2551,7 @@ def test_sirka_vymenena_behem_send_next_neschvali_nevidenou(conn, api, meta, med
     bot.tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(handler)))
     bot.send_next()
     r = _get(conn, rid)
-    assert r.status == "pending" and r.telegram_landscape_sha256 == "wsha1"
-    assert r.video_landscape_sha256 == "wsha2"
-    bot.handle(_cb(f"ok:{rid}", msg_id=r.telegram_msg_id))
-    assert _get(conn, rid).status == "pending" and sum(meta.calls.values()) == 0
-    # další obrátka pošle novou šířku a nový náhled, pak schválení projde
-    now[0] += 60
-    bot.maybe_send_next()
-    assert count[0] == 3
-    r = _get(conn, rid)
-    assert r.telegram_landscape_sha256 == "wsha2" and r.telegram_msg_id > r.telegram_landscape_msg_id
-    now[0] += 60
-    bot.maybe_send_next()
-    assert count[0] == 3  # už nic
+    assert r.status == "pending" and r.video_landscape_sha256 == "wsha2"
     bot.handle(_cb(f"ok:{rid}", msg_id=r.telegram_msg_id))
     assert _get(conn, rid).status == "published"
 
@@ -2630,8 +2585,8 @@ def test_trvala_chyba_sirky_bez_otisku_ohlasi_jednou(conn, api, meta, media_dir)
 
 
 @pg
-def test_schvalit_po_odmitnute_sirce_rekne_proc(conn, api, meta, media_dir):
-    from hlidac_reels.bot import LANDSCAPE_REJECTED
+def test_schvalit_po_odmitnute_sirce_projde(conn, api, meta, media_dir):
+    # Telegram šířku odmítl (např. velikost); schválení na tom nezávisí
     bot = _make_bot(conn, api, meta, media_dir)
     now = [1000.0]
     bot.clock = lambda: now[0]
@@ -2642,12 +2597,8 @@ def test_schvalit_po_odmitnute_sirce_rekne_proc(conn, api, meta, media_dir):
     _count_video_requests(bot, api, [True])
     now[0] += 60
     bot.maybe_send_next()
-    api.calls.clear()
     bot.handle(_cb(f"ok:{rid}", msg_id=old))
-    assert _get(conn, rid).status == "pending"
-    assert [b.get("text") for b in api.sent("answerCallbackQuery")] == [LANDSCAPE_REJECTED]
-    assert LANDSCAPE_REJECTED == ("Video na šířku Telegram odmítl. Vyměň ho přes reels-add-landscape, "
-                                  "nebo položku zamítni.")
+    assert _get(conn, rid).status != "pending"
 
 
 @pg
@@ -2705,14 +2656,11 @@ def test_sirka_u_varianty_sady_az_po_vyberu(conn, api, meta, media_dir):
     assert _set_msg_id(conn, ids[1]) == set_msg
     bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
     picked_preview = _get(conn, ids[1]).telegram_msg_id
-    # vybraná varianta se šířkou, kterou vlastník ještě neviděl, se neschválí
-    bot.handle(_cb(f"ok:{ids[1]}", msg_id=picked_preview))
-    assert _get(conn, ids[1]).status == "pending"
+    # po výběru jde šířka jen pro informaci; Schválit z náhledu vybrané varianty platí i pro ni
     now[0] += 60
     bot.maybe_send_next()
     caps = _video_captions(api)
     assert len(caps) == 1 and "na šířku (Threads)" in caps[0]
-    r = _get(conn, ids[1])
-    assert r.telegram_msg_id > r.telegram_landscape_msg_id
-    bot.handle(_cb(f"ok:{ids[1]}", msg_id=r.telegram_msg_id))
+    assert _get(conn, ids[1]).telegram_msg_id == picked_preview
+    bot.handle(_cb(f"ok:{ids[1]}", msg_id=picked_preview))
     assert _get(conn, ids[1]).status == "published"

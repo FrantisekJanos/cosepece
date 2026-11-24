@@ -177,32 +177,20 @@ def test_sha_in_use(conn):
     assert queue.sha_in_use(conn, "jine") is False
 
 
-def test_approve_jen_kdyz_vlastnik_videl_sirku(conn):
+def test_approve_plati_i_pro_sirku(conn):
     from datetime import datetime, timezone
     from hlidac_reels import queue
     now = datetime.now(timezone.utc)
-    # bez šířky: běžné schválení z pending
     a = _add(conn, 1)
     assert queue.approve(conn, a, now) is False  # queued
     assert queue.transition(conn, a, "queued", "pending", telegram_msg_id=10)
     assert queue.approve(conn, a, now) is True
     assert queue.get(conn, a).status == "approved" and queue.get(conn, a).decided_at is not None
-    # šířka doplněná, ještě neodeslaná
+    assert queue.approve(conn, a, now) is False  # už nečeká
+    # šířka doplněná a do Telegramu zatím neodeslaná: jedno Schválit platí i pro ni (rozhodnutí 2026-11-24)
     b = _add(conn, 2)
     assert queue.transition(conn, b, "queued", "pending", telegram_msg_id=20)
     assert queue.set_landscape(conn, b, "/m/w.mp4", "W")
-    assert queue.approve(conn, b, now) is False
-    # odeslaná, ale náhled je starší než video
-    queue.set_fields(conn, b, telegram_landscape_msg_id=21, telegram_landscape_sha256="W")
-    assert queue.approve(conn, b, now) is False
-    assert queue.get(conn, b).status == "pending"
-    # nový náhled po videu, ale do Telegramu odešel jiný soubor (vyměněný během odesílání)
-    queue.set_fields(conn, b, telegram_msg_id=22, telegram_landscape_sha256="X")
-    assert queue.approve(conn, b, now) is False
-    queue.set_fields(conn, b, telegram_landscape_sha256=None)
-    assert queue.approve(conn, b, now) is False
-    # odeslaná právě ta šířka, která je v řádku
-    queue.set_fields(conn, b, telegram_landscape_sha256="W")
     assert queue.approve(conn, b, now) is True
 
 

@@ -14,6 +14,11 @@
 .hkrow .big.txt { font-size: 230px; }
 .hkrow .of { font-size: 130px; color: var(--paper); text-transform: uppercase; margin-left: 0; }
 #hk-title { font-size: 104px; }
+/* autoři zadaných PN: řádek se zalamuje, jméno se nezkracuje; štítek klubu jede v textu hned za jménem
+   (obal .pna, písmo obalu určuje šířku mezery před štítkem), při zalomení zůstane u svého autora */
+#hk-pn { flex-wrap: wrap; align-items: baseline; gap: 4px 36px; }
+#hk-pn .pna { min-width: 0; font: 500 28px/1 'IBM Plex Mono', monospace; }
+#hk-pn .klub { display: inline-block; white-space: nowrap; }
 
 /* o co jde */
 #s-ctx .body { gap: 36px; }

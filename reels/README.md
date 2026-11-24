@@ -138,6 +138,36 @@ kontrola `media.validate(..., "landscape")`), worker ho nahraje jako `PUT ?actio
 (před videem na výšku, stejný limit 30 MB) a bot ho při převzetí sady uloží do `video_landscape_path`, takže Threads
 dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se zaloguje; `reels-generate --no-landscape` ji vypne.
 
+**Kontrola a oprava variant (generátor):**
+
+- Před kontrolou projde karta a popisek normalizací (`generator/normalize.py`): `hook.big` zapsané jako „číslo + jednotka“
+  se rozdělí na číslo a jednotku, body formátu `zmena` bez citace se vynechají (jen když aspoň jeden bod citaci má),
+  popisku bez závěrečné věty se věta doplní. Fakta se nemění. Každý zásah je věta v `variant-N/normalize.json`
+  (prázdný seznam = bez zásahu) a upravená karta se zapíše zpět do `card.json`.
+- Chyba rozvržení říká, o kolik pixelů a které pole přetéká (`přetéká o N px`, např. `title 120 znaků`). Šablona v3
+  vměstná i dlouhou částku a jméno v háčku: jednotka se zalomí pod číslo a `fit()` zmenšuje podtitulek a meta
+  (`hk-sub`, `hk-meta`), případně je zkrátí na celá slova, aniž by vznikla chyba rozvržení.
+- `claude -p` vrací druh běhu (`ClaudeRun.kind`): `ok`, `env` (nenulový kód nebo `is_error`, třeba vyčerpaný limit
+  předplatného) a `timeout`. Chyba prostředí bez jakéhokoli zápisu vyhodí `EnvError` a opravu nespustí. Běh, který
+  vadnou variantu nezměnil (otisk `card.json` a `caption.txt`), dostane chybu „běh modelu nic nezapsal“.
+- Stav úlohy je v `<out>/state.json` (stav variant `chybi|vadna|platna|vyrenderovana`, otisk vstupu a verzí promptů,
+  počet běhů modelu). Opakované spuštění nad stejnou složkou pokračuje: hotová videa se nerenderují znovu, platné
+  varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
+  plus nejvýš 3 cílené opravy jen vadných variant, s doslovnými chybami); běh přerušený chybou prostředí se nepočítá.
+  Hotové platné varianty se renderují hned, takže je pozdější chyba prostředí nezahodí.
+- Video k PN bez textu PN dostane jen formát `pn`, sada má pak 2 varianty a obě musí projít.
+
+**Worker při chybě a výpadku:**
+
+- Před každým claimem `check_tools` ověří `claude`, Chromium Playwrightu, `ffmpeg`, `ffprobe` a soubor `--mcp-config`;
+  chybí-li něco, loguje chybu a úlohy nebere (čeká 5 minut).
+- `EnvError` nahlásí úlohu jako `fail` („prostředí: …“) a worker se pozastaví, aby nespálil frontu (každý `fail`
+  stojí úloze jeden z 3 pokusů). Odstup před sondou je 15 min, 1 h, pak 3 h. Sonda je krátké `claude -p` („odpověz OK“,
+  bez nástrojů, timeout 120 s); po úspěchu worker pokračuje claimem, po neúspěchu čeká o stupeň déle. Při pozastavení
+  neposílá heartbeat.
+- Nahrání videa (na výšku i na šířku) a `result` se při výpadku (chyba sítě, odpověď ≥ 500) opakují po 1, 5 a 15 minutách,
+  4xx včetně 409 ne. Šířka po vyčerpání pokusů jen varuje, výška úlohu ukončí.
+
 ```bash
 pip install -e ".[render]"
 reels-worker --env <soubor .env> --root <pracovní složka> --mcp-config <mcp.json> [--once]

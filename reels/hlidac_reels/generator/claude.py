@@ -118,9 +118,9 @@ def _task_line(n: int, fmt: str | None) -> str:
 
 
 def build_prompt(*, ct: int, formats: list[str], workdir: Path, repair: dict[int, list[str]] | None = None) -> str:
-    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2 a 3 = v3 ve formátech `formats`; `repair` = jen opravy."""
-    plan = {1: None, 2: formats[0], 3: formats[1]}
-    numbers = sorted(repair) if repair else [1, 2, 3]
+    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2, 3… = v3 ve formátech `formats`; `repair` = jen opravy."""
+    plan: dict[int, str | None] = {1: None, **{i: f for i, f in enumerate(formats, 2)}}
+    numbers = sorted(repair) if repair else sorted(plan)
     tasks = "\n".join(_task_line(n, plan[n]) for n in numbers)
     fix = ""
     if repair:
@@ -129,7 +129,7 @@ def build_prompt(*, ct: int, formats: list[str], workdir: Path, repair: dict[int
                "opravit soubory ve své složce a chyby odstranit:\n" + "\n".join(lines) + "\n")
     text = (HERE / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
     text = text.replace("{ct}", str(ct)).replace("{tasks}", tasks).replace("{repair}", fix)
-    if repair:
+    if repair or len(numbers) != 3:
         text = text.replace("tři subagenty", f"tolik subagentů, kolik je níže variant ({len(numbers)})")
     return text
 

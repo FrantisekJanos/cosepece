@@ -55,9 +55,13 @@ def test_v3_bez_zdroju():
 
 
 def test_zmena_bod_bez_citace_nebo_zdroje():
+    # bod bez citace normalizace vynechá; kontrola ho proto snese, chyba je až bez jediné citace
     card = load_fixture("v3-zmena-221.json")
     card["zmena"]["body"][0]["citace"] = ""
-    assert _check(card)
+    assert _check(card) == []
+    for b in card["zmena"]["body"]:
+        b["citace"] = ""
+    assert any("žádný bod nemá citaci" in e for e in _check(card))
     card = load_fixture("v3-zmena-221.json")
     card["zmena"]["body"][0]["zdroj"] = ""
     assert _check(card)

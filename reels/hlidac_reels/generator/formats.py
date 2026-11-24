@@ -14,16 +14,17 @@ FOCUS_FORMATS = ["pn", "zmena"]
 
 
 def pick_formats(reason_keys: list[str], has_amendments: bool, hint: str | None = None,
-                 focus: bool = False) -> list[str]:
+                 focus: bool = False, has_text: bool = True) -> list[str]:
     """Dva různé formáty v3. reason_keys jsou seřazené podle váhy ve skóre (nejtěžší první).
 
     `rozprava` jen z ručního hintu; automatika ji nevybírá. focus = video k vybraným PN: vždy FOCUS_FORMATS,
-    hint se nebere (/pn formát nezadává a `cesta` ani `rozprava` o obsahu PN nevypráví).
+    hint se nebere (/pn formát nezadává a `cesta` ani `rozprava` o obsahu PN nevypráví). has_text = False
+    (text PN není k dispozici): jen `pn`, varianta `zmena` by neměla z čeho citovat.
     """
     if hint is not None and hint not in FORMATS:
         raise ValueError(f"neznámý formát {hint!r}, povolené: {', '.join(FORMATS)}")
     if focus:
-        return list(FOCUS_FORMATS)
+        return list(FOCUS_FORMATS) if has_text else ["pn"]
     picked: list[str] = [hint] if hint else []
     for key in reason_keys:
         for fmt, keys in FORMAT_TRIGGERS.items():

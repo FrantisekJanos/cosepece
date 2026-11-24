@@ -251,3 +251,33 @@ def test_video_k_pn_karta_bez_pn_vypadne(tmp_path, fake):
     assert any("9999" in e for e in r.variants[0].errors)
     # oprava dostala chybu PN
     assert len(fake["calls"]) == 2 and "9999" in fake["calls"][1]
+
+
+def test_video_k_pn_bez_textu_dve_varianty(tmp_path, fake):
+    info = [dict(FOCUS_INFO[0], has_text=False)]
+    r = _run(tmp_path, focus_pn=[2315], focus_info=info, render=False)
+    assert r.formats == ["pn"]
+    assert [(v.n, v.template, v.format) for v in r.variants] == [(1, "template_v2", None), (2, "template_v3", "pn")]
+    assert "variant-3" not in fake["calls"][0] and "formát F = pn" in fake["calls"][0]
+    assert json.loads((tmp_path / "out" / "tisk.json").read_text(encoding="utf-8"))["formats"] == ["pn"]
+
+
+def test_normalizace_zapise_kartu_a_zasahy(tmp_path, fake):
+    def prepare(wd):
+        d = wd / "variant-2"
+        card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+        card["hook"] = dict(card["hook"], big="800 mil. Kč", unit="")
+        (d / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+        (d / "caption.txt").write_text("Popisek bez závěru.", encoding="utf-8")
+    fake["prepare"] = prepare
+    r = _run(tmp_path, render=False)
+    assert r.variants[1].ok, r.variants[1].errors
+    d = tmp_path / "out" / "variant-2"
+    card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+    assert card["hook"]["big"] == "800" and card["hook"]["unit"] == "mil. Kč"
+    assert r.variants[1].caption.endswith("Hodnotíme postup, ne politický obsah.")
+    assert (d / "caption.txt").read_text(encoding="utf-8").strip() == r.variants[1].caption
+    notes = json.loads((d / "normalize.json").read_text(encoding="utf-8"))
+    assert len(notes) == 2
+    # bez zásahu se normalize.json zapíše prázdný
+    assert json.loads((tmp_path / "out" / "variant-1" / "normalize.json").read_text(encoding="utf-8")) == []

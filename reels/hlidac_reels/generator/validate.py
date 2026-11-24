@@ -29,13 +29,15 @@ def _v3_block(card: dict, fmt: str) -> list[str]:
     if fmt == "pn" and _empty(block.get("count")):
         errs.append("pn: chybí count")
     if fmt == "zmena":
+        # body bez citace vynechá normalizace (normalize.py); chyba je až bez jediné citace
         body = block.get("body") or []
         if not body:
             errs.append("zmena: chybí body")
+        elif all(_empty(b.get("citace")) for b in body):
+            errs.append("zmena: žádný bod nemá citaci")
         for i, b in enumerate(body, 1):
-            for key in ("citace", "zdroj"):
-                if _empty(b.get(key)):
-                    errs.append(f"zmena: bod {i} nemá {key}")
+            if _empty(b.get("zdroj")):
+                errs.append(f"zmena: bod {i} nemá zdroj")
     if fmt == "rozprava":
         for side in ("pro", "namitky", "odpovedi"):
             for i, b in enumerate((block.get(side) or {}).get("body") or [], 1):

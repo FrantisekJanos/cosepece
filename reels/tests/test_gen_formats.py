@@ -31,6 +31,14 @@ def test_video_k_pn_ma_pevne_formaty():
     assert pick_formats([], True, focus=True) == ["pn", "zmena"]
 
 
+def test_focus_bez_textu_jen_pn():
+    # PN bez textu: varianta zmena nemá z čeho citovat, sada má jen v2 a pn
+    assert pick_formats(["deadline_cut"], True, focus=True, has_text=False) == ["pn"]
+    assert pick_formats([], True, focus=True, has_text=True) == ["pn", "zmena"]
+    # bez /pn se has_text nebere
+    assert pick_formats([], True, has_text=False) == ["zmena", "pn"]
+
+
 def test_hint_je_prvni():
     assert pick_formats(["deadline_cut", "late_pn"], False, hint="zmena") == ["zmena", "cesta"]
 

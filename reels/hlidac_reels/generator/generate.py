@@ -18,6 +18,7 @@ from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
 from .claude import DEFAULT_MODEL, build_prompt, prepare_workdir, run_claude, write_focus, write_published
 from .formats import pick_formats
+from .normalize import normalize
 from .validate import check_layout, validate_variant
 
 MIN_OK = 2
@@ -46,8 +47,11 @@ class GenResult:
 
 
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
-           focus_pn: list[int] | None = None) -> dict | None:
-    """Načte a ověří variantu; vrací kartu, nebo None (chyby v v.errors)."""
+           focus_pn: list[int] | None = None, focus_info: list[dict] | None = None) -> dict | None:
+    """Načte, znormalizuje a ověří variantu; vrací kartu, nebo None (chyby v v.errors).
+
+    Normalizovaná karta a popisek se zapíšou zpět do složky varianty, zásahy do `normalize.json`.
+    """
     d = workdir / f"variant-{v.n}"
     v.errors = []
     try:
@@ -63,6 +67,13 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         v.errors = ["card.json není objekt"]
         return None
     try:  # pád kontroly (nečekaný tvar karty, chybějící Chromium) vyřadí jen tuto variantu
+        card, caption, notes = normalize(card, v.caption, fmt=v.format, focus_info=focus_info or [])
+        if notes:
+            (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
+            if caption != v.caption:
+                (d / "caption.txt").write_text(caption + "\n", encoding="utf-8")
+        v.caption = caption
+        (d / "normalize.json").write_text(json.dumps(notes, ensure_ascii=False, indent=1), encoding="utf-8")
         v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
                                     fmt=v.format, focus_pn=focus_pn)
         if not v.errors and layout:
@@ -94,22 +105,26 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
              timeout_s: int = 1200, landscape: bool = True,
              published: list[dict] | None = None, focus_pn: list[int] | None = None,
              focus_info: list[dict] | None = None) -> GenResult:
-    """Sada 3 variant k tisku; focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu."""
+    """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN 2).
+
+    focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
+    """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
         shutil.rmtree(old, ignore_errors=True)
     (out / "vysledek.json").unlink(missing_ok=True)
     focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
-    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None)
+    # server has_text zatím neposílá; chybějící pole = text PN je k dispozici
+    has_text = all(i.get("has_text", True) for i in focus_info or [] if isinstance(i, dict))
+    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text)
     (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats,
                                                "focus_pn": focus_pn}, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
     prepare_workdir(out, ct)
     write_published(out, published or [])
     write_focus(out, focus_pn, focus_info or [])
-    variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", formats[0]),
-                Variant(3, "template_v3", formats[1])]
+    variants = [Variant(1, "template_v2", None)] + [Variant(n, "template_v3", f) for n, f in enumerate(formats, 2)]
 
     runs: list[dict] = []
 
@@ -122,7 +137,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     note_run(run_claude(build_prompt(ct=ct, formats=formats, workdir=out), workdir=out, mcp_config=mcp_config,
                         model=model, timeout_s=timeout_s))
-    cards = {v.n: _check(v, out, ct, reason_keys, render, focus_pn) for v in variants}
+    cards = {v.n: _check(v, out, ct, reason_keys, render, focus_pn, focus_info) for v in variants}
     for v in variants:
         with_timeout(v)
     broken = {v.n: v.errors for v in variants if cards[v.n] is None}
@@ -131,7 +146,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
                             mcp_config=mcp_config, model=model, timeout_s=timeout_s))
         for v in variants:
             if v.n in broken:
-                cards[v.n] = _check(v, out, ct, reason_keys, render, focus_pn)
+                cards[v.n] = _check(v, out, ct, reason_keys, render, focus_pn, focus_info)
                 with_timeout(v)
 
     for v in variants:  # render vždy jen jeden najednou

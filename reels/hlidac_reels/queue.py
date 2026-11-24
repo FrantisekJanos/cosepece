@@ -131,6 +131,15 @@ def next_queued(conn, sets: bool = True) -> Reel | None:
     return r
 
 
+def next_autopilot(conn) -> Reel | None:
+    """Nejstarší schválená položka autopilota (čeká na zveřejnění bez Schválit)."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='approved' AND autopilot ORDER BY id LIMIT 1")
+        r = _row(cur)
+    conn.commit()
+    return r
+
+
 def by_telegram_msg(conn, msg_id: int) -> Reel | None:
     """Položka, k níž patří zpráva v Telegramu (video nebo náhled s tlačítky)."""
     with conn.cursor() as cur:
@@ -317,6 +326,15 @@ def set_state(conn, key: str, value: str) -> None:
             "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (key, value),
         )
+
+
+def state_keys(conn, prefix: str) -> list[str]:
+    """Klíče reel_state začínající prefixem (prefix se bere doslova, bez zástupných znaků LIKE)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT key FROM reel_state WHERE left(key, %s) = %s ORDER BY key", (len(prefix), prefix))
+        out = [r[0] for r in cur.fetchall()]
+    conn.commit()
+    return out
 
 
 def delete_state(conn, key: str) -> None:

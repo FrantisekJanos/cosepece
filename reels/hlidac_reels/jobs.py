@@ -89,3 +89,12 @@ def failed_unnotified(conn) -> list[Job]:
 def mark_notified(conn, job_id: int) -> None:
     with _tx(conn), conn.cursor() as cur:
         cur.execute("UPDATE reel_jobs SET notified_at=now() WHERE id=%s", (job_id,))
+
+
+def focus_pn(conn, job_id: int) -> list[int] | None:
+    """PN, o kterých je video úlohy (None = celý tisk nebo úloha neexistuje)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT focus_pn FROM reel_jobs WHERE id=%s", (job_id,))
+        r = cur.fetchone()
+    conn.commit()
+    return list(r[0]) if r and r[0] else None

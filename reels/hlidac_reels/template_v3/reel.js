@@ -291,13 +291,14 @@
     var a = A('s-hook', lim((c.title || '').length / 40, 0.8, 2));
     $('hk-rub').textContent = RUBRIKA[c.format] || 'Hlídač zákonů';
     $('hk-row').style.display = h ? '' : 'none';
-    setOpt($('hk-sub'), h ? h.sub : '');
+    // podtitulek a meta se vměstnávají přes fit() jako ostatní texty (dlouhé jméno, datum a čas podání)
+    fillPlain($('hk-sub'), h ? h.sub : '');
     fill($('hk-title'), c.title || c.nazev || '', function (t) { setWords($('hk-title'), t, true); });
     $('hk-faze').textContent = 'Fáze: ' + c.faze;
     var meta = [];
     if (c.typ_navrhu) meta.push(String(c.typ_navrhu));
     if (c.predlozeno) meta.push('předloženo ' + czDate(c.predlozeno));
-    setOpt($('hk-meta'), meta.join(' · '));
+    fillPlain($('hk-meta'), meta.join(' · '));
 
     a.show($('hk-rub').parentNode, 0, -30, 0);
     a.bg(function (L) { $('hk-sq').style.opacity = Math.floor(Math.max(0, L) * 2.5) % 2 ? 0.25 : 1; });
@@ -871,6 +872,22 @@
     return false;
   }
 
+  function fitRows(body) {
+    // řádky [data-fit-row] (háček: velké číslo + jednotka) zmenšuje po 4 % (nejvýš na 60 %), dokud se jejich
+    // obsah nevejde do šířky sloupce; děti mají vlastní velikost písma, zmenšují se všechny stejným poměrem
+    Array.prototype.forEach.call(body.querySelectorAll('[data-fit-row]'), function (row) {
+      if (row.offsetParent === null) return;
+      var kids = Array.prototype.slice.call(row.children);
+      kids.forEach(function (k) {
+        k.style.fontSize = '';
+        k.dataset.base = parseFloat(getComputedStyle(k).fontSize);
+      });
+      for (var step = 1; step <= 10 && row.scrollWidth > row.clientWidth + 1; step++) {
+        kids.forEach(function (k) { k.style.fontSize = (k.dataset.base * (1 - 0.04 * step)) + 'px'; });
+      }
+    });
+  }
+
   window.fit = function () {
     // každou scénu zmenšuje po 4 % (nejvýš na 60 %), potom zkracuje texty od konce na celá slova
     scenes.forEach(function (s, si) {
@@ -888,6 +905,7 @@
         el.style.fontSize = '';
         el.dataset.base = parseFloat(getComputedStyle(el).fontSize);
       });
+      fitRows(body);
       var scale = 1;
       while (overflows(body) && scale > 0.6) {
         scale -= 0.04;

@@ -20,7 +20,8 @@ html.landscape .body.two:not(.solo) > .side-a, html.landscape .body.two:not(.sol
   flex-direction: column; justify-content: safe center; gap: 32px; min-width: 0; flex: 1 1 0; }
 
 /* hook: velké číslo vlevo, titulek a fáze vpravo; bez čísla titulek přes celou šířku */
-html.landscape #s-hook .body.two:not(.solo) > .side-a { flex: 0 0 auto; }
+/* sloupec s číslem má šířku obsahu, nejvýš polovinu těla: delší číslo s jednotkou zmenší fit(), titulek místo neztratí */
+html.landscape #s-hook .body.two:not(.solo) > .side-a { flex: 0 1 auto; max-width: 50%; }
 html.landscape #hk-sub { max-width: 720px; }
 html.landscape .hkrow .big.txt { font-size: 200px; }
 html.landscape #s-hook .body.solo #hk-title { font-size: 120px; }

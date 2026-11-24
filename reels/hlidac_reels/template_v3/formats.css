@@ -8,10 +8,11 @@
 
 /* hook: rubrika, velké číslo, titulek */
 #s-hook .body { gap: 30px; }
-.hkrow { display: flex; align-items: baseline; transform-origin: 0 80%; }
-.hkrow .big { font-size: 380px; color: var(--yellow); }
+/* číslo se nikdy nezalomí; jednotka, která se vedle něj nevejde, spadne pod něj (fit() pak řádek zmenší na šířku sloupce) */
+.hkrow { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 26px; row-gap: 30px; transform-origin: 0 80%; }
+.hkrow .big { font-size: 380px; color: var(--yellow); white-space: nowrap; }
 .hkrow .big.txt { font-size: 230px; }
-.hkrow .of { font-size: 130px; color: var(--paper); text-transform: uppercase; margin-left: 26px; }
+.hkrow .of { font-size: 130px; color: var(--paper); text-transform: uppercase; margin-left: 0; }
 #hk-title { font-size: 104px; }
 
 /* o co jde */

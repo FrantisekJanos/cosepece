@@ -63,21 +63,22 @@ def _quoted(value) -> str:
     return f"„{value}“" if value not in (None, "") else "(žádný)"
 
 
-def _server_authors(focus_info: list[dict]) -> list[dict]:
-    """Autoři zadaných PN ze serveru seřazení podle čísla PN.
+def _server_pn(focus_info: list[dict]) -> dict[int, dict]:
+    """Údaje serveru o každém zadaném PN (číslo → `{"cislo", "jmeno", "klub"}`), seřazené podle čísla.
 
-    Klub je popisek ke dni podání (`ANO`, ne `ANO2011`); starší server ho neposílá a bez údaje je `None`.
+    Jméno chybí (`None`), když server autora neuvádí; klub platí jen s autorem ze serveru. Klub je popisek
+    ke dni podání (`ANO`, ne `ANO2011`); starší server ho neposílá a bez údaje je `None`.
     """
     by_num: dict[int, dict] = {}
     for item in focus_info or []:
-        if not isinstance(item, dict):
+        cislo = _as_int(item.get("cislo")) if isinstance(item, dict) else None
+        if cislo is None or (cislo in by_num and by_num[cislo]["jmeno"]):
             continue
-        cislo, osoba, klub = _as_int(item.get("cislo")), item.get("osoba"), item.get("klub")
-        if cislo is None or cislo in by_num or not isinstance(osoba, str) or not osoba.strip():
-            continue
-        by_num[cislo] = {"cislo": cislo, "jmeno": osoba.strip(),
-                         "klub": klub.strip() if isinstance(klub, str) and klub.strip() else None}
-    return [by_num[n] for n in sorted(by_num)]
+        osoba, klub = item.get("osoba"), item.get("klub")
+        jmeno = osoba.strip() if isinstance(osoba, str) and osoba.strip() else None
+        klub = klub.strip() if jmeno and isinstance(klub, str) and klub.strip() else None
+        by_num[cislo] = {"cislo": cislo, "jmeno": jmeno, "klub": klub}
+    return {n: by_num[n] for n in sorted(by_num)}
 
 
 def _set_authors(card: dict, authors: list[dict], notes: list[str]) -> None:
@@ -94,20 +95,19 @@ def _set_authors(card: dict, authors: list[dict], notes: list[str]) -> None:
     notes.append(f"pn_autor: autoři zadaných PN ze serveru ({which})")
 
 
-def _fix_top(card: dict, authors: list[dict], notes: list[str]) -> None:
+def _fix_top(card: dict, server: dict[int, dict], notes: list[str]) -> None:
     """V `pn.top` zadaných PN platí autor a klub ze serveru; klub od modelu (MCP vrací poslední klub)
-    se bez údaje serveru odstraní. Ostatní PN zůstanou, jak je model napsal."""
+    se bez údaje serveru odstraní, autor bez údaje serveru zůstane. Ostatní PN zůstanou, jak je model napsal."""
     block = card.get("pn")
     top = block.get("top") if isinstance(block, dict) else None
     if not isinstance(top, list):
         return
-    by_num = {a["cislo"]: a for a in authors}
     for item in top:
-        author = by_num.get(_as_int(item.get("cislo"))) if isinstance(item, dict) else None
-        if author is None:
+        pn = server.get(_as_int(item.get("cislo"))) if isinstance(item, dict) else None
+        if pn is None:
             continue
-        n, jmeno, klub = author["cislo"], author["jmeno"], author["klub"]
-        if item.get("autor") != jmeno:
+        n, jmeno, klub = pn["cislo"], pn["jmeno"], pn["klub"]
+        if jmeno and item.get("autor") != jmeno:
             notes.append(f"pn.top PN {n}: autor {_quoted(item.get('autor'))} → „{jmeno}“ (server)")
             item["autor"] = jmeno
         if klub is None:
@@ -153,8 +153,8 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     if CLOSING not in caption:
         caption = f"{caption.rstrip()}\n\n{CLOSING}" if caption.strip() else CLOSING
         notes.append(f"popisek: doplněna věta „{CLOSING}“")
-    authors = _server_authors(focus_info)
-    _set_authors(card, authors, notes)
-    _fix_top(card, authors, notes)
+    server = _server_pn(focus_info)
+    _set_authors(card, [pn for pn in server.values() if pn["jmeno"]], notes)
+    _fix_top(card, server, notes)
     caption = _caption_clubs(card, caption, notes)
     return card, caption, notes

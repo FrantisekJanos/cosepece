@@ -168,6 +168,26 @@ def test_top_prepise_autora():
     assert [n for n in notes if n.startswith("pn.top")] == ["pn.top PN 9801: autor „T. Poslanec“ → „Test Poslanec“ (server)"]
 
 
+def test_top_bez_osoby_ze_serveru_odstrani_klub():
+    # zadaný PN bez autora v zadání: bez údaje serveru žádný klub; autor zůstane, jak ho napsal model
+    info = _info() + [{"cislo": 9803, "osoba": None, "cas": None, "titulek": None,
+                       "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=9803&o=10", "id_osoba": None,
+                       "klub": None, "klub_ke_dni": None, "has_text": False},
+                      {"cislo": 9804, "osoba": "", "klub": "ANO"}]
+    card = _pn_card()
+    card["pn"]["top"] = [_top(9803, "Jan Model", "SPD"), _top(9804, "Petr Model", "ODS"), _top(9805, "X Y", "STAN")]
+    new, _, notes = _pn(card, CAPTION, info)
+    top = new["pn"]["top"]
+    assert "klub" not in top[0] and top[0]["autor"] == "Jan Model"
+    assert "klub" not in top[1] and top[1]["autor"] == "Petr Model"
+    assert top[2] == _top(9805, "X Y", "STAN")
+    assert [n for n in notes if n.startswith("pn.top")] == [
+        "pn.top PN 9803: klub „SPD“ odstraněn (server klub neuvádí)",
+        "pn.top PN 9804: klub „ODS“ odstraněn (server klub neuvádí)"]
+    # pn_autor nese jen PN s autorem ze serveru
+    assert new["pn_autor"] == AUTHORS
+
+
 def test_popisek_doplni_klub():
     card = _pn_card()
     new, cap, notes = _pn(card, _caption("PN 9801 podal Test Poslanec. Další věta."), info=_info()[:1])

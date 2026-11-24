@@ -1,0 +1,8 @@
+[
+  {"cislo": 9801, "osoba": "Test Poslanec", "cas": "2026-03-15 10:00:00", "titulek": null,
+   "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=9801&o=10", "id_osoba": 6150, "klub": "ANO",
+   "klub_ke_dni": "2026-03-15", "has_text": true},
+  {"cislo": 9802, "osoba": "Test Ministr", "cas": "2026-03-16 09:00:00", "titulek": null,
+   "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=9802&o=10", "id_osoba": null, "klub": null,
+   "klub_ke_dni": null, "has_text": false}
+]

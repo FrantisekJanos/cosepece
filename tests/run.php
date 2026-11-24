@@ -1829,9 +1829,9 @@ $rjC = $jobs->claim();
 check('claim úlohy k PN: focus_pn jako pole čísel', [$rjC['job_id'] ?? null, $rjC['focus_pn'] ?? null], [$rjPnJob, [2312, 2313]]);
 check('claim úlohy k PN: údaje PN', $rjC['focus_pn_info'] ?? null, [
     ['cislo' => 2312, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:44:24', 'titulek' => null,
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10'],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true],
     ['cislo' => 2313, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:45:15', 'titulek' => 'Titulek PN 2313',
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10'],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true],
 ]);
 check('pole PostgreSQL → čísla', [Hlidac\ReelJobs::parsePnArray('{2376,2377}'), Hlidac\ReelJobs::parsePnArray(null), Hlidac\ReelJobs::parsePnArray('{}'), Hlidac\ReelJobs::parsePnArray('x')],
     [[2376, 2377], null, null, null]);
@@ -1994,6 +1994,27 @@ check('snímek: jen tisky s titulkem', $rsNoHeadline, []);
 // druhý zápis přepíše řádek (bez ON CONFLICT)
 Hlidac\ReelsSnapshot::write(db(), new Hlidac\Repo(db()), $rsLevel);
 check('snímek: druhý zápis bez duplicity', (int)db()->value("SELECT COUNT(*) FROM reel_state WHERE $rjKey = 'top_findings'"), 1);
+
+// --- F4 klub autora PN (Clubs::at v den změny, pnInfo) ---
+// před úklidem: claim potřebuje titulek tisku 311 z rozboru AI, který úklid vrací na původní stav
+echo "Reels: klub autora PN (F4)\n";
+// osoba 90001 přešla 15. 3. 2026 z ODS k Pirátům (konec a začátek členství týž den): v ten den platí novější klub
+$f4Clubs = new Hlidac\Clubs(new Hlidac\Source('', $tmp . '/cache-clubs-f4', $tmp . '/src'), 174);
+check('klub v den změny: platí novější členství', [$f4Clubs->at(90001, '2026-03-14'), $f4Clubs->at(90001, '2026-03-15'), $f4Clubs->at(90001, '2026-03-16')],
+    ['ODS', 'Piráti', 'Piráti']);
+check('klub neznámé osoby v den změny', $f4Clubs->at(999999, '2026-03-15'), null);
+// PN poslance s klubem a textem a PN člena vlády bez klubu a bez textu; tvar sdílí test Pythonu (tests/contract)
+db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99801, 9801, 311, 6150, 'Test Poslanec', '2026-03-15 10:00:00', 'ANO2011')");
+db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99802, 9802, 311, NULL, 'Test Ministr', '2026-03-16 09:00:00', NULL)");
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score) VALUES (99801, 311, 9801, 'Text PN', 7, 0)");
+$rjReset();
+$f4Job = $rjAdd('manual', 311);
+db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9801,9802}', $f4Job]);
+check('claim úlohy k PN: klub ke dni podání a has_text (tests/contract/focus-pn-info.json)', $jobs->claim()['focus_pn_info'] ?? null,
+    json_decode((string)file_get_contents(APP_ROOT . '/tests/contract/focus-pn-info.json'), true));
+db()->run('DELETE FROM pn_text WHERE id_dokument IN (99801, 99802)');
+db()->run('DELETE FROM pn WHERE id_dokument IN (99801, 99802)');
+$rjReset();
 
 // úklid
 $rjReset();

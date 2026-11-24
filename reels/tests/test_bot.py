@@ -1578,6 +1578,73 @@ def test_fronta_po_vyberu_nabidne_zbyle_varianty(bot, conn, api, media_dir):
     assert _get(conn, ids[2]).telegram_msg_id != new_set
 
 
+def _remaining(api) -> list[dict]:
+    """Zprávy „Sada #N: zbývá…“."""
+    return [b for b in api.sent() if "zbývá" in b.get("text", "") or "zbývají" in b.get("text", "")]
+
+
+@pg
+def test_po_rozhodnuti_zbyva_varianta(bot, conn, api, meta, media_dir):
+    """Incident: 2 ze 3 vybrané a schválené, varianta 1 zůstala bez připomenutí."""
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    bot.handle(_cb(f"pick:{ids[2]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    # druhá vybraná ještě čeká: zatím žádná připomínka
+    assert _remaining(api) == []
+    bot.handle(_cb(f"no:{ids[2]}"))
+    rem = _remaining(api)
+    assert len(rem) == 1
+    assert "Sada #7: zbývá varianta 1. Vybrat, nebo Hotovo." in rem[0]["text"]
+    assert _buttons(rem[0]) == [f"pick:{ids[0]}", "doneset:7"]
+    new_msg = _set_msg_id(conn, ids[0])
+    assert new_msg != set_msg and set_msg in _dropped(api)
+    # nová zpráva platí, Vybrat z ní funguje
+    api.calls.clear()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=new_msg))
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[0]}"]
+
+
+@pg
+def test_zbyva_i_kdyz_publikace_selze(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    meta.fail["ig_create"] = MetaError("(#100) chybný parametr", status=400)
+    bot.handle(_cb(f"ok:{ids[1]}"))
+    assert _get(conn, ids[1]).status == "failed"
+    assert len(_remaining(api)) == 1
+
+
+@pg
+def test_nezbyva_nic_bez_zpravy(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7, n=2)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{ids[0]}"))
+    bot.handle(_cb(f"no:{ids[1]}"))
+    assert _remaining(api) == []
+    assert not [b for b in api.sent() if any(d.startswith("pick:") for d in _buttons(b))]
+
+
+@pg
+def test_pick_zapise_picked_at(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 7)
+    bot.send_next()
+    assert _get(conn, ids[0]).picked_at is None
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=_set_msg_id(conn, ids[0])))
+    assert _get(conn, ids[0]).picked_at is not None
+    assert _get(conn, ids[1]).picked_at is None
+
+
 @pg
 def test_vybrana_varianta_jde_schvalit(bot, conn, api, meta, media_dir):
     ids = _add_set(conn, media_dir, 7)

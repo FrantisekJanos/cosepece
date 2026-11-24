@@ -39,11 +39,26 @@ def set_video_caption(reel: Reel) -> str:
     return f"#{reel.set_id} · varianta {reel.variant} · {_variant_label(reel)}"[:VIDEO_CAPTION_LIMIT]
 
 
-def set_text(items: list[Reel]) -> str:
-    """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku."""
+def remaining_text(set_id: int, variants: list[int]) -> str:
+    """Úvod zprávy sady po rozhodnutí o vybraných variantách: co ještě čeká na výběr."""
+    if len(variants) == 1:
+        return f"Sada #{set_id}: zbývá varianta {variants[0]}. Vybrat, nebo Hotovo."
+    return f"Sada #{set_id}: zbývají varianty {', '.join(str(v) for v in variants)}. Vybrat, nebo Hotovo."
+
+
+def set_text(items: list[Reel], remaining: bool = False) -> str:
+    """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku.
+
+    remaining=True: úvod „zbývá varianta N“ (po rozhodnutí o vybraných variantách).
+    """
     first = items[0]
-    head = f"Sada #{first.set_id}" + (f" · tisk {first.ct}" if first.ct is not None else "")
-    head += "\nVyber jednu nebo víc variant, Hotovo zbylé zamítne."
+    if remaining:
+        head = remaining_text(first.set_id, [r.variant for r in items])
+        if first.ct is not None:
+            head += f"\nTisk {first.ct}"
+    else:
+        head = f"Sada #{first.set_id}" + (f" · tisk {first.ct}" if first.ct is not None else "")
+        head += "\nVyber jednu nebo víc variant, Hotovo zbylé zamítne."
     blocks = []
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])

@@ -326,7 +326,12 @@ class Bot:
             return
         self._answer(cb_id, "Schváleno")
         self._drop_buttons(msg_id)
-        self._publish(reel_id, publish.run)
+        try:
+            self._publish(reel_id, publish.run)
+        finally:
+            # připomínka zbylé varianty nezávisí na výsledku publikace
+            if reel is not None:
+                self._offer_remaining(reel.set_id)
 
     def _retry(self, reel_id: int, cb_id, msg_id) -> None:
         reel = queue.get(self.conn, reel_id)
@@ -358,6 +363,9 @@ class Bot:
         self._answer(cb_id, "Zamítnuto")
         self._drop_buttons(msg_id)
         self._say(f"#{reel_id} zamítnuto.")
+        reel = queue.get(self.conn, reel_id)
+        if reel is not None:
+            self._offer_remaining(reel.set_id)
         self._safe_send_next()
 
     def _edit(self, reel_id: int, cb_id, msg_id) -> None:
@@ -432,7 +440,7 @@ class Bot:
             return
         # ostatní varianty zůstávají pending a jdou vybrat dál; schválit jde jen vybraná
         queue.mark_picked(self.conn, reel.set_id, reel.id)
-        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id)
+        queue.set_fields(self.conn, reel.id, telegram_msg_id=preview_id, picked_at=_now())
         # zpráva sady přijde o tlačítko vybrané varianty; po poslední i o Hotovo
         rest = [r for r in self._unpicked_items(reel.set_id) if r.telegram_msg_id == msg_id]
         if rest:
@@ -454,7 +462,24 @@ class Bot:
         self._say(f"Sada #{set_id}: zbylé varianty zamítnuty." if any_picked else f"Sada #{set_id} zamítnuta.")
         self._safe_send_next()
 
-    def _offer_set(self, set_id: int) -> bool:
+    def _offer_remaining(self, set_id: int | None) -> None:
+        """Po rozhodnutí o poslední vybrané variantě připomene nevybrané (zpráva „zbývá varianta N“).
+
+        Nic se neděje, dokud nějaká vybraná varianta čeká na schválení, nebo když už nic nezbývá.
+        Chyba odeslání se nepropaguje: položky zůstanou pending a doplní je /fronta.
+        """
+        if set_id is None:
+            return
+        try:
+            picked = queue.picked(self.conn, set_id)
+            items = queue.set_items(self.conn, set_id)
+            if any(r.status == "pending" and r.id in picked for r in items):
+                return
+            self._offer_set(set_id, remaining=True)
+        except Exception as e:  # noqa: BLE001 - rozhodnutí je hotové, připomínka nesmí shodit handler
+            log.warning("připomínka zbylých variant sady #%s selhala: %s", set_id, self._safe(e))
+
+    def _offer_set(self, set_id: int, remaining: bool = False) -> bool:
         """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, zkusí to opravná smyčka a /fronta).
@@ -462,7 +487,8 @@ class Bot:
         pending = self._unpicked_items(set_id)
         if not pending:
             return False
-        msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, set_text(pending), set_buttons(pending))
+        msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id,
+                             set_text(pending, remaining=remaining), set_buttons(pending))
         if not msg_id:
             return False
         for r in pending:

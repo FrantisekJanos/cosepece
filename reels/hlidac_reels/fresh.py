@@ -1,7 +1,8 @@
-"""Čerstvé nálezy: úlohy fresh ze změn ve snímku top_findings a vypršení či stažení starých sad.
+"""Čerstvé nálezy: úlohy fresh ze změn ve snímku top_findings a stažení sad, jejichž tisk vypadl z nálezů.
 
 Snímek zapisuje PHP synchronizace (app/ReelsSnapshot.php) do reel_state pod klíčem top_findings:
 {"at": ISO 8601 s posunem pásma, "items": {"<ct>": ["klíč důvodu", …]}}. Bot volá detect a retire každou hodinu.
+Lhůty čekání (vypršení) řeší queue.expire.
 """
 from __future__ import annotations
 
@@ -17,8 +18,6 @@ SNAPSHOT_KEY = "top_findings"
 BASELINE_KEY = "fresh_baseline"
 # snímek starší než tohle znamená, že synchronizace stojí: nic se nezakládá ani nestahuje
 SNAPSHOT_MAX_AGE = timedelta(hours=3)
-# nevybrané varianty sady fresh/auto_pick starší než tohle vyprší
-SET_MAX_AGE = timedelta(days=7)
 # nejvýš tolik nových úloh fresh za den (Europe/Prague): změna skóre nesmí spustit vlnu generování
 FRESH_PER_DAY = 2
 # k tisku, ke kterému za tuto dobu vznikla úloha (i ruční) nebo vyšlo video, se fresh nezakládá
@@ -139,40 +138,33 @@ def _load_baseline(raw: str | None) -> dict[str, list[str]] | None:
 
 
 def retire(conn, now: datetime) -> list[tuple[int, str]]:
-    """Sady fresh/auto_pick: nevybrané varianty starší než 7 dní (fresh od založení úlohy) → expired,
-    sada bez výběru s tiskem mimo nálezy → withdrawn.
+    """Stažení: sada fresh/auto_pick bez výběru, jejíž tisk vypadl ze snímku nálezů → withdrawn.
 
-    Mění se nevybrané položky sady ve stavu queued/pending; vybrané varianty (queue.picked) zůstávají a sada
-    s výběrem se nestahuje. Bez čerstvého snímku nebo s prázdným snímkem (chyba skóre, obnovená prázdná DB)
-    se nic nestahuje, aby nezmizely všechny sady najednou; vypršení platí dál. Vrací (set_id, nový stav)
-    jen pro sady, které se změnily.
+    Mění se položky sady ve stavu queued/pending; sada s výběrem (queue.picked) se nestahuje. Bez čerstvého
+    snímku nebo s prázdným snímkem (chyba skóre, obnovená prázdná DB) se nic nestahuje, aby nezmizely všechny
+    sady najednou. Vypršení podle lhůt sem nepatří (queue.expire). Vrací (set_id, "withdrawn") jen pro sady,
+    které se změnily.
     """
     items = _snapshot(conn, now)
+    if not items:
+        return []
     with conn.cursor() as cur:
-        # stáří sady fresh se měří od založení úlohy (reel_jobs.id = set_id), auto_pick od zařazení do fronty
         cur.execute(
-            "SELECT set_id, CASE WHEN max(source) = 'fresh' THEN coalesce("
-            "(SELECT j.created_at FROM reel_jobs j WHERE j.id = reel_queue.set_id), min(created_at)) "
-            "ELSE min(created_at) END, max(ct) FROM reel_queue "
-            "WHERE set_id IS NOT NULL AND status IN ('queued','pending') AND source <> 'manual' "
+            "SELECT set_id, max(ct) FROM reel_queue "
+            "WHERE set_id IS NOT NULL AND status IN ('queued','pending') AND source <> 'manual' AND NOT autopilot "
             "GROUP BY set_id ORDER BY set_id",
         )
         sets = cur.fetchall()
     conn.commit()
 
     out: list[tuple[int, str]] = []
-    for set_id, created_at, ct in sets:
-        picked = queue.picked(conn, set_id)
-        if now - created_at > SET_MAX_AGE:
-            status = "expired"
-        elif not picked and items and ct is not None and str(ct) not in items:
-            status = "withdrawn"
-        else:
+    for set_id, ct in sets:
+        if ct is None or str(ct) in items or queue.picked(conn, set_id):
             continue
         changed = False
         for reel in queue.set_items(conn, set_id):
-            if reel.id not in picked and queue.transition(conn, reel.id, ("queued", "pending"), status):
+            if queue.transition(conn, reel.id, ("queued", "pending"), "withdrawn"):
                 changed = True
         if changed:
-            out.append((set_id, status))
+            out.append((set_id, "withdrawn"))
     return out

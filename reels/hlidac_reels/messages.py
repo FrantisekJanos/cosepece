@@ -6,7 +6,8 @@ a výsledek řádek Threads. Bez něj se o Threads nepíše nic.
 from __future__ import annotations
 
 from .caption import for_network
-from .queue import AUTO_HOLD, Reel
+from .queue import (AUTO_HOLD, AUTO_SET_MAX, HELD_MAX, PICKED_MAX, REQUESTED_SET_MAX,
+                    UNPICKED_AFTER_DECISION, Expired, Reel)
 
 TEXT_LIMIT = 4096
 VIDEO_CAPTION_LIMIT = 1024
@@ -162,6 +163,36 @@ def auto_waiting_text(set_id: int, limit: int, reason: str) -> str:
                 "Poslat hned: /dalsi")
     return (f"Sada #{set_id} čeká, dokud nevybereš z předchozí automatické sady (nejdéle {AUTO_HOLD} h). "
             "Poslat hned: /dalsi")
+
+
+def withdrawn_text(set_id: int) -> str:
+    """Sada stažená, protože její tisk vypadl z hlavních nálezů (fresh.retire)."""
+    return f"#{set_id} staženo: nález už není mezi hlavními"
+
+
+def expired_text(e: Expired) -> str:
+    """Jedna zpráva o vypršení jednotky (queue.expire); vypršení jen zamítá, nikdy neschvaluje."""
+    ids = ", ".join(f"#{i}" for i in e.reel_ids)
+    if e.kind == "unpicked":
+        hours = int(UNPICKED_AFTER_DECISION.total_seconds() // 3600)
+        return f"Sada #{e.set_id}: nevybrané varianty vypršely ({hours} h od posledního rozhodnutí)."
+    if e.kind == "picked":
+        what = "vybraná varianta" if len(e.reel_ids) == 1 else "vybrané varianty"
+        verb = "vypršela" if len(e.reel_ids) == 1 else "vypršely"
+        return f"Sada #{e.set_id}: {what} {ids} {verb} ({PICKED_MAX.days} dní bez schválení)."
+    if e.kind == "held":
+        if e.set_id is not None:
+            return f"Sada #{e.set_id} zamítnuta: {HELD_MAX.days} dní se nepodařilo poslat ke schválení."
+        return f"{ids} zamítnuto: {HELD_MAX.days} dní se nepodařilo poslat ke schválení."
+    days = (AUTO_SET_MAX if e.kind == "auto_set" else REQUESTED_SET_MAX).days
+    if e.set_id is not None:
+        return f"Sada #{e.set_id} vypršela: {days} dní bez výběru."
+    return f"{ids} vypršelo: {days} dní bez rozhodnutí."
+
+
+def reminder_text(set_id: int) -> str:
+    """Nedotčená automatická sada čeká AUTO_HOLD h (už nebrzdí další automatickou)."""
+    return f"Sada #{set_id} čeká {AUTO_HOLD} h. Vybrat, nebo Hotovo."
 
 
 NOTHING_READY = "Teď není co poslat: položky ve frontě jsou odložené po chybě odeslání, zkusím je znovu."

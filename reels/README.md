@@ -237,8 +237,14 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
 - do Telegramu jdou nejvýš 2 automatické sady (`fresh`, `auto_pick`) denně (Europe/Prague) a najednou nejvýš
   1 nevyřízená jednotka; sady ručních úloh (`/video`, `/pn`) denní limit neomezuje a nepočítají se do něj, `/dalsi` limit
   obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
-- nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
-  zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+- každé čekání má lhůtu (`queue.expire`, jednou za hodinu) a vypršení bot ohlásí zprávou a odebere tlačítka; lhůty běží
+  od odeslání do Telegramu (`sent_at`), neodeslaná sada nevyprší, autopilot se nepočítá:
+  nedotčená automatická sada (`fresh`) 7 dní, nedotčená vyžádaná (`manual`, `auto_pick`, `ukazka`) 14 dní,
+  vybraná nerozhodnutá varianta 14 dní od výběru (`picked_at`), nevybrané varianty dotčené sady 24 h od posledního
+  rozhodnutí (dokud žádná vybraná nečeká na schválení) → `expired`; `held` 7 dní od posledního pokusu → `rejected`.
+  Vypršení jen zamítá, nikdy neschvaluje. Nedotčená automatická sada po 12 h přestane brzdit další a přijde jedna
+  připomínka (`reel_state` `reminded:<set_id>`),
+- sada `fresh` nebo `auto_pick` bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne (`withdrawn`, `fresh.retire`).
 
 ## Autopilot (`/pn` bez schválení)
 

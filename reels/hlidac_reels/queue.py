@@ -3,13 +3,17 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, fields as dc_fields
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import psycopg
 
 # reel_state set_picked:<set_id> = id vybraných variant oddělená čárkou (dřívější hodnota je jedno id);
-# vybraná varianta nevyprší a sada s výběrem se nestáhne
+# sada s výběrem se nestáhne (fresh.retire), vybraná varianta má vlastní lhůtu PICKED_MAX
 PICKED_KEY = "set_picked:"
+# reel_state reminded:<set_id> = nedotčená automatická sada už dostala připomínku po AUTO_HOLD h
+REMINDED_KEY = "reminded:"
+# reel_state held_msg:<reel_id> = id zprávy s tlačítky Zkusit znovu / Zahodit u jednotky v held
+HELD_MSG_KEY = "held_msg:"
 
 # Vyžádaná jednotka (uživatel si o ni řekl: /video, /pn, /vyber, ukázka) se posílá hned (R1);
 # automatická (source 'fresh') brzdí denní limit a jiná nedotčená automatická sada (R2)
@@ -21,6 +25,12 @@ AUTO_HOLD = 12
 SEND_BACKOFF = (1, 5, 15, 60)
 # po tolika neúspěšných pokusech jde jednotka do stavu held (zpráva s tlačítky)
 SEND_MAX_ATTEMPTS = 5
+# lhůty čekání (queue.expire); běží od sent_at, u vybrané varianty od picked_at, u held od posledního pokusu
+UNPICKED_AFTER_DECISION = timedelta(hours=24)  # nevybrané varianty dotčené sady od posledního rozhodnutí
+AUTO_SET_MAX = timedelta(days=7)  # nedotčená automatická jednotka
+REQUESTED_SET_MAX = timedelta(days=14)  # nedotčená vyžádaná jednotka
+PICKED_MAX = timedelta(days=14)  # vybraná varianta bez Schválit / Zamítnout
+HELD_MAX = timedelta(days=7)  # jednotka v held bez Zkusit znovu / Zahodit → rejected
 
 STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
             "expired", "withdrawn", "held")
@@ -71,7 +81,7 @@ class Reel:
     send_attempts: int = 0  # pokusy o odeslání do Telegramu (fronta ke schválení)
     send_error: str | None = None  # poslední chyba odeslání
     next_send_at: datetime | None = None  # nejdřív kdy zkusit odeslat znovu
-    picked_at: datetime | None = None  # kdy si položku převzalo odesílání
+    picked_at: datetime | None = None  # kdy vlastník variantu vybral (tlačítko Vybrat, Bot._pick)
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
@@ -181,6 +191,123 @@ def auto_blocked(conn, now: datetime) -> bool:
         blocked = cur.fetchone()[0]
     conn.commit()
     return bool(blocked)
+
+
+@dataclass
+class Expired:
+    """Výsledek vypršení jedné jednotky: kind unpicked | auto_set | requested_set | picked | held.
+
+    reel_ids = položky, které změnily stav, msg_ids = zprávy, kterým se mají odebrat tlačítka.
+    """
+    kind: str
+    set_id: int | None
+    reel_ids: list[int]
+    msg_ids: list[int]
+
+
+def _overdue(start: datetime | None, limit: timedelta, now: datetime) -> bool:
+    return start is not None and now - start >= limit
+
+
+def expire(conn, now: datetime) -> list[Expired]:
+    """Lhůty čekání (spec 2.2); vypršení jen zamítá, nikdy neschvaluje.
+
+    - nevybrané varianty dotčené sady (něco vybrané nebo rozhodnuté): UNPICKED_AFTER_DECISION od posledního
+      rozhodnutí (max decided_at), jen když žádná vybraná varianta nečeká na schválení → expired (unpicked),
+    - nedotčená jednotka: od sent_at AUTO_SET_MAX (source 'fresh', auto_set), jinak REQUESTED_SET_MAX
+      (requested_set) → expired,
+    - vybraná nerozhodnutá varianta: PICKED_MAX od picked_at (starší výběry bez něj od sent_at) → expired,
+    - held: HELD_MAX od posledního pokusu (next_send_at) → rejected.
+
+    Čekající položka bez sent_at (nebyla v Telegramu) nevyprší. Autopilot (approved se sent_at, v Telegramu
+    nebyl) se vylučuje výslovně. Vypršení nastaví decided_at = now: u sady s vypršelou vybranou variantou
+    tak od té chvíle běží lhůta zbylých nevybraných. Vrací jen jednotky, kde se stav opravdu změnil
+    (přechod je podmíněný, souběžné kliknutí vyhraje).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_COLS} FROM reel_queue WHERE NOT autopilot AND coalesce(set_id, -id) IN "
+            "(SELECT coalesce(set_id, -id) FROM reel_queue WHERE status IN ('pending','held') AND NOT autopilot) "
+            "ORDER BY id"
+        )
+        rows = [Reel(*r) for r in cur.fetchall()]
+    conn.commit()
+    units: dict[int, list[Reel]] = {}
+    for r in rows:
+        units.setdefault(r.set_id if r.set_id is not None else -r.id, []).append(r)
+
+    out: list[Expired] = []
+
+    def run(kind: str, set_id: int | None, items: list[Reel], to_status: str, **fields) -> None:
+        done = [r for r in items if transition(conn, r.id, r.status, to_status, decided_at=now, **fields)]
+        if not done:
+            return
+        msg_ids = sorted({r.telegram_msg_id for r in done if r.telegram_msg_id})
+        if kind == "held":
+            for r in done:
+                raw = get_state(conn, f"{HELD_MSG_KEY}{r.id}")
+                if raw and raw.isdigit():
+                    msg_ids.append(int(raw))
+                delete_state(conn, f"{HELD_MSG_KEY}{r.id}")
+        out.append(Expired(kind, set_id, [r.id for r in done], msg_ids))
+
+    for items in units.values():
+        set_id = items[0].set_id
+        held = [r for r in items if r.status == "held"]
+        if held and _overdue(max(r.next_send_at or r.created_at for r in held), HELD_MAX, now):
+            run("held", set_id, held, "rejected", error="vypršelo: odeslání do Telegramu se nepovedlo")
+        waiting = [r for r in items if r.status == "pending" and r.sent_at is not None]
+        if not waiting:
+            continue
+        chosen = picked(conn, set_id) if set_id is not None else set()
+        if not chosen and all(r.decided_at is None for r in items):
+            auto = any(r.source == AUTO_SOURCE for r in items)
+            limit = AUTO_SET_MAX if auto else REQUESTED_SET_MAX
+            if _overdue(min(r.sent_at for r in waiting), limit, now):
+                run("auto_set" if auto else "requested_set", set_id, waiting, "expired")
+            continue
+        old_picks = [r for r in waiting if r.id in chosen and _overdue(r.picked_at or r.sent_at, PICKED_MAX, now)]
+        if old_picks:
+            run("picked", set_id, old_picks, "expired")
+        if set_id is None:
+            continue
+        # po případném vypršení vybraných: stav a decided_at znovu z DB
+        current = set_items(conn, set_id)
+        if any(r.status == "pending" and r.id in chosen for r in current):
+            continue
+        rest = [r for r in current if r.status == "pending" and r.sent_at is not None and r.id not in chosen]
+        decided = [r.decided_at for r in current if r.decided_at is not None]
+        if rest and decided and _overdue(max(decided), UNPICKED_AFTER_DECISION, now):
+            run("unpicked", set_id, rest, "expired")
+    return out
+
+
+def auto_reminders(conn, now: datetime) -> list[int]:
+    """Automatické sady nedotčené aspoň AUTO_HOLD h od sent_at, které ještě nedostaly připomínku.
+
+    Stejná „nedotčenost“ jako auto_blocked (žádná varianta rozhodnutá ani vybraná, něco čeká), autopilot
+    vyloučený. Připomínku zapíše volající po odeslání zprávy (mark_reminded).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT q.set_id FROM reel_queue q WHERE q.source = %(auto)s AND NOT q.autopilot "
+            "AND q.set_id IS NOT NULL GROUP BY q.set_id "
+            "HAVING bool_or(q.status = 'pending') AND bool_and(q.decided_at IS NULL) "
+            "AND min(q.sent_at) IS NOT NULL "
+            "AND %(now)s::timestamptz - min(q.sent_at) >= make_interval(hours => %(hold)s) "
+            "AND NOT EXISTS (SELECT 1 FROM reel_state s WHERE s.value <> '' "
+            "AND s.key IN (concat(%(pk)s::text, q.set_id), concat(%(rk)s::text, q.set_id))) "
+            "ORDER BY q.set_id",
+            {"auto": AUTO_SOURCE, "now": now, "hold": AUTO_HOLD, "pk": PICKED_KEY, "rk": REMINDED_KEY},
+        )
+        ids = [r[0] for r in cur.fetchall()]
+    conn.commit()
+    return ids
+
+
+def mark_reminded(conn, set_id: int) -> None:
+    """Připomínka sady odešla, znovu se neposílá."""
+    set_state(conn, f"{REMINDED_KEY}{set_id}", "1")
 
 
 def mark_video_sent(conn, id: int, msg_id: int) -> None:

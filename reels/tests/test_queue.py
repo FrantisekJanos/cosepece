@@ -397,3 +397,136 @@ def test_sets_sent_on_jen_automaticke(conn):
             queue.transition(conn, i, "queued", "pending", sent_at=t)
     # /vyber (auto_pick) je vyžádaná sada a do denního limitu se nepočítá
     assert queue.sets_sent_on(conn, date(2026, 11, 24)) == 1
+
+
+# --- lhůty a vypršení (queue.expire, queue.auto_reminders) ---
+
+def _sent(conn, set_id, source="manual", n=3, at=None):
+    """Sada odeslaná do Telegramu (pending se sent_at)."""
+    from hlidac_reels import queue
+    ids = _set(conn, set_id, source=source, n=n)
+    for i in ids:
+        queue.transition(conn, i, "queued", "pending", sent_at=at or _now())
+    return ids
+
+
+def _statuses(conn, ids):
+    from hlidac_reels import queue
+    return [queue.get(conn, i).status for i in ids]
+
+
+def test_expire_nevybrane_dotcene_sady_24h_od_rozhodnuti(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, at=_now() - timedelta(days=3), n=3)
+    queue.mark_picked(conn, 1, ids[0])
+    queue.set_fields(conn, ids[0], picked_at=_now() - timedelta(days=2))
+    assert queue.approve(conn, ids[0], _now() - timedelta(hours=24) + timedelta(minutes=1))
+    assert queue.expire(conn, _now()) == []
+    assert _statuses(conn, ids) == ["approved", "pending", "pending"]
+    queue.set_fields(conn, ids[1], telegram_msg_id=500)
+    queue.set_fields(conn, ids[2], telegram_msg_id=500)
+    out = queue.expire(conn, _now() + timedelta(minutes=2))
+    assert out == [queue.Expired("unpicked", 1, ids[1:], [500])]
+    assert _statuses(conn, ids) == ["approved", "expired", "expired"]
+    assert queue.expire(conn, _now() + timedelta(days=30)) == []
+
+
+def test_expire_nevybrane_cekaji_na_vybranou(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, at=_now() - timedelta(days=3), n=3)
+    # vybrané dvě, jedna rozhodnutá před 2 dny, druhá dál čeká na schválení: zbylé nevyprší
+    queue.mark_picked(conn, 1, ids[0])
+    queue.mark_picked(conn, 1, ids[1])
+    queue.set_fields(conn, ids[0], picked_at=_now() - timedelta(days=2))
+    queue.set_fields(conn, ids[1], picked_at=_now() - timedelta(days=2))
+    queue.transition(conn, ids[0], "pending", "rejected", decided_at=_now() - timedelta(days=2))
+    assert queue.expire(conn, _now()) == []
+    assert _statuses(conn, ids) == ["rejected", "pending", "pending"]
+
+
+def test_expire_nedotcena_automaticka_7_dni(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, source="fresh", at=_now() - timedelta(days=7) + timedelta(minutes=1))
+    assert queue.expire(conn, _now()) == []
+    out = queue.expire(conn, _now() + timedelta(minutes=2))
+    assert [(e.kind, e.set_id, e.reel_ids) for e in out] == [("auto_set", 1, ids)]
+    assert _statuses(conn, ids) == ["expired"] * 3
+    assert all(queue.get(conn, i).decided_at is not None for i in ids)
+
+
+def test_expire_nedotcena_vyzadana_14_dni(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    at = _now() - timedelta(days=14) + timedelta(minutes=1)
+    ids = _sent(conn, 1, source="auto_pick", at=at)
+    solo = _add(conn, 900, source="manual")
+    queue.transition(conn, solo, "queued", "pending", sent_at=at, telegram_msg_id=77)
+    # vyžádaná sada nevyprší po 7 dnech
+    assert queue.expire(conn, _now()) == []
+    out = queue.expire(conn, _now() + timedelta(minutes=2))
+    assert [(e.kind, e.set_id, e.reel_ids, e.msg_ids) for e in out] == [
+        ("requested_set", 1, ids, []), ("requested_set", None, [solo], [77])]
+    assert _statuses(conn, ids + [solo]) == ["expired"] * 4
+
+
+def test_expire_vybrana_nerozhodnuta_14_dni_od_vyberu(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _sent(conn, 1, at=_now() - timedelta(days=30))
+    queue.mark_picked(conn, 1, ids[0])
+    queue.set_fields(conn, ids[0], picked_at=_now() - timedelta(days=14) + timedelta(minutes=1), telegram_msg_id=88)
+    assert queue.expire(conn, _now()) == []
+    t = _now() + timedelta(minutes=2)
+    assert queue.expire(conn, t) == [queue.Expired("picked", 1, [ids[0]], [88])]
+    assert _statuses(conn, ids) == ["expired", "pending", "pending"]
+    # zbylé nevybrané vyprší 24 h po vypršení vybrané (to se bere jako poslední rozhodnutí)
+    assert queue.expire(conn, t + timedelta(hours=23)) == []
+    assert [e.kind for e in queue.expire(conn, t + timedelta(hours=24))] == ["unpicked"]
+    assert _statuses(conn, ids) == ["expired"] * 3
+
+
+def test_expire_held_7_dni_na_rejected(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.set_fields(conn, i, next_send_at=_now() - timedelta(days=7) + timedelta(minutes=1), send_attempts=5)
+    queue.transition(conn, i, "queued", "held")
+    queue.set_state(conn, f"{queue.HELD_MSG_KEY}{i}", "321")
+    assert queue.expire(conn, _now()) == []
+    assert queue.expire(conn, _now() + timedelta(minutes=2)) == [queue.Expired("held", None, [i], [321])]
+    r = queue.get(conn, i)
+    # vypršení nikdy neschvaluje: held jde do rejected
+    assert r.status == "rejected" and r.decided_at is not None
+    assert queue.get_state(conn, f"{queue.HELD_MSG_KEY}{i}") is None
+
+
+def test_nevyprsi_bez_sent_at(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    # sada, která ještě nebyla v Telegramu (queued), a pending bez sent_at
+    queued = _set(conn, 1, source="fresh")
+    old = _add(conn, 900, source="manual")
+    queue.transition(conn, old, "queued", "pending")
+    # autopilot: approved se sent_at, v Telegramu nikdy nebyl
+    ap = _add(conn, 901, source="fresh", set_id=4, variant=1, autopilot=True)
+    queue.transition(conn, ap, "queued", "approved", sent_at=_now() - timedelta(days=60))
+    assert queue.expire(conn, _now() + timedelta(days=100)) == []
+    assert _statuses(conn, queued + [old, ap]) == ["queued"] * 3 + ["pending", "approved"]
+    assert queue.auto_reminders(conn, _now() + timedelta(days=100)) == []
+
+
+def test_pripominka_jednou(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    _sent(conn, 1, source="fresh", at=_now() - timedelta(hours=12) + timedelta(minutes=1))
+    _sent(conn, 2, source="manual", at=_now() - timedelta(days=2))
+    touched = _sent(conn, 3, source="fresh", at=_now() - timedelta(days=2))
+    queue.mark_picked(conn, 3, touched[0])
+    assert queue.auto_reminders(conn, _now()) == []
+    later = _now() + timedelta(minutes=2)
+    assert queue.auto_reminders(conn, later) == [1]
+    queue.mark_reminded(conn, 1)
+    assert queue.auto_reminders(conn, later) == []

@@ -2194,49 +2194,127 @@ def _to(conn, rid, status):
 
 
 @pg
-def test_cerstve_stazeni_a_vyprseni_sady(bot, conn, api, media_dir, monkeypatch):
+def test_cerstve_stazeni_sady(bot, conn, api, media_dir, monkeypatch):
     from hlidac_reels import fresh
     a = _add_set(conn, media_dir, 1)
-    b = _add_set(conn, media_dir, 2)
     bot.send_next()
-    bot.send_next(force=True)  # obě sady v Telegramu
     set_msg = _set_msg_id(conn, a[0])
 
     def retire(c, now):
         for i in a:
             _to(c, i, "withdrawn")
-        for i in b:
-            _to(c, i, "expired")
-        return [(1, "withdrawn"), (2, "expired")]
+        return [(1, "withdrawn")]
     monkeypatch.setattr(fresh, "detect", lambda c, now: [])
     monkeypatch.setattr(fresh, "retire", retire)
     bot.maybe_fresh()
-    texts = api.texts()
-    assert "#1 staženo: nález už není mezi hlavními" in texts
-    assert "#2 vypršelo (7 dní bez výběru)" in texts
+    assert "#1 staženo: nález už není mezi hlavními" in api.texts()
     assert set_msg in _dropped(api)
 
 
+def _later(bot, **delta):
+    """Hodiny bota posunuté dopředu (lhůty queue.expire počítají s bot.now)."""
+    from datetime import datetime, timedelta, timezone
+    at = datetime.now(timezone.utc) + timedelta(**delta)
+    bot.now = lambda: at
+    bot._next_fresh = float("-inf")
+
+
 @pg
-def test_vyprseni_zbylych_variant_po_vyberu(bot, conn, api, media_dir, monkeypatch):
-    from hlidac_reels import fresh
+def test_vyprseni_posle_zpravu_a_odebere_tlacitka(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 1)
+    bot.send_next()
+    set_msg = _set_msg_id(conn, ids[0])
+    # těsně před lhůtou (7 dní od odeslání automatické sady) nic
+    _later(bot, days=7, minutes=-5)
+    api.calls.clear()
+    bot.maybe_fresh()
+    assert {_get(conn, i).status for i in ids} == {"pending"}
+    _later(bot, days=7, minutes=5)
+    bot.maybe_fresh()
+    assert {_get(conn, i).status for i in ids} == {"expired"}
+    assert "Sada #1 vypršela: 7 dní bez výběru." in api.texts()
+    assert set_msg in _dropped(api)
+    # podruhé už nic
+    api.calls.clear()
+    _later(bot, days=8)
+    bot.maybe_fresh()
+    assert api.calls == []
+
+
+@pg
+def test_vyprseni_zbylych_variant_po_rozhodnuti(bot, conn, api, media_dir):
     ids = _add_set(conn, media_dir, 7)
     bot.send_next()
     set_msg = _set_msg_id(conn, ids[0])
     bot.handle(_cb(f"pick:{ids[0]}", msg_id=set_msg))
     preview = _get(conn, ids[0]).telegram_msg_id
-
-    def retire(c, now):
-        for i in ids[1:]:
-            _to(c, i, "expired")
-        return [(7, "expired")]
-    monkeypatch.setattr(fresh, "detect", lambda c, now: [])
-    monkeypatch.setattr(fresh, "retire", retire)
+    bot.handle(_cb(f"no:{ids[0]}", msg_id=preview))
+    # po rozhodnutí přišla nová zpráva sady se zbylými variantami
+    rest_msg = _set_msg_id(conn, ids[1])
     api.calls.clear()
+    _later(bot, hours=25)
     bot.maybe_fresh()
-    assert "#7 zbylé varianty vypršely" in api.texts()
-    assert _dropped(api) == [set_msg] and preview not in _dropped(api)
-    assert _get(conn, ids[0]).status == "pending"
+    assert "Sada #7: nevybrané varianty vypršely (24 h od posledního rozhodnutí)." in api.texts()
+    assert _dropped(api) == [rest_msg]
+    assert [_get(conn, i).status for i in ids] == ["rejected", "expired", "expired"]
+
+
+@pg
+def test_stare_tlacitko_po_vyprseni(bot, conn, api, meta, media_dir):
+    ids = _add_set(conn, media_dir, 7, source="manual")
+    bot.send_next()
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=_set_msg_id(conn, ids[0])))
+    preview = _get(conn, ids[0]).telegram_msg_id
+    api.calls.clear()
+    _later(bot, days=14, minutes=5)
+    bot.maybe_fresh()
+    assert _get(conn, ids[0]).status == "expired"
+    assert "Sada #7: vybraná varianta #%d vypršela (14 dní bez schválení)." % ids[0] in api.texts()
+    assert preview in _dropped(api)
+    # Review Focus 3: staré Schválit na vypršelé položce nic nezmění
+    api.calls.clear()
+    bot.handle(_cb(f"ok:{ids[0]}", msg_id=preview))
+    assert api.sent("answerCallbackQuery")[-1].get("text") == "Položka už nečeká na schválení."
+    assert _get(conn, ids[0]).status == "expired"
+    assert sum(meta.calls.values()) == 0
+
+
+@pg
+def test_vyprseni_held_zamitne_a_odebere_tlacitka(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir)
+    api.fail["sendVideo"] = httpx.Response(429, json={"ok": False, "description": "Too Many Requests"})
+    for _ in range(queue.SEND_MAX_ATTEMPTS):
+        bot.send_next()
+        queue.set_fields(conn, rid, next_send_at=None)
+    assert _get(conn, rid).status == "held"
+    held_msg = int(queue.get_state(conn, f"{queue.HELD_MSG_KEY}{rid}"))
+    queue.set_fields(conn, rid, next_send_at=bot.now())
+    api.fail.pop("sendVideo")
+    api.calls.clear()
+    _later(bot, days=7, minutes=5)
+    bot.maybe_fresh()
+    r = _get(conn, rid)
+    assert r.status == "rejected"
+    assert f"#{rid} zamítnuto: 7 dní se nepodařilo poslat ke schválení." in api.texts()
+    assert held_msg in _dropped(api)
+    # staré Zkusit znovu už nic nezmění
+    bot.handle(_cb(f"sendretry:{rid}", msg_id=held_msg))
+    assert api.sent("answerCallbackQuery")[-1].get("text") == "Položka už nečeká na odeslání."
+    assert _get(conn, rid).status == "rejected"
+
+
+@pg
+def test_pripominka_automaticke_sady_jednou(bot, conn, api, media_dir):
+    ids = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    api.calls.clear()
+    _later(bot, hours=12, minutes=5)
+    bot.maybe_fresh()
+    _later(bot, hours=13)
+    bot.maybe_fresh()
+    assert api.texts().count("Sada #3 čeká 12 h. Vybrat, nebo Hotovo.") == 1
+    assert {_get(conn, i).status for i in ids} == {"pending"}
 
 
 @pg
@@ -2321,6 +2399,7 @@ def test_schvalit_nevybranou_variantu_nejde(bot, conn, api, meta, media_dir):
 def test_stazeni_neodeslane_sady_bez_zpravy(bot, conn, api, media_dir, monkeypatch):
     from hlidac_reels import fresh
     a = _add_set(conn, media_dir, 1)
+    b = _add_set(conn, media_dir, 2, source="manual")
 
     def retire(c, now):
         for i in a:
@@ -2328,9 +2407,12 @@ def test_stazeni_neodeslane_sady_bez_zpravy(bot, conn, api, media_dir, monkeypat
         return [(1, "withdrawn")]
     monkeypatch.setattr(fresh, "detect", lambda c, now: [])
     monkeypatch.setattr(fresh, "retire", retire)
+    # neodeslaná sada nevyprší ani po měsíci (lhůty běží od sent_at) a stažení je bez zprávy
+    _later(bot, days=30)
     bot.maybe_fresh()
     assert api.calls == []
     assert {_get(conn, i).status for i in a} == {"withdrawn"}
+    assert {_get(conn, i).status for i in b} == {"queued"}
 
 
 @pg

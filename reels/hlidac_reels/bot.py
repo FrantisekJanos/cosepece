@@ -93,9 +93,6 @@ HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat dal
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
 SET_GONE = "Sada už nečeká na výběr."
 HELD_GONE = "Položka už nečeká na odeslání."
-RETIRED = {"withdrawn": "#{} staženo: nález už není mezi hlavními",
-           "expired": "#{} vypršelo (7 dní bez výběru)"}
-RETIRED_REST = "#{} zbylé varianty vypršely"  # sada s výběrem: vyprší jen nevybrané varianty
 LANDSCAPE_FAILED_KEY = "landscape_failed:{}"  # reel_state: sha256 šířky, kterou Telegram trvale odmítl
 
 
@@ -396,6 +393,7 @@ class Bot:
             return
         for r in unit:
             queue.transition(self.conn, r.id, "held", "queued", send_attempts=0, next_send_at=None)
+            queue.delete_state(self.conn, f"{queue.HELD_MSG_KEY}{r.id}")
         self._answer(cb_id, "Zkusím poslat znovu")
         self._drop_buttons(msg_id)
         self._safe_send_next()
@@ -408,6 +406,7 @@ class Bot:
             return
         for r in unit:
             queue.transition(self.conn, r.id, "held", "rejected", error="zahozeno", decided_at=_now())
+            queue.delete_state(self.conn, f"{queue.HELD_MSG_KEY}{r.id}")
         self._answer(cb_id, "Zahozeno")
         self._drop_buttons(msg_id)
         self._say(messages.held_dropped_text(unit[0]))
@@ -942,7 +941,10 @@ class Bot:
         if attempts >= queue.SEND_MAX_ATTEMPTS:
             held = queue.get(self.conn, target.id)
             if held is not None and held.status == "held":
-                self._say(self._scrub(messages.held_text(held)), messages.held_buttons(held.id))
+                msg_id = self._say(self._scrub(messages.held_text(held)), messages.held_buttons(held.id))
+                if msg_id:
+                    # vypršení held (queue.expire) zprávě odebere tlačítka
+                    queue.set_state(self.conn, f"{queue.HELD_MSG_KEY}{held.id}", str(msg_id))
 
     def _announce_limit(self, reason: str) -> None:
         """Automatická sada čeká (reason 'limit' = denní limit, 'blocked' = jiná nedotčená automatická sada).
@@ -1122,13 +1124,18 @@ class Bot:
             queue.delete_state(self.conn, key)
 
     def maybe_fresh(self) -> None:
-        """Čerstvé nálezy a vypršení či stažení sad, nejvýš jednou za FRESH_INTERVAL s."""
+        """Čerstvé nálezy, stažení sad, lhůty čekání a připomínky, nejvýš jednou za FRESH_INTERVAL s.
+
+        Každý krok běží zvlášť: chyba jednoho nezastaví ostatní.
+        """
         now = self.clock()
         if now < self._next_fresh:
             return
         self._next_fresh = now + FRESH_INTERVAL
         self._guard("hledání čerstvých nálezů", lambda: fresh.detect(self.conn, self.now()))
-        self._guard("stažení starých sad", self._retire)
+        self._guard("stažení sad mimo nálezy", self._retire)
+        self._guard("vypršení lhůt", self._expire)
+        self._guard("připomínky automatických sad", self._remind)
 
     def _retire(self) -> None:
         for set_id, status in fresh.retire(self.conn, self.now()):
@@ -1139,9 +1146,20 @@ class Bot:
                 continue
             for msg_id in {r.telegram_msg_id for r in items if r.telegram_msg_id}:
                 self._drop_buttons(msg_id)
-            # u sady s výběrem vypršely jen nevybrané varianty, vybrané dál čekají na schválení
-            text = RETIRED_REST if queue.picked(self.conn, set_id) else RETIRED.get(status, "#{} " + status)
-            self._say(text.format(set_id))
+            self._say(messages.withdrawn_text(set_id))
+
+    def _expire(self) -> None:
+        """Vypršelé jednotky (queue.expire): tlačítka pryč a jedna zpráva za jednotku."""
+        for e in queue.expire(self.conn, self.now()):
+            for msg_id in e.msg_ids:
+                self._drop_buttons(msg_id)
+            self._say(messages.expired_text(e))
+
+    def _remind(self) -> None:
+        """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště."""
+        for set_id in queue.auto_reminders(self.conn, self.now()):
+            if self._say(messages.reminder_text(set_id)):
+                queue.mark_reminded(self.conn, set_id)
 
     # --- hlídání čerstvosti dat ----------------------------------------------
 

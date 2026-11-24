@@ -155,12 +155,13 @@ def _statuses(conn, set_id: int) -> list[str]:
 def test_retire(conn):
     from hlidac_reels import fresh
     _snapshot(conn, BASE_ITEMS, NOW - timedelta(minutes=30))
+    # stará sada s tiskem v nálezech: retire nic nemění (lhůty řeší queue.expire)
     old = _set(conn, source="fresh", ct=221, age=timedelta(days=8))
     gone = _set(conn, source="fresh", ct=500, age=timedelta(days=1), status="queued")
     manual = _set(conn, source="manual", ct=600, age=timedelta(days=30))
     ok = _set(conn, source="auto_pick", ct=90, age=timedelta(days=2))
-    assert sorted(fresh.retire(conn, NOW)) == sorted([(old, "expired"), (gone, "withdrawn")])
-    assert _statuses(conn, old) == ["expired", "expired"]
+    assert fresh.retire(conn, NOW) == [(gone, "withdrawn")]
+    assert _statuses(conn, old) == ["pending", "pending"]
     assert _statuses(conn, gone) == ["withdrawn", "withdrawn"]
     assert _statuses(conn, manual) == ["pending", "pending"]
     assert _statuses(conn, ok) == ["pending", "pending"]
@@ -172,12 +173,12 @@ def test_retire_bez_cerstveho_snimku_nestahuje(conn):
     from hlidac_reels import fresh
     gone = _set(conn, source="fresh", ct=500, age=timedelta(days=1))
     old = _set(conn, source="fresh", ct=501, age=timedelta(days=8))
-    # bez snímku: jen vypršení
-    assert fresh.retire(conn, NOW) == [(old, "expired")]
+    assert fresh.retire(conn, NOW) == []
     # snímek starý 4 h: stažení se přeskočí
     _snapshot(conn, BASE_ITEMS, NOW - timedelta(hours=4))
     assert fresh.retire(conn, NOW) == []
     assert _statuses(conn, gone) == ["pending", "pending"]
+    assert _statuses(conn, old) == ["pending", "pending"]
 
 
 def test_retire_cast_sady_uz_vybrana(conn):
@@ -195,8 +196,7 @@ def test_retire_prazdny_snimek_nestahuje(conn):
     from hlidac_reels import fresh
     _snapshot(conn, {}, NOW)
     gone = _set(conn, source="fresh", ct=500, age=timedelta(days=1))
-    old = _set(conn, source="fresh", ct=501, age=timedelta(days=8))
-    assert fresh.retire(conn, NOW) == [(old, "expired")]
+    assert fresh.retire(conn, NOW) == []
     assert _statuses(conn, gone) == ["pending", "pending"]
 
 
@@ -246,25 +246,20 @@ def test_baseline_po_kazdem_tisku(conn, monkeypatch):
 def test_retire_vybrana_sada_nevyprsi_ani_nestahne(conn):
     from hlidac_reels import fresh, queue
     _snapshot(conn, BASE_ITEMS, NOW)
-    # starší než 7 dní a tisk mimo nálezy, ale varianta už je vybraná
+    # odeslaná před 8 dny a tisk mimo nálezy, ale varianta 1 vybraná včera a varianta 2 rozhodnutá před hodinou
     s = _set(conn, source="fresh", ct=500, age=timedelta(days=8))
+    first, second = (r.id for r in queue.set_items(conn, s))
     with conn.cursor() as cur:
-        cur.execute("UPDATE reel_queue SET status='rejected' WHERE set_id=%s AND variant=2", (s,))
+        cur.execute("UPDATE reel_queue SET sent_at=%s WHERE set_id=%s", (NOW - timedelta(days=8), s))
+        cur.execute("UPDATE reel_queue SET status='rejected', decided_at=%s WHERE id=%s",
+                    (NOW - timedelta(hours=1), second))
+        cur.execute("UPDATE reel_queue SET picked_at=%s WHERE id=%s", (NOW - timedelta(days=1), first))
     conn.commit()
-    queue.mark_picked(conn, s, 1)
-    assert fresh.retire(conn, NOW) == []
-    assert _statuses(conn, s) == ["pending", "rejected"]
-
-
-def test_retire_po_vyberu_vyprsi_jen_nevybrane(conn):
-    from hlidac_reels import fresh, queue
-    _snapshot(conn, BASE_ITEMS, NOW)
-    s = _set(conn, source="fresh", ct=221, age=timedelta(days=8), variants=3)
-    first = queue.set_items(conn, s)[0].id
     queue.mark_picked(conn, s, first)
-    assert fresh.retire(conn, NOW) == [(s, "expired")]
-    assert _statuses(conn, s) == ["pending", "expired", "expired"]
+    # nestáhne se (výběr) a nevyprší: vybraná má 14 dní od výběru, sada je dotčená
     assert fresh.retire(conn, NOW) == []
+    assert queue.expire(conn, NOW) == []
+    assert _statuses(conn, s) == ["pending", "rejected"]
 
 
 def test_retire_po_vyberu_nestahuje(conn):
@@ -351,18 +346,6 @@ def test_prazdna_baseline_jako_prvni_beh(conn):
     assert fresh.detect(conn, NOW) == []
     assert _fresh_jobs(conn) == []
     assert json.loads(queue.get_state(conn, "fresh_baseline")) == BASE_ITEMS
-
-
-def test_retire_fresh_stari_od_zalozeni_ulohy(conn):
-    from hlidac_reels import fresh
-    _snapshot(conn, BASE_ITEMS, NOW)
-    # úloha založená před 8 dny, video dorazilo až včera
-    f = _set(conn, source="fresh", ct=221, age=timedelta(days=1), job_age=timedelta(days=8))
-    # auto_pick se měří od zařazení do fronty
-    a = _set(conn, source="auto_pick", ct=90, age=timedelta(days=1), job_age=timedelta(days=8))
-    assert fresh.retire(conn, NOW) == [(f, "expired")]
-    assert _statuses(conn, f) == ["expired", "expired"]
-    assert _statuses(conn, a) == ["pending", "pending"]
 
 
 def test_klic_bez_udalosti_nezalozi(conn):

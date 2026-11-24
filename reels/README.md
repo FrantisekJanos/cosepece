@@ -198,6 +198,7 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 - `/video <číslo tisku> [cesta|pn|zmena|rozprava]`: ruční zadání (formát je jen nápověda pro generátor),
 - `/vyber`: tisk vybere automatika z hlavních nálezů (nikdy formát `rozprava`),
 - `/pn`: video k vybraným pozměňovacím návrhům (ruční úloha, viz níže),
+- `/autopilot on|off` (bez argumentu stav): zveřejňování videí z `/pn` bez schválení (viz Autopilot níže, výchozí vypnuto),
 - `/fronta`: kromě položek ke schválení i zadání ve frontě (u úloh k PN i čísla PN) a kdy bylo PC naposledy vidět,
 - `/stav`: stav dat (viz Hlídání dat níže).
 
@@ -238,6 +239,21 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
   obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
 - nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
   zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+
+## Autopilot (`/pn` bez schválení)
+
+Přepínač `autopilot` (tabulka `reel_state`, výchozí vypnuto) mění jen chování `/pn`. Zapnutý autopilot nastaví nové
+úloze z `/pn` příznak `reel_jobs.autopilot`; worker pro ni vygeneruje 2 varianty (v2 a v3 `pn`). Sada smí mít u všech
+úloh 1 až 3 platné varianty (minimum 1): nevzniklé varianty jdou v manifestu jako `skipped` a jako poznámka do
+`reel_jobs.error`, sada s jedinou platnou variantou se pošle.
+
+- Při převzetí sady bot založí položky rovnou jako `approved` s `reel_queue.autopilot` jen tehdy, když má úloha příznak
+  a přepínač je zapnutý. Jinak jde sada ke schválení jako obvykle.
+- Bot zveřejní v jednom cyklu nejvýš jednu položku autopilota a pošle odkazy na FB, IG a Threads. Selhání dostane
+  tlačítko Zkusit znovu.
+- `/autopilot off` zastaví zveřejňování hned a ještě nezveřejněné položky autopilota přesune do běžného schvalování.
+- `/video`, `/vyber` a `fresh` autopilot nikdy nepoužijí.
+- Pořadí nasazení: nejdřív server (web a bot společně přes redeploy), potom worker na PC.
 
 ## Hlídání dat
 

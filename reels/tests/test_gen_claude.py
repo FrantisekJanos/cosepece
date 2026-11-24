@@ -152,6 +152,39 @@ def test_zadani_md(tmp_path):
     assert not (tmp_path / "podklady" / "zadani.md").exists()
 
 
+CONTRACT_PN_INFO = Path(__file__).resolve().parents[2] / "tests" / "contract" / "focus-pn-info.json"
+
+
+def test_zadani_md_klub(tmp_path):
+    # klub autora ke dni podání posílá server (tvar drží společný soubor s testem PHP), model ho nezjišťuje
+    from hlidac_reels.generator.claude import write_focus
+    prepare_workdir(tmp_path, 300)
+    info = json.loads(CONTRACT_PN_INFO.read_text(encoding="utf-8"))
+    write_focus(tmp_path, [9801, 9802], info)
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "- autor: Test Poslanec (klub ANO ke dni podání 15. 3. 2026)" in text
+    assert "- autor: Test Ministr (klub v datech Sněmovny ke dni podání není, klub neuváděj)" in text
+    # starší server pole klub a klub_ke_dni neposílá: jméno bez klubu
+    old = [{k: v for k, v in i.items() if k not in ("klub", "klub_ke_dni")} for i in info]
+    write_focus(tmp_path, [9801], old)
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "- autor: Test Poslanec (klub v datech Sněmovny ke dni podání není, klub neuváděj)" in text
+    assert "klub ANO" not in text
+    # bez jména autora
+    write_focus(tmp_path, [9803], [])
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "- autor: zjisti přes get_pn (klub neuváděj)" in text
+
+
+def test_navody_klub_jen_ze_zadani():
+    from hlidac_reels.generator import claude
+    for name in ("v2.md", "v3.md"):
+        text = (claude.HERE / "prompts" / name).read_text(encoding="utf-8")
+        assert "Klub autora ber jen ze zadání" in text, name
+        assert "klub v závorce" in text, name
+    assert "hook.sub" in (claude.HERE / "prompts" / "v3.md").read_text(encoding="utf-8")
+
+
 def test_navody_ctou_zadani():
     from hlidac_reels.generator import claude
     for name in ("orchestrator.md", "v2.md", "v3.md"):

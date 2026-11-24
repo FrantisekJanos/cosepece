@@ -112,6 +112,27 @@ def _pn_time(cas) -> str:
     return f"{int(m[3])}. {int(m[2])}. {m[1]} {m[4]}" if m else str(cas or "")
 
 
+def _pn_day(day) -> str:
+    """„2026-03-15“ → „15. 3. 2026“; jiný tvar beze změny."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(day or ""))
+    return f"{int(m[3])}. {int(m[2])}. {m[1]}" if m else str(day or "")
+
+
+def _author_line(i: dict) -> str:
+    """Řádek autora PN v zadání. Klub ke dni podání posílá server (pn.klub); bez údaje se klub neuvádí.
+
+    Starší server klíče `klub` a `klub_ke_dni` neposílá, chybějící klíč platí jako null.
+    """
+    name = i.get("osoba")
+    if not name:
+        return "- autor: zjisti přes get_pn (klub neuváděj)"
+    club = i.get("klub")
+    if not club:
+        return f"- autor: {name} (klub v datech Sněmovny ke dni podání není, klub neuváděj)"
+    day = _pn_day(i.get("klub_ke_dni"))
+    return f"- autor: {name} (klub {club} ke dni podání{' ' + day if day else ''})"
+
+
 def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict]) -> None:
     """Zapíše `podklady/zadani.md` pro video k vybraným PN (/pn); bez focus_pn soubor smaže.
 
@@ -130,7 +151,7 @@ def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict]) -> 
     for n in focus_pn:
         i = by_num.get(n, {})
         parts.append(f"## PN {n}")
-        parts.append(f"- autor: {i.get('osoba') or 'zjisti přes get_pn'}")
+        parts.append(_author_line(i))
         if i.get("cas"):
             parts.append(f"- podáno: {_pn_time(i['cas'])}")
         if i.get("titulek"):

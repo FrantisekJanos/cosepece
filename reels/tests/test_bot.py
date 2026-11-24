@@ -144,7 +144,7 @@ _PHP_TABLES = {
     "pn": "CREATE TABLE pn (id_dokument integer PRIMARY KEY, cislo integer NOT NULL, ct integer NOT NULL, "
           "id_osoba integer, osoba varchar(120), cas varchar(19))",
     "pn_text": "CREATE TABLE pn_text (id_dokument integer PRIMARY KEY, ct integer NOT NULL, cislo integer NOT NULL, "
-               "ai_json text)",
+               "ai_json text, text text)",
 }
 
 
@@ -2076,13 +2076,14 @@ def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
 # --- /pn: video k vybraným PN -------------------------------------------------
 
 def _pn(conn, cislo: int, ct: int, osoba: str = "Jan Novák", cas: str = "2026-11-23 20:09:00",
-        titulek: str | None = None) -> None:
+        titulek: str | None = None, text: str | None = None) -> None:
     with conn.cursor() as cur:
         cur.execute("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (%s,%s,%s,%s,%s)",
                     (30000 + cislo, cislo, ct, osoba, cas))
-        if titulek is not None:
-            cur.execute("INSERT INTO pn_text (id_dokument, ct, cislo, ai_json) VALUES (%s,%s,%s,%s)",
-                        (30000 + cislo, ct, cislo, json.dumps({"titulek": titulek}, ensure_ascii=False)))
+        if titulek is not None or text is not None:
+            ai = json.dumps({"titulek": titulek}, ensure_ascii=False) if titulek is not None else None
+            cur.execute("INSERT INTO pn_text (id_dokument, ct, cislo, ai_json, text) VALUES (%s,%s,%s,%s,%s)",
+                        (30000 + cislo, ct, cislo, ai, text))
     conn.commit()
 
 
@@ -2204,6 +2205,40 @@ def test_pn_seznam_48h(bot, conn, api):
     assert _buttons(body) == ["pn:2380", "pn:2378", "pn:2377", "pn:2376", "pn:2376+2377+2378"]
     labels = [b["text"] for row in body["reply_markup"]["inline_keyboard"] for b in row]
     assert labels[0] == "Video k PN 2380" and labels[-1] == "Jedno video ze všech (2376+2377+2378)"
+
+
+@pg
+def test_pn_seznam_uryvek_bez_rozboru(bot, conn, api):
+    # PN bez rozboru AI: místo titulku začátek textu za „se mění takto:“, bez hlavičky s předkladateli
+    _pn_bot(bot)
+    body = ("PARLAMENT ČESKÉ REPUBLIKY Poslanecká sněmovna Pozměňovací návrh poslance Benjamina Činčily "
+            "k vládnímu návrhu zákona o státním rozpočtu (ST 324)\nVládní návrh zákona (ST 324) se mění takto:\n"
+            "1. V kapitole 313 – Ministerstvo práce a sociálních věcí se zvyšuje ukazatel „Výdaje celkem“ "
+            "o částku 500 000 000 Kč. " + "Další text. " * 40)
+    _pn(conn, 2422, 324, cas="2026-11-24 10:00:00", text=body)
+    _pn(conn, 2423, 324, cas="2026-11-24 10:01:00", text="Text bez obvyklé formulace.")
+    _pn(conn, 2424, 324, cas="2026-11-24 10:02:00", titulek="Titulek AI", text=body)
+    bot.handle(_msg("/pn"))
+    text = api.sent()[-1]["text"]
+    assert "„V kapitole 313 – Ministerstvo práce" in text
+    assert "(text PN, rozbor AI zatím chybí)" in text
+    assert "Činčily" not in text
+    assert "PN 2423 · tisk 324 · Jan Novák · 24. 11. 10:01\n(rozbor AI zatím chybí)" in text
+    assert "Titulek AI (shrnutí AI)" in text
+
+
+def test_pn_uryvek_delka():
+    from hlidac_reels.bot import PN_EXCERPT, _pn_excerpt
+    long = _pn_excerpt("se mění takto: " + "slovo " * 100)
+    assert len(long) <= PN_EXCERPT + 1 and long.endswith("slovo…")
+    assert _pn_excerpt("Zákon se doplňuje takto: a) krátce.") == "krátce."
+    assert _pn_excerpt(None) == "" and _pn_excerpt("bez formulace") == ""
+    # bez „takto:“: za odkazem na tisk v hlavičce
+    assert _pn_excerpt("Pozměňovací návrh poslance X k návrhu (Sněmovní tisk č. 324/0). V kapitole 329 se zvyšují výdaje.") \
+        == "V kapitole 329 se zvyšují výdaje."
+    # „(ST 324) Vládní návrh … se mění takto:“ a datum na začátku
+    assert _pn_excerpt("PN (ST 324) Vládní návrh zákona o rozpočtu se mění takto: I. V příloze č. 4 x.") == "V příloze č. 4 x."
+    assert _pn_excerpt("k tisku (sněmovní tisk 300) Datum: 23. 11. 2026 V části první x.") == "V části první x."
 
 
 @pg

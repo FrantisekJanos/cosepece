@@ -167,6 +167,36 @@ def _ai_title(ai_json: str | None) -> str:
     return str(ai.get("titulek") or "").strip() if isinstance(ai, dict) else ""
 
 
+PN_EXCERPT = 200  # nejvýš znaků úryvku textu PN v seznamu /pn
+PN_HEAD = 1500  # hlavička PN (předkladatelé, název tisku) se hledá jen na začátku textu
+_PN_BODY = re.compile(r"(?:takto|tyto úpravy|následovně)\s*:\s*", re.IGNORECASE)
+# odkaz na tisk na konci hlavičky: „(Sněmovní tisk č. 324/0).“, „(ST 324)“, „sněmovní tisk 324“
+_PN_TISK = re.compile(r"\(?\b(?:sněmovní\w*\s+tisk\w*|ST)\s*(?:č\.\s*)?\d+(?:/\d+)?\)?\.?\s*", re.IGNORECASE)
+
+
+def _pn_excerpt(text: str | None) -> str:
+    """Úryvek textu PN bez hlavičky s předkladateli, nejvýš PN_EXCERPT znaků. Pro seznam /pn u PN, které ještě
+    nemají rozbor AI. Začátek: za „… se mění takto:“ (i „provedou tyto úpravy:“), jinak za posledním odkazem
+    na sněmovní tisk v hlavičce. Bez obojího prázdný řetězec."""
+    flat = re.sub(r"\s+", " ", text or "").strip()
+    head = flat[:PN_HEAD]
+    marker = _PN_BODY.search(head)
+    refs = [m for m in _PN_TISK.finditer(head) if marker is None or m.start() < marker.start()]
+    gap = flat[refs[-1].end():marker.start()] if marker is not None and refs else ""
+    if marker is not None and (not refs or (len(gap) <= 200 and not gap.startswith("V "))):
+        start = marker.end()  # „(ST 324) Vládní návrh zákona … se mění takto:“
+    elif refs:
+        start = refs[-1].end()  # „… (Sněmovní tisk č. 324/0). V kapitole 329 …“ (věta textu začíná „V …“)
+    else:
+        return ""
+    body = re.sub(r"^[\s/.,;:–-]*(?:Datum:\s*\d{1,2}\.\s*\d{1,2}\.\s*\d{4}\s*)?", "", flat[start:])
+    body = re.sub(r"^(?:\d+\.|[IVX]+\.|[A-ZČŘŠŽ]\.|[a-z]\))\s*", "", body)
+    if len(body) <= PN_EXCERPT:
+        return body
+    cut = body[:PN_EXCERPT].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:–-") + "…"
+
+
 # --- bot --------------------------------------------------------------------
 
 class Bot:
@@ -534,7 +564,7 @@ class Bot:
         """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT p.cislo, p.ct, p.osoba, p.cas, x.ai_json FROM pn p "
+                "SELECT p.cislo, p.ct, p.osoba, p.cas, x.ai_json, left(x.text, 6000) FROM pn p "
                 "LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
                 "WHERE p.cas >= to_char((%s::timestamptz AT TIME ZONE 'Europe/Prague') - interval '48 hours', "
                 "'YYYY-MM-DD HH24:MI:SS') ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
@@ -546,10 +576,16 @@ class Bot:
             return
         lines, buttons = [], []
         by_ct: dict[int, list[int]] = {}
-        for cislo, ct, osoba, cas, ai_json in rows:
+        for cislo, ct, osoba, cas, ai_json, text in rows:
             line = f"PN {cislo} · tisk {ct} · {osoba or 'autor neznámý'} · {_pn_time(cas)}"
             title = _ai_title(ai_json)
-            lines.append(line + (f"\n{title} (shrnutí AI)" if title else ""))
+            if title:
+                line += f"\n{title} (shrnutí AI)"
+            else:
+                # rozbor AI běží na Macu se zpožděním; do té doby aspoň začátek textu návrhu
+                excerpt = _pn_excerpt(text)
+                line += f"\n„{excerpt}“ (text PN, rozbor AI zatím chybí)" if excerpt else "\n(rozbor AI zatím chybí)"
+            lines.append(line)
             buttons.append((f"Video k PN {cislo}", f"pn:{cislo}"))
             by_ct.setdefault(ct, []).append(cislo)
         for ct, nums in by_ct.items():

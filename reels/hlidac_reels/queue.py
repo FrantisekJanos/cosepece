@@ -136,17 +136,6 @@ def get(conn, id: int) -> Reel | None:
     return r
 
 
-def next_queued(conn, sets: bool = True) -> Reel | None:
-    """Nejstarší položka queued; sets=False přeskočí automatické sady (denní limit sad je vyčerpaný),
-    samostatná videa a sady ručních úloh (source manual) projdou."""
-    only_solo = "" if sets else " AND (set_id IS NULL OR source = 'manual')"
-    with conn.cursor() as cur:
-        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='queued'{only_solo} ORDER BY id LIMIT 1")
-        r = _row(cur)
-    conn.commit()
-    return r
-
-
 def next_sendable(conn, now: datetime, auto_ok: bool) -> Reel | None:
     """Další položka k odeslání do Telegramu (R1, R2, R4).
 
@@ -279,15 +268,6 @@ def set_items(conn, set_id: int) -> list[Reel]:
         out = [Reel(*r) for r in cur.fetchall()]
     conn.commit()
     return out
-
-
-def pending_count(conn) -> int:
-    """Nevyřízené jednotky ke schválení: sada se počítá jednou, samostatné video taky."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT count(DISTINCT coalesce(set_id, -id)) FROM reel_queue WHERE status='pending'")
-        n = cur.fetchone()[0]
-    conn.commit()
-    return n
 
 
 def local_date(conn, at: datetime) -> date:

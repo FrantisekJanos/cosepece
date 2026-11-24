@@ -6,7 +6,7 @@ a výsledek řádek Threads. Bez něj se o Threads nepíše nic.
 from __future__ import annotations
 
 from .caption import for_network
-from .queue import Reel
+from .queue import AUTO_HOLD, Reel
 
 TEXT_LIMIT = 4096
 VIDEO_CAPTION_LIMIT = 1024
@@ -109,6 +109,47 @@ def approval_buttons(reel_id: int) -> list[tuple[str, str]]:
 
 def retry_buttons(reel_id: int) -> list[tuple[str, str]]:
     return [("Zkusit znovu", f"retry:{reel_id}")]
+
+
+def _unit_label(reel: Reel) -> str:
+    """Jednotka v textu zprávy: sada podle set_id, samostatné video podle id."""
+    return f"Sada #{reel.set_id}" if reel.set_id is not None else f"#{reel.id}"
+
+
+def held_text(reel: Reel) -> str:
+    """Jednotku se opakovaně nepodařilo poslat do Telegramu (stav held)."""
+    what = _unit_label(reel)
+    where = f" (tisk {reel.ct})" if reel.ct is not None else ""
+    error = (reel.send_error or "")[:REASON_LIMIT]
+    reason = f"\nPoslední chyba: {error}" if error else ""
+    return (f"{what}{where} se nepodařilo poslat ke schválení ani po {reel.send_attempts} pokusech.{reason}\n"
+            "Zkusit znovu, nebo zahodit?")
+
+
+def held_buttons(reel_id: int) -> list[tuple[str, str]]:
+    return [("Zkusit znovu", f"sendretry:{reel_id}"), ("Zahodit", f"drop:{reel_id}")]
+
+
+def held_dropped_text(reel: Reel) -> str:
+    """Potvrzení Zahodit u jednotky, kterou nešlo poslat."""
+    return f"Sada #{reel.set_id} zahozena." if reel.set_id is not None else f"#{reel.id} zahozeno."
+
+
+def set_dropped_text(set_id: int) -> str:
+    """Žádné video sady Telegram nepřijal (odmítnutí 4xx nebo nečitelný soubor)."""
+    return f"Sada #{set_id} vyřazena: žádné její video nejde poslat do Telegramu."
+
+
+def auto_waiting_text(set_id: int, limit: int, reason: str) -> str:
+    """Automatická sada čeká: reason 'limit' = denní limit, jinak nerozhodnutá jiná automatická sada."""
+    if reason == "limit":
+        return (f"Sada #{set_id} čeká na zítřek: denní limit {limit} automatických sad je vyčerpaný. "
+                "Poslat hned: /dalsi")
+    return (f"Sada #{set_id} čeká, dokud nevybereš z předchozí automatické sady (nejdéle {AUTO_HOLD} h). "
+            "Poslat hned: /dalsi")
+
+
+NOTHING_READY = "Teď není co poslat: položky ve frontě jsou odložené po chybě odeslání, zkusím je znovu."
 
 
 def _split_error(error: str | None) -> tuple[list[str], list[str]]:

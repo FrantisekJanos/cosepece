@@ -28,16 +28,18 @@ def _add(conn, n, **kw):
     return queue.add(conn, video_path=f"v{n}.mp4", video_sha256=f"sha{n}", caption=f"c{n}", **kw)
 
 
-def test_add_a_next_queued_podle_id(conn):
+def test_add_a_next_sendable_podle_id(conn):
+    from datetime import datetime, timezone
     from hlidac_reels import queue
+    now = datetime.now(timezone.utc)
     a, b = _add(conn, 1), _add(conn, 2)
     assert a < b
-    assert queue.next_queued(conn).id == a
+    assert queue.next_sendable(conn, now, True).id == a
     assert queue.transition(conn, a, "queued", "pending")
-    assert queue.next_queued(conn).id == b
+    # čekající položka další neblokuje
+    assert queue.next_sendable(conn, now, True).id == b
     assert queue.get(conn, b).source == "ukazka"
     assert queue.get(conn, 999) is None
-    assert queue.pending_count(conn) == 1
 
 
 def test_duplicitni_video_vyhodi_DuplicateVideo(conn):

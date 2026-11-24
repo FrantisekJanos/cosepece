@@ -23,7 +23,7 @@ def fake(monkeypatch):
 
     def run_claude(prompt, *, workdir, mcp_config, model, timeout_s=1200):
         state["calls"].append(prompt)
-        if len(state["calls"]) == 1:
+        if "OPRAVA:" not in prompt:  # generování celé sady (ne oprava)
             for d in GEN.iterdir():
                 if d.name not in state["skip"]:
                     shutil.copytree(d, Path(workdir) / d.name, dirs_exist_ok=True)
@@ -90,15 +90,16 @@ def test_neplatny_json_vypadne(tmp_path, fake):
     assert not r.variants[1].ok and r.ok
 
 
-def test_oprava_jen_jednou(tmp_path, fake):
+def test_oprava_nejvys_trikrat(tmp_path, fake):
     def bad(wd):
         card = json.loads((wd / "variant-3" / "card.json").read_text(encoding="utf-8"))
         card["reasons"].append({"key": "p90_passed", "label": "x", "points": 1})
         (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
     fake["prepare"] = bad
     r = _run(tmp_path)
-    assert len(fake["calls"]) == 2
-    assert "variant-3" in fake["calls"][1] and "p90_passed" in fake["calls"][1] and "variant-1" not in fake["calls"][1]
+    assert len(fake["calls"]) == gen.BUDGET_RUNS == 4  # 1 generování + 3 cílené běhy
+    for prompt in fake["calls"][1:]:
+        assert "variant-3" in prompt and "p90_passed" in prompt and "variant-1" not in prompt
     assert not r.variants[2].ok and r.ok
 
 
@@ -250,7 +251,7 @@ def test_video_k_pn_karta_bez_pn_vypadne(tmp_path, fake):
     assert not r.variants[0].ok
     assert any("9999" in e for e in r.variants[0].errors)
     # oprava dostala chybu PN
-    assert len(fake["calls"]) == 2 and "9999" in fake["calls"][1]
+    assert len(fake["calls"]) == 4 and "9999" in fake["calls"][1]
 
 
 def test_video_k_pn_bez_textu_dve_varianty(tmp_path, fake):
@@ -318,7 +319,7 @@ def test_beh_nic_nezapsal(tmp_path, fake):
         (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
     fake["prepare"] = bad
     r = _run(tmp_path, render=False)
-    assert len(fake["calls"]) == 2
+    assert len(fake["calls"]) == 4
     assert "běh modelu nic nezapsal" in r.variants[2].errors and not r.variants[2].ok
     assert all("běh modelu nic nezapsal" not in v.errors for v in r.variants[:2])
 
@@ -335,7 +336,7 @@ def test_beh_nic_nezapsal_skutecny_proces(tmp_path, monkeypatch):
     # stejný projev jako chyba D1 (Edit nepovolený): rc 0, žádný soubor; nesmí projít potichu
     _fake_bin(monkeypatch, FAKE_CLAUDE_NOWRITE="1")
     r = _run(tmp_path, render=False)
-    assert not r.ok and len(r.runs) == 2
+    assert not r.ok and len(r.runs) == 4
     assert all("běh modelu nic nezapsal" in v.errors for v in r.variants)
 
 
@@ -347,3 +348,183 @@ def test_env_chyba_bez_opravy(tmp_path, monkeypatch):
     assert "limit" in e.value.reason
     log = (tmp_path / "out" / "claude.log").read_text(encoding="utf-8")
     assert log.count("=== běh ===") == 1  # oprava se nespustila
+
+
+# --- Task 5: stav úlohy (state.json), pokračování, rozpočet běhů ---
+
+def _state(tmp_path) -> dict:
+    return json.loads((tmp_path / "out" / "state.json").read_text(encoding="utf-8"))
+
+
+def _copy_variant(wd, n):
+    shutil.copytree(GEN / f"variant-{n}", Path(wd) / f"variant-{n}", dirs_exist_ok=True)
+
+
+def _env_run(prompt, kw, fake, result="Claude AI usage limit reached"):
+    fake["calls"].append(prompt)
+    return ClaudeRun(ok=False, returncode=1, timed_out=False, log_path=Path(kw["workdir"]) / "claude.log",
+                     kind="env", result=result)
+
+
+def test_pokracovani_nerenderuje_platne(tmp_path, fake, monkeypatch):
+    # 1. vydání: varianta 3 chybí a rozpočet (zúžený na 1 běh) dojde; 1 a 2 se vyrenderují
+    fake["skip"] = {"variant-3"}
+    monkeypatch.setattr(gen, "BUDGET_RUNS", 1)
+    r1 = _run(tmp_path)
+    assert [v.ok for v in r1.variants] == [True, True, False] and len(fake["calls"]) == 1
+    st = _state(tmp_path)
+    assert [st["variants"][k]["state"] for k in ("1", "2", "3")] == ["vyrenderovana", "vyrenderovana", "chybi"]
+    assert st["model_runs"] == 1
+    # 2. vydání se stejným vstupem: jen cílený běh nad variantou 3, platné se znovu nerenderují
+    monkeypatch.setattr(gen, "BUDGET_RUNS", 4)
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        _copy_variant(kw["workdir"], 3)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    fake["renders"].clear()
+    fake["landscape"].clear()
+    r2 = _run(tmp_path)
+    assert len(fake["calls"]) == 2
+    fix = fake["calls"][1]
+    assert "variant-3" in fix and "variant-1" not in fix and "variant-2" not in fix
+    assert fake["renders"] == ["template_v3"] and fake["landscape"] == ["template_v3"]
+    assert [v.ok for v in r2.variants] == [True, True, True] and r2.ok
+    assert all(v.video and v.video.exists() and v.video_landscape for v in r2.variants)
+    assert r2.variants[0].caption  # popisek hotové varianty se načte znovu
+    assert _state(tmp_path)["model_runs"] == 2
+
+
+def test_pokracovani_bez_videa_renderuje_znovu(tmp_path, fake):
+    _run(tmp_path)
+    (tmp_path / "out" / "variant-2" / "reel-311-cesta.mp4").unlink()
+    fake["renders"].clear()
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 1 and fake["renders"] == ["template_v3"] and r.ok
+
+
+def test_jiny_vstup_zacne_znova(tmp_path, fake):
+    # Review Focus 1: změněná karta webu = stará platná varianta se nesmí použít
+    _run(tmp_path)
+    assert _state(tmp_path)["model_runs"] == 1
+    (tmp_path / "out" / "variant-1" / "normalize.json").write_text('["starý zásah"]', encoding="utf-8")
+    card = load_fixture("card-1-v2.json")
+    card["title"] = str(card.get("title", "")) + " (upraveno)"
+    fake["skip"] = {"variant-3"}  # nové generování variantu 3 nenapíše
+    fake["renders"].clear()
+    r = _run(tmp_path, card_v2=card)
+    assert len(fake["calls"]) >= 2 and "OPRAVA:" not in fake["calls"][1]  # znovu celá sada
+    assert not r.variants[2].ok  # stará varianta 3 je pryč
+    assert fake["renders"] == ["template_v2", "template_v3"]
+    assert json.loads((tmp_path / "out" / "variant-1" / "normalize.json").read_text(encoding="utf-8")) == []
+    st = _state(tmp_path)
+    assert st["model_runs"] == len(fake["calls"]) - 1 and st["variants"]["3"]["state"] == "chybi"
+
+
+def test_jina_verze_promptu_zacne_znova(tmp_path, fake, monkeypatch):
+    _run(tmp_path, render=False)
+    monkeypatch.setattr(gen, "_prompt_versions", lambda: {"v3.md": "jina"})
+    _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 2 and "OPRAVA:" not in fake["calls"][1]
+
+
+def test_rozpocet_4_behy(tmp_path, fake):
+    def bad(wd):
+        card = json.loads((wd / "variant-3" / "card.json").read_text(encoding="utf-8"))
+        card["ct"] = 999
+        (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = bad
+    _run(tmp_path, render=False)
+    r = _run(tmp_path, render=False)  # další vydání téže úlohy: rozpočet je vyčerpaný
+    assert len(fake["calls"]) == 4
+    assert r.ok and not r.variants[2].ok and r.variants[2].errors and r.runs == []
+    st = _state(tmp_path)
+    assert st["model_runs"] == 4 and st["variants"]["3"]["state"] == "vadna" and st["variants"]["3"]["errors"]
+
+
+def test_oprava_jen_vadnych_s_chybou(tmp_path, fake, monkeypatch):
+    # přesná chyba rozvržení (Task 1) jde do cíleného běhu doslova, jen u vadné varianty
+    err = "scene:s-hook: přetéká o 3 px (hook.unit 7 znaků, title 41 znaků)"
+    seen = {"n": 0}
+
+    def layout(card, template):
+        if card.get("format") == "pn":
+            seen["n"] += 1
+            if seen["n"] == 1:
+                return [err]
+        return []
+    monkeypatch.setattr(gen, "check_layout", layout)
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        if "OPRAVA:" in prompt:  # model kartu přepíše (stejný obsah s jiným odsazením)
+            d = Path(kw["workdir"]) / "variant-3"
+            card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+            (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 2
+    fix = fake["calls"][1]
+    assert err in fix and "variant-3" in fix and "variant-2" not in fix and "variant-1" not in fix
+    assert all(v.ok for v in r.variants)
+
+
+def test_env_chyba_v_oprave_zachova_platne(tmp_path, fake, monkeypatch):
+    # chyba prostředí v cíleném běhu: EnvError ven, hotová videa zůstanou a další vydání pokračuje
+    from hlidac_reels.generator.claude import EnvError
+    fake["skip"] = {"variant-3"}
+    real = gen.run_claude
+    mode = {"env": True}
+
+    def run_claude(prompt, **kw):
+        if "OPRAVA:" in prompt and mode["env"]:
+            return _env_run(prompt, kw, fake)
+        r = real(prompt, **kw)
+        if "OPRAVA:" in prompt:
+            _copy_variant(kw["workdir"], 3)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    with pytest.raises(EnvError):
+        _run(tmp_path)
+    assert fake["renders"] == ["template_v2", "template_v3"]
+    st = _state(tmp_path)
+    assert st["model_runs"] == 1  # běh, který kvůli prostředí nic nezapsal, rozpočet nespálí
+    assert [st["variants"][k]["state"] for k in ("1", "2")] == ["vyrenderovana", "vyrenderovana"]
+    mode["env"] = False
+    fake["renders"].clear()
+    r = _run(tmp_path)
+    assert fake["renders"] == ["template_v3"]
+    assert len(fake["calls"]) == 3 and "OPRAVA:" in fake["calls"][2]
+    assert r.ok and all(v.ok for v in r.variants)
+
+
+def test_env_chyba_pri_generovani_zopakuje_generovani(tmp_path, fake, monkeypatch):
+    from hlidac_reels.generator.claude import EnvError
+    real = gen.run_claude
+    mode = {"env": True}
+
+    def run_claude(prompt, **kw):
+        if mode["env"]:
+            return _env_run(prompt, kw, fake, result="limit")
+        return real(prompt, **kw)
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    with pytest.raises(EnvError):
+        _run(tmp_path, render=False)
+    assert _state(tmp_path)["model_runs"] == 0
+    mode["env"] = False
+    r = _run(tmp_path, render=False)
+    assert "OPRAVA:" not in fake["calls"][1] and r.ok and _state(tmp_path)["model_runs"] == 1
+
+
+def test_platna_bez_renderu_se_pri_renderu_zkontroluje(tmp_path, fake, monkeypatch):
+    # varianta platná bez kontroly rozvržení (render=False) se před renderem zkontroluje
+    _run(tmp_path, render=False)
+    assert _state(tmp_path)["variants"]["2"]["state"] == "platna"
+    checked = []
+    monkeypatch.setattr(gen, "check_layout", lambda card, template: checked.append(template) or [])
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 1 and len(checked) == 3 and r.ok and all(v.video for v in r.variants)

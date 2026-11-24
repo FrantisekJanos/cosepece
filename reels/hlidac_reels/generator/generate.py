@@ -24,6 +24,11 @@ from .validate import check_layout, validate_variant
 
 MIN_OK = 2
 NOTHING_WRITTEN = "běh modelu nic nezapsal"
+BUDGET_RUNS = 4  # běhy modelu na úlohu přes všechna vydání: 1 generování + 3 cílené běhy
+STATE_FILE = "state.json"
+PROMPTS = ("v2.md", "v3.md", "orchestrator.md")  # návody, jejichž verze patří do otisku vstupu
+# stavy variant ve state.json
+MISSING, BROKEN, VALID, RENDERED = "chybi", "vadna", "platna", "vyrenderovana"
 
 
 @dataclass
@@ -45,7 +50,8 @@ class GenResult:
     formats: list[str]
     variants: list[Variant]
     ok: bool
-    runs: list[dict] = field(default_factory=list)  # stav běhů claude -p (timeout, návratový kód)
+    runs: list[dict] = field(default_factory=list)  # běhy claude -p tohoto vydání (timeout, návratový kód)
+    model_runs: int = 0  # běhy modelu úlohy přes všechna vydání (rozpočet BUDGET_RUNS)
 
 
 def _append_notes(path: Path, notes: list[str]) -> None:
@@ -124,6 +130,101 @@ def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
     v.video_landscape = video
 
 
+def _prompt_versions() -> dict[str, str]:
+    """sha256 návodů, ze kterých model karty píše; jiná verze návodu = jiný vstup úlohy."""
+    d = Path(__file__).parent / "prompts"
+    return {name: hashlib.sha256((d / name).read_bytes()).hexdigest() for name in PROMPTS}
+
+
+def _input_hash(card_v2: dict, focus_pn: list[int] | None, formats: list[str]) -> str:
+    """Otisk vstupu úlohy: karta webu, zadané PN, formáty a verze návodů (kanonický JSON)."""
+    data = {"card_v2": card_v2, "focus_pn": focus_pn, "formats": formats, "prompts": _prompt_versions()}
+    raw = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _load_state(out: Path, input_hash: str) -> dict | None:
+    """Stav minulého vydání téže úlohy; None = žádný, nečitelný, nebo k jinému vstupu."""
+    try:
+        st = json.loads((out / STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(st, dict) or st.get("input") != input_hash or not isinstance(st.get("variants"), dict)
+            or not isinstance(st.get("model_runs"), int)):
+        return None
+    return st
+
+
+def _save_state(out: Path, st: dict) -> None:
+    """Zapíše state.json přes dočasný soubor (pád uprostřed zápisu nesmí stav rozbít)."""
+    tmp = out / (STATE_FILE + ".tmp")
+    tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(out / STATE_FILE)
+
+
+def _sha(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _rel(path: Path | None, out: Path) -> str | None:
+    return path.relative_to(out).as_posix() if path else None
+
+
+def _resume(v: Variant, entry: dict, out: Path, layout: bool) -> dict | bool | None:
+    """Obnoví variantu z minulého vydání bez modelu.
+
+    Vrací True = hotové video (nic dalšího), kartu = platná, None = vadná nebo chybí (chyby v v.errors),
+    False = stav nesedí se soubory a variantu je nutné znovu zkontrolovat.
+    """
+    d = out / f"variant-{v.n}"
+    state = entry.get("state")
+    if state in (MISSING, BROKEN):
+        v.errors = [str(e) for e in entry.get("errors") or []] or ["varianta chybí"]
+        return None
+    try:
+        caption = (d / "caption.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if state == RENDERED and entry.get("video") and (out / entry["video"]).is_file():
+        v.caption, v.errors = caption, []
+        v.video = out / entry["video"]
+        land = entry.get("video_landscape")
+        v.video_landscape = out / land if land and (out / land).is_file() else None
+        v.warnings = [str(w) for w in entry.get("warnings") or []]
+        return True
+    # platná (nebo vyrenderovaná bez videa): kartu stačí načíst, pokud se od kontroly nezměnila
+    if state not in (VALID, RENDERED) or _sha(d / "card.json") != entry.get("card_sha"):
+        return False
+    if layout and not entry.get("layout"):  # platná bez kontroly rozvržení (render=False) se před renderem zkontroluje
+        return False
+    try:
+        card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    v.caption, v.errors = caption, []
+    return card if isinstance(card, dict) else False
+
+
+def _render_variant(v: Variant, card: dict, out: Path, ct: int, landscape: bool) -> None:
+    """Vyrenderuje platnou variantu na výšku (a na šířku); chyba na výšku jde do v.errors."""
+    name = "v2" if v.format is None else v.format
+    video = out / f"variant-{v.n}" / f"reel-{ct}-{name}.mp4"
+    v.warnings = []
+    try:
+        render_reel(Card.from_json(card), video, template=v.template)
+        v.errors = media_validate(probe(video))
+    except Exception as e:  # noqa: BLE001 — chyba renderu vyřadí jen tuto variantu
+        v.errors = [f"render selhal: {e}"]
+    if v.errors:
+        return
+    v.video = video
+    if landscape:
+        _render_landscape(v, card, video)
+
+
 def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: bool, out: Path, mcp_config: Path,
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
              timeout_s: int = 1200, landscape: bool = True,
@@ -132,17 +233,25 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN 2).
 
     focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
-    Chyba prostředí claude -p (limit, přihlášení) bez zapsaných souborů vyhodí EnvError.
+    Stav úlohy je v `out/state.json`. Další vydání se stejným otiskem vstupu pokračuje: hotová videa
+    se nerenderují znovu, platné varianty se jen vyrenderují, vadné jdou do cíleného běhu se svými chybami.
+    Rozpočet BUDGET_RUNS běhů modelu platí přes všechna vydání. Jiný vstup = složka se vyčistí.
+    Chyba prostředí claude -p (limit, přihlášení) bez zapsaných souborů vyhodí EnvError; rozpočet nespálí
+    a hotová práce zůstane ve stavu pro další vydání.
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("variant-*"):  # výstup minulého běhu se nesmí vydávat za nový
-        shutil.rmtree(old, ignore_errors=True)
-    (out / "vysledek.json").unlink(missing_ok=True)
     focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
     # server has_text zatím neposílá; chybějící pole = text PN je k dispozici
     has_text = all(i.get("has_text", True) for i in focus_info or [] if isinstance(i, dict))
     formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text)
+    input_hash = _input_hash(card_v2, focus_pn, formats)
+    st = _load_state(out, input_hash)
+    if st is None:  # nový vstup: výstup minulého běhu se nesmí vydávat za nový (smaže i normalize.json)
+        for old in out.glob("variant-*"):
+            shutil.rmtree(old, ignore_errors=True)
+        st = {"input": input_hash, "model_runs": 0, "variants": {}}
+    (out / "vysledek.json").unlink(missing_ok=True)
     (out / "tisk.json").write_text(json.dumps({"ct": ct, "reason_keys": reason_keys, "formats": formats,
                                                "focus_pn": focus_pn}, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -150,14 +259,27 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     write_published(out, published or [])
     write_focus(out, focus_pn, focus_info or [])
     variants = [Variant(1, "template_v2", None)] + [Variant(n, "template_v3", f) for n, f in enumerate(formats, 2)]
+    entries: dict[str, dict] = st["variants"]
+    for v in variants:
+        entries.setdefault(str(v.n), {"state": MISSING, "errors": []})
+    _save_state(out, st)
 
     runs: list[dict] = []
+    cards: dict[int, dict | None] = {}  # platné karty, které čekají na render
+    tried: set[int] = set()  # varianty, jejichž render v tomto vydání selhal (nezkoušet znovu)
+
+    def save(v: Variant, state: str) -> None:
+        d = out / f"variant-{v.n}"
+        entries[str(v.n)] = {"state": state, "errors": list(v.errors), "card_sha": _sha(d / "card.json"),
+                             "layout": render, "video": _rel(v.video, out),
+                             "video_landscape": _rel(v.video_landscape, out), "warnings": list(v.warnings)}
+        _save_state(out, st)
 
     def model_run(prompt: str, numbers: list[int]) -> set[int]:
         """Jeden běh claude -p; vrací čísla variant, jejichž card.json ani caption.txt se nezměnily.
 
         Chyba prostředí (limit, přihlášení) bez jediného zapsaného souboru ukončí generování výjimkou
-        EnvError: oprava by skončila stejně a spálila by pokus.
+        EnvError: oprava by skončila stejně a spálila by pokus. Takový běh se do rozpočtu nepočítá.
         """
         before = _fingerprints(out, numbers)
         r = run_claude(prompt, workdir=out, mcp_config=mcp_config, model=model, timeout_s=timeout_s)
@@ -167,49 +289,70 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
         unchanged = {n for n in numbers if after[n] == before[n]}
         if r.kind == "env" and len(unchanged) == len(numbers):
             raise EnvError(r.result or f"claude -p skončil s kódem {r.returncode}")
+        st["model_runs"] += 1
+        _save_state(out, st)
         return unchanged
 
-    def mark(v: Variant, unchanged: set[int]) -> None:
-        if not v.errors:
+    def check(v: Variant, unchanged: set[int] | None = None) -> None:
+        """Kontrola varianty (po běhu modelu i bez něj) a zápis stavu."""
+        cards[v.n] = card = _check(v, out, ct, reason_keys, render, focus_pn, focus_info)
+        if card is not None:
+            save(v, VALID)
             return
-        if v.n in unchanged:  # rc 0 bez zápisu (např. nepovolený nástroj) nesmí vypadat jako chyba obsahu
-            v.errors.insert(0, NOTHING_WRITTEN)
-        if runs[-1]["timed_out"]:
-            v.errors.insert(0, "běh claude -p vypršel (timeout)")
+        if unchanged is not None:
+            if v.n in unchanged:  # rc 0 bez zápisu (např. nepovolený nástroj) nesmí vypadat jako chyba obsahu
+                v.errors.insert(0, NOTHING_WRITTEN)
+            if runs[-1]["timed_out"]:
+                v.errors.insert(0, "běh claude -p vypršel (timeout)")
+        d = out / f"variant-{v.n}"
+        exists = (d / "card.json").is_file() and (d / "caption.txt").is_file()
+        save(v, BROKEN if exists else MISSING)
 
-    unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out), [v.n for v in variants])
-    cards = {v.n: _check(v, out, ct, reason_keys, render, focus_pn, focus_info) for v in variants}
-    for v in variants:
-        mark(v, unchanged)
-    broken = {v.n: v.errors for v in variants if cards[v.n] is None}
-    if broken:  # jedna oprava jen vadných variant, pak vypadnou
-        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out, repair=broken), sorted(broken))
+    def render_pending() -> None:
+        """Vyrenderuje platné karty, které ještě video nemají; vždy jen jednu najednou."""
         for v in variants:
-            if v.n in broken:
-                cards[v.n] = _check(v, out, ct, reason_keys, render, focus_pn, focus_info)
-                mark(v, unchanged)
-
-    for v in variants:  # render vždy jen jeden najednou
-        card = cards[v.n]
-        if card is None:
-            continue
-        if render:
-            name = "v2" if v.format is None else v.format
-            video = out / f"variant-{v.n}" / f"reel-{ct}-{name}.mp4"
-            try:
-                render_reel(Card.from_json(card), video, template=v.template)
-                v.errors = media_validate(probe(video))
-            except Exception as e:  # noqa: BLE001 — chyba renderu vyřadí jen tuto variantu
-                v.errors = [f"render selhal: {e}"]
-            if v.errors:
+            card = cards.get(v.n)
+            if card is None or not render or v.n in tried:
                 continue
-            v.video = video
-            if landscape:
-                _render_landscape(v, card, video)
-        v.ok = True
+            tried.add(v.n)
+            _render_variant(v, card, out, ct, landscape)
+            if not v.errors:
+                cards[v.n] = None
+                save(v, RENDERED)
+            else:  # stav zůstane platná: další vydání zkusí render znovu, bez běhu modelu
+                save(v, VALID)
 
+    def broken() -> dict[int, list[str]]:
+        return {v.n: v.errors or ["varianta chybí"] for v in variants
+                if entries[str(v.n)]["state"] in (MISSING, BROKEN)}
+
+    if st["model_runs"] == 0:  # první generování celé sady
+        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out), [v.n for v in variants])
+        for v in variants:
+            check(v, unchanged)
+    else:  # pokračování: obnovit, co minulá vydání udělala
+        for v in variants:
+            got = _resume(v, entries[str(v.n)], out, render)
+            if got is False:
+                check(v)
+            elif isinstance(got, dict):
+                cards[v.n] = got
+            elif got is None:
+                cards[v.n] = None
+    render_pending()
+
+    while (bad := broken()) and st["model_runs"] < BUDGET_RUNS:  # cílené běhy jen nad stále vadnými
+        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out, repair=bad), sorted(bad))
+        for v in variants:
+            if v.n in bad:
+                check(v, unchanged)
+        render_pending()
+
+    for v in variants:
+        state = entries[str(v.n)]["state"]
+        v.ok = state == RENDERED or (state == VALID and not render)
     result = GenResult(ct=ct, formats=formats, variants=variants,
-                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs)
+                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs, model_runs=st["model_runs"])
     data = asdict(result)
     for item in data["variants"]:
         item["video"] = str(item["video"]) if item["video"] else None

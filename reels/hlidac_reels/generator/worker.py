@@ -16,7 +16,8 @@ na nejbližší kontrole (před během modelu nebo renderem, běžící claude -
 nevolá a práce zůstane ve složce (příští vydání téže úlohy pokračuje ze state.json). 400 = starší server
 progress nezná: worker ho přestane posílat a pracuje dál (vydání pak platí 60 min od claim).
 
-Druh chyby ve fail: 0 platných variant = content (timeout, když vypršel poslední běh claude -p), 4xx při
+Druh chyby ve fail: 0 platných variant = content (timeout, když vypršel poslední běh claude -p); když ale některá
+platná varianta čeká jen na render (GenResult.unrendered), bez druhu: další vydání ji vyrenderuje. 4xx při
 nahrávání = content, 5xx nebo výpadek sítě po opakováních = infra (zpět do fronty za RETRY_INFRA_S), chyba
 prostředí = env (zpět do fronty, pokus se vrací); ostatní výjimky bez druhu (server: dnešní chování).
 """
@@ -349,8 +350,12 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
             if not res.ok or len(good) < MIN_OK:
                 detail = "; ".join(f"{v.n}: {', '.join(v.errors) or 'bez videa'}" for v in res.variants
                                    if v not in good)
-                # obojí konečné: vypršel poslední běh claude -p = timeout, jinak obsah
-                kind = "timeout" if res.runs and res.runs[-1].get("timed_out") else "content"
+                if res.unrendered:
+                    # platná varianta čeká jen na render (selhal Chromium nebo ffmpeg): bez druhu = další pokus,
+                    # který ji vyrenderuje bez běhu modelu; content by úlohu hned uzavřel
+                    kind = None
+                else:  # obojí konečné: vypršel poslední běh claude -p = timeout, jinak obsah
+                    kind = "timeout" if res.runs and res.runs[-1].get("timed_out") else "content"
                 return _report_fail(api, job_id, claim,
                                     f"málo platných variant ({len(good)}/{len(res.variants)}): {detail}", root,
                                     kind=kind)

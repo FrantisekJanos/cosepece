@@ -51,6 +51,7 @@ def fake(monkeypatch):
 
     monkeypatch.setattr(gen, "run_claude", run_claude)
     monkeypatch.setattr(gen, "render_reel", render_reel)
+    state["render_reel"] = render_reel  # test si render podvrhne jinak a pak vrátí tento
     monkeypatch.setattr(gen, "check_layout", lambda card, template: [])
     def probe(p):
         # video na šířku má rozměry 16:9; land_fail="ratio" u varianty 2 podvrhne šířku s poměrem 9:16
@@ -598,6 +599,20 @@ def test_generate_cancelled_pred_renderem(tmp_path, fake):
     # další vydání téže úlohy pokračuje ze state.json: bez běhu modelu jen render
     r = _run(tmp_path)
     assert len(fake["calls"]) == 1 and r.ok and fake["renders"] == ["template_v2", "template_v3", "template_v3"]
+
+
+def test_render_selhal_platne_cekaji_na_render(tmp_path, fake, monkeypatch):
+    # platné varianty, jejichž render selhal (Chromium, ffmpeg): další vydání je jen vyrenderuje bez modelu
+    def broken_render(card, out_path, **kw):
+        raise RuntimeError("Chromium spadl")
+    monkeypatch.setattr(gen, "render_reel", broken_render)
+    r = _run(tmp_path)
+    assert not r.ok and r.unrendered == [1, 2, 3]
+    assert [_state(tmp_path)["variants"][k]["state"] for k in ("1", "2", "3")] == ["platna"] * 3
+    # render zase jede: bez běhu modelu, nic nečeká
+    monkeypatch.setattr(gen, "render_reel", fake["render_reel"])
+    r = _run(tmp_path)
+    assert r.ok and r.unrendered == [] and len(fake["calls"]) == 1
 
 
 def test_generate_cancelled_pred_modelem(tmp_path, fake):

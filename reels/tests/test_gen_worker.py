@@ -927,6 +927,17 @@ def _gen_timeout(**kw):
     return res
 
 
+def _gen_unrendered(timed_out: bool):
+    """0 platných videí, ale varianta 2 je platná a čeká na render (ten selhal): další vydání ji jen vyrenderuje."""
+    def gen(**kw):
+        res = fake_generate(set())(**kw)
+        res.unrendered = [2]
+        if timed_out:  # ani vypršený běh modelu nemění, že stačí znovu render
+            res.runs = [{"ok": False, "timed_out": True}]
+        return res
+    return gen
+
+
 def _gen_keyerror(**kw):
     raise KeyError("card_v2")
 
@@ -952,6 +963,9 @@ _FAIL_CASES = {
     # případ: (generate, třída API, druh, odklad)
     "0-platnych": (fake_generate(set()), FakeApi, "content", None),
     "0-platnych-timeout": (_gen_timeout, FakeApi, "timeout", None),
+    # render selhal u platné varianty: bez druhu = 3 pokusy, další vydání jen renderuje (spec 3.3)
+    "render-selhal": (_gen_unrendered(False), FakeApi, None, None),
+    "render-selhal-timeout": (_gen_unrendered(True), FakeApi, None, None),
     "nahravani-stale-503": (fake_generate({1, 2, 3}), _Api503, "infra", 900),
     "sit-pri-result": (fake_generate({1, 2, 3}), _ApiOffline, "infra", 900),
     "403-pri-nahravani": (fake_generate({1, 2, 3}), _Api403, "content", None),

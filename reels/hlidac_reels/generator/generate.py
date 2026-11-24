@@ -61,6 +61,8 @@ class GenResult:
     ok: bool
     runs: list[dict] = field(default_factory=list)  # běhy claude -p tohoto vydání (timeout, návratový kód)
     model_runs: int = 0  # běhy modelu úlohy přes všechna vydání (rozpočet BUDGET_RUNS)
+    # platné varianty bez videa (render selhal): další vydání je jen vyrenderuje, bez běhu modelu
+    unrendered: list[int] = field(default_factory=list)
 
 
 def _append_notes(path: Path, notes: list[str]) -> None:
@@ -391,8 +393,10 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     for v in variants:
         state = entries[str(v.n)]["state"]
         v.ok = state == RENDERED or (state == VALID and not render)
+    unrendered = [v.n for v in variants if render and entries[str(v.n)]["state"] == VALID]
     result = GenResult(ct=ct, formats=formats, variants=variants,
-                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs, model_runs=st["model_runs"])
+                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs, model_runs=st["model_runs"],
+                       unrendered=unrendered)
     data = asdict(result)
     for item in data["variants"]:
         item["video"] = str(item["video"]) if item["video"] else None

@@ -423,6 +423,18 @@ def test_jiny_vstup_zacne_znova(tmp_path, fake):
     assert st["model_runs"] == len(fake["calls"]) - 1 and st["variants"]["3"]["state"] == "chybi"
 
 
+def test_jiny_data_date_pokracuje(tmp_path, fake):
+    # server skládá card_v2 při každém claimu a data_date = dnešek: změna data nesmí restartovat úlohu
+    c1 = load_fixture("card-1-v2.json")
+    c1["data_date"] = "2026-11-23"
+    _run(tmp_path, card_v2=c1)
+    assert len(fake["calls"]) == 1 and len(fake["renders"]) == 3
+    c2 = dict(c1, data_date="2026-11-24")
+    r = _run(tmp_path, card_v2=c2)
+    assert len(fake["calls"]) == 1 and len(fake["renders"]) == 3  # žádný nový běh modelu ani render
+    assert r.ok and _state(tmp_path)["model_runs"] == 1
+
+
 def test_jina_verze_promptu_zacne_znova(tmp_path, fake, monkeypatch):
     _run(tmp_path, render=False)
     monkeypatch.setattr(gen, "_prompt_versions", lambda: {"v3.md": "jina"})

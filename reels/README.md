@@ -152,7 +152,7 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
   vadnou variantu nezměnil (otisk `card.json` a `caption.txt`), dostane chybu „běh modelu nic nezapsal“.
 - Stav úlohy je v `<out>/state.json` (stav variant `chybi|vadna|platna|vyrenderovana`, otisk vstupu a verzí promptů,
   počet běhů modelu). Opakované spuštění nad stejnou složkou pokračuje: hotová videa se nerenderují znovu, platné
-  varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
+  varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. „Stejný vstup“ je stejná karta z webu (bez `data_date`), takže hodinová synchronizace dat, která kartu změní, spustí úlohu znovu od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
   plus nejvýš 3 cílené opravy jen vadných variant, s doslovnými chybami); běh přerušený chybou prostředí se nepočítá.
   Hotové platné varianty se renderují hned, takže je pozdější chyba prostředí nezahodí.
 - Video k PN bez textu PN dostane jen formát `pn`, sada má pak 2 varianty a obě musí projít.
@@ -163,8 +163,8 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
   chybí-li něco, loguje chybu a úlohy nebere (čeká 5 minut).
 - `EnvError` nahlásí úlohu jako `fail` („prostředí: …“) a worker se pozastaví, aby nespálil frontu (každý `fail`
   stojí úloze jeden z 3 pokusů). Odstup před sondou je 15 min, 1 h, pak 3 h. Sonda je krátké `claude -p` („odpověz OK“,
-  bez nástrojů, timeout 120 s); po úspěchu worker pokračuje claimem, po neúspěchu čeká o stupeň déle. Při pozastavení
-  neposílá heartbeat.
+  bez nástrojů, timeout 120 s); po úspěchu worker pokračuje claimem, po neúspěchu čeká o stupeň déle. Heartbeat
+  posílá i při pozastavení, na začátku každé smyčky (tedy jednou za krok pauzy).
 - Nahrání videa (na výšku i na šířku) a `result` se při výpadku (chyba sítě, odpověď ≥ 500) opakují po 1, 5 a 15 minutách,
   4xx včetně 409 ne. Šířka po vyčerpání pokusů jen varuje, výška úlohu ukončí.
 

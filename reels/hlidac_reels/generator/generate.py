@@ -138,7 +138,9 @@ def _prompt_versions() -> dict[str, str]:
 
 def _input_hash(card_v2: dict, focus_pn: list[int] | None, formats: list[str]) -> str:
     """Otisk vstupu úlohy: karta webu, zadané PN, formáty a verze návodů (kanonický JSON)."""
-    data = {"card_v2": card_v2, "focus_pn": focus_pn, "formats": formats, "prompts": _prompt_versions()}
+    # data_date server přepočítá při každém claimu (dnešní datum): do otisku nepatří, jinak by půlnoc smazala rozdělanou práci
+    card = {k: v for k, v in card_v2.items() if k != "data_date"}
+    data = {"card_v2": card, "focus_pn": focus_pn, "formats": formats, "prompts": _prompt_versions()}
     raw = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

@@ -91,3 +91,48 @@ def test_migrace_nahradi_stary_index(conn):
         names = sorted(r[0] for r in cur.fetchall())
     conn.commit()
     assert names == ["reel_jobs_active_ct_pn"]
+
+
+def test_jobs_add_autopilot(conn):
+    from hlidac_reels import jobs, queue
+    a = jobs.add(conn, source="manual", ct=300, focus_pn=[2376], autopilot=True)
+    b = jobs.add(conn, source="manual", ct=301)
+    by_id = {j.id: j for j in jobs.pending(conn)}
+    assert by_id[a].autopilot is True and by_id[b].autopilot is False
+    r1 = queue.add(conn, video_path="a.mp4", video_sha256="x" * 64, caption="c", autopilot=True)
+    r2 = queue.add(conn, video_path="b.mp4", video_sha256="y" * 64, caption="c")
+    assert queue.get(conn, r1).autopilot is True and queue.get(conn, r2).autopilot is False
+
+
+def test_jobs_autopilot_off(conn):
+    from hlidac_reels import jobs, queue
+    q = jobs.add(conn, source="manual", ct=300, autopilot=True)
+    c = jobs.add(conn, source="manual", ct=301, autopilot=True)
+    d = jobs.add(conn, source="manual", ct=302, autopilot=True)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed' WHERE id=%s", (c,))
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (d,))
+    conn.commit()
+    assert jobs.autopilot_off(conn) == 2
+    assert jobs.autopilot_off(conn) == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, autopilot FROM reel_jobs ORDER BY id")
+        assert cur.fetchall() == [(q, False), (c, False), (d, True)]
+    conn.commit()
+    # set_fields příznak autopilota změnit nesmí
+    r = queue.add(conn, video_path="a.mp4", video_sha256="x" * 64, caption="c")
+    with pytest.raises(ValueError):
+        queue.set_fields(conn, r, autopilot=True)
+
+
+def test_migrace_dvakrat(conn):
+    from hlidac_reels import db
+    db.migrate(conn)
+    db.migrate(conn)  # schéma je idempotentní
+    with conn.cursor() as cur:
+        cur.execute("SELECT table_name, is_nullable, column_default FROM information_schema.columns "
+                    "WHERE column_name = 'autopilot' AND table_name IN ('reel_jobs','reel_queue') "
+                    "ORDER BY table_name")
+        rows = cur.fetchall()
+    conn.commit()
+    assert rows == [("reel_jobs", "NO", "false"), ("reel_queue", "NO", "false")]

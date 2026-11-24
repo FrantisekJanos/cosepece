@@ -56,10 +56,12 @@ class Reel:
     set_id: int | None
     variant: int | None
     template: str | None
+    autopilot: bool = False  # z úlohy s autopilotem: zveřejní se bez schválení
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))
-_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id", "status"}
+# autopilot nastavuje jen add (převzetí sady) a autopilot_to_approval, set_fields ho změnit nesmí
+_ALLOWED = {f.name for f in dc_fields(Reel)} - {"id", "status", "autopilot"}
 
 
 @contextmanager
@@ -75,7 +77,7 @@ def _tx(conn):
 
 def _check(fields: dict) -> None:
     # názvy sloupců se vkládají do SQL, proto jen ze seznamu polí Reel;
-    # status se mění jen přes transition (podmíněný přechod)
+    # status se mění jen přes transition (podmíněný přechod), autopilot jen přes add a autopilot_to_approval
     bad = set(fields) - _ALLOWED
     if bad:
         raise ValueError(f"neznámá pole: {sorted(bad)}")
@@ -91,16 +93,16 @@ def add(conn, *, video_path: str, video_sha256: str, caption: str,
         video_landscape_path: str | None = None,
         video_landscape_sha256: str | None = None,
         set_id: int | None = None, variant: int | None = None, template: str | None = None,
-        commit: bool = True) -> int:
+        autopilot: bool = False, commit: bool = True) -> int:
     """Vloží položku. commit=False nechá transakci otevřenou (volající commitne, při chybě rollback)."""
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, "
-                "video_landscape_path, video_landscape_sha256, set_id, variant, template) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                "video_landscape_path, video_landscape_sha256, set_id, variant, template, autopilot) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (source, ct, format, video_path, video_sha256, caption,
-                 video_landscape_path, video_landscape_sha256, set_id, variant, template),
+                 video_landscape_path, video_landscape_sha256, set_id, variant, template, bool(autopilot)),
             )
             new_id = cur.fetchone()[0]
         if commit:
@@ -128,6 +130,27 @@ def next_queued(conn, sets: bool = True) -> Reel | None:
         r = _row(cur)
     conn.commit()
     return r
+
+
+def next_autopilot(conn) -> Reel | None:
+    """Nejstarší schválená položka autopilota (čeká na zveřejnění bez Schválit)."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='approved' AND autopilot ORDER BY id LIMIT 1")
+        r = _row(cur)
+    conn.commit()
+    return r
+
+
+def autopilot_to_approval(conn) -> list[int]:
+    """Vypnutý autopilot: dosud nezveřejněné položky autopilota (jen approved) jdou ke schválení jako běžné.
+
+    Položka, která se už zveřejňuje (publishing), zůstane beze změny.
+    """
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET status='queued', autopilot=false, sent_at=NULL, decided_at=NULL "
+                    "WHERE status='approved' AND autopilot RETURNING id")
+        ids = sorted(r[0] for r in cur.fetchall())
+    return ids
 
 
 def by_telegram_msg(conn, msg_id: int) -> Reel | None:
@@ -316,6 +339,15 @@ def set_state(conn, key: str, value: str) -> None:
             "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (key, value),
         )
+
+
+def state_keys(conn, prefix: str) -> list[str]:
+    """Klíče reel_state začínající prefixem (prefix se bere doslova, bez zástupných znaků LIKE)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT key FROM reel_state WHERE left(key, %s) = %s ORDER BY key", (len(prefix), prefix))
+        out = [r[0] for r in cur.fetchall()]
+    conn.commit()
+    return out
 
 
 def delete_state(conn, key: str) -> None:

@@ -1778,7 +1778,7 @@ def test_smycka_inbox_a_cerstve(conn, api, meta, media_dir, tmp_path, monkeypatc
     tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
     bot = Bot(conn, tg, meta, CHAT, str(media_dir), PUBLIC_BASE, inbox_dir=str(tmp_path / "inbox"))
     calls = []
-    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m: calls.append(("ingest", i, m)) or [])
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on=False: calls.append(("ingest", i, m)) or [])
     monkeypatch.setattr(fresh, "detect", lambda c, now: calls.append(("detect",)) or [])
     monkeypatch.setattr(fresh, "retire", lambda c, now: calls.append(("retire",)) or [])
     t = [1000.0]
@@ -1857,7 +1857,7 @@ def test_vyprseni_zbylych_variant_po_vyberu(bot, conn, api, media_dir, monkeypat
 def test_chyba_inboxu_jen_zaloguje(bot, conn, api, media_dir, monkeypatch, caplog):
     from hlidac_reels import inbox
 
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("disk")
     monkeypatch.setattr(inbox, "ingest_all", boom)
     bot.inbox_dir = str(media_dir / "inbox")
@@ -1871,13 +1871,28 @@ def test_inbox_nova_sada_se_hned_posle(bot, conn, api, media_dir, monkeypatch):
     from hlidac_reels import inbox
     ids = []
 
-    def ingest(c, i, m):
+    def ingest(c, i, m, autopilot_on=False):
         ids.extend(_add_set(c, media_dir, 9))
         return [inbox.IngestResult(9, list(ids), {}, True)]
     monkeypatch.setattr(inbox, "ingest_all", ingest)
     bot.inbox_dir = str(media_dir / "inbox")
     bot.maybe_ingest()
     assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_ingest_preda_stav_autopilota(bot, conn, media_dir, monkeypatch):
+    from hlidac_reels import inbox, queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    seen = []
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on: seen.append(autopilot_on) or [])
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot._ingest()
+    queue.set_state(conn, AUTOPILOT_KEY, "1")
+    bot._ingest()
+    queue.set_state(conn, AUTOPILOT_KEY, "0")
+    bot._ingest()
+    assert seen == [False, True, False]
 
 
 @pg
@@ -2664,3 +2679,402 @@ def test_sirka_u_varianty_sady_az_po_vyberu(conn, api, meta, media_dir):
     assert _get(conn, ids[1]).telegram_msg_id == picked_preview
     bot.handle(_cb(f"ok:{ids[1]}", msg_id=picked_preview))
     assert _get(conn, ids[1]).status == "published"
+
+
+@pg
+def test_autopilot_prepinac(bot, conn, api):
+    from hlidac_reels import messages, queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    assert bot._autopilot_on() is False
+    bot.handle(_msg("/autopilot on"))
+    assert queue.get_state(conn, AUTOPILOT_KEY) == "1"
+    assert bot._autopilot_on() is True
+    assert api.texts()[-1] == messages.autopilot_text(True)
+    assert "bez schválení" in api.texts()[-1] and "/autopilot off" in api.texts()[-1]
+    # bez argumentu: jen stav
+    bot.handle(_msg("/autopilot"))
+    assert api.texts()[-1] == messages.autopilot_text(True)
+    bot.handle(_msg("/autopilot off"))
+    assert queue.get_state(conn, AUTOPILOT_KEY) == "0"
+    assert bot._autopilot_on() is False
+    assert api.texts()[-1] == "Autopilot vypnut: sady jdou ke schválení."
+    bot.handle(_msg("/autopilot"))
+    assert api.texts()[-1] == messages.autopilot_text(False)
+    # nápověda zmiňuje přepínač
+    bot.handle(_msg("/neznamy"))
+    assert "/autopilot" in api.texts()[-1]
+
+
+@pg
+def test_autopilot_off_smaze_priznak_rozpracovanych_uloh(bot, conn, api, tmp_path, monkeypatch):
+    # on -> /pn X -> off (PC offline) -> on -> sada X se převezme: nesmí se zveřejnit bez schválení
+    import json as _json
+    from hlidac_reels import inbox, jobs, media, messages, queue
+    from hlidac_reels.media import VideoInfo
+    bot.handle(_msg("/autopilot on"))
+    jid = jobs.add(conn, source="manual", ct=311, focus_pn=[2376], autopilot=True)
+    done = jobs.add(conn, source="manual", ct=312, autopilot=True)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (done,))
+    conn.commit()
+    bot.handle(_msg("/autopilot off"))
+    assert api.texts()[-1] == messages.autopilot_text(False, 0, 1)
+    assert "Rozpracované úlohy autopilota (1)" in api.texts()[-1]
+    by_id = {j.id: j for j in jobs.pending(conn)}
+    assert by_id[jid].autopilot is False
+    with conn.cursor() as cur:
+        cur.execute("SELECT autopilot FROM reel_jobs WHERE id=%s", (done,))
+        assert cur.fetchone()[0] is True  # hotová úloha se nemění
+    conn.commit()
+    bot.handle(_msg("/autopilot on"))
+    # worker úlohu dokončil a sadu odevzdal do mezisložky
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (jid,))
+    conn.commit()
+    folder = tmp_path / "inbox" / str(jid)
+    folder.mkdir(parents=True)
+    variants = []
+    for n in (1, 2):
+        (folder / f"variant-{n}.mp4").write_bytes(f"ok-{n}".encode())
+        variants.append({"n": n, "template": "template_v3", "format": "pn", "caption": f"Popisek {n}", "card": {}})
+    (folder / "manifest.json").write_text(
+        _json.dumps({"job_id": jid, "ct": 311, "source": "manual", "variants": variants}), encoding="utf-8")
+    monkeypatch.setattr(media, "probe", lambda path: VideoInfo("h264", "aac", 1080, 1920, 30.0, 10))
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=bot._autopilot_on())
+    assert res[0].ok and res[0].autopilot is False
+    assert [(r.status, r.autopilot) for r in queue.set_items(conn, jid)] == [("queued", False)] * 2
+
+
+# --- /pn a autopilot -----------------------------------------------------------
+
+@pg
+def test_pn_s_autopilotem_zalozi_priznak(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (job,) = jobs.pending(conn)
+    assert job.autopilot is True
+    assert api.texts()[-1] == (f"Zadání #{job.id} (PN 2376, tisk 300) je 1. ve frontě. "
+                               "Autopilot: po vygenerování se rovnou zveřejní.")
+
+
+@pg
+def test_pn_bez_autopilota_bez_priznaku(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn 2376"))
+    (job,) = jobs.pending(conn)
+    assert job.autopilot is False
+    assert "Autopilot" not in api.texts()[-1]
+
+
+@pg
+def test_pn_dvakrat_stejne(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_cb("pn:2376"))
+    bot.handle(_msg("/pn 2376"))
+    assert len(jobs.pending(conn)) == 1
+    assert api.texts()[-1] == "PN 2376 (tisk 300) už ve frontě je."
+
+
+@pg
+def test_video_a_vyber_nikdy_autopilot(bot, conn, api):
+    from hlidac_reels import jobs
+    _tisk(conn, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/video 300"))
+    assert [j.autopilot for j in jobs.pending(conn)] == [False]
+    assert "Autopilot" not in api.texts()[-1]
+    bot._add_job("auto_pick", None, None)
+    assert all(j.autopilot is False for j in jobs.pending(conn))
+
+
+@pg
+def test_pn_seznam_hlavicka_autopilota(bot, conn, api):
+    _pn_bot(bot)
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/pn"))
+    assert "Autopilot zapnut" not in api.texts()[-1]
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn"))
+    assert api.texts()[-1].startswith("PN za posledních 48 h:\nAutopilot zapnut: vybrané PN se zveřejní bez schválení.")
+
+
+# --- autopilot: zveřejnění a hlášení ---------------------------------------------
+
+def _autopilot_set(conn, media_dir: Path, set_id: int, n: int = 2, focus_pn=None) -> list[int]:
+    """Sada autopilota jako po převzetí (Task 4): položky approved s autopilot=true, úloha s PN."""
+    ids = _add_set(conn, media_dir, set_id, n=n, ct=300, source="manual")
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_jobs (id, source, ct, focus_pn, autopilot, status) "
+                    "VALUES (%s,'manual',300,%s,true,'done')", (set_id, focus_pn))
+        cur.execute("UPDATE reel_queue SET status='approved', autopilot=true, decided_at=now(), sent_at=now() "
+                    "WHERE id = ANY(%s)", (ids,))
+    conn.commit()
+    from hlidac_reels import queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    queue.set_state(conn, AUTOPILOT_KEY, "1")  # převzetí jako approved jen se zapnutým přepínačem
+    return ids
+
+
+def _autopilot_bot(conn, api, meta, media_dir, threads=None):
+    b = _make_bot(conn, api, meta, media_dir, threads=threads)
+    t = [1000.0]
+    b.clock = lambda: t[0]
+    return b, t
+
+
+@pg
+def test_autopilot_publikuje_a_hlasi_odkazy(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    th = FakeThreads(media_dir)
+    bot, t = _autopilot_bot(conn, api, meta, media_dir, threads=th)
+    ids = _autopilot_set(conn, media_dir, 7, focus_pn=[2376])
+    queue.set_state(conn, "autopilot_skipped:7",
+                    json.dumps([{"n": 3, "format": "pn", "errors": ["render selhal"]}]))
+    bot.maybe_autopublish()
+    r = _get(conn, ids[0])
+    assert r.status == "published"
+    done = [x for x in api.texts() if x.startswith("Autopilot zveřejnil")]
+    assert done == [f"Autopilot zveřejnil #{ids[0]} (PN 2376, tisk 300, varianta vysledek): "
+                    f"FB https://www.facebook.com/reel/V1 · IG https://www.instagram.com/reel/M1/ · "
+                    f"Threads {TH_LINK}"]
+    # nevzniklá varianta se ohlásí až po poslední položce sady
+    assert not any("nevznikla" in x for x in api.texts())
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "published"
+    assert f"#{ids[1]} (PN 2376, tisk 300, varianta v2)" in api.texts()[-2]
+    assert api.texts()[-1] == "Varianta 3 (pn) nevznikla: render selhal"
+    assert queue.get_state(conn, "autopilot_skipped:7") is None
+    # už není co zveřejnit: nic dalšího
+    n = len(api.calls)
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert len(api.calls) == n
+    assert meta.calls["fb_upload_reel"] == 2
+
+
+@pg
+def test_autopilot_done_bez_chybejicich_odkazu(conn, media_dir):
+    import dataclasses
+    from hlidac_reels.messages import autopilot_done
+    r = dataclasses.replace(_get(conn, _add(conn, media_dir, ct=300)), format="v2", fb_permalink="https://fb/x",
+                            ig_permalink=None, threads_permalink="")
+    assert autopilot_done(r, None) == f"Autopilot zveřejnil #{r.id} (tisk 300, varianta v2): FB https://fb/x"
+
+
+@pg
+def test_autopilot_chyba_publikace_pokracuje(conn, api, meta, media_dir):
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 8)
+    meta.fail["ig_create"] = MetaError("(#2) služba nedostupná", status=500)
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "failed"
+    last = api.sent()[-1]
+    assert "služba nedostupná" in last["text"] and _buttons(last) == [f"retry:{ids[0]}"]
+    assert _get(conn, ids[1]).status == "approved"
+    del meta.fail["ig_create"]
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "published"
+    assert _get(conn, ids[0]).status == "failed"
+    assert api.texts()[-1].startswith(f"Autopilot zveřejnil #{ids[1]}")
+
+
+@pg
+def test_autopilot_restart_publishing(conn, api, meta, media_dir, monkeypatch):
+    from hlidac_reels import publish, queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 9, n=1)
+    assert queue.transition(conn, ids[0], "approved", "publishing")
+    bot.start()
+    assert _get(conn, ids[0]).status == "unknown"
+    assert any(f"retry:{ids[0]}" in _buttons(b) for b in api.sent())
+    called = []
+    monkeypatch.setattr(publish, "run", lambda *a, **k: called.append(a))
+    bot.maybe_autopublish()
+    assert called == [] and sum(meta.calls.values()) == 0
+    assert _get(conn, ids[0]).status == "unknown"
+
+
+@pg
+def test_autopilot_po_jedne_za_cyklus(conn, api, meta, media_dir):
+    from hlidac_reels.bot import SEND_INTERVAL
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 10, n=3)
+    bot.maybe_autopublish()
+    bot.maybe_autopublish()
+    assert [_get(conn, i).status for i in ids] == ["published", "approved", "approved"]
+    t[0] += SEND_INTERVAL - 1
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "approved"
+    t[0] += 1
+    bot.maybe_autopublish()
+    assert [_get(conn, i).status for i in ids] == ["published", "published", "approved"]
+
+
+@pg
+def test_start_nechá_approved_autopilota(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 11, n=1)
+    manual = _add(conn, media_dir, 77)
+    assert queue.transition(conn, manual, "queued", "pending")
+    assert queue.transition(conn, manual, "pending", "approved")
+    bot.start()
+    assert _get(conn, ids[0]).status == "approved"
+    assert _get(conn, manual).status == "failed"
+    assert sum(meta.calls.values()) == 0
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+
+
+@pg
+def test_next_autopilot_nejstarsi(conn, media_dir):
+    from hlidac_reels import queue
+    assert queue.next_autopilot(conn) is None
+    plain = _add(conn, media_dir, 88)
+    assert queue.transition(conn, plain, "queued", "pending")
+    assert queue.transition(conn, plain, "pending", "approved")
+    assert queue.next_autopilot(conn) is None
+    ids = _autopilot_set(conn, media_dir, 13)
+    assert queue.next_autopilot(conn).id == ids[0]
+
+
+@pg
+def test_fronta_autopilot_ceka_na_zverejneni(conn, api, meta, media_dir):
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 12, n=1)
+    bot.handle(_msg("/fronta"))
+    line = [x for x in api.texts() if x.startswith(f"#{ids[0]} ")]
+    assert line and "čeká na automatické zveřejnění" in line[0] and "restart" not in line[0]
+
+
+@pg
+def test_ingest_ulozi_nevznikle_varianty_autopilota(bot, conn, media_dir, monkeypatch):
+    from hlidac_reels import inbox, queue
+    from hlidac_reels.inbox import IngestResult
+    skipped = [{"n": 2, "format": "pn", "errors": ["a", "b"]}]
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on: [
+        IngestResult(5, [1], ok=True, autopilot=True, skipped=skipped),
+        IngestResult(6, [2], ok=True, autopilot=False, skipped=skipped)])
+    monkeypatch.setattr(bot, "_safe_send_next", lambda: None)
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot._ingest()
+    assert json.loads(queue.get_state(conn, "autopilot_skipped:5")) == skipped
+    assert queue.get_state(conn, "autopilot_skipped:6") is None
+
+
+def test_texty_nevzniklych_variant():
+    from hlidac_reels.messages import autopilot_skipped
+    assert autopilot_skipped([{"n": 2, "format": "pn", "errors": ["a", "b"]},
+                              {"n": 1, "errors": []}]) == ("Varianta 2 (pn) nevznikla: a; b\n"
+                                                          "Varianta 1 nevznikla: důvod neuveden")
+    assert autopilot_skipped([]) == ""
+
+
+@pg
+def test_smycka_vola_autopublish_po_ingestu(conn, api, meta, media_dir, monkeypatch):
+    bot = _make_bot(conn, api, meta, media_dir)
+    order = []
+    for name in ("maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_notify_failed"):
+        monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
+
+    class Stop(Exception):
+        pass
+
+    def stop():
+        raise Stop
+
+    monkeypatch.setattr(bot, "start", lambda: None)
+    monkeypatch.setattr(bot, "maybe_fresh", stop)
+    monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=lambda s: None)
+    assert order == ["maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_notify_failed"]
+
+
+@pg
+def test_autopilot_nevznikle_hlaseni_zkusi_znovu(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 14, n=1)
+    queue.set_state(conn, "autopilot_skipped:14", json.dumps([{"n": 2, "format": "pn", "errors": ["x"]}]))
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+    assert queue.get_state(conn, "autopilot_skipped:14") is not None
+    del api.fail["sendMessage"]
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert api.texts() == ["Varianta 2 (pn) nevznikla: x"]
+    assert queue.get_state(conn, "autopilot_skipped:14") is None
+
+
+@pg
+def test_autopilot_vypnuty_nezverejni_nic(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.bot import AUTOPILOT_KEY
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 15, n=1)
+    queue.set_state(conn, AUTOPILOT_KEY, "0")
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "approved"
+    assert sum(meta.calls.values()) == 0 and api.calls == []
+
+
+@pg
+def test_autopilot_off_vrati_sadu_ke_schvaleni(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 16)
+    queue.set_state(conn, "autopilot_skipped:16", json.dumps([{"n": 3, "format": "pn", "errors": ["x"]}]))
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+    api.calls.clear()
+    bot.handle(_msg("/autopilot off"))
+    r = _get(conn, ids[1])
+    assert r.autopilot is False and r.decided_at is None
+    off = api.texts()[0]
+    assert off.startswith("Autopilot vypnut: sady jdou ke schválení. Dosud nezveřejněná videa autopilota (1) "
+                          "půjdou ke schválení.")
+    assert "Varianta 3 (pn) nevznikla: x" in off
+    assert queue.get_state(conn, "autopilot_skipped:16") is None
+    # běžná cesta ke schválení: sada (zbylá varianta) odešla do Telegramu hned po odpovědi
+    assert _get(conn, ids[1]).status == "pending"
+    assert any(f"pick:{ids[1]}" in _buttons(b) for b in api.sent())
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "pending"
+    assert meta.calls["fb_upload_reel"] == 1
+    # ani znovu zapnutý autopilot ji nezveřejní (už není autopilot)
+    bot.handle(_msg("/autopilot on"))
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert meta.calls["fb_upload_reel"] == 1
+
+
+@pg
+def test_autopilot_off_nesahne_na_publishing(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 17, n=1)
+    assert queue.transition(conn, ids[0], "approved", "publishing")
+    bot.handle(_msg("/autopilot off"))
+    r = _get(conn, ids[0])
+    assert r.status == "publishing" and r.autopilot is True
+    assert api.texts()[-1] == "Autopilot vypnut: sady jdou ke schválení."
+
+
+@pg
+def test_autopilot_vadny_klic_nevznikle_smazan(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    _autopilot_set(conn, media_dir, 18, n=1)
+    queue.set_state(conn, "autopilot_skipped:abc", "[]")
+    bot.maybe_autopublish()
+    assert queue.get_state(conn, "autopilot_skipped:abc") is None

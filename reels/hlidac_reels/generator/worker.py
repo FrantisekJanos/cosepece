@@ -212,7 +212,9 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
                        published=list(job.get("published") or []),
                        # video k vybraným PN (/pn); starší server pole neposílá = celý tisk
                        focus_pn=[int(n) for n in job.get("focus_pn") or []] or None,
-                       focus_info=list(job.get("focus_pn_info") or []))
+                       focus_info=list(job.get("focus_pn_info") or []),
+                       # úloha autopilota: jen 2 varianty (v2 + v3 pn); starší server pole neposílá
+                       autopilot=job.get("autopilot") is True)
         good = []
         for v in res.variants:
             if not (v.ok and v.video):
@@ -243,7 +245,11 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
             _retrying(lambda: api.upload_video(job_id, claim, v.n, v.video),
                       f"úloha {job_id}: nahrání videa {v.n}", sleep)
             log.info("úloha %s: video %s nahráno", job_id, v.n)
-        _retrying(lambda: api.result(job_id, claim, variants), f"úloha {job_id}: odeslání sady", sleep)
+        # nevzniklé varianty: bot je ohlásí u sady, server je uloží jako poznámku úlohy
+        skipped = [{"n": v.n, "format": v.format,
+                    "errors": [clean_error(e, root) for e in v.errors] or ["bez videa"]}
+                   for v in res.variants if v not in good]
+        _retrying(lambda: api.result(job_id, claim, variants, skipped), f"úloha {job_id}: odeslání sady", sleep)
     except EnvError as e:
         _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root)
         raise

@@ -1,4 +1,4 @@
-"""Výběr dvou formátů v3 pro sadu: pravidlo podle klíčů důvodů skóre, ne úsudek modelu."""
+"""Výběr formátů v3 pro sadu (obvykle dva, u autopilota a /pn bez textu jeden): pravidlo podle klíčů důvodů skóre, ne úsudek modelu."""
 from __future__ import annotations
 
 FORMATS = ("cesta", "pn", "zmena", "rozprava")
@@ -14,15 +14,18 @@ FOCUS_FORMATS = ["pn", "zmena"]
 
 
 def pick_formats(reason_keys: list[str], has_amendments: bool, hint: str | None = None,
-                 focus: bool = False, has_text: bool = True) -> list[str]:
+                 focus: bool = False, has_text: bool = True, autopilot: bool = False) -> list[str]:
     """Dva různé formáty v3. reason_keys jsou seřazené podle váhy ve skóre (nejtěžší první).
 
     `rozprava` jen z ručního hintu; automatika ji nevybírá. focus = video k vybraným PN: vždy FOCUS_FORMATS,
     hint se nebere (/pn formát nezadává a `cesta` ani `rozprava` o obsahu PN nevypráví). has_text = False
-    (text PN není k dispozici): jen `pn`, varianta `zmena` by neměla z čeho citovat.
+    (text PN není k dispozici): jen `pn`, varianta `zmena` by neměla z čeho citovat. autopilot = úloha autopilota
+    (/pn, zveřejní se bez schválení): jen `pn`, sada má 2 varianty (v2 z rozboru AI + v3 pn).
     """
     if hint is not None and hint not in FORMATS:
         raise ValueError(f"neznámý formát {hint!r}, povolené: {', '.join(FORMATS)}")
+    if autopilot:
+        return ["pn"]
     if focus:
         return list(FOCUS_FORMATS) if has_text else ["pn"]
     picked: list[str] = [hint] if hint else []

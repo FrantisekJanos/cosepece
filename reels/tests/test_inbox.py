@@ -111,17 +111,40 @@ def test_zrusena_uloha_smaze_slozku(conn, tmp_path):
     assert not folder.exists() and queue.set_items(conn, jid) == []
 
 
-def test_jedna_platna_varianta(conn, tmp_path):
+def test_sada_s_jednou_variantou_projde(conn, tmp_path):
     from hlidac_reels import inbox, queue
     jid = _job(conn)
-    folder = _set(tmp_path, jid, ["ok", "broken", "broken"])
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["skipped"] = [{"n": 2, "format": "pn", "errors": ["render selhal"]}]
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
     res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
-    assert len(res) == 1 and res[0].ok is False and set(res[0].rejected) == {2, 3}
+    assert len(res) == 1 and res[0].ok and not res[0].rejected and len(res[0].reel_ids) == 1
+    assert [r.variant for r in queue.set_items(conn, jid)] == [1]
+    assert not folder.exists()
+
+
+def test_jedna_platna_z_vadnych_projde(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok", "broken", "broken"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and set(res[0].rejected) == {2, 3}
+    assert [r.variant for r in queue.set_items(conn, jid)] == [1]
+
+
+def test_zadna_platna_varianta(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["broken", "broken", "broken"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert len(res) == 1 and res[0].ok is False and set(res[0].rejected) == {1, 2, 3}
     assert queue.set_items(conn, jid) == []
     with conn.cursor() as cur:
         cur.execute("SELECT status, error, notified_at FROM reel_jobs WHERE id=%s", (jid,))
         status, error, notified = cur.fetchone()
     assert status == "failed" and "varianta 2" in error and len(error) <= 500 and notified is None
+    assert error.startswith("žádná platná varianta. ")
     assert not folder.exists()
     assert not list((tmp_path / "media").rglob("*.mp4"))  # žádné osiřelé kopie
 
@@ -183,7 +206,7 @@ def _rewrite(folder, jid, mutate):
 def test_format_v3_povinny_a_platny(conn, tmp_path):
     from hlidac_reels import inbox
     jid = _job(conn)
-    folder = _set(tmp_path, jid, ["ok", "ok", "ok", "ok"][:3])
+    folder = _set(tmp_path, jid, ["ok", "ok"])
 
     def mut(m):
         m["variants"][0]["format"] = None
@@ -317,3 +340,68 @@ def test_sirka_neni_bool_je_vadny_manifest(conn, tmp_path):
     (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
     res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
     assert res and not res[0].ok and not folder.exists()
+
+
+def _autopilot_job(conn):
+    from hlidac_reels import jobs
+    jid = jobs.add(conn, source="manual", ct=311, autopilot=True)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (jid,))
+    conn.commit()
+    return jid
+
+
+def test_ingest_autopilot_schvaleno(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _autopilot_job(conn)
+    _set(tmp_path, jid, ["ok", "ok"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=True)
+    assert res[0].ok and res[0].autopilot is True and len(res[0].reel_ids) == 2
+    items = queue.set_items(conn, jid)
+    assert [(r.status, r.autopilot) for r in items] == [("approved", True)] * 2
+    assert all(r.decided_at is not None and r.sent_at is not None for r in items)
+
+
+def test_ingest_autopilot_vypnuty_ke_schvaleni(conn, tmp_path):
+    # úloha vznikla s autopilotem, ale přepínač je při převzetí vypnutý: běžné schvalování
+    from hlidac_reels import inbox, queue
+    jid = _autopilot_job(conn)
+    _set(tmp_path, jid, ["ok", "ok"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=False)
+    assert res[0].ok and res[0].autopilot is False
+    items = queue.set_items(conn, jid)
+    assert [(r.status, r.autopilot, r.decided_at, r.sent_at) for r in items] == [("queued", False, None, None)] * 2
+
+
+def test_ingest_bez_autopilota_ulohy_ke_schvaleni(conn, tmp_path):
+    # zapnutý přepínač nestačí: úloha bez autopilota (např. /video) jde ke schválení
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    _set(tmp_path, jid, ["ok"])
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=True)
+    assert res[0].ok and res[0].autopilot is False
+    assert [(r.status, r.autopilot) for r in queue.set_items(conn, jid)] == [("queued", False)]
+
+
+def test_ingest_jedna_varianta_autopilot(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _autopilot_job(conn)
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["skipped"] = [{"n": 2, "format": "pn", "errors": ["render selhal"]}]
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=True)
+    assert res[0].ok and res[0].autopilot is True
+    assert res[0].skipped == [{"n": 2, "format": "pn", "errors": ["render selhal"]}]
+    assert [(r.variant, r.status) for r in queue.set_items(conn, jid)] == [(1, "approved")]
+
+
+def test_ingest_vadny_skipped_se_ignoruje(conn, tmp_path):
+    from hlidac_reels import inbox
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["skipped"] = "nesmysl"
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and res[0].skipped == []

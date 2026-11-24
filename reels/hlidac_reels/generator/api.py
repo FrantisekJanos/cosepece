@@ -97,8 +97,12 @@ class ReelsApi:
             query["orientation"] = orientation
         return self._request("PUT", "video", query=query, claim_token=claim_token, file=Path(path))
 
-    def result(self, job_id: int, claim_token: str, variants: list[dict]) -> None:
-        self._request("POST", "result", claim_token=claim_token, payload={"job_id": job_id, "variants": variants})
+    def result(self, job_id: int, claim_token: str, variants: list[dict], skipped: list[dict] | None = None) -> None:
+        """Sada 1–3 variant; skipped = nevzniklé varianty [{n, format, errors}] (starší server pole ignoruje)."""
+        payload: dict = {"job_id": job_id, "variants": variants}
+        if skipped is not None:
+            payload["skipped"] = skipped
+        self._request("POST", "result", claim_token=claim_token, payload=payload)
 
     def fail(self, job_id: int, claim_token: str, error: str) -> str:
         r = self._request("POST", "fail", claim_token=claim_token, payload={"job_id": job_id, "error": error})

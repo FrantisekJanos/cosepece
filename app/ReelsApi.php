@@ -4,7 +4,8 @@
 //   GET  ?action=claim                      → {"job": {...}} nebo {"job": null}
 //   PUT  ?action=video&job_id=N&n=1..3      tělo = MP4 (≤ 30 MB) → <inbox>/<job_id>/variant-<n>.mp4
 //        &orientation=landscape             video na šířku 16:9 (volitelné) → variant-<n>-sirka.mp4
-//   POST ?action=result  {"job_id","variants":[{"n","template","format","caption","card"}]} → manifest.json, úloha done
+//   POST ?action=result  {"job_id","variants":[{"n","template","format","caption","card"}],"skipped":[{"n","format","errors"}]}
+//        → manifest.json, úloha done (1–3 varianty; skipped = nevzniklé varianty, poznámka do reel_jobs.error)
 //        (manifest u varianty doplní "landscape": true/false podle nahraného videa na šířku)
 //   POST ?action=fail    {"job_id","error"}  → {"status": "queued"|"failed"}, složka úlohy se smaže
 //   POST ?action=heartbeat                  → {"ok": true}
@@ -144,18 +145,21 @@ final class ReelsApi
         if (is_string($variants)) {
             return [400, ['error' => $variants]];
         }
+        $skipped = self::skippedVariants($data['skipped'] ?? null);
         $job = $this->db->one('SELECT ct, source FROM reel_jobs WHERE id = ?', [$jobId]);
         $manifest = [
             'job_id' => $jobId,
             'ct' => $job !== null && $job['ct'] !== null ? (int)$job['ct'] : null,
             'source' => $job !== null ? (string)$job['source'] : null,
             'variants' => $variants,
+            // varianty, které worker nevyrobil (n, formát, chyby); bot je ohlásí u sady
+            'skipped' => $skipped,
         ];
         $json = json_encode($manifest, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
         if ($json === false || !self::writeAtomic($jobDir . '/manifest.json', $json)) {
             return [500, ['error' => 'manifest.json nejde zapsat']];
         }
-        if (!$this->jobs->finish($jobId, $claim)) {
+        if (!$this->jobs->finish($jobId, $claim, self::skippedNote($skipped))) {
             // souběh: claim vypršel mezi kontrolou a dokončením → bot nesmí sadu převzít
             self::removeDir($jobDir);
             return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
@@ -234,13 +238,54 @@ final class ReelsApi
     }
 
     /**
-     * Kontrola variant výsledku: 2–3 různá n 1–3, každé s videem na disku, šablonou (v2 bez formátu,
+     * Pole skipped z výsledku workeru: seznam {n, format?, errors}. Je jen informační, proto se vadné položky
+     * zahodí (n mimo 1–3, ne objekt) místo odmítnutí sady; chyby jen texty, nejvýš 10 po 300 znacích.
+     */
+    private static function skippedVariants(mixed $skipped): array
+    {
+        if (!is_array($skipped) || !array_is_list($skipped)) {
+            return [];
+        }
+        $out = [];
+        foreach ($skipped as $item) {
+            $n = is_array($item) ? self::positiveInt($item['n'] ?? null) : null;
+            if ($n === null || $n > 3) {
+                continue;
+            }
+            $format = $item['format'] ?? null;
+            $errors = [];
+            foreach (is_array($item['errors'] ?? null) ? $item['errors'] : [] as $e) {
+                if (is_string($e) && trim($e) !== '' && count($errors) < 10) {
+                    $errors[] = mb_substr(trim($e), 0, 300);
+                }
+            }
+            $out[] = ['n' => $n, 'format' => is_string($format) && in_array($format, self::FORMATS, true) ? $format : null, 'errors' => $errors];
+        }
+        return $out;
+    }
+
+    /** Poznámka pro reel_jobs.error z pole skipped; null, když žádná varianta nevypadla. */
+    private static function skippedNote(array $skipped): ?string
+    {
+        if ($skipped === []) {
+            return null;
+        }
+        $parts = array_map(
+            fn(array $s): string => $s['n'] . ($s['format'] !== null ? ' (' . $s['format'] . ')' : '') . ': '
+                . ($s['errors'] !== [] ? implode(', ', $s['errors']) : 'bez udaného důvodu'),
+            $skipped
+        );
+        return 'Nevzniklé varianty: ' . implode('; ', $parts);
+    }
+
+    /**
+     * Kontrola variant výsledku: 1–3 různá n 1–3, každé s videem na disku, šablonou (v2 bez formátu,
      * v3 s formátem z FORMATS), popiskem do CAPTION_LIMIT a kartou; příznak landscape podle videa na šířku. Vrací pročištěné varianty (seřazené podle n), nebo text chyby.
      */
     private function validVariants(mixed $variants, string $jobDir): array|string
     {
-        if (!is_array($variants) || !array_is_list($variants) || count($variants) < 2 || count($variants) > 3) {
-            return 'Sada musí mít 2 nebo 3 varianty';
+        if (!is_array($variants) || !array_is_list($variants) || count($variants) < 1 || count($variants) > 3) {
+            return 'Sada musí mít 1 až 3 varianty';
         }
         $out = [];
         foreach ($variants as $v) {

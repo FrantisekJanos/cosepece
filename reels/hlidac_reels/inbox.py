@@ -2,6 +2,9 @@
 
 Varianta může mít i video na šířku 16:9 (variant-<n>-sirka.mp4, v manifestu "landscape": true), které dostane
 Threads. Vadná šířka variantu nevyřadí: položka vznikne jen s videem na výšku a důvod je v IngestResult.warnings.
+
+Autopilot: když úloha v reel_jobs má autopilot a přepínač je při převzetí zapnutý, položky sady vzniknou rovnou
+schválené (approved, autopilot) a bot je zveřejní bez Schválit. Jinak jde sada ke schválení jako každá jiná.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ from .generator.formats import FORMATS
 log = logging.getLogger(__name__)
 
 MAX_VIDEO_BYTES = 30 * 1024 * 1024
-MIN_VALID = 2
+MIN_VALID = 1  # sada s jedinou platnou variantou se převezme (stejně jako MIN_OK workeru)
 _SOURCES = ("manual", "auto_pick", "fresh")
 _TEMPLATES = ("template_v2", "template_v3")
 _ERROR_LIMIT = 500
@@ -33,6 +36,8 @@ class IngestResult:
     rejected: dict[int, list[str]] = field(default_factory=dict)  # varianta -> chyby
     ok: bool = False
     warnings: dict[int, list[str]] = field(default_factory=dict)  # varianta -> proč nemá video na šířku
+    autopilot: bool = False  # položky vznikly schválené (úloha s autopilotem a přepínač zapnutý)
+    skipped: list[dict] = field(default_factory=list)  # z manifestu: nevzniklé varianty [{n, format, errors}]
 
 
 class _BadManifest(Exception):
@@ -75,6 +80,23 @@ def _job_status(conn, job_id: int) -> str | None:
         r = cur.fetchone()
     conn.commit()
     return r[0] if r else None
+
+
+def _job_autopilot(conn, job_id: int) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT autopilot FROM reel_jobs WHERE id=%s", (job_id,))
+        r = cur.fetchone()
+    conn.commit()
+    return bool(r and r[0])
+
+
+def _skipped(m: dict) -> list[dict]:
+    """Nevzniklé varianty z manifestu; jen informace, vadný tvar se zahodí (sadu nevyřadí)."""
+    raw = m.get("skipped")
+    if not isinstance(raw, list):
+        return []
+    return [s for s in raw if isinstance(s, dict) and isinstance(s.get("n"), int)
+            and not isinstance(s.get("n"), bool)]
 
 
 def _fail_job(conn, job_id: int, error: str) -> None:
@@ -164,9 +186,10 @@ def _check_landscape(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[l
     return [], digest
 
 
-def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
+def _ingest_one(conn, folder: Path, media_dir: Path, m: dict, autopilot: bool) -> IngestResult:
+    """autopilot = úloha má autopilota a přepínač je zapnutý: položky vzniknou rovnou schválené."""
     job_id = m["job_id"]
-    res = IngestResult(job_id)
+    res = IngestResult(job_id, skipped=_skipped(m))
     good: list[tuple[dict, str, str | None]] = []
     seen_sha: set[str] = set()
     for v in sorted(m["variants"], key=lambda x: x["n"]):
@@ -205,12 +228,18 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
                         ct=m.get("ct"), format=fmt, source=m["source"], set_id=job_id,
                         variant=v["n"], template=v["template"],
                         video_landscape_path=str(land_target) if land_target else None,
-                        video_landscape_sha256=land, commit=False))
+                        video_landscape_sha256=land, autopilot=autopilot, commit=False))
+                if autopilot:
+                    # bez Schválit: rovnou schváleno, sent_at = převzetí (sada nikam ke schválení nejde)
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE reel_queue SET status='approved', decided_at=now(), sent_at=now() "
+                                    "WHERE id = ANY(%s)", (res.reel_ids,))
                 conn.commit()  # celá sada v jedné transakci
             except BaseException:
                 conn.rollback()
                 raise
             res.ok = True
+            res.autopilot = autopilot
         except Exception as e:  # noqa: BLE001 - sada se nesmí uložit napůl
             log.exception("převzetí sady %s selhalo", job_id)
             res.reel_ids.clear()
@@ -219,12 +248,15 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict) -> IngestResult:
         for t in created:  # po rollbacku nezůstanou osiřelé soubory
             t.unlink(missing_ok=True)
         reasons = "; ".join(f"varianta {n}: {', '.join(e)}" for n, e in sorted(res.rejected.items()))
-        _fail_job(conn, job_id, f"méně než {MIN_VALID} platné varianty. {reasons}")
+        _fail_job(conn, job_id, f"žádná platná varianta. {reasons}")
     return res
 
 
-def ingest_all(conn, inbox_dir: Path, media_dir: Path) -> list[IngestResult]:
-    """Převezme hotové sady (složky s manifest.json a úlohou ve stavu done)."""
+def ingest_all(conn, inbox_dir: Path, media_dir: Path, autopilot_on: bool = False) -> list[IngestResult]:
+    """Převezme hotové sady (složky s manifest.json a úlohou ve stavu done).
+
+    autopilot_on = stav přepínače v okamžiku převzetí; bez něj jde každá sada ke schválení.
+    """
     inbox_dir, media_dir = Path(inbox_dir), Path(media_dir)
     results: list[IngestResult] = []
     if not inbox_dir.is_dir():
@@ -263,6 +295,7 @@ def ingest_all(conn, inbox_dir: Path, media_dir: Path) -> list[IngestResult]:
             log.info("%s: sada %s už je převzatá, složka se maže", folder.name, job_id)
             shutil.rmtree(folder, ignore_errors=True)
             continue
-        results.append(_ingest_one(conn, folder, media_dir, m))
+        autopilot = autopilot_on and _job_autopilot(conn, job_id)
+        results.append(_ingest_one(conn, folder, media_dir, m, autopilot))
         shutil.rmtree(folder, ignore_errors=True)
     return results

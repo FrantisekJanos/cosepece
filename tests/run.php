@@ -1538,14 +1538,15 @@ $rjKey = db()->driver === 'mysql' ? '`key`' : 'key';
 $rjPnType = db()->driver === 'pgsql' ? 'INTEGER[]' : 'TEXT';
 db()->run("CREATE TABLE IF NOT EXISTS reel_jobs (id $rjId, source VARCHAR(20) NOT NULL, ct INTEGER, format_hint VARCHAR(40), reason_keys TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'queued', claimed_at $rjTs, claim_token VARCHAR(64), attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
-    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType)");
+    set_id BIGINT, created_at $rjTs NOT NULL, finished_at $rjTs, notified_at $rjTs, focus_pn $rjPnType,
+    autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
 // pro jeden tisk a množinu PN nejvýš jedna aktivní úloha (částečný index jako v produkci; MySQL ho neumí)
 if (db()->driver !== 'mysql') {
     db()->run("CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALESCE(focus_pn, '{}')) WHERE status IN ('queued','claimed') AND ct IS NOT NULL");
 }
 db()->run("CREATE TABLE IF NOT EXISTS reel_queue (id $rjId, source VARCHAR(20) NOT NULL DEFAULT 'ukazka', ct INTEGER, video_path TEXT NOT NULL,
     video_sha256 VARCHAR(64) NOT NULL, caption TEXT NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued', format VARCHAR(40),
-    created_at $rjTs, published_at $rjTs)");
+    created_at $rjTs, published_at $rjTs, autopilot BOOLEAN NOT NULL DEFAULT FALSE)");
 db()->run("CREATE TABLE IF NOT EXISTS reel_state ($rjKey VARCHAR(100) PRIMARY KEY, value TEXT)");
 
 // tisky s titulkem z rozboru AI (221 s textem „Nahrazuje se“, 311 a 90 bez něj); původní řádky se na konci vrátí
@@ -1711,6 +1712,15 @@ $rjReset();
 $rjAdd('manual', 311);
 $rjC = $jobs->claim();
 check('claim úlohy k celému tisku: focus_pn null', [array_key_exists('focus_pn', $rjC ?? []), $rjC['focus_pn'] ?? null, $rjC['focus_pn_info'] ?? 'x'], [true, null, []]);
+check('claim úlohy bez autopilota: autopilot false', [array_key_exists('autopilot', $rjC ?? []), $rjC['autopilot'] ?? null], [true, false]);
+$rjReset();
+$rjAp = $rjAdd('manual', 311);
+db()->run('UPDATE reel_jobs SET autopilot = ? WHERE id = ?', [true, $rjAp]);
+$rjC = $jobs->claim();
+check('claim úlohy autopilota: autopilot true', [$rjC['job_id'] ?? null, $rjC['autopilot'] ?? null], [$rjAp, true]);
+$rjReset();
+$rjAdd('manual', 311);
+$rjC = $jobs->claim();
 // texty PN 2312 a 2313: chybějící řádek se vloží (a na konci smaže), existujícímu se vrátí ai_json
 $rjAiBak = db()->all('SELECT id_dokument, ai_json FROM pn_text WHERE id_dokument IN (31312, 31313)');
 $rjAiNew = array_values(array_diff([31312, 31313], array_map('intval', array_column($rjAiBak, 'id_dokument'))));
@@ -1809,8 +1819,10 @@ check('video 2 na šířku → 200', $api->handle('PUT', 'video', ['job_id' => (
 check('video na šířku vedle videa na výšku', [filesize($raDir . '/variant-2-sirka.mp4'), filesize($raDir . '/variant-2.mp4')], [6000, 5000]);
 check('orientation=portrait = video na výšku', $api->handle('PUT', 'video', ['job_id' => (string)$raJob, 'n' => '1', 'orientation' => 'portrait'], $raMp4(), $raH($raClaim))[0], 200);
 
-check('result s 1 variantou → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1)]]), $raH($raClaim))[0], 400);
-check('result s 1 variantou: manifest nevznikl', is_file($raDir . '/manifest.json'), false);
+[$raSt, $raRes] = $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => []]), $raH($raClaim));
+check('result s 0 variantami → 400', [$raSt, $raRes['error'] ?? null], [400, 'Sada musí mít 1 až 3 varianty']);
+check('result s 0 variantami: manifest nevznikl', is_file($raDir . '/manifest.json'), false);
+check('result se 4 variantami → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2), $raVariant(3), $raVariant(4)]]), $raH($raClaim))[0], 400);
 check('result s variantou bez videa → 400', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(3)]]), $raH($raClaim))[0], 400);
 $raLong = $raVariant(2);
 $raLong['caption'] = str_repeat('ž', 2121);
@@ -1834,6 +1846,21 @@ check('manifest: v2 s format null (přijato), v3 s formátem', [array_key_exists
     $raManifest['variants'][0]['format'] ?? null, $raManifest['variants'][1]['template'] ?? null, $raManifest['variants'][1]['format'] ?? null],
     [true, 'template_v2', null, 'template_v3', 'zmena']);
 check('manifest: šířka jen u varianty s nahraným videem na šířku', array_column($raManifest['variants'] ?? [], 'landscape'), [false, true]);
+check('manifest bez skipped: prázdný seznam, error úlohy prázdný', [$raManifest['skipped'] ?? null, $rjStatus($raJob)['error']], [[], null]);
+
+// sada s jedinou platnou variantou projde; neplatné varianty (skipped) jdou do manifestu a do error jako poznámka
+$rjReset();
+$raJob1 = $rjAdd('manual', 221);
+$raClaim1 = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$raJob1, 'n' => '1'], $raMp4(), $raH($raClaim1));
+$raSkipped = [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal', 'chybí PN']], ['n' => 9, 'errors' => ['x']], 'nesmysl',
+    ['n' => 3, 'errors' => 'není seznam']];
+[$raSt, $raRes] = $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob1, 'variants' => [$raVariant(1)], 'skipped' => $raSkipped]), $raH($raClaim1));
+$raManifest1 = json_decode((string)@file_get_contents($raInbox . '/' . $raJob1 . '/manifest.json'), true);
+check('result s 1 variantou → 200, úloha done', [$raSt, $raRes, $rjStatus($raJob1)['status']], [200, ['ok' => true, 'variants' => 1], 'done']);
+check('manifest: jediná varianta a skipped (jen platné položky)', [array_column($raManifest1['variants'] ?? [], 'n'), $raManifest1['skipped'] ?? null],
+    [[1], [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal', 'chybí PN']], ['n' => 3, 'format' => null, 'errors' => []]]]);
+check('skipped jako poznámka v reel_jobs.error', $rjStatus($raJob1)['error'], 'Nevzniklé varianty: 2 (pn): render selhal, chybí PN; 3: bez udaného důvodu');
 
 // výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
 $rjReset();

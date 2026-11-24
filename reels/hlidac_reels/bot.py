@@ -1,7 +1,8 @@
 """Telegram bot pro schvalování Reels (jediný vlastník v soukromém chatu).
 
 Zásady: obsluhuje se jen chat REELS_TELEGRAM_CHAT_ID (cokoli jiného se zahodí bez volání API),
-nic se nezveřejní bez tlačítka Schválit, ke schválení čeká nejvýš jedna jednotka (sada variant nebo
+nic se nezveřejní bez tlačítka Schválit (kromě položek autopilota: maybe_autopublish je zveřejní
+po jedné za SEND_INTERVAL a pošle odkazy), ke schválení čeká nejvýš jedna jednotka (sada variant nebo
 samostatné video, kromě /dalsi), offset Telegramu se ukládá po každé zpracované zprávě, takže restart žádné tlačítko nezopakuje.
 Tokeny se nikam nevypisují.
 
@@ -38,7 +39,8 @@ import psycopg
 from . import db, fresh, hlidani, inbox, jobs, publish, queue
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
-from .messages import (approval_buttons, preview_parts, preview_text, result_text,  # noqa: F401
+from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
+                       autopilot_skipped, autopilot_text, preview_parts, preview_text, result_text,  # noqa: F401
                        retry_buttons, set_buttons, set_text, set_video_caption, video_caption)
 from .meta import Meta
 from .queue import Reel
@@ -76,10 +78,14 @@ PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
 PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
             f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
+AUTOPILOT_KEY = "autopilot"  # reel_state: "1" = PN z /pn se zveřejní bez schválení
+# reel_state autopilot_skipped:<set_id> = JSON nevzniklých variant sady autopilota; ohlásí se po její poslední položce
+AUTOPILOT_SKIPPED_KEY = "autopilot_skipped:"
 HELP = ("Příkazy: /fronta (počty podle stavů a zadání), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
-        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem).\n"
+        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
+        "/autopilot on|off (PN z /pn zveřejnit bez schválení; bez argumentu stav).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
 PICK_FIRST = "Nejdřív vyber variantu tlačítkem Vybrat, pak jde popisek upravit."
@@ -211,6 +217,7 @@ class Bot:
         self.clock: Callable[[], float] = time.monotonic
         self.now: Callable[[], datetime] = _now
         self._next_send_check = float("-inf")
+        self._next_autopublish = float("-inf")
         # None = převzetí sad z mezisložky vypnuté
         self.inbox_dir = inbox_dir
         self._next_ingest = float("-inf")
@@ -326,13 +333,19 @@ class Bot:
         self._drop_buttons(msg_id)
         self._publish(reel_id, publish.retry)
 
-    def _publish(self, reel_id: int, fn: Callable[..., Reel]) -> None:
+    def _publish(self, reel_id: int, fn: Callable[..., Reel], auto: bool = False) -> Reel:
+        """auto=True: položka autopilota, úspěch se ohlásí zprávou autopilota s odkazy."""
         self._say("Zveřejňuji…")
         reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base,
                   threads=self.threads)
         buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
-        self._say(self._scrub(result_text(reel, threads=self.threads is not None)), buttons)
+        if auto and reel.status == "published":
+            text = autopilot_done(reel, jobs.focus_pn(self.conn, reel.set_id) if reel.set_id else None)
+        else:
+            text = result_text(reel, threads=self.threads is not None)
+        self._say(self._scrub(text), buttons)
         self._safe_send_next()
+        return reel
 
     def _reject(self, reel_id: int, cb_id, msg_id) -> None:
         if not queue.transition(self.conn, reel_id, "pending", "rejected", decided_at=_now()):
@@ -473,8 +486,44 @@ class Bot:
             self._cmd_pn((text or "").strip().partition(" ")[2])
         elif command == "/stav":
             self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
+        elif command == "/autopilot":
+            self._cmd_autopilot((text or "").strip().partition(" ")[2])
         else:
             self._say(HELP)
+
+    def _autopilot_on(self) -> bool:
+        return queue.get_state(self.conn, AUTOPILOT_KEY) == "1"
+
+    def _cmd_autopilot(self, arg: str) -> None:
+        """/autopilot on|off: přepne autopilota; bez argumentu (nebo s jiným) vypíše stav."""
+        arg = arg.strip().lower()
+        moved: list[int] = []
+        held = 0
+        if arg in ("on", "off"):
+            queue.set_state(self.conn, AUTOPILOT_KEY, "1" if arg == "on" else "0")
+        if arg == "off":
+            # vypnutí platí hned i pro převzaté sady: nezveřejněné položky jdou ke schválení (send_next)
+            moved = queue.autopilot_to_approval(self.conn)
+            # i úlohy ve frontě nebo u workeru: jejich sada půjde ke schválení, i kdyby se autopilot
+            # před převzetím znovu zapnul (jinak by se zveřejnila bez schválení)
+            held = jobs.autopilot_off(self.conn)
+        text = autopilot_text(self._autopilot_on(), len(moved), held)
+        if arg == "off":
+            # hlášení nevzniklých variant se pošle hned s odpovědí (autopilot je už nezveřejní)
+            notes = [self._pop_skipped(key) for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY)]
+            text = "\n\n".join([text, *(n for n in notes if n)])
+        self._say(self._scrub(text)[:TELEGRAM_TEXT_LIMIT])
+        if moved:
+            self._safe_send_next()
+
+    def _pop_skipped(self, key: str) -> str:
+        """Text hlášení nevzniklých variant z klíče reel_state a klíč smaže (vadný obsah = prázdný text)."""
+        raw = queue.get_state(self.conn, key)
+        queue.delete_state(self.conn, key)
+        try:
+            return autopilot_skipped(json.loads(raw)) if raw else ""
+        except (ValueError, TypeError, AttributeError):
+            return ""
 
     def _cmd_video(self, args: list[str]) -> None:
         """/video <ct> [formát]: ruční zadání generátoru."""
@@ -499,15 +548,18 @@ class Bot:
             return
         self._add_job("manual", ct, hint)
 
-    def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None) -> None:
+    def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None,
+                 autopilot: bool = False) -> None:
         what = _job_what(ct, focus_pn)
         try:
-            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn)
+            job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn,
+                           autopilot=autopilot)
         except jobs.ActiveJobExists:
             self._say(f"{_pn_label(focus_pn)} (tisk {ct}) už ve frontě je." if focus_pn
                       else f"Tisk {ct} už ve frontě je.")
             return
-        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.")
+        note = AUTOPILOT_QUEUED if autopilot else ""
+        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.{note}")
 
     def _cmd_pn(self, rest: str) -> None:
         """/pn: seznam PN za 48 h; /pn 2376 2377 = dvě úlohy; /pn 2376+2377 = jedno video z obou."""
@@ -547,7 +599,8 @@ class Bot:
             self._say(f"{', '.join(parts[:-1])} a {parts[-1]} patří k různým tiskům. "
                       "Jedno video jde jen z PN téhož tisku, zadej je zvlášť (mezerou místo +).")
             return
-        self._add_job("manual", tisky[0], None, focus_pn=pns)
+        # autopilot platí jen pro /pn (příkaz i tlačítko); /video a /vyber ho nenastavují
+        self._add_job("manual", tisky[0], None, focus_pn=pns, autopilot=self._autopilot_on())
 
     def _pn_list(self) -> None:
         """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
@@ -582,7 +635,10 @@ class Bot:
                 # nejnovějších nejvýš PN_PER_VIDEO PN tisku (víc jedno video neunese)
                 group = "+".join(str(n) for n in sorted(nums[:PN_PER_VIDEO]))
                 buttons.append((f"Jedno video ze všech ({group})", f"pn:{group}"))
-        self._say(self._clip("PN za posledních 48 h:\n\n" + "\n\n".join(lines)), buttons)
+        head = "PN za posledních 48 h:"
+        if self._autopilot_on():
+            head += "\n" + AUTOPILOT_PN_LIST_HEADER
+        self._say(self._clip(head + "\n\n" + "\n\n".join(lines)), buttons)
 
     def _worker_seen(self) -> str:
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
@@ -637,6 +693,8 @@ class Bot:
                     self._offer_set(reel.set_id)
             elif reel.status == "pending":
                 self._resend_preview(reel)
+            elif reel.status == "approved" and reel.autopilot:
+                self._say(f"{head} · čeká na automatické zveřejnění")
             elif reel.status == "approved":
                 self._say(f"{head} · čeká na restart bota")
             elif reel.status == "publishing":
@@ -872,13 +930,62 @@ class Bot:
         self._guard("převzetí sad z mezisložky", self._ingest)
 
     def _ingest(self) -> None:
-        results = inbox.ingest_all(self.conn, Path(self.inbox_dir), Path(self.media_dir))
+        # autopilot jen pro úlohy s příznakem a jen dokud je přepínač zapnutý (jinak běžné schvalování)
+        results = inbox.ingest_all(self.conn, Path(self.inbox_dir), Path(self.media_dir),
+                                   autopilot_on=self._autopilot_on())
         for r in results:
             if not r.ok:
                 # úloha je už failed; zprávu o ní pošle oznámení neúspěšných úloh
                 log.warning("sada úlohy %s nepřevzata", r.job_id)
+            elif r.autopilot and r.skipped:
+                # nevzniklé varianty se ohlásí až po zveřejnění poslední položky sady (_announce_skipped)
+                queue.set_state(self.conn, f"{AUTOPILOT_SKIPPED_KEY}{r.job_id}",
+                                json.dumps(r.skipped, ensure_ascii=False))
         if any(r.ok for r in results):
             self._safe_send_next()
+
+    def maybe_autopublish(self) -> None:
+        """Zveřejní jednu položku autopilota, nejvýš jednou za SEND_INTERVAL s (sada tak jde po jedné za cyklus)."""
+        now = self.clock()
+        if now < self._next_autopublish:
+            return
+        self._next_autopublish = now + SEND_INTERVAL
+        self._guard("zveřejnění autopilota", self._autopublish)
+
+    def _autopublish(self) -> None:
+        # vypnutý přepínač: nezveřejní se nic (převzaté položky už /autopilot off vrátil ke schválení)
+        if not self._autopilot_on():
+            return
+        reel = queue.next_autopilot(self.conn)
+        if reel is not None:
+            # publish.run sám přejde approved → publishing; chyba skončí failed/unknown se Zkusit znovu
+            # a další položka sady přijde na řadu v dalším cyklu
+            self._publish(reel.id, publish.run, auto=True)
+        # nevzniklé varianty sad, které už nemají co zveřejnit (i hlášení, které minule neodešlo)
+        for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY):
+            suffix = key[len(AUTOPILOT_SKIPPED_KEY):]
+            if not suffix.isdigit():
+                # vadný klíč by chybu hlásil každý cyklus: smazat
+                log.warning("vadný klíč %s smazán", key)
+                queue.delete_state(self.conn, key)
+                continue
+            self._announce_skipped(int(suffix))
+
+    def _announce_skipped(self, set_id: int) -> None:
+        """Po poslední položce sady (žádná už nečeká ani se nezveřejňuje) ohlásí nevzniklé varianty jednou."""
+        key = f"{AUTOPILOT_SKIPPED_KEY}{set_id}"
+        raw = queue.get_state(self.conn, key)
+        if raw is None:
+            return
+        if any(r.status in ("approved", "publishing") for r in queue.set_items(self.conn, set_id)):
+            return
+        try:
+            text = autopilot_skipped(json.loads(raw))
+        except (ValueError, TypeError, AttributeError):
+            text = ""
+        # když zpráva neodejde, klíč zůstane a další cyklus to zkusí znovu
+        if not text or self._say(self._scrub(text)):
+            queue.delete_state(self.conn, key)
 
     def maybe_fresh(self) -> None:
         """Čerstvé nálezy a vypršení či stažení sad, nejvýš jednou za FRESH_INTERVAL s."""
@@ -1005,7 +1112,10 @@ class Bot:
                       "Zkusit znovu nejdřív dohledá, co už na sítích je.", retry_buttons(reel_id))
         # schválené, ale publikace nezačala (pád mezi schválením a publish.run): bez tlačítka by uvízly;
         # failed + Zkusit znovu je bezpečné, retry nejdřív dohledá, co už na sítích je
+        # schválené položky autopilota zveřejní maybe_autopublish (publikace u nich ještě nezačala)
         for reel in queue.by_status(self.conn, ("approved",)):
+            if reel.autopilot:
+                continue
             if queue.transition(self.conn, reel.id, "approved", "failed", error=INTERRUPTED):
                 self._say(f"#{reel.id}: zveřejnění bylo přerušeno před začátkem publikace.",
                           retry_buttons(reel.id))
@@ -1046,6 +1156,7 @@ class Bot:
                     started = True
                 self.maybe_send_next()
                 self.maybe_ingest()
+                self.maybe_autopublish()
                 self.maybe_notify_failed()
                 self.maybe_fresh()
                 self.maybe_refresh_threads_token()

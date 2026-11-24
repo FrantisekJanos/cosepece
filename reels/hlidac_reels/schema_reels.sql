@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS reel_jobs (
 );
 -- Video k vybraným PN (/pn, 2026-11-24): čísla PN seřazená a bez duplicit; NULL = celý tisk.
 ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS focus_pn integer[];
+-- Autopilot (2026-11-24): úloha zadaná se zapnutým autopilotem, její videa se zveřejní bez schválení.
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS autopilot boolean NOT NULL DEFAULT false;
 -- Pro jeden tisk a jednu množinu PN nejvýš jedna aktivní úloha (úloha k celému tisku a k jeho PN běží vedle sebe).
 -- Původní index jen nad ct se ruší.
 DROP INDEX IF EXISTS reel_jobs_active_ct;
@@ -76,6 +78,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS reel_jobs_active_ct_pn ON reel_jobs (ct, COALE
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS set_id   bigint;  -- reel_jobs.id
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS variant  smallint;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS template text;
+-- Autopilot: položka z úlohy s autopilotem (zveřejní se bez schválení).
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS autopilot boolean NOT NULL DEFAULT false;
 -- Nové stavy expired a withdrawn: CHECK se vytvoří znovu (idempotentně, i nad starou produkční tabulkou).
 ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_status_check;
 ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_status_check

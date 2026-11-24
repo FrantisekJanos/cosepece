@@ -129,7 +129,10 @@ Server mu jen vydává úlohy a přebírá výsledky, sám nic negeneruje.
 
 Postup jedné úlohy: heartbeat → `claim` (úloha s kartou tisku) → `generate()` (`claude -p` napíše 3 varianty, render
 v2/v3, kontrola videa) → nahrání platných videí (`PUT`, každé nejvýš 30 MB; větší varianta vypadne) → `result`.
-Se 2 nebo 3 platnými variantami server sadu přijme, s méně worker nahlásí `fail`. Bez úlohy nebo po chybě sítě čeká
+Sada s 1–3 platnými variantami projde (i jediná platná se pošle), bez platné varianty worker nahlásí `fail`.
+Nevzniklé varianty jdou v `result` jako `skipped: [{n, format, errors}]`: server je zapíše do manifestu a jako
+poznámku do `reel_jobs.error` (úloha je přesto `done`). Úloha autopilota (`autopilot` v claimu, z `/pn`) má jen
+2 varianty: v2 a v3 `pn`. Bez úlohy nebo po chybě sítě čeká
 5 minut. Worker zpracuje vždy jen jednu úlohu a druhá instance (třeba naplánovaná úloha plus ruční spuštění) hned
 skončí se zprávou (zámek `worker.lock` v pracovní složce).
 
@@ -155,7 +158,7 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
   varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. „Stejný vstup“ je stejná karta z webu (bez `data_date`), takže hodinová synchronizace dat, která kartu změní, spustí úlohu znovu od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
   plus nejvýš 3 cílené opravy jen vadných variant, s doslovnými chybami); běh přerušený chybou prostředí se nepočítá.
   Hotové platné varianty se renderují hned, takže je pozdější chyba prostředí nezahodí.
-- Video k PN bez textu PN dostane jen formát `pn`, sada má pak 2 varianty a obě musí projít.
+- Video k PN bez textu PN a úloha autopilota dostanou jen formát `pn`, sada má pak 2 varianty.
 
 **Worker při chybě a výpadku:**
 
@@ -195,6 +198,7 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 - `/video <číslo tisku> [cesta|pn|zmena|rozprava]`: ruční zadání (formát je jen nápověda pro generátor),
 - `/vyber`: tisk vybere automatika z hlavních nálezů (nikdy formát `rozprava`),
 - `/pn`: video k vybraným pozměňovacím návrhům (ruční úloha, viz níže),
+- `/autopilot on|off` (bez argumentu stav): zveřejňování videí z `/pn` bez schválení (viz Autopilot níže, výchozí vypnuto),
 - `/fronta`: kromě položek ke schválení i zadání ve frontě (u úloh k PN i čísla PN) a kdy bylo PC naposledy vidět,
 - `/stav`: stav dat (viz Hlídání dat níže).
 
@@ -235,6 +239,27 @@ Sada se do limitu počítá jako jedna nevyřízená jednotka, dokud v ní něco
   obchází; když automatická sada čeká kvůli limitu, bot to jednou ohlásí (s odkazem na `/dalsi`),
 - nevybrané varianty sady `fresh` nebo `auto_pick` vyprší po 7 dnech (`fresh` se počítá od založení úlohy), vybrané
   zůstávají; sada bez výběru, jejíž tisk vypadl z hlavních nálezů, se stáhne; ruční sady nevyprší.
+
+## Autopilot (`/pn` bez schválení)
+
+Přepínač `autopilot` (tabulka `reel_state`, výchozí vypnuto) mění jen chování `/pn`. Zapnutý autopilot nastaví nové
+úloze z `/pn` příznak `reel_jobs.autopilot`; worker pro ni vygeneruje 2 varianty (v2 a v3 `pn`). Sada smí mít u všech
+úloh 1 až 3 platné varianty (minimum 1): nevzniklé varianty jdou v manifestu jako `skipped` a jako poznámka do
+`reel_jobs.error`, sada s jedinou platnou variantou se pošle.
+
+- Při převzetí sady bot založí položky rovnou jako `approved` s `reel_queue.autopilot` jen tehdy, když má úloha příznak
+  a přepínač je zapnutý. Jinak jde sada ke schválení jako obvykle.
+- Bot zveřejní v jednom cyklu nejvýš jednu položku autopilota a pošle odkazy na FB, IG a Threads. Selhání dostane
+  tlačítko Zkusit znovu.
+- `/autopilot off` zastaví zveřejňování hned a ještě nezveřejněné položky autopilota přesune do běžného schvalování.
+  Zároveň smaže příznak úlohám, které ještě čekají ve frontě nebo je má worker (`queued`, `claimed`): jejich sady
+  půjdou ke schválení, i když se autopilot před převzetím sady znovu zapne. Odpověď uvede počty videí i úloh.
+- `/video`, `/vyber` a `fresh` autopilot nikdy nepoužijí.
+- Pořadí nasazení: nejdřív server (web a bot společně přes redeploy), potom worker na PC.
+- **Autopilot nezapínat, dokud není aktualizovaný worker na PC.** Starý worker pole `autopilot` v claimu ignoruje
+  a vygeneruje 3 varianty včetně formátu `zmena`, které by pak šly ven bez schválení.
+- Hned po redeployi serveru může API workeru několik sekund vracet 500, dokud bot nevytvoří nové sloupce
+  (`autopilot` v `reel_jobs` a `reel_queue`). Worker počká a zkusí to znovu, zásah není potřeba.
 
 ## Hlídání dat
 

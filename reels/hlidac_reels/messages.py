@@ -159,3 +159,46 @@ def result_text(reel: Reel, threads: bool = False) -> str:
     if other:
         lines.append(f"Chyba: {'; '.join(other)}")
     return "\n".join(lines)
+
+
+def autopilot_text(on: bool, to_approval: int = 0, jobs_to_approval: int = 0) -> str:
+    """Odpověď na /autopilot: stav přepínače; to_approval = kolik videí autopilota vypnutí vrátilo ke schválení,
+    jobs_to_approval = kolika rozpracovaným úlohám autopilota vypnutí smazalo příznak."""
+    if on:
+        return ("Autopilot zapnut: PN vybraná v /pn se zveřejní bez schválení (2 videa na PN). "
+                "Vypnout: /autopilot off")
+    text = "Autopilot vypnut: sady jdou ke schválení."
+    if to_approval:
+        text += f" Dosud nezveřejněná videa autopilota ({to_approval}) půjdou ke schválení."
+    if jobs_to_approval:
+        text += f" Rozpracované úlohy autopilota ({jobs_to_approval}) půjdou ke schválení i po novém zapnutí."
+    return text
+
+
+AUTOPILOT_QUEUED = " Autopilot: po vygenerování se rovnou zveřejní."
+AUTOPILOT_PN_LIST_HEADER = "Autopilot zapnut: vybrané PN se zveřejní bez schválení."
+
+
+def autopilot_done(reel: Reel, focus_pn: list[int] | None) -> str:
+    """Hlášení o zveřejnění položky autopilota s odkazy; síť bez odkazu se vynechá."""
+    what = []
+    if focus_pn:
+        what.append("PN " + "+".join(str(n) for n in focus_pn))
+    if reel.ct is not None:
+        what.append(f"tisk {reel.ct}")
+    what.append(f"varianta {reel.format or _variant_label(reel)}")
+    links = [f"{name} {link}" for name, link in (("FB", reel.fb_permalink), ("IG", reel.ig_permalink),
+                                                ("Threads", reel.threads_permalink)) if link]
+    head = f"Autopilot zveřejnil #{reel.id} ({', '.join(what)})"
+    return (f"{head}: {' · '.join(links)}" if links else head)[:TEXT_LIMIT]
+
+
+def autopilot_skipped(skipped: list[dict]) -> str:
+    """Varianty sady autopilota, které generátor nevytvořil (z manifestu {n, format, errors}); prázdné = nic."""
+    lines = []
+    for s in skipped:
+        fmt = f" ({s['format']})" if s.get("format") else ""
+        errors = s.get("errors") if isinstance(s.get("errors"), list) else []
+        reason = "; ".join(str(e) for e in errors)[:REASON_LIMIT] or "důvod neuveden"
+        lines.append(f"Varianta {s.get('n')}{fmt} nevznikla: {reason}")
+    return "\n".join(lines)[:TEXT_LIMIT]

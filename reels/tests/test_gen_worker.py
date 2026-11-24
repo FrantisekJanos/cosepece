@@ -55,8 +55,9 @@ class FakeApi:
             raise ApiError(409, '{"error": "claim"}')
         return {"ok": True}
 
-    def result(self, job_id, claim_token, variants):
+    def result(self, job_id, claim_token, variants, skipped=None):
         self.calls.append(("result", job_id, claim_token, variants))
+        self.skipped = skipped
         if self.conflict_on == "result":
             raise ApiError(409, '{"error": "claim"}')
 
@@ -71,11 +72,11 @@ class FakeApi:
 def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] = frozenset()):
     """Falešný generate(): zapíše karty a videa jako část 1, varianty z ok_ns jsou platné, z land_ns mají šířku."""
     def gen(*, ct, card_v2, reason_keys, has_amendments, out, mcp_config, model, hint, render, timeout_s,
-            published=None, focus_pn=None, focus_info=None):
+            published=None, focus_pn=None, focus_info=None, autopilot=False):
         if seen is not None:
             seen.update(ct=ct, out=Path(out), model=model, hint=hint, mcp_config=mcp_config,
                         reason_keys=reason_keys, has_amendments=has_amendments, published=published,
-                        focus_pn=focus_pn, focus_info=focus_info)
+                        focus_pn=focus_pn, focus_info=focus_info, autopilot=autopilot)
         out = Path(out)
         variants = [Variant(1, "template_v2", None), Variant(2, "template_v3", "cesta"),
                     Variant(3, "template_v3", "pn")]
@@ -93,7 +94,7 @@ def fake_generate(ok_ns: set[int], seen: dict | None = None, land_ns: set[int] =
                     v.video_landscape.write_bytes(b"\0\0\0\x18ftypmp42land")
             else:
                 v.errors = [f"chyba v {out / 'x'}"]
-        return GenResult(ct=ct, formats=["cesta", "pn"], variants=variants, ok=len(ok_ns) >= 2)
+        return GenResult(ct=ct, formats=["cesta", "pn"], variants=variants, ok=len(ok_ns) >= 1)
     return gen
 
 
@@ -135,9 +136,41 @@ def test_process_dve_platne(tmp_path):
     assert [v["n"] for v in api.calls[-1][3]] == [1, 3]
 
 
+def test_sada_s_jednou_variantou_projde(tmp_path):
+    api = FakeApi()
+    assert _process(api, tmp_path, fake_generate({2})) is True
+    assert api.names() == ["upload_video", "result"]
+    assert [v["n"] for v in api.calls[-1][3]] == [2]
+
+
+def test_skipped_v_manifestu(tmp_path):
+    api = FakeApi()
+    assert _process(api, tmp_path, fake_generate({1})) is True
+    assert [(s["n"], s["format"]) for s in api.skipped] == [(2, "cesta"), (3, "pn")]
+    # chyby bez cest k PC
+    assert all(s["errors"] and str(tmp_path) not in " ".join(s["errors"]) for s in api.skipped)
+    assert "<root>" in api.skipped[0]["errors"][0]
+
+
+def test_bez_vypadku_prazdny_skipped(tmp_path):
+    api = FakeApi()
+    assert _process(api, tmp_path, fake_generate({1, 2, 3})) is True
+    assert api.skipped == []
+
+
+def test_process_preda_autopilota(tmp_path):
+    seen: dict = {}
+    _process(FakeApi(), tmp_path, fake_generate({1, 2}, seen))
+    assert seen["autopilot"] is False  # starší server pole neposílá
+    job = dict(JOB, autopilot=True)
+    worker.process(FakeApi(), job, root=tmp_path, mcp_config=tmp_path / "mcp.json", model="m",
+                   generate=fake_generate({1, 2}, seen))
+    assert seen["autopilot"] is True
+
+
 def test_process_malo_variant(tmp_path):
     api = FakeApi()
-    assert _process(api, tmp_path, fake_generate({2})) is False
+    assert _process(api, tmp_path, fake_generate(set())) is False
     assert api.names() == ["fail"]
     error = api.calls[0][3]
     assert len(error) <= 500
@@ -167,7 +200,7 @@ def test_process_velke_video_vypadne(tmp_path, monkeypatch):
 def test_process_velke_video_malo_variant(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "MAX_VIDEO_BYTES", 100)
     api = FakeApi()
-    assert _process(api, tmp_path, _oversize(fake_generate({1, 2}), 2)) is False
+    assert _process(api, tmp_path, _oversize(fake_generate({2}), 2)) is False
     assert api.names() == ["fail"]
     assert "30 MB" in api.calls[0][3]
 
@@ -312,7 +345,7 @@ def test_run_ctrl_c_skonci(tmp_path):
 def test_run_po_chybe_pauza(tmp_path, monkeypatch):
     api = FakeApi(job=dict(JOB))
     sleeps: list[float] = []
-    monkeypatch.setattr(worker, "generate", fake_generate({1}))
+    monkeypatch.setattr(worker, "generate", fake_generate(set()))
     worker.run(api, root=tmp_path, mcp_config=tmp_path / "m.json", model="m", sleep=sleeps.append, once=True)
     assert api.names() == ["heartbeat", "claim", "fail"]
     assert sleeps == [60]
@@ -395,7 +428,7 @@ def test_api_pozadavky(server, tmp_path):
     server.response = (200, "application/json", b'{"ok": true, "bytes": 12, "orientation": "landscape"}')
     assert api.upload_video(7, "claim-x", 2, video, orientation="landscape")["orientation"] == "landscape"
     server.response = (200, "application/json", b'{"ok": true, "bytes": 12}')
-    api.result(7, "claim-x", [{"n": 1}])
+    api.result(7, "claim-x", [{"n": 1}], skipped=[{"n": 2, "format": "pn", "errors": ["x"]}])
     server.response = (200, "application/json", b'{"status": "failed"}')
     assert api.fail(7, "claim-x", "chyba") == "failed"
     server.response = (200, "application/json", b'{"ok": true}')
@@ -413,7 +446,8 @@ def test_api_pozadavky(server, tmp_path):
     assert reqs[3]["body"] == video.read_bytes() and reqs[3]["headers"]["X-Claim-Token"] == "claim-x"
     assert put["headers"]["X-Claim-Token"] == "claim-x"
     assert put["headers"]["Content-Length"] == "12" and put["body"] == video.read_bytes()
-    assert json.loads(reqs[4]["body"]) == {"job_id": 7, "variants": [{"n": 1}]}
+    assert json.loads(reqs[4]["body"]) == {"job_id": 7, "variants": [{"n": 1}],
+                                           "skipped": [{"n": 2, "format": "pn", "errors": ["x"]}]}
     assert reqs[4]["headers"]["X-Claim-Token"] == "claim-x"
     assert json.loads(reqs[5]["body"]) == {"job_id": 7, "error": "chyba"}
     assert "X-Claim-Token" not in reqs[6]["headers"]
@@ -624,7 +658,7 @@ def test_nahravani_zkusi_znovu(tmp_path):
 
 def test_nahravani_vzda_po_trech(tmp_path):
     class Api(FakeApi):
-        def result(self, job_id, claim_token, variants):
+        def result(self, job_id, claim_token, variants, skipped=None):
             self.calls.append(("result",))
             raise ApiError(502, "Bad Gateway")
 

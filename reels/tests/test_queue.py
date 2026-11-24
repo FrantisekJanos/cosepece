@@ -238,3 +238,160 @@ def test_novy_stav_a_sloupce(conn):
     assert queue.transition(conn, i, "queued", "held")
     db.migrate(conn)
     db.migrate(conn)
+
+
+# --- výběr jednotky k odeslání (R1, R2) a odklad (R4) ---
+
+def _now():
+    from datetime import datetime, timezone
+    return datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def _set(conn, set_id, source="manual", n=3, start=None):
+    """Sada n variant; čísla videí odvozená od set_id, ať se otisky neopakují."""
+    base = start if start is not None else set_id * 10
+    return [_add(conn, base + v, source=source, set_id=set_id, variant=v) for v in range(1, n + 1)]
+
+
+def test_next_sendable_vyzadana_neceka_na_pending(conn):
+    from hlidac_reels import queue
+    a = _set(conn, 1)
+    b = _set(conn, 2)
+    for i in a:
+        queue.transition(conn, i, "queued", "pending", sent_at=_now())
+    r = queue.next_sendable(conn, _now(), auto_ok=False)
+    assert r is not None and r.id == b[0]
+
+
+def test_next_sendable_vrati_prvni_queued_variantu_sady(conn):
+    from hlidac_reels import queue
+    a = _set(conn, 1)
+    queue.transition(conn, a[0], "queued", "pending", sent_at=_now())
+    assert queue.next_sendable(conn, _now(), auto_ok=False).id == a[1]
+
+
+def test_next_sendable_auto_jen_s_auto_ok(conn):
+    from hlidac_reels import queue
+    f = _set(conn, 1, source="fresh")
+    assert queue.next_sendable(conn, _now(), auto_ok=False) is None
+    assert queue.next_sendable(conn, _now(), auto_ok=True).id == f[0]
+    # vyžádané zdroje projdou i bez auto_ok
+    for i in f:
+        queue.transition(conn, i, "queued", "rejected")
+    for sid, src in ((2, "auto_pick"), (3, "ukazka")):
+        ids = _set(conn, sid, source=src)
+        assert queue.next_sendable(conn, _now(), auto_ok=False).id == ids[0]
+        for i in ids:
+            queue.transition(conn, i, "queued", "rejected")
+    assert queue.REQUESTED_SOURCES == ("manual", "auto_pick", "ukazka")
+
+
+def test_next_sendable_preskoci_odlozenou(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    a = _add(conn, 1)
+    b = _add(conn, 2)
+    queue.set_fields(conn, a, next_send_at=_now() + timedelta(minutes=5))
+    assert queue.next_sendable(conn, _now(), auto_ok=True).id == b
+    # po uplynutí odkladu je zase na řadě starší
+    assert queue.next_sendable(conn, _now() + timedelta(minutes=5), auto_ok=True).id == a
+
+
+def test_auto_blocked_12h(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    assert queue.auto_blocked(conn, _now()) is False
+    f = _set(conn, 1, source="fresh")
+    for i in f:
+        queue.transition(conn, i, "queued", "pending", sent_at=_now() - timedelta(hours=11))
+    assert queue.auto_blocked(conn, _now()) is True
+    # po 12 h od odeslání už nebrzdí
+    assert queue.auto_blocked(conn, _now() + timedelta(hours=2)) is False
+    for i in f:
+        queue.set_fields(conn, i, sent_at=_now() - timedelta(hours=13))
+    assert queue.auto_blocked(conn, _now()) is False
+    for i in f:
+        queue.set_fields(conn, i, sent_at=_now() - timedelta(hours=11))
+    # vybraná varianta = dotčená sada
+    queue.mark_picked(conn, 1, f[1])
+    assert queue.auto_blocked(conn, _now()) is False
+    queue.delete_state(conn, "set_picked:1")
+    assert queue.auto_blocked(conn, _now()) is True
+    # rozhodnutá varianta = dotčená sada
+    queue.transition(conn, f[2], "pending", "rejected", decided_at=_now())
+    assert queue.auto_blocked(conn, _now()) is False
+
+
+def test_auto_blocked_ignoruje_vyzadane_a_autopilot(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    sent = _now() - timedelta(hours=1)
+    for i in _set(conn, 1, source="manual"):
+        queue.transition(conn, i, "queued", "pending", sent_at=sent)
+    for i in _set(conn, 2, source="auto_pick"):
+        queue.transition(conn, i, "queued", "pending", sent_at=sent)
+    # autopilot: approved se sent_at, v Telegramu nikdy nebyl
+    ap = _add(conn, 99, source="fresh", set_id=4, variant=1, autopilot=True)
+    queue.transition(conn, ap, "queued", "approved", sent_at=sent)
+    assert queue.auto_blocked(conn, _now()) is False
+
+
+def test_mark_video_sent(conn):
+    from hlidac_reels import queue
+    i = _add(conn, 1)
+    queue.mark_video_sent(conn, i, 4242)
+    r = queue.get(conn, i)
+    assert r.telegram_video_msg_id == 4242
+    assert r.status == "queued"
+
+
+def test_defer_send_backoff_a_held(conn):
+    from datetime import timedelta
+    from hlidac_reels import queue
+    ids = _set(conn, 1)
+    other = _set(conn, 2)
+    for n, mins in enumerate((1, 5, 15, 60, 60), start=1):
+        assert queue.defer_send(conn, ids[0], f"chyba {n}", _now()) == n
+        r = queue.get(conn, ids[0])
+        assert r.send_attempts == n
+        assert r.send_error == f"chyba {n}"
+        assert r.next_send_at == _now() + timedelta(minutes=mins)
+        # celá sada se odkládá spolu, jiná varianta téže sady se mezitím neposílá
+        assert queue.get(conn, ids[1]).next_send_at == _now() + timedelta(minutes=mins)
+        expect = "held" if n == 5 else "queued"
+        assert [queue.get(conn, i).status for i in ids] == [expect] * 3
+    assert [r.id for r in queue.held_items(conn)] == ids
+    # jiná sada zůstala beze změny a je na řadě
+    assert queue.get(conn, other[0]).send_attempts == 0
+    assert queue.next_sendable(conn, _now(), auto_ok=False).id == other[0]
+
+
+def test_defer_send_held_jen_queued_varianty(conn):
+    from hlidac_reels import queue
+    ids = _set(conn, 1)
+    queue.transition(conn, ids[0], "queued", "pending", sent_at=_now())
+    for _ in range(queue.SEND_MAX_ATTEMPTS):
+        queue.defer_send(conn, ids[1], "x", _now())
+    assert [queue.get(conn, i).status for i in ids] == ["pending", "held", "held"]
+
+
+def test_sets_sent_on_hranice_dne(conn):
+    from datetime import date, datetime, timezone
+    from hlidac_reels import queue
+    a = _set(conn, 1, source="fresh", n=1)
+    b = _set(conn, 2, source="fresh", n=1)
+    queue.transition(conn, a[0], "queued", "pending", sent_at=datetime(2026, 11, 24, 22, 59, tzinfo=timezone.utc))
+    queue.transition(conn, b[0], "queued", "pending", sent_at=datetime(2026, 11, 24, 23, 1, tzinfo=timezone.utc))
+    assert queue.sets_sent_on(conn, date(2026, 11, 24)) == 1
+    assert queue.sets_sent_on(conn, date(2026, 11, 25)) == 1
+
+
+def test_sets_sent_on_jen_automaticke(conn):
+    from datetime import date, datetime, timezone
+    from hlidac_reels import queue
+    t = datetime(2026, 11, 24, 10, 0, tzinfo=timezone.utc)
+    for sid, src in ((1, "fresh"), (2, "auto_pick"), (3, "manual")):
+        for i in _set(conn, sid, source=src, n=1):
+            queue.transition(conn, i, "queued", "pending", sent_at=t)
+    # /vyber (auto_pick) je vyžádaná sada a do denního limitu se nepočítá
+    assert queue.sets_sent_on(conn, date(2026, 11, 24)) == 1

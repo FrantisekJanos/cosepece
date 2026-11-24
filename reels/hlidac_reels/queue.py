@@ -11,6 +11,17 @@ import psycopg
 # vybraná varianta nevyprší a sada s výběrem se nestáhne
 PICKED_KEY = "set_picked:"
 
+# Vyžádaná jednotka (uživatel si o ni řekl: /video, /pn, /vyber, ukázka) se posílá hned (R1);
+# automatická (source 'fresh') brzdí denní limit a jiná nedotčená automatická sada (R2)
+REQUESTED_SOURCES = ("manual", "auto_pick", "ukazka")
+AUTO_SOURCE = "fresh"
+# nedotčená automatická sada brzdí další automatickou nejdéle tak dlouho od odeslání (hodiny)
+AUTO_HOLD = 12
+# odklad po neúspěšném odeslání do Telegramu (minuty podle pořadí pokusu, dál poslední hodnota)
+SEND_BACKOFF = (1, 5, 15, 60)
+# po tolika neúspěšných pokusech jde jednotka do stavu held (zpráva s tlačítky)
+SEND_MAX_ATTEMPTS = 5
+
 STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
             "expired", "withdrawn", "held")
 
@@ -136,6 +147,89 @@ def next_queued(conn, sets: bool = True) -> Reel | None:
     return r
 
 
+def next_sendable(conn, now: datetime, auto_ok: bool) -> Reel | None:
+    """Další položka k odeslání do Telegramu (R1, R2, R4).
+
+    Jednotka s nejstarší queued položkou (podle id), jejíž next_send_at není v budoucnu; automatické
+    (source 'fresh') jen při auto_ok. U sady vrací její první queued variantu. Stav ostatních jednotek
+    (pending, nerozhodnuté) na výběr nemá vliv.
+    """
+    only_requested = "" if auto_ok else " AND source = ANY(%(req)s)"
+    ready = "(next_send_at IS NULL OR next_send_at <= %(now)s::timestamptz)"
+    with conn.cursor() as cur:
+        cur.execute(
+            f"WITH u AS (SELECT id, set_id FROM reel_queue WHERE status='queued' AND {ready}{only_requested} "
+            "ORDER BY id LIMIT 1) "
+            f"SELECT {', '.join('r.' + f.name for f in dc_fields(Reel))} FROM reel_queue r, u "
+            f"WHERE r.status='queued' AND {ready.replace('next_send_at', 'r.next_send_at')} "
+            "AND (r.id = u.id OR (u.set_id IS NOT NULL AND r.set_id = u.set_id)) "
+            "ORDER BY r.variant NULLS LAST, r.id LIMIT 1",
+            {"now": now, "req": list(REQUESTED_SOURCES)},
+        )
+        r = _row(cur)
+    conn.commit()
+    return r
+
+
+def auto_blocked(conn, now: datetime) -> bool:
+    """Brzdí nedotčená automatická jednotka další automatickou (R2)?
+
+    Automatická (source 'fresh', ne autopilot) jednotka v Telegramu (sent_at), žádná varianta rozhodnutá
+    (decided_at) ani vybraná (set_picked:<set_id>), dosud čeká (pending) a od odeslání neuběhlo AUTO_HOLD h.
+    Autopilot má sent_at, i když do Telegramu nešel, proto se vylučuje výslovně.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM reel_queue q WHERE q.source = %(auto)s AND NOT q.autopilot "
+            "GROUP BY coalesce(q.set_id, -q.id) "
+            "HAVING bool_or(q.status = 'pending') AND bool_and(q.decided_at IS NULL) "
+            "AND min(q.sent_at) IS NOT NULL "
+            "AND %(now)s::timestamptz - min(q.sent_at) < make_interval(hours => %(hold)s) "
+            "AND NOT EXISTS (SELECT 1 FROM reel_state s WHERE max(q.set_id) IS NOT NULL "
+            "AND s.key = concat(%(pk)s::text, max(q.set_id)) AND s.value <> ''))",
+            {"auto": AUTO_SOURCE, "now": now, "hold": AUTO_HOLD, "pk": PICKED_KEY},
+        )
+        blocked = cur.fetchone()[0]
+    conn.commit()
+    return bool(blocked)
+
+
+def mark_video_sent(conn, id: int, msg_id: int) -> None:
+    """Uloží id zprávy s videem hned po odeslání (stav se nemění)."""
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET telegram_video_msg_id=%s WHERE id=%s", (msg_id, id))
+
+
+def defer_send(conn, id: int, error: str, now: datetime) -> int:
+    """Odeslání se nepovedlo: odloží jednotku (R4) a vrátí nový počet pokusů.
+
+    Odklad SEND_BACKOFF podle pokusu platí pro položku i pro ostatní queued varianty její sady (sada se
+    posílá jako celek). Od SEND_MAX_ATTEMPTS pokusů jdou queued položky jednotky do stavu held.
+    """
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("SELECT send_attempts + 1, set_id FROM reel_queue WHERE id=%s FOR UPDATE", (id,))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"položka {id} neexistuje")
+        n, set_id = row
+        mins = SEND_BACKOFF[min(n - 1, len(SEND_BACKOFF) - 1)]
+        unit = "(id = %(id)s OR (%(set)s::bigint IS NOT NULL AND set_id = %(set)s::bigint AND status = 'queued'))"
+        cur.execute(
+            f"UPDATE reel_queue SET send_attempts=%(n)s, send_error=%(err)s, "
+            f"next_send_at=%(now)s::timestamptz + make_interval(mins => %(mins)s) WHERE {unit}",
+            {"id": id, "set": set_id, "n": n, "err": error, "now": now, "mins": mins},
+        )
+        if n >= SEND_MAX_ATTEMPTS:
+            cur.execute(f"UPDATE reel_queue SET status='held' WHERE {unit} AND status='queued'",
+                        {"id": id, "set": set_id})
+    return n
+
+
+def held_items(conn) -> list[Reel]:
+    """Položky odložené po opakovaných chybách odeslání (čekají na sendretry nebo drop)."""
+    return by_status(conn, ("held",))
+
+
 def next_autopilot(conn) -> Reel | None:
     """Nejstarší schválená položka autopilota (čeká na zveřejnění bez Schválit)."""
     with conn.cursor() as cur:
@@ -206,14 +300,14 @@ def local_date(conn, at: datetime) -> date:
 
 
 def sets_sent_on(conn, day: date) -> int:
-    """Kolik automatických sad odešlo ke schválení v daném dni (Europe/Prague); samostatná videa
-    a sady ručních úloh (source manual) se nepočítají."""
+    """Kolik automatických sad (source 'fresh') odešlo ke schválení v daném dni (Europe/Prague);
+    samostatná videa a vyžádané sady (manual, auto_pick z /vyber) se nepočítají."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(DISTINCT set_id) FROM reel_queue WHERE set_id IS NOT NULL AND sent_at IS NOT NULL "
-            "AND source <> 'manual' "
+            "AND source = %s AND NOT autopilot "
             "AND (sent_at AT TIME ZONE 'Europe/Prague')::date = %s",
-            (day,),
+            (AUTO_SOURCE, day),
         )
         n = cur.fetchone()[0]
     conn.commit()

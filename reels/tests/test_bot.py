@@ -459,7 +459,9 @@ def test_po_restartu_unknown_s_tlacitkem(bot, conn, api, meta, media_dir):
     assert not orphan.exists()
     announce = [b for b in api.sent() if f"retry:{rid}" in _buttons(b)]
     assert len(announce) == 1 and f"#{rid}" in announce[0]["text"]
-    # pak pošle další položku ke schválení
+    # další položku ke schválení pošle až smyčka (R3)
+    assert _get(conn, nxt).status == "queued"
+    bot.maybe_send_next()
     assert _get(conn, nxt).status == "pending"
     assert sum(meta.calls.values()) == 0
 
@@ -741,9 +743,11 @@ def test_vypadek_site_video_nevyradi(bot, conn, api, media_dir):
     bot.send_next()
     r = _get(conn, rid)
     assert r.status == "queued" and r.send_attempts == 2 and "Bad Gateway" in r.send_error
-    # start() chybu jen zaloguje
+    # start() nic neposílá, pokus přijde ve smyčce
     now[0] += timedelta(minutes=5)
     bot.start()
+    assert _get(conn, rid).send_attempts == 2
+    bot.maybe_send_next()
     assert _get(conn, rid).status == "queued"
     assert _get(conn, rid).send_attempts == 3
 
@@ -985,6 +989,7 @@ def test_threads_bez_tokenu_selze_viditelne(conn, api, meta, media_dir):
     bot = _make_bot(conn, api, meta, media_dir, threads=th)
     _add(conn, media_dir)
     bot.start()
+    bot.maybe_send_next()
     rid = _get_pending(conn)
     bot.handle(_cb(f"ok:{rid}"))
     r = _get(conn, rid)
@@ -1008,6 +1013,7 @@ def test_threads_neni_nastavene_bot_bezi(conn, api, meta, media_dir, monkeypatch
     bot = _make_bot(conn, api, meta, media_dir, threads=None, env_token="tok-bez-uzivatele")
     rid = _add(conn, media_dir)
     bot.start()
+    bot.maybe_send_next()
     assert "Threads" not in api.sent()[-1]["text"]
     bot.handle(_cb(f"ok:{rid}"))
     assert seen == [None]
@@ -1813,6 +1819,44 @@ def test_restart_uprostred_sady(conn, api, meta, media_dir):
 
 
 @pg
+def test_start_a_prevzeti_neobchazi_r3(bot, conn, api, media_dir, monkeypatch):
+    """Restart s plnou frontou a převzetí několika sad z mezisložky: do posunu hodin o SEND_INTERVAL
+    odejde právě jedna jednotka (R3, ochrana před zahlcením chatu po výpadku PC)."""
+    from hlidac_reels import inbox
+    from hlidac_reels.bot import SEND_INTERVAL
+    tick = _clocked(bot)
+    _add(conn, media_dir, 1)
+    _add_set(conn, media_dir, 2, source="manual")
+    sets = []
+
+    def ingest(c, i, m, autopilot_on=False):
+        out = []
+        for n in (11, 12, 13):
+            ids = _add_set(c, media_dir, n, source="manual")
+            sets.append(ids)
+            out.append(inbox.IngestResult(n, ids, {}, True))
+        return out
+    monkeypatch.setattr(inbox, "ingest_all", ingest)
+    bot.inbox_dir = str(media_dir / "inbox")
+    api.fail["getUpdates"] = httpx.ConnectError("down")
+
+    def units() -> int:
+        return len(_previews(api)) + len(_set_offers(api))
+    bot.start()
+    for _ in range(3):  # obrátky smyčky během jednoho SEND_INTERVAL
+        bot.maybe_send_next()
+        bot.maybe_ingest()
+        bot.maybe_autopublish()
+        tick(SEND_INTERVAL / 4)
+    assert len(sets) == 3
+    assert units() == 1
+    tick(SEND_INTERVAL)
+    bot.maybe_send_next()
+    bot.maybe_ingest()
+    assert units() == 2
+
+
+@pg
 def test_trvala_prechodna_chyba(conn, api, meta, media_dir):
     """Review Focus 2: 429 u první sady ji odkládá, druhá odejde v dalším cyklu; po 5 pokusech held
     a právě jedna zpráva s tlačítky."""
@@ -2152,6 +2196,9 @@ def test_inbox_nova_sada_se_hned_posle(bot, conn, api, media_dir, monkeypatch):
     monkeypatch.setattr(inbox, "ingest_all", ingest)
     bot.inbox_dir = str(media_dir / "inbox")
     bot.maybe_ingest()
+    # převzatou sadu pošle smyčka (maybe_send_next), ne převzetí samo (R3)
+    assert {_get(conn, i).status for i in ids} == {"queued"}
+    bot.maybe_send_next()
     assert {_get(conn, i).status for i in ids} == {"pending"}
 
 

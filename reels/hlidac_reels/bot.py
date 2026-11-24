@@ -1050,8 +1050,7 @@ class Bot:
                 # nevzniklé varianty se ohlásí až po zveřejnění poslední položky sady (_announce_skipped)
                 queue.set_state(self.conn, f"{AUTOPILOT_SKIPPED_KEY}{r.job_id}",
                                 json.dumps(r.skipped, ensure_ascii=False))
-        if any(r.ok for r in results):
-            self._safe_send_next()
+        # převzaté sady odešle smyčka (maybe_send_next, nejvýš jedna jednotka za SEND_INTERVAL, R3)
 
     def maybe_autopublish(self) -> None:
         """Zveřejní jednu položku autopilota, nejvýš jednou za SEND_INTERVAL s (sada tak jde po jedné za cyklus)."""
@@ -1234,7 +1233,7 @@ class Bot:
                           retry_buttons(reel.id))
         self._refresh_previews_for_threads()
         self._clean_public()
-        self._safe_send_next()
+        # odeslání ke schválení až ve smyčce (maybe_send_next): start by jinak přidal jednotku navíc (R3)
 
     def poll_once(self) -> None:
         offset = int(queue.get_state(self.conn, "tg_offset") or 0)

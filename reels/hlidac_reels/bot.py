@@ -600,7 +600,10 @@ class Bot:
                 # nejnovějších nejvýš PN_PER_VIDEO PN tisku (víc jedno video neunese)
                 group = "+".join(str(n) for n in sorted(nums[:PN_PER_VIDEO]))
                 buttons.append((f"Jedno video ze všech ({group})", f"pn:{group}"))
-        self._say(self._clip("PN za posledních 48 h:\n\n" + "\n\n".join(lines)), buttons)
+        head = "PN za posledních 48 h:"
+        if self._autopilot_on():
+            head += "\n" + AUTOPILOT_PN_LIST_HEADER
+        self._say(self._clip(head + "\n\n" + "\n\n".join(lines)), buttons)
 
     def _worker_seen(self) -> str:
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))

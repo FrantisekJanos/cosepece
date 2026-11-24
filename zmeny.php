@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-24', 'Pozměňovací návrhy na detailu tisku výš a na celou šířku',
         'Seznam pozměňovacích návrhů byl na stránce tisku až dole v úzkém pravém sloupci. Teď je hned pod důvody skóre v široké části stránky, předkladatelé jsou vedle něj. Nad seznamem jsou odkazy na označené návrhy (přílepek, rozsáhlá změna, lhůta se zpětným použitím nebo závažnost od 6/10), od nejzávažnějšího. Seznam dál začíná nejnovějšími návrhy; hned je jich vidět deset, ostatní se rozbalí. Skóre se nemění.',
-        [0], false],
+        [84], false],
     ['2026-11-23', 'Všechny hlavní stránky v horním menu',
         'Stránky Zákony, Data a API, Pro AI asistenty a Co jsme změnili byly dosud jen v patičce. Teď jsou v horním menu vedle ostatních. Na telefonu je menu jeden řádek, který se posouvá do strany, takže nezabírá víc místa než dřív.',
         [75], false],

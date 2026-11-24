@@ -80,8 +80,13 @@ ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS variant  smallint;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS template text;
 -- Autopilot: položka z úlohy s autopilotem (zveřejní se bez schválení).
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS autopilot boolean NOT NULL DEFAULT false;
--- Nové stavy expired a withdrawn: CHECK se vytvoří znovu (idempotentně, i nad starou produkční tabulkou).
+-- Odesílání ke schválení (F1): počet pokusů, chyba, čas dalšího pokusu, čas převzetí; nový stav held.
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS send_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS send_error    text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS next_send_at  timestamptz;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS picked_at     timestamptz;
+-- Nové stavy expired, withdrawn a held: CHECK se vytvoří znovu (idempotentně, i nad starou produkční tabulkou).
 ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_status_check;
 ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_status_check
     CHECK (status IN ('queued','pending','approved','publishing','published','rejected','failed','unknown',
-                      'expired','withdrawn'));
+                      'expired','withdrawn','held'));

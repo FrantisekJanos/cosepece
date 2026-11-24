@@ -224,3 +224,17 @@ def test_delete_state(conn):
     queue.delete_state(conn, "k")
     assert queue.get_state(conn, "k") is None
     queue.delete_state(conn, "k")  # neexistující klíč nevadí
+
+
+def test_novy_stav_a_sloupce(conn):
+    from hlidac_reels import db, queue
+    i = _add(conn, 1)
+    r = queue.get(conn, i)
+    assert r.send_attempts == 0
+    assert r.send_error is None
+    assert r.next_send_at is None
+    assert r.picked_at is None
+    assert "held" in queue.STATUSES
+    assert queue.transition(conn, i, "queued", "held")
+    db.migrate(conn)
+    db.migrate(conn)

@@ -12,7 +12,7 @@ import psycopg
 PICKED_KEY = "set_picked:"
 
 STATUSES = ("queued", "pending", "approved", "publishing", "published", "rejected", "failed", "unknown",
-            "expired", "withdrawn")
+            "expired", "withdrawn", "held")
 
 
 class DuplicateVideo(Exception):
@@ -57,6 +57,10 @@ class Reel:
     variant: int | None
     template: str | None
     autopilot: bool = False  # z úlohy s autopilotem: zveřejní se bez schválení
+    send_attempts: int = 0  # pokusy o odeslání do Telegramu (fronta ke schválení)
+    send_error: str | None = None  # poslední chyba odeslání
+    next_send_at: datetime | None = None  # nejdřív kdy zkusit odeslat znovu
+    picked_at: datetime | None = None  # kdy si položku převzalo odesílání
 
 
 _COLS = ", ".join(f.name for f in dc_fields(Reel))

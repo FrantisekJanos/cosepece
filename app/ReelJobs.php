@@ -91,9 +91,10 @@ final class ReelJobs
                     continue; // úlohu mezitím vzal jiný požadavek, nebo se nález nepodařilo přiřadit
                 }
             }
-            $card = $this->cardV2($ct);
+            $focus = self::parsePnArray($job['focus_pn'] ?? null);
+            $card = $this->cardV2($ct, $focus);
             if ($card === null) {
-                $this->markFailed($id, 'tisk nemá titulek z rozboru AI');
+                $this->markFailed($id, $focus === null ? 'tisk nemá titulek z rozboru AI' : 'tisk ani zadané PN nemají titulek z rozboru AI');
                 continue;
             }
             $token = bin2hex(random_bytes(16));
@@ -105,7 +106,6 @@ final class ReelJobs
             if ($claimed->rowCount() === 0) {
                 continue;
             }
-            $focus = self::parsePnArray($job['focus_pn'] ?? null);
             return [
                 'job_id' => $id,
                 'claim_token' => $token,
@@ -225,17 +225,21 @@ final class ReelJobs
 
     /**
      * Karta pro šablonu v2 (stejný tvar jako data/reels-ukazky/cards-export.php) nebo null, když tisk nemá
-     * titulek z rozboru AI. Volitelně typ_navrhu, predlozeno, deadline (zkrácená lhůta pro výbory)
+     * titulek z rozboru AI. U úlohy k vybraným PN ($focusPn) se titulek tisku bez nálezu (Repo::headline bere jen
+     * závažnost ≥ 4 s citací) nahradí rozborem prvního zadaného PN s titulkem, bez ohledu na závažnost. Volitelně typ_navrhu, predlozeno, deadline (zkrácená lhůta pro výbory)
      * a pn (počet PN, autorů a podaných v den konce podrobné rozpravy). timeline se nevyplňuje: popisy kroků
      * v ruční sérii jsou redakční, z tabulky kroky by šly do videa surové názvy stavů.
      */
-    public function cardV2(int $ct): ?array
+    public function cardV2(int $ct, ?array $focusPn = null): ?array
     {
         $t = $this->db->one('SELECT * FROM tisky WHERE ct = ?', [$ct]);
         if ($t === null) {
             return null;
         }
         $h = (new Repo($this->db))->headline($ct);
+        if ($h === null && $focusPn !== null) {
+            $h = $this->pnHeadline($ct, $focusPn);
+        }
         if ($h === null) {
             return null;
         }
@@ -282,6 +286,38 @@ final class ReelJobs
             }
         }
         return $card;
+    }
+
+    /**
+     * Titulek karty z rozboru AI prvního zadaného PN (podle čísla), které titulek má; citace je první citace
+     * rozboru, nebo prázdná. Stejný tvar jako Repo::headline. Null, když žádné zadané PN titulek nemá.
+     */
+    private function pnHeadline(int $ct, array $pns): ?array
+    {
+        if ($pns === []) {
+            return null;
+        }
+        $marks = implode(', ', array_fill(0, count($pns), '?'));
+        $rows = $this->db->all(
+            "SELECT p.cislo, x.ai_json, x.ai_model FROM pn p JOIN pn_text x ON x.id_dokument = p.id_dokument
+              WHERE p.ct = ? AND p.cislo IN ($marks) AND x.ai_json IS NOT NULL ORDER BY p.cislo",
+            [$ct, ...$pns]
+        );
+        foreach ($rows as $r) {
+            $ai = json_decode((string)$r['ai_json'], true);
+            $title = is_array($ai) ? trim((string)($ai['titulek'] ?? '')) : '';
+            if ($title === '') {
+                continue;
+            }
+            return [
+                'title' => $title,
+                'perex' => trim((string)($ai['perex'] ?? '')),
+                'quote' => trim((string)(((array)($ai['citace'] ?? []))[0] ?? '')),
+                'source' => 'pozměňovací návrh č. ' . (int)$r['cislo'],
+                'verified' => (string)$r['ai_model'] === AiReviewer::verifyModel($this->config),
+            ];
+        }
+        return null;
     }
 
     /**

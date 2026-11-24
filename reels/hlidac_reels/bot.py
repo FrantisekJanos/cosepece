@@ -87,8 +87,6 @@ SET_GONE = "Sada už nečeká na výběr."
 RETIRED = {"withdrawn": "#{} staženo: nález už není mezi hlavními",
            "expired": "#{} vypršelo (7 dní bez výběru)"}
 RETIRED_REST = "#{} zbylé varianty vypršely"  # sada s výběrem: vyprší jen nevybrané varianty
-LANDSCAPE_NOT_SENT = "Video na šířku ještě nebylo odesláno ke schválení."
-LANDSCAPE_REJECTED = "Video na šířku Telegram odmítl. Vyměň ho přes reels-add-landscape, nebo položku zamítni."
 LANDSCAPE_FAILED_KEY = "landscape_failed:{}"  # reel_state: sha256 šířky, kterou Telegram trvale odmítl
 
 
@@ -311,18 +309,9 @@ class Bot:
             self._answer(cb_id, "Nejdřív vyber variantu.")
             return
         # jediné místo, odkud se položka dostane k publikaci: přechod jen z pending
+        # Schválit platí i pro video na šířku: to se znovu neschvaluje (rozhodnutí 2026-11-24)
         if not queue.approve(self.conn, reel_id, _now()):
-            reel = queue.get(self.conn, reel_id)
-            if reel is not None and reel.status == "pending":
-                if queue.get_state(self.conn, LANDSCAPE_FAILED_KEY.format(reel_id)) == _failed_mark(reel):
-                    self._answer(cb_id, LANDSCAPE_REJECTED)
-                    self._say(f"#{reel_id}: {LANDSCAPE_REJECTED}")
-                    return
-                # doplněné video na šířku ještě vlastník neviděl (nebo k němu nepřišel nový náhled)
-                self._answer(cb_id, LANDSCAPE_NOT_SENT)
-                self._say(f"#{reel_id}: {LANDSCAPE_NOT_SENT} Schválit půjde z nového náhledu.")
-            else:
-                self._answer(cb_id, "Položka už nečeká na schválení.")
+            self._answer(cb_id, "Položka už nečeká na schválení.")
             return
         self._answer(cb_id, "Schváleno")
         self._drop_buttons(msg_id)
@@ -801,15 +790,13 @@ class Bot:
             queue.set_state(self.conn, LIMIT_NOTIFIED_KEY, str(waiting.set_id))
 
     def _send_landscape_updates(self) -> None:
-        """Video na šířku doplněné k čekající položce: pošle ho a nový náhled s tlačítky.
+        """Video na šířku doplněné k čekající položce: pošle ho do chatu jen pro informaci.
 
-        Id videa se uloží hned po odeslání, aby se video neposílalo v každé obrátce znovu. Náhled,
-        který se nepošle, se dožene v další obrátce: Telegram čísluje zprávy v chatu vzestupně, takže
-        náhled starší než video na šířku má menší message_id (telegram_msg_id < telegram_landscape_msg_id).
-        Do té doby Schválit nepublikuje (queue.approve). Výpadek Telegramu (síť, 5xx, 429) se jen
-        zaloguje a zkusí se znovu. Trvalou chybu (Telegram video odmítl, soubor nejde přečíst) bot
-        ohlásí jednou a tutéž šířku (podle sha256) už nezkouší; nový soubor přes reels-add-landscape
-        se zkusí znovu.
+        Schválit z původního náhledu platí i pro šířku (queue.approve), nový náhled s tlačítky se neposílá.
+        Id videa se uloží hned po odeslání, aby se video neposílalo v každé obrátce znovu. Výpadek Telegramu
+        (síť, 5xx, 429) se jen zaloguje a zkusí se znovu. Trvalou chybu (Telegram video odmítl, soubor nejde
+        přečíst) bot ohlásí jednou a tutéž šířku (podle sha256) už nezkouší; nový soubor přes
+        reels-add-landscape se zkusí znovu.
         """
         for reel in queue.by_status(self.conn, ("pending",)):
             if not reel.video_landscape_path:
@@ -844,11 +831,8 @@ class Bot:
                 if not queue.set_landscape_sent(self.conn, reel.id, land_id, reel.video_landscape_sha256):
                     continue
                 queue.delete_state(self.conn, failed_key)
-                reel = queue.get(self.conn, reel.id)
-                if reel is None or reel.status != "pending":
-                    continue
-            if (reel.telegram_msg_id or 0) < reel.telegram_landscape_msg_id:
-                self._resend_preview(reel)
+            # šířka jde do chatu jen pro informaci: Schválit z původního náhledu platí i pro ni,
+            # nový náhled s tlačítky se neposílá (rozhodnutí 2026-11-24)
 
     def _give_up(self, reel: Reel, exc: Exception, shape: str = "na výšku") -> None:
         """Vyřadí položku, jejíž video nejde poslat; shape říká, které (na výšku / na šířku)."""

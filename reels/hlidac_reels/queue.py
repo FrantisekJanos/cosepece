@@ -218,19 +218,11 @@ def transition(conn, id: int, from_status: str | tuple[str, ...], to_status: str
 
 
 def approve(conn, id: int, decided_at) -> bool:
-    """Schválení: pending → approved, jen když vlastník viděl obě videa.
-
-    Do Telegramu musí odejít právě ta šířka, která je v řádku (telegram_landscape_sha256 =
-    video_landscape_sha256, NULL = NULL; soubor vyměněný během odesílání neprojde), a náhled s tlačítky musí být
-    novější než ona (Telegram čísluje zprávy v chatu vzestupně). Jinak by Schválit ze starého
-    náhledu zveřejnilo šířku, kterou vlastník neviděl. Podmínka je v jednom UPDATE, takže je atomická.
-    """
+    """Schválení: pending → approved. Jedno Schválit platí pro video na výšku i na šířku; šířku vlastník
+    znovu neschvaluje, ani když dorazí později (rozhodnutí 2026-11-24). Atomické v jednom UPDATE."""
     with _tx(conn), conn.cursor() as cur:
         cur.execute(
-            "UPDATE reel_queue SET status='approved', decided_at=%s WHERE id=%s AND status='pending' "
-            "AND (video_landscape_path IS NULL OR (telegram_landscape_msg_id IS NOT NULL "
-            "AND telegram_landscape_sha256 IS NOT DISTINCT FROM video_landscape_sha256 "
-            "AND telegram_msg_id > telegram_landscape_msg_id)) RETURNING id",
+            "UPDATE reel_queue SET status='approved', decided_at=%s WHERE id=%s AND status='pending' RETURNING id",
             (decided_at, id),
         )
         return cur.fetchone() is not None

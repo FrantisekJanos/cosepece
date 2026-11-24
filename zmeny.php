@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-24', 'Kratší adresy stránek',
+        'Stránky mají adresy bez přípony .php a číslo tisku nebo zákona je přímo v adrese: cosepece.cz/tisk/221, cosepece.cz/zakon/159/2006, cosepece.cz/tisky. Staré adresy fungují dál a samy přesměrují na nové, takže dříve sdílené odkazy zůstávají platné. Adresy pro stroje (api.php, rss.php) se nemění. Skóre se nemění.',
+        [85], false],
     ['2026-11-24', 'Pozměňovací návrhy na detailu tisku výš a na celou šířku',
         'Seznam pozměňovacích návrhů byl na stránce tisku až dole v úzkém pravém sloupci. Teď je hned pod důvody skóre v široké části stránky, předkladatelé jsou vedle něj. Nad seznamem jsou odkazy na označené návrhy (přílepek, rozsáhlá změna, lhůta se zpětným použitím nebo závažnost od 6/10), od nejzávažnějšího. Seznam dál začíná nejnovějšími návrhy; hned je jich vidět deset, ostatní se rozbalí. Skóre se nemění.',
         [84], false],

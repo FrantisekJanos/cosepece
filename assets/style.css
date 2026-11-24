@@ -99,6 +99,10 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .suppressed { margin: 0; padding: 14px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; color: var(--muted); }
 .pn-item { flex-direction: column; align-items: stretch !important; }
 .pn-summary { color: var(--ink-2); }
+.pn-flagged { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pn-flagged strong { margin-right: 2px; }
+.pn-flagged a.chip { text-decoration: none; }
+.pn-flagged a.chip:hover { text-decoration: underline; }
 .quote { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid #F59E0B; background: #FFFBEB; border-radius: 0 8px 8px 0; color: var(--ink); overflow-wrap: anywhere; }
 
 /* upozornění */

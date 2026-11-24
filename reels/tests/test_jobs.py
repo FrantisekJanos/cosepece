@@ -55,3 +55,39 @@ def test_failed_unnotified(conn):
     assert [j.id for j in jobs.failed_unnotified(conn)] == [i]
     jobs.mark_notified(conn, i)
     assert jobs.failed_unnotified(conn) == []
+
+
+def test_focus_pn_serazene_bez_duplicit(conn):
+    from hlidac_reels import jobs
+    i = jobs.add(conn, source="manual", ct=300, focus_pn=[2378, 2376, 2378])
+    (job,) = jobs.pending(conn)
+    assert job.id == i and job.focus_pn == [2376, 2378]
+    jobs.add(conn, source="manual", ct=301)
+    assert [j.focus_pn for j in jobs.pending(conn)] == [[2376, 2378], None]
+
+
+def test_focus_pn_unikatnost(conn):
+    from hlidac_reels import jobs
+    jobs.add(conn, source="manual", ct=300, focus_pn=[2376, 2377])
+    # stejná množina PN (jiné pořadí) je duplicita
+    with pytest.raises(jobs.ActiveJobExists):
+        jobs.add(conn, source="manual", ct=300, focus_pn=[2377, 2376])
+    # jiná množina PN i celý tisk běží vedle sebe
+    jobs.add(conn, source="manual", ct=300, focus_pn=[2376])
+    jobs.add(conn, source="manual", ct=300)
+    with pytest.raises(jobs.ActiveJobExists):
+        jobs.add(conn, source="manual", ct=300)
+    with pytest.raises(jobs.ActiveJobExists):
+        jobs.add(conn, source="manual", ct=300, focus_pn=[])  # prázdný seznam = celý tisk
+    assert len(jobs.pending(conn)) == 3
+
+
+def test_migrace_nahradi_stary_index(conn):
+    from hlidac_reels import db
+    db.migrate(conn)  # podruhé: idempotentní
+    with conn.cursor() as cur:
+        cur.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'reel_jobs' "
+                    "AND indexname LIKE 'reel_jobs_active%%'")
+        names = sorted(r[0] for r in cur.fetchall())
+    conn.commit()
+    assert names == ["reel_jobs_active_ct_pn"]

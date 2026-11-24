@@ -4,6 +4,10 @@ Smyčka: heartbeat → claim → generate() z části 1 (claude -p na předplatn
 result. Video na šířku 16:9 se nahraje před videem na výšku: server, který šířku ještě neumí (parametr orientation
 ignoruje), ho tak přepíše videem na výšku a sada projde bez šířky. Chyba šířky variantu nevyřadí. Bez úlohy nebo při chybě sítě čeká 5 minut. Vždy jen jedna úloha a jedna instance (zámek root/worker.lock),
 naplánovaná úloha při přihlášení a ruční spuštění se tak nepotkají.
+
+Chyba prostředí (EnvError: vyčerpaný limit předplatného, odhlášení) úlohu nahlásí jako chybu a worker se pozastaví
+s odstupy PAUSE_STEPS; další úlohu vezme až po úspěšné sondě (krátký claude -p). Bez nástrojů (claude, Chromium,
+ffmpeg/ffprobe, konfigurace MCP) úlohy nebere vůbec. Výpadek sítě nebo 5xx při nahrávání se opakuje (RETRY_DELAYS).
 """
 from __future__ import annotations
 
@@ -11,12 +15,15 @@ import argparse
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 from .api import ApiError, ReelsApi
-from .claude import DEFAULT_MODEL
+from .claude import DEFAULT_MODEL, EnvError, _bin, parse_output
 from .generate import MIN_OK, generate
 
 log = logging.getLogger("hlidac_reels.worker")
@@ -26,6 +33,84 @@ FAIL_PAUSE_S = 60  # pauza po nezdařené úloze, ať vadná úloha nespálí t�
 ERROR_LIMIT = 500
 TIMEOUT_S = 1200  # s na jeden běh claude -p
 MAX_VIDEO_BYTES = 30 * 1024 * 1024  # limit reels_api.php i ingesteru bota
+PAUSE_STEPS = (900, 3600, 10800)  # s: odstupy po chybě prostředí; poslední krok se opakuje
+PROBE_TIMEOUT_S = 120
+PROBE_PROMPT = "odpověz OK"
+RETRY_DELAYS = (60, 300, 900)  # s: opakování nahrávání a result při výpadku sítě nebo 5xx
+
+_chromium_path: str | None = None  # nalezené Chromium Playwrightu (driver se pak už nespouští)
+
+
+def _chromium_ok() -> bool:
+    """Je nainstalované Chromium pro Playwright? Cestu zjistí driver Playwrightu, nalezenou si pamatuje."""
+    global _chromium_path
+    if _chromium_path and Path(_chromium_path).is_file():
+        return True
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            path = p.chromium.executable_path
+    except Exception:  # noqa: BLE001 — chybějící balík i nefunkční driver = Chromium není
+        return False
+    if path and Path(path).is_file():
+        _chromium_path = path
+        return True
+    return False
+
+
+def check_tools(mcp_config: Path) -> list[str]:
+    """Co workeru chybí k vygenerování sady (prázdný seznam = vše je); bez nástrojů úlohy nebere."""
+    missing = []
+    # CLAUDE_BIN (stejně jako run_claude) má přednost; jinak claude na PATH
+    exe = os.environ.get("CLAUDE_BIN", "").split()[:1] or ["claude"]
+    if not (shutil.which(exe[0]) or Path(exe[0]).is_file()):
+        missing.append("claude (Claude Code CLI na PATH)")
+    if not _chromium_ok():
+        missing.append("Chromium pro Playwright (playwright install chromium)")
+    for name in ("ffmpeg", "ffprobe"):
+        if not shutil.which(name):
+            missing.append(name)
+    if not Path(mcp_config).is_file():
+        missing.append(f"konfigurace MCP {Path(mcp_config).name}")
+    return missing
+
+
+def probe(model: str) -> bool:
+    """Sonda po chybě prostředí: jeden krátký claude -p bez nástrojů a MCP; True = model zase odpovídá."""
+    argv = [*_bin(), "-p", "--model", model, "--output-format", "json", "--tools", "", "--strict-mcp-config"]
+    try:
+        # prázdná dočasná složka: žádný CLAUDE.md ani projektová nastavení
+        with tempfile.TemporaryDirectory(prefix="reels-probe-") as cwd:
+            proc = subprocess.run(argv, cwd=cwd, input=PROBE_PROMPT, capture_output=True, encoding="utf-8",
+                                  errors="replace", timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("sonda: claude -p neproběhl: %s", e)
+        return False
+    is_error, result = parse_output(proc.stdout)
+    if proc.returncode != 0 or is_error:
+        log.warning("sonda: claude -p skončil s kódem %s: %s", proc.returncode, result or "bez výstupu")
+        return False
+    return True
+
+
+def _retrying(call, what: str, sleep):
+    """Zavolá call(); při výpadku sítě (OSError) nebo 5xx opakuje po RETRY_DELAYS, pak výjimku pustí dál.
+
+    409 (claim vypršel) ani jiné 4xx se neopakují: další pokus by skončil stejně.
+    """
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return call()
+        except ApiError as e:
+            if delay is None or e.status < 500:
+                raise
+            err: Exception = e
+        except OSError as e:
+            if delay is None:
+                raise
+            err = e
+        log.warning("%s selhalo (%s), zkusím znovu za %s s", what, err, delay)
+        sleep(delay)
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -75,7 +160,7 @@ def _report_fail(api, job_id: int, claim_token: str, error: str, root: Path) -> 
     return False
 
 
-def _upload_landscape(api, job_id: int, claim: str, v) -> None:
+def _upload_landscape(api, job_id: int, claim: str, v, sleep=time.sleep) -> None:
     """Nahraje video na šířku varianty, když je; chyba (mimo 409) jen varování, varianta jde dál na výšku."""
     video = getattr(v, "video_landscape", None)
     if not video:
@@ -86,9 +171,10 @@ def _upload_landscape(api, job_id: int, claim: str, v) -> None:
         log.warning("úloha %s: video na šířku %s je větší než 30 MB, vynechávám", job_id, v.n)
         return
     try:
-        r = api.upload_video(job_id, claim, v.n, video, orientation="landscape")
-    except ApiError as e:
-        if e.status == 409:
+        r = _retrying(lambda: api.upload_video(job_id, claim, v.n, video, orientation="landscape"),
+                      f"úloha {job_id}: nahrání videa na šířku {v.n}", sleep)
+    except (ApiError, OSError) as e:
+        if isinstance(e, ApiError) and e.status == 409:
             raise
         v.warnings = [*v.warnings, f"nahrání videa na šířku selhalo: {e}"]
         log.warning("úloha %s: nahrání videa na šířku %s selhalo: %s", job_id, v.n, e)
@@ -99,8 +185,13 @@ def _upload_landscape(api, job_id: int, claim: str, v) -> None:
         log.warning("úloha %s: server video na šířku nepřijal (starší verze), varianta %s jen na výšku", job_id, v.n)
 
 
-def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate) -> bool:
-    """Zpracuje jednu vydanou úlohu; True, když server sadu přijal."""
+def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate,
+            sleep=time.sleep) -> bool:
+    """Zpracuje jednu vydanou úlohu; True, když server sadu přijal.
+
+    Chybu prostředí (EnvError) nahlásí serveru jako chybu úlohy (do F3 stojí jeden pokus) a vyhodí dál:
+    smyčka se podle ní pozastaví. `sleep` čeká mezi opakováními nahrávání.
+    """
     root = Path(root)
     try:
         job_id = int(job["job_id"])
@@ -148,10 +239,14 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
         for v in good:
             for w in v.warnings:
                 log.warning("úloha %s: varianta %s: %s", job_id, v.n, w)
-            _upload_landscape(api, job_id, claim, v)
-            api.upload_video(job_id, claim, v.n, v.video)
+            _upload_landscape(api, job_id, claim, v, sleep)
+            _retrying(lambda: api.upload_video(job_id, claim, v.n, v.video),
+                      f"úloha {job_id}: nahrání videa {v.n}", sleep)
             log.info("úloha %s: video %s nahráno", job_id, v.n)
-        api.result(job_id, claim, variants)
+        _retrying(lambda: api.result(job_id, claim, variants), f"úloha {job_id}: odeslání sady", sleep)
+    except EnvError as e:
+        _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root)
+        raise
     except ApiError as e:
         if e.status == 409:
             # úloha mezitím vypršela a vrátila se do fronty: server ji už vydal znovu, fail by nic nezměnil
@@ -164,17 +259,39 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
     return True
 
 
-def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once: bool = False) -> None:
-    """Smyčka workeru; once=True = jeden průchod (i s čekáním, když nic není)."""
+def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once: bool = False,
+        probe=None) -> None:
+    """Smyčka workeru; once=True = jeden průchod (i s čekáním, když nic není).
+
+    Bez nástrojů (check_tools) úlohy nebere. Po chybě prostředí je pozastavený: před dalším claim počká krok
+    z PAUSE_STEPS a pustí sondu; neúspěch = delší odstup, úspěch = odstup se nuluje a worker bere úlohy.
+    `probe` jde podvrhnout v testech (výchozí = skutečná sonda).
+    """
+    probe = probe or globals()["probe"]
+    pause: int | None = None  # index do PAUSE_STEPS, None = worker není pozastavený
     while True:
         try:
             api.heartbeat()
-            job = api.claim()
-            if job is None:
-                log.debug("žádná úloha")
+            missing = check_tools(mcp_config)
+            if missing:
+                log.error("chybí nástroje, úlohy neberu: %s", ", ".join(missing))
                 sleep(IDLE_S)
-            elif not process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate):
-                sleep(FAIL_PAUSE_S)
+            elif pause is not None and not _resume(pause, model, sleep, probe):
+                pause = min(pause + 1, len(PAUSE_STEPS) - 1)
+            else:
+                if pause is not None:
+                    log.info("sonda prošla, pozastavení končí")
+                    pause = None
+                job = api.claim()
+                if job is None:
+                    log.debug("žádná úloha")
+                    sleep(IDLE_S)
+                elif not process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate,
+                                 sleep=sleep):
+                    sleep(FAIL_PAUSE_S)
+        except EnvError as e:
+            pause = 0
+            log.error("chyba prostředí (%s), pozastavuji, sonda za %s s", e.reason, PAUSE_STEPS[0])
         except (ApiError, OSError) as e:  # URLError a timeout jsou OSError
             log.error("API nedostupné: %s", e)
             sleep(IDLE_S)
@@ -183,6 +300,16 @@ def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once
             sleep(IDLE_S)
         if once:
             return
+
+
+def _resume(step: int, model: str, sleep, probe) -> bool:
+    """Pozastavený worker: počká odstup PAUSE_STEPS[step] a pustí sondu; True = může zase brát úlohy."""
+    log.info("pozastaveno po chybě prostředí, čekám %s s, pak sonda", PAUSE_STEPS[step])
+    sleep(PAUSE_STEPS[step])
+    ok = probe(model)
+    if not ok:
+        log.warning("sonda neprošla, pozastavení pokračuje")
+    return ok
 
 
 def acquire_lock(root: Path):

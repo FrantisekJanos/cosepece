@@ -37,7 +37,9 @@ Web funguje i bez AI části (skóre z postupu a pravidel), jen bez srozumiteln�
 ### Požadavky
 
 - PHP 8.1 nebo novější s rozšířeními `pdo_sqlite` (nebo `pdo_mysql`), `zip`, `curl`, `iconv`, `mbstring`
-- Apache s povoleným `.htaccess` (běžný sdílený hosting)
+- Apache s povoleným `.htaccess` (běžný sdílený hosting). Stránky mají adresy bez `.php`
+  (`/tisk/221`, `/tisky`), což potřebuje `mod_rewrite`. Když po nasazení adresa `/tisky` vrátí chybu 404,
+  hosting `mod_rewrite` nemá: nastavte v `config.php` `'pretty_urls' => false` a web použije adresy s `.php`.
 - odchozí HTTPS na `https://www.psp.cz` (stahují se otevřená data a Word soubory)
 - cron na hostingu, nebo externí webcron (např. cron-job.org)
 - `memory_limit` aspoň 256 MB a delší běh skriptu (cron.php si sám nastaví 512 MB a 600 s, pokud to hosting dovolí)

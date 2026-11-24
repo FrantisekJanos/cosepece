@@ -152,7 +152,7 @@ View::header('Co jsme změnili', 'zmeny', 'Přehled oprav a změn v hodnocení n
       </li>
     <?php endforeach; ?>
   </ul>
-  <p class="muted small">Jak se skóre počítá teď, popisuje stránka <a href="metodika.php">Jak hodnotíme</a>. <?php if ((string)config('issues_url', '') !== ''): ?><a href="<?= e((string)config('issues_url', '')) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
+  <p class="muted small">Jak se skóre počítá teď, popisuje stránka <a href="<?= e(url('metodika')) ?>">Jak hodnotíme</a>. <?php if ((string)config('issues_url', '') !== ''): ?><a href="<?= e((string)config('issues_url', '')) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </section>
 <?php
 View::footer();

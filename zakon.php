@@ -72,7 +72,7 @@ View::header($title, 'zakony', 'Co v tomto volebním období mění ' . $title .
       <?= count($bills) ?> <?= count($bills) === 1 ? 'tisk' : (count($bills) >= 2 && count($bills) <= 4 ? 'tisky' : 'tisků') ?> ve Sněmovně<?php if ($amendments !== []): ?>, <?= count($amendments) ?> pozměňovacích návrhů k jiným tiskům<?php endif; ?><?php if ($upcoming !== []): ?>, <?= count($upcoming) ?> připravovaných u vlády<?php endif; ?>.
       <?= in_array($law, $watched, true) ? '<span class="chip chip-mp">Sledovaný zákon</span>' : '' ?>
     </p>
-    <p class="small"><a href="<?= e(Laws::eSbirkaUrl($law)) ?>">Platné znění v e-Sbírce</a> · <a href="rss.php?zakon=<?= e(rawurlencode($law)) ?>">RSS upozornění k tomuto zákonu</a> · <a href="api.php?zakon=<?= e(rawurlencode($law)) ?>">JSON</a> · <a href="zakon.php">Všechny zákony</a></p>
+    <p class="small"><a href="<?= e(Laws::eSbirkaUrl($law)) ?>">Platné znění v e-Sbírce</a> · <a href="<?= e(url('rss', ['zakon' => $law])) ?>">RSS upozornění k tomuto zákonu</a> · <a href="<?= e(url('api', ['zakon' => $law])) ?>">JSON</a> · <a href="<?= e(url('zakon')) ?>">Všechny zákony</a></p>
   </div>
 </section>
 
@@ -88,7 +88,7 @@ View::header($title, 'zakony', 'Co v tomto volebním období mění ' . $title .
   <ul class="upcoming-list">
     <?php foreach ($amendments as $a): ?>
       <li>
-        <a class="upcoming-title" href="tisk.php?ct=<?= (int)$a['ct'] ?>#pn-<?= (int)$a['cislo'] ?>">Pozměňovací návrh č. <?= (int)$a['cislo'] ?> k tisku <?= (int)$a['ct'] ?> · <?= e($a['nazev']) ?></a>
+        <a class="upcoming-title" href="<?= e(url('tisk', ['ct' => (int)$a['ct']], 'pn-' . (int)$a['cislo'])) ?>">Pozměňovací návrh č. <?= (int)$a['cislo'] ?> k tisku <?= (int)$a['ct'] ?> · <?= e($a['nazev']) ?></a>
         <div class="muted small"><?= e((string)$a['osoba']) ?> · <?= e(formatDate((string)$a['cas'])) ?><?php if ($a['ai_score'] !== null): ?> · AI <?= (int)$a['ai_score'] ?>/10<?php endif; ?></div>
         <?php if (!empty($a['ai']['titulek'])): ?><div class="small">AI: <?= e((string)$a['ai']['titulek']) ?></div><?php endif; ?>
       </li>

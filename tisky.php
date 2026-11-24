@@ -39,7 +39,7 @@ View::header('Tisky', 'tisky');
     <h1>Návrhy zákonů</h1>
     <p class="lead"><?= count($bills) ?> tisků<?= $q !== '' ? ' pro „' . e($q) . '“' : '' ?> · <?= e($filters[$f]) ?><?= $min > 0 ? ' · skóre ' . $min . '+' : '' ?> · řazeno <?= $sort === 'recent' ? 'podle poslední změny' : 'podle závažnosti' ?></p>
   </div>
-  <form class="search" action="tisky.php" method="get" role="search">
+  <form class="search" action="<?= e(url('tisky')) ?>" method="get" role="search">
     <label for="q" class="sr-only">Hledat tisky</label>
     <input id="q" name="q" type="search" value="<?= e($q) ?>" placeholder="Tisk, číslo zákona nebo poslanec">
     <?php if ($f !== ''): ?><input type="hidden" name="f" value="<?= e($f) ?>"><?php endif; ?>
@@ -53,12 +53,12 @@ View::header('Tisky', 'tisky');
   <div class="card-head">
     <div class="filters">
       <?php foreach ($filters as $key => $label): ?>
-        <a class="pill<?= $key === $f ? ' active' : '' ?>" href="tisky.php?<?= http_build_query(array_filter(['f' => $key, 'q' => $q, 'sort' => $sort === 'recent' ? 'recent' : null, 'min' => $min ?: null])) ?>"><?= e($label) ?></a>
+        <a class="pill<?= $key === $f ? ' active' : '' ?>" href="<?= e(url('tisky', array_filter(['f' => $key, 'q' => $q, 'sort' => $sort === 'recent' ? 'recent' : null, 'min' => $min ?: null]))) ?>"><?= e($label) ?></a>
       <?php endforeach; ?>
     </div>
     <div class="filters">
-      <a class="pill<?= $sort === 'score' ? ' active' : '' ?>" href="tisky.php?<?= http_build_query(array_filter(['f' => $f, 'q' => $q, 'min' => $min ?: null])) ?>">Podle závažnosti</a>
-      <a class="pill<?= $sort === 'recent' ? ' active' : '' ?>" href="tisky.php?<?= http_build_query(array_filter(['f' => $f, 'q' => $q, 'sort' => 'recent', 'min' => $min ?: null])) ?>">Podle data</a>
+      <a class="pill<?= $sort === 'score' ? ' active' : '' ?>" href="<?= e(url('tisky', array_filter(['f' => $f, 'q' => $q, 'min' => $min ?: null]))) ?>">Podle závažnosti</a>
+      <a class="pill<?= $sort === 'recent' ? ' active' : '' ?>" href="<?= e(url('tisky', array_filter(['f' => $f, 'q' => $q, 'sort' => 'recent', 'min' => $min ?: null]))) ?>">Podle data</a>
     </div>
   </div>
   <?php require __DIR__ . '/app/partials/bills_table.php'; ?>

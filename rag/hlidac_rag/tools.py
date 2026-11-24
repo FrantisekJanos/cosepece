@@ -133,7 +133,7 @@ def _snippet(text: str | None, tsq: str, okoli: int = 150) -> str:
 def _tisk_urls(ct: int) -> dict:
     return {
         "url_psp": f"{PSP}/sqw/historie.sqw?o={OBDOBI}&t={ct}",
-        "url_web": f"{SITE}/tisk.php?ct={ct}",
+        "url_web": f"{SITE}/tisk/{ct}",
     }
 
 
@@ -343,7 +343,7 @@ def get_pn(conn, cislo: int) -> dict:
     r["ai"] = _json(r.pop("ai_json"))
     r["priznaky"] = _json(r.pop("signals"))
     r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={cislo}&o={OBDOBI}"
-    r["url_web"] = f"{SITE}/tisk.php?ct={r['ct']}"
+    r["url_web"] = f"{SITE}/tisk/{r['ct']}"
     r["osnova_dostupna"] = _texty_ok(conn) and bool(_one(conn, f"""
         SELECT EXISTS (SELECT 1 FROM texty.dokument d WHERE d.druh = 'pn' AND d.cislo_pn = %s AND {_DOSTUPNY}) AS ok""",
         (cislo,))["ok"])

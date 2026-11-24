@@ -63,7 +63,7 @@ HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (a
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
-HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099   # lokální náhled
+HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
 ```
 
 Test vypisuje `VŠE OK`; po každé změně logiky ho spusť a případně rozšiř.
@@ -127,6 +127,14 @@ jméno „web: datum · účel“), jen při PostgreSQL. Ochrana: podepsaný úd
 klíč meta `form_secret`, ne cron_token), kontrola Origin/Sec-Fetch-Site, skryté pole, 3 tokeny/IP/den
 (RateLimit 'mcp_token', započítá se před vložením), 200 tokenů/den celkem; synchronizace ruší tokeny z webu
 nepoužité 7 dní nebo nepoužívané 90 dní (`config.php → mcp`).
+
+Adresy stránek jsou bez `.php` (`app/Url.php`): `/tisk/221`, `/zakon/159/2006`, `/zakony`, `/tisky`, `/data-a-api`
+(ne `/data`, to je adresář), `/hledat?q=…`. Odkazy v HTML vždy přes `url('tisk', ['ct' => 221], 'pn-5')` (adresa
+od kořene webu, nikdy relativní ke stránce a bez `<base>`), celé adresy přes `absUrl()`, soubory přes `asset()`.
+Strojové adresy (`api.php`, `rss.php`, `og.php`, `ai_api.php`, `reels_api.php`, `cron.php`) se nemění. Přepis
+hezkých adres na skripty dělá `.htaccess` (stejná pravidla má `Url::route()` pro `bin/router.php`, shodu hlídá test),
+staré adresy s `.php` přesměruje `bootstrap.php` (301, jen GET/HEAD). Nová stránka = řádek v `Url::PAGES`
+a pravidlo v `.htaccess`. Bez mod_rewrite: `config.php → pretty_urls = false`.
 
 Vstupy a limity: `bootstrap.php` odmítá jiné metody než GET/HEAD (POST jen mcp.php a ai_api.php), parametry-pole
 zahazuje a čísla o 10+ číslicích ořízne (jinak chyba INTEGER v PostgreSQL). `RateLimit` počítá IPv4 adresu

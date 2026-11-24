@@ -43,20 +43,23 @@ final class View
         $sync = $repo->lastSync();
         // hlavní menu: nejdřív obsah (co se ve Sněmovně a u vlády děje), pak stránky o webu a datech
         $nav = [
-            'prehled' => ['index.php', 'Přehled'],
-            'tisky' => ['tisky.php', 'Tisky'],
-            'zakony' => ['zakon.php', 'Zákony'],
-            'upozorneni' => ['upozorneni.php', 'Upozornění'],
-            'pripravovane' => ['pripravovane.php', 'Připravované'],
-            'metodika' => ['metodika.php', 'Jak hodnotíme'],
-            'data' => ['data.php', 'Data a API'],
-            'mcp' => ['mcp.php', 'Pro AI asistenty'],
-            'zmeny' => ['zmeny.php', 'Co jsme změnili'],
+            'prehled' => ['index', 'Přehled'],
+            'tisky' => ['tisky', 'Tisky'],
+            'zakony' => ['zakon', 'Zákony'],
+            'upozorneni' => ['upozorneni', 'Upozornění'],
+            'pripravovane' => ['pripravovane', 'Připravované'],
+            'metodika' => ['metodika', 'Jak hodnotíme'],
+            'data' => ['data', 'Data a API'],
+            'mcp' => ['mcp', 'Pro AI asistenty'],
+            'zmeny' => ['zmeny', 'Co jsme změnili'],
         ];
         $desc = $description !== '' ? $description : 'Pozměňovací návrhy, zrychlená projednávání a zkrácené lhůty v Poslanecké sněmovně.';
-        // náhled pro sociální sítě: vlastní obrázek ke každé stránce (og.php), absolutní adresy ze site_url
-        $page = basename((string)($_SERVER['SCRIPT_NAME'] ?? 'index.php'));
-        $ogUrl = siteUrl((string)($og['url'] ?? ($page === 'index.php' ? '' : $page)));
+        // náhled pro sociální sítě: vlastní obrázek ke každé stránce (og.php), absolutní adresy ze site_url;
+        // kanonická adresa je hezká adresa stránky (u zákona i s jeho číslem), bez filtrů v dotazu
+        $page = basename((string)($_SERVER['SCRIPT_NAME'] ?? 'index.php'), '.php');
+        $law = (string)($_GET['z'] ?? '');
+        $ogPath = isset(Url::PAGES[$page]) ? Url::path($page, $page === 'zakon' && Laws::valid($law) ? ['z' => $law] : []) : '';
+        $ogUrl = siteUrl((string)($og['url'] ?? $ogPath));
         $ogImage = siteUrl((string)($og['image'] ?? 'og.php?p=' . rawurlencode($active)));
         $ogTitle = (string)($og['title'] ?? $title);
         $ogAlt = (string)($og['alt'] ?? $ogTitle . ' – Hlídač zákonů');
@@ -85,15 +88,15 @@ final class View
 <meta name="twitter:description" content="<?= e($desc) ?>">
 <meta name="twitter:image" content="<?= e($ogImage) ?>">
 <meta name="twitter:image:alt" content="<?= e($ogAlt) ?>">
-<link rel="icon" href="favicon.ico" sizes="32x32">
-<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
-<link rel="manifest" href="site.webmanifest">
+<link rel="icon" href="<?= e(asset('favicon.ico')) ?>" sizes="32x32">
+<link rel="icon" href="<?= e(asset('assets/favicon.svg')) ?>" type="image/svg+xml">
+<link rel="apple-touch-icon" href="<?= e(asset('assets/apple-touch-icon.png')) ?>">
+<link rel="manifest" href="<?= e(asset('site.webmanifest')) ?>">
 <meta name="theme-color" content="#15171C">
-<link rel="alternate" type="application/rss+xml" title="Hlídač zákonů – upozornění" href="rss.php">
+<link rel="alternate" type="application/rss+xml" title="Hlídač zákonů – upozornění" href="<?= e(url('rss')) ?>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=<?= (int)@filemtime(APP_ROOT . '/assets/style.css') ?>">
+<link rel="stylesheet" href="<?= e(asset('assets/style.css')) ?>?v=<?= (int)@filemtime(APP_ROOT . '/assets/style.css') ?>">
 <?php $umami = (array)config('umami', []); if (!self::$noAnalytics && ($umami['src'] ?? '') !== '' && ($umami['website_id'] ?? '') !== ''): ?>
 <script defer src="<?= e($umami['src']) ?>" data-website-id="<?= e($umami['website_id']) ?>"<?php if (($umami['domains'] ?? '') !== ''): ?> data-domains="<?= e($umami['domains']) ?>"<?php endif; ?> data-do-not-track="true"></script>
 <?php endif; ?>
@@ -101,7 +104,7 @@ final class View
 <body>
 <header class="top">
   <div class="top-in">
-    <a class="brand" href="index.php">
+    <a class="brand" href="<?= e(url()) ?>">
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V10"/><path d="M19 21V10"/><path d="M9 21V10"/><path d="M15 21V10"/><path d="M2 10 12 3l10 7z"/></svg>
       <span class="brand-name">Hlídač zákonů</span>
       <span class="brand-sub">Poslanecká sněmovna · <?= $obdobi ?>. volební období</span>
@@ -109,10 +112,10 @@ final class View
     <?php if (!in_array($active, ['prehled', 'hledat', 'tisky'], true)): ?><?php self::searchForm('', 'top'); ?><?php endif; ?>
     <div class="top-row2">
       <nav id="site-nav" aria-label="Hlavní menu">
-        <?php foreach ($nav as $key => [$href, $label]): ?>
-          <a href="<?= $href ?>"<?= $key === $active ? ' class="active" aria-current="page"' : '' ?>><?= $label ?></a>
+        <?php foreach ($nav as $key => [$page, $label]): ?>
+          <a href="<?= e(url($page)) ?>"<?= $key === $active ? ' class="active" aria-current="page"' : '' ?>><?= $label ?></a>
         <?php endforeach; ?>
-        <a href="rss.php">RSS</a>
+        <a href="<?= e(url('rss')) ?>">RSS</a>
       </nav>
       <div class="sync"><?= $sync ? 'Data aktualizována ' . e(formatDate($sync, true)) : 'Data zatím nebyla načtena' ?></div>
     </div>
@@ -130,7 +133,7 @@ final class View
         static $n = 0;
         $id = 'q' . (++$n);
         ?>
-<form class="search search-<?= e($variant) ?>" action="hledat.php" method="get" role="search" data-search="hledat.php?index=<?= e(SearchIndex::stamp(db())) ?>">
+<form class="search search-<?= e($variant) ?>" action="<?= e(url('hledat')) ?>" method="get" role="search" data-search="<?= e(url('hledat', ['index' => SearchIndex::stamp(db())])) ?>" data-base="<?= e(asset('')) ?>">
   <div class="search-box">
     <label for="<?= $id ?>" class="sr-only">Hledat tisky, zákony, pozměňovací návrhy a témata</label>
     <input id="<?= $id ?>" name="q" type="search" value="<?= e($q) ?>" placeholder="Tisk, zákon, téma nebo poslanec" autocomplete="off" spellcheck="false"
@@ -139,7 +142,7 @@ final class View
   </div>
   <button type="submit">Hledat</button>
 </form>
-<?php if ($n === 1): ?><script src="assets/search.js?v=<?= (int)@filemtime(APP_ROOT . '/assets/search.js') ?>" defer></script><?php endif; ?>
+<?php if ($n === 1): ?><script src="<?= e(asset('assets/search.js')) ?>?v=<?= (int)@filemtime(APP_ROOT . '/assets/search.js') ?>" defer></script><?php endif; ?>
 <?php
     }
 
@@ -149,8 +152,8 @@ final class View
         ?>
 <footer class="foot">
   <p>Zdroj: <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřená data Poslanecké sněmovny</a> (tisky, sněmovní dokumenty, poslanci). Počty PN jsou podané písemné pozměňovací návrhy; Sněmovna neeviduje, které z nich byly platně podány ve 2. čtení. Příznaky se počítají automaticky z historie tisku.</p>
-  <p class="foot-disclaimer"><strong>Upozornění:</strong> Obsah vzniká automaticky z otevřených dat a část rozborů (shrnutí, titulky a hodnocení závažnosti textů) připravuje umělá inteligence, která se může mýlit. Údaje mají informativní povahu, nejsou právní radou ani oficiálním stanoviskem Sněmovny a před dalším použitím je ověřte v původních zdrojích. <a href="metodika.php#odpovednost">Omezení odpovědnosti</a></p>
-  <p><a href="zmeny.php">Co jsme změnili</a> · <a href="zakon.php">Zákony</a> · <a href="data.php">Data a API</a> · <a href="mcp.php">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
+  <p class="foot-disclaimer"><strong>Upozornění:</strong> Obsah vzniká automaticky z otevřených dat a část rozborů (shrnutí, titulky a hodnocení závažnosti textů) připravuje umělá inteligence, která se může mýlit. Údaje mají informativní povahu, nejsou právní radou ani oficiálním stanoviskem Sněmovny a před dalším použitím je ověřte v původních zdrojích. <a href="<?= e(url('metodika', [], 'odpovednost')) ?>">Omezení odpovědnosti</a></p>
+  <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </footer>
 </main>
 </body>
@@ -307,15 +310,15 @@ final class View
             if ($current === null) {
                 return GovPrep::url($pid);
             }
-            $path = 'pripravovane.php' . ($current['druh'] === 'narizeni' ? '?druh=narizeni' : '') . '#prep-' . rawurlencode($current['pid']);
-            return $absolute ? siteUrl($path) : $path;
+            $query = $current['druh'] === 'narizeni' ? ['druh' => 'narizeni'] : [];
+            $anchor = 'prep-' . rawurlencode($current['pid']);
+            return $absolute ? absUrl('pripravovane', $query, $anchor) : url('pripravovane', $query, $anchor);
         }
         // upozornění minulého období vede na psp.cz (tisk se stejným číslem je teď jiný návrh)
         if (self::isPastPeriod($alert)) {
             return self::pspTiskUrl((int)$alert['ct'], (int)$alert['obdobi']);
         }
-        $path = 'tisk.php?ct=' . (int)$alert['ct'];
-        return $absolute ? siteUrl($path) : $path;
+        return $absolute ? absUrl('tisk', ['ct' => (int)$alert['ct']]) : url('tisk', ['ct' => (int)$alert['ct']]);
     }
 
     public static function pspTiskUrl(int $ct, int $obdobi): string

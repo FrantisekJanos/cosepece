@@ -25,14 +25,14 @@ View::header('Upozornění', 'upozorneni');
 <section class="hero">
   <div>
     <h1>Upozornění</h1>
-    <p class="lead"><?= $total ?> událostí · odebírat můžete přes <a href="rss.php">RSS</a> nebo na sociálních sítích</p>
+    <p class="lead"><?= $total ?> událostí · odebírat můžete přes <a href="<?= e(url('rss')) ?>">RSS</a> nebo na sociálních sítích</p>
   </div>
 </section>
 <section class="card">
   <div class="card-head">
     <div class="filters">
-      <a class="pill<?= $all ? '' : ' active' ?>" href="upozorneni.php">Jen důležité (skóre <?= (int)Scorer::weights(config())['level_watch'] ?>+)</a>
-      <a class="pill<?= $all ? ' active' : '' ?>" href="upozorneni.php?vse=1">Včetně běžné agendy</a>
+      <a class="pill<?= $all ? '' : ' active' ?>" href="<?= e(url('upozorneni')) ?>">Jen důležité (skóre <?= (int)Scorer::weights(config())['level_watch'] ?>+)</a>
+      <a class="pill<?= $all ? ' active' : '' ?>" href="<?= e(url('upozorneni', ['vse' => 1])) ?>">Včetně běžné agendy</a>
     </div>
   </div>
   <?php View::alertList($alerts); ?>

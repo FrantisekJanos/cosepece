@@ -128,7 +128,7 @@ def test_radek_a_hlavicka(conn):
     assert out["ct"] == 231
     assert out["nazev"] == NAZEV_231
     assert out["url_psp"] == "https://www.psp.cz/sqw/historie.sqw?o=10&t=231"
-    assert out["url_web"] == "https://cosepece.cz/tisk.php?ct=231"
+    assert out["url_web"] == "https://cosepece.cz/tisk/231"
     assert out["celkem"] == 1 and out["offset"] == 0 and out["dalsi_offset"] is None and out["pocet"] == 1
     assert out["kluby_sloupce"] == ["pro", "proti", "zdrzel", "nepritomen"]
     assert "poznamka" not in out
@@ -336,7 +336,7 @@ def test_get_hlasovani_plny_detail(steno):
     out = h._get_hlasovani(steno, 1000001)
 
     assert out == {
-        "id_hlasovani": 1000001, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk.php?ct=231",
+        "id_hlasovani": 1000001, "ct": 231, "nazev": NAZEV_231, "url_web": "https://cosepece.cz/tisk/231",
         "schuze": 34, "cislo": 287, "datum": "2026-10-24 04:39", "vysledek": "zamítnuto",
         "pro": 81, "proti": 96, "zdrzel": 0, "nehlasoval": 0, "prihlaseno": 177, "kvorum": 89,
         "krok": "Odesíláno do Senátu / souhlas", "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=1000001",
@@ -393,7 +393,7 @@ def test_hlasy_poslancu_nejhorsi_pripad_pod_60000_znaku():
     poslanci = [{"id_osoba": 999999, "jmeno": "Ž" * 40, "klub": "Ž" * 40, "hlas": max(h.HLAS.values(), key=len)}] * 200
     projevy = [{"klic": "10/999/9999/99", "datum": "2026-12-31", "recnik": "Ž" * 120}] * h.MAX_PROJEVU
     kluby = [{"klub": "Ž" * 40, "pro": 200, "proti": 200, "zdrzel": 200, "nepritomen": 200}] * 10
-    out = {"id_hlasovani": 999999, "ct": 99999, "nazev": "Ř" * 255, "url_web": "https://cosepece.cz/tisk.php?ct=99999",
+    out = {"id_hlasovani": 999999, "ct": 99999, "nazev": "Ř" * 255, "url_web": "https://cosepece.cz/tisk/99999",
            "krok": "Ž" * 243, "kluby": kluby, "projevy": projevy, "projevu_celkem": 999, "poslanci": poslanci}
     assert _velikost(out) < 60000
 

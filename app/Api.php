@@ -186,7 +186,7 @@ final class Api
             'duvody' => array_map(fn(array $r) => ['klic' => $r['key'], 'body' => (int)$r['points'], 'popis' => $r['label']],
                 $t['reasons_list'] ?? (json_decode((string)$t['reasons'], true) ?: [])),
             'priznaky' => array_map(fn(array $f) => $f[1], $t['flags'] ?? []),
-            'url' => siteUrl('tisk.php?ct=' . (int)$t['ct']),
+            'url' => absUrl('tisk', ['ct' => (int)$t['ct']]),
             'psp_url' => View::pspTiskUrl((int)$t['ct'], $obdobi),
         ];
     }

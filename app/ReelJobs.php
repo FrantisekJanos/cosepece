@@ -273,7 +273,7 @@ final class ReelJobs
             'quote_source' => $h['source'],
             'verified' => $h['verified'],
             'reasons' => $reasons,
-            'url' => rtrim((string)($this->config['site_url'] ?? ''), '/') . '/tisk.php?ct=' . $ct,
+            'url' => rtrim((string)($this->config['site_url'] ?? ''), '/') . '/' . Url::path('tisk', ['ct' => $ct]),
             'data_date' => date('Y-m-d', ($this->now)()),
         ];
         if (($t['typ_navrhu'] ?? '') !== '') {

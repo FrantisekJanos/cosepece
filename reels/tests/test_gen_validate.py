@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
 from conftest import load_fixture
-from hlidac_reels.generator.validate import check_layout, validate_variant
+from hlidac_reels.generator.normalize import normalize
+from hlidac_reels.generator.validate import caption_authors, check_layout, has_word, validate_variant
 
 CAPTION_OK = (
     "Na mimořádnou daň pro rafinerie dostaly sněmovní výbory 30 dní. Běžná lhůta je 60.\n\n"
@@ -145,3 +148,91 @@ def test_video_k_pn_karta_zminuje_pn():
     assert not any("karta nezmiňuje" in e for e in _check(v2, focus_pn=[1418]))
     # bez zadání PN se nic nekontroluje
     assert _check(load_fixture("card-1-v2.json")) == []
+
+
+# --- F4: popisek videa k vybraným PN jmenuje autora a jeho klub (card.pn_autor) ---
+
+def _pn_card(authors: list[dict]) -> dict:
+    card = load_fixture("v3-pn-311.json")
+    card["pn"]["top"][0] = dict(card["pn"]["top"][0], cislo=authors[0]["cislo"])
+    card["pn_autor"] = authors
+    return card
+
+
+def _caption(text: str) -> str:
+    return f"{text}\n\nHodnotíme postup, ne politický obsah.\n\n#snemovna"
+
+
+def _author_errs(card: dict, text: str) -> list[str]:
+    nums = [a["cislo"] for a in card["pn_autor"]]
+    return [e for e in _check(card, _caption(text), focus_pn=nums) if "autor" in e]
+
+
+POSLANEC = {"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"}
+
+
+def test_popisek_bez_klubu_chyba():
+    card = _pn_card([POSLANEC])
+    assert _author_errs(card, "PN 9801 podal Test Poslanec (ANO).") == []
+    errs = _author_errs(card, "PN 9801 podal Test Poslanec (ANO2011).")
+    assert errs == ["popisek neuvádí klub autora PN 9801: „Test Poslanec (ANO)“"]
+
+
+def test_popisek_sklonovane_jmeno_bez_klubu():
+    # Review Focus 3: skloňované jméno normalizace nenajde, klub nevloží; kontrola chce klub, autora uzná
+    contract = Path(__file__).resolve().parents[2] / "tests" / "contract" / "focus-pn-info.json"
+    info = json.loads(contract.read_text(encoding="utf-8"))
+    card = load_fixture("v3-pn-311.json")
+    card["pn"]["top"][0] = dict(card["pn"]["top"][0], cislo=9801)
+    caption = _caption("Návrh poslance Testa Poslance, PN 9801. PN 9802 podal ministr Test Ministr.")
+    new, cap, _ = normalize(card, caption, fmt="pn", focus_info=info)
+    assert cap == caption
+    errs = [e for e in _check(new, cap, focus_pn=[9801, 9802]) if "autor" in e]
+    assert errs == ["popisek neuvádí klub autora PN 9801: „Test Poslanec (ANO)“"]
+
+
+def test_popisek_bez_autora_chyba():
+    card = _pn_card([POSLANEC])
+    errs = _author_errs(card, "PN 9801 mění lhůtu, podporuje ho ANO.")
+    assert errs == ["popisek neuvádí autora PN 9801 (Test Poslanec)"]
+    # víc PN téhož autora v jedné chybě; autor bez klubu klub nepotřebuje
+    card = _pn_card([POSLANEC, dict(POSLANEC, cislo=9803), {"cislo": 9802, "jmeno": "Test Ministr", "klub": None}])
+    errs = _author_errs(card, "PN 9801 a 9803 mění lhůtu, PN 9802 podal Test Ministr.")
+    assert errs == ["popisek neuvádí autora PN 9801, 9803 (Test Poslanec)",
+                    "popisek neuvádí klub autora PN 9801, 9803: „Test Poslanec (ANO)“"]
+    # u spojovníku stačí první část příjmení, skloňovaná
+    card = _pn_card([{"cislo": 9801, "jmeno": "Jana Nováková-Svobodová", "klub": "TOP 09"}])
+    assert _author_errs(card, "PN 9801 podala poslankyně Novákové (TOP 09).") == []
+    assert _author_errs(card, "PN 9801 podala poslankyně Svobodová (TOP 09).") == [
+        "popisek neuvádí autora PN 9801 (Jana Nováková-Svobodová)"]
+
+
+def test_kontrola_jen_dvou_autoru():
+    authors = [POSLANEC, {"cislo": 9802, "jmeno": "Jana Malá", "klub": "ODS"},
+               {"cislo": 9803, "jmeno": "Petr Velký", "klub": "STAN"}]
+    card = _pn_card(authors)
+    assert caption_authors(card) == [{"jmeno": "Test Poslanec", "klub": "ANO", "cisla": [9801]},
+                                     {"jmeno": "Jana Malá", "klub": "ODS", "cisla": [9802]}]
+    assert _author_errs(card, "PN 9801 podal Test Poslanec (ANO), PN 9802 Jana Malá (ODS) a další.") == []
+    # bez pn_autor se autor nekontroluje
+    del card["pn_autor"]
+    assert caption_authors(card) == []
+    assert not any("autor" in e for e in _check(card, _caption("PN 2315 mění lhůtu.")))
+
+
+def test_kontrola_pn_v_karte_nepocita_pn_autor():
+    # pn_autor doplňuje normalizace ze zadání; video má o PN mluvit samo, číslo jen v pn_autor nestačí
+    card = load_fixture("v3-pn-311.json")
+    card["pn_autor"] = [POSLANEC]
+    errs = _check(card, _caption("PN 9801 podal Test Poslanec (ANO)."), focus_pn=[9801])
+    assert any("karta nezmiňuje" in e for e in errs)
+
+
+def test_has_word():
+    assert has_word("(ANO)", "ANO")
+    assert not has_word("ANO2011", "ANO")
+    assert has_word("za TOP 09.", "TOP 09")
+    assert not has_word("TOP 091", "TOP 09") and not has_word("ano, souhlasí", "ANO")
+    assert has_word("klub KDU-ČSL podpořil", "KDU-ČSL") and not has_word("KDU-ČSLx", "KDU-ČSL")
+    assert has_word("Motoristé.", "Motoristé") and not has_word("Motoristéch", "Motoristé")
+    assert not has_word("cokoli", "")

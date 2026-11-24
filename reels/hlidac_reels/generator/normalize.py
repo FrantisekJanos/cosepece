@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import re
 
-from .validate import CLOSING
+from .validate import CLOSING, caption_authors, has_word
 
 # „800 mil. Kč“, „1,5 mld. Kč“, „2 000 mil. Kč“: číslo (tisíce oddělené mezerou, desetinná čárka) + jednotka
 # začínající písmenem a bez číslic; „10 → 4“, „10 z 12“, „4 roky místo 10“ ani samotné „2 000“ se nerozdělí
@@ -50,11 +50,100 @@ def _drop_uncited(card: dict, notes: list[str]) -> None:
     block["body"] = cited
 
 
+def _as_int(value) -> int | None:
+    """Číslo PN ze serveru nebo z karty: celé číslo, případně číslice v řetězci."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().isdecimal():
+        return int(value)
+    return None
+
+
+def _quoted(value) -> str:
+    return f"„{value}“" if value not in (None, "") else "(žádný)"
+
+
+def _server_authors(focus_info: list[dict]) -> list[dict]:
+    """Autoři zadaných PN ze serveru seřazení podle čísla PN.
+
+    Klub je popisek ke dni podání (`ANO`, ne `ANO2011`); starší server ho neposílá a bez údaje je `None`.
+    """
+    by_num: dict[int, dict] = {}
+    for item in focus_info or []:
+        if not isinstance(item, dict):
+            continue
+        cislo, osoba, klub = _as_int(item.get("cislo")), item.get("osoba"), item.get("klub")
+        if cislo is None or cislo in by_num or not isinstance(osoba, str) or not osoba.strip():
+            continue
+        by_num[cislo] = {"cislo": cislo, "jmeno": osoba.strip(),
+                         "klub": klub.strip() if isinstance(klub, str) and klub.strip() else None}
+    return [by_num[n] for n in sorted(by_num)]
+
+
+def _set_authors(card: dict, authors: list[dict], notes: list[str]) -> None:
+    """`pn_autor` píše jen normalizace (údaje serveru); bez zadaných PN se pole od modelu odstraní."""
+    if not authors:
+        if "pn_autor" in card:
+            del card["pn_autor"]
+            notes.append("pn_autor: odstraněn, zadání autory PN neuvádí")
+        return
+    if card.get("pn_autor") == authors:
+        return
+    card["pn_autor"] = authors
+    which = ", ".join(f"PN {a['cislo']} {a['jmeno']}" + (f" ({a['klub']})" if a["klub"] else "") for a in authors)
+    notes.append(f"pn_autor: autoři zadaných PN ze serveru ({which})")
+
+
+def _fix_top(card: dict, authors: list[dict], notes: list[str]) -> None:
+    """V `pn.top` zadaných PN platí autor a klub ze serveru; klub od modelu (MCP vrací poslední klub)
+    se bez údaje serveru odstraní. Ostatní PN zůstanou, jak je model napsal."""
+    block = card.get("pn")
+    top = block.get("top") if isinstance(block, dict) else None
+    if not isinstance(top, list):
+        return
+    by_num = {a["cislo"]: a for a in authors}
+    for item in top:
+        author = by_num.get(_as_int(item.get("cislo"))) if isinstance(item, dict) else None
+        if author is None:
+            continue
+        n, jmeno, klub = author["cislo"], author["jmeno"], author["klub"]
+        if item.get("autor") != jmeno:
+            notes.append(f"pn.top PN {n}: autor {_quoted(item.get('autor'))} → „{jmeno}“ (server)")
+            item["autor"] = jmeno
+        if klub is None:
+            if "klub" in item:
+                notes.append(f"pn.top PN {n}: klub {_quoted(item['klub'])} odstraněn (server klub neuvádí)")
+                del item["klub"]
+        elif item.get("klub") != klub:
+            notes.append(f"pn.top PN {n}: klub {_quoted(item.get('klub'))} → „{klub}“ (server)")
+            item["klub"] = klub
+
+
+def _caption_clubs(card: dict, caption: str, notes: list[str]) -> str:
+    """Za první výskyt celého jména autora bez závorky za ním doplní klub, když ho popisek ještě nemá.
+
+    Skloňované jméno („návrh Jana Nováka“) se nenajde a popisek zůstane; chybu s klubem pak vrátí kontrola.
+    """
+    for author in caption_authors(card):
+        jmeno, klub = author["jmeno"], author["klub"]
+        if not klub or has_word(caption, klub):
+            continue
+        # celé jméno: ne část delšího slova ani dvojitého příjmení („Novák-Dlouhý“), bez závorky za ním
+        name = r"\s+".join(re.escape(part) for part in jmeno.split())
+        m = re.search(rf"(?<![\w-]){name}(?![\w-])(?!\s*\()", caption)
+        if not m:
+            continue
+        caption = f"{caption[:m.end()]} ({klub}){caption[m.end():]}"
+        notes.append(f"popisek: za „{jmeno}“ doplněn klub ({klub})")
+    return caption
+
+
 def normalize(card: dict, caption: str, *, fmt: str | None,
               focus_info: list[dict]) -> tuple[dict, str, list[str]]:
     """Vrací novou kartu, nový popisek a seznam zásahů; vstupní karta zůstane beze změny.
 
-    focus_info = údaje o zadaných PN z claimu serveru (/pn); zatím žádné pravidlo je nedoplňuje.
+    focus_info = údaje o zadaných PN z claimu serveru (/pn): autor a klub ke dni podání jdou do
+    `pn_autor` (každá varianta, v2 i v3), do `pn.top` a do popisku.
     """
     card = copy.deepcopy(card)
     notes: list[str] = []
@@ -64,4 +153,8 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     if CLOSING not in caption:
         caption = f"{caption.rstrip()}\n\n{CLOSING}" if caption.strip() else CLOSING
         notes.append(f"popisek: doplněna věta „{CLOSING}“")
+    authors = _server_authors(focus_info)
+    _set_authors(card, authors, notes)
+    _fix_top(card, authors, notes)
+    caption = _caption_clubs(card, caption, notes)
     return card, caption, notes

@@ -60,14 +60,66 @@ def _mentions(value, nums: set[int]) -> bool:
 
 
 def _focus_errors(card: dict, caption: str, focus_pn: list[int]) -> list[str]:
-    """Video k vybraným PN: karta i popisek musí zmínit číslo aspoň jednoho z nich."""
+    """Video k vybraným PN: karta i popisek musí zmínit číslo aspoň jednoho z nich.
+
+    `pn_autor` doplňuje normalizace ze zadání, a tak se nepočítá: o PN má mluvit obsah karty od modelu.
+    """
     nums = set(focus_pn)
     which = ", ".join(str(n) for n in sorted(nums))
     errs = []
-    if not _mentions(card, nums):
+    if not _mentions({k: v for k, v in card.items() if k != "pn_autor"}, nums):
         errs.append(f"karta nezmiňuje zadaný PN ({which}): video má být o něm")
     if not _mentions(caption, nums):
         errs.append(f"popisek nezmiňuje číslo zadaného PN ({which})")
+    return errs
+
+
+def has_word(text: str, word: str) -> bool:
+    """Je `word` v textu samostatným výrazem? „ANO“ v „(ANO)“ ano, v „ANO2011“ ne; i víceslovné „TOP 09“."""
+    return bool(word) and re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text) is not None
+
+
+def caption_authors(card: dict) -> list[dict]:
+    """Autoři zadaných PN z `card["pn_autor"]`, které má jmenovat popisek.
+
+    Nejvýš dva různí autoři (dvojice jméno + klub) v pořadí karty, každý se všemi svými čísly PN:
+    `{"jmeno", "klub", "cisla"}`. Klub chybí (`None`), když ho server neuvádí.
+    """
+    rows = card.get("pn_autor")
+    authors: list[dict] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("jmeno"), str) or not row["jmeno"].strip():
+            continue
+        jmeno = row["jmeno"].strip()
+        klub = row["klub"].strip() if isinstance(row.get("klub"), str) and row["klub"].strip() else None
+        author = next((a for a in authors if (a["jmeno"], a["klub"]) == (jmeno, klub)), None)
+        if author is None:
+            if len(authors) == 2:
+                continue
+            author = {"jmeno": jmeno, "klub": klub, "cisla": []}
+            authors.append(author)
+        cislo = row.get("cislo")
+        if isinstance(cislo, int) and not isinstance(cislo, bool) and cislo not in author["cisla"]:
+            author["cisla"].append(cislo)
+    return authors
+
+
+def _surname_stem(jmeno: str) -> str:
+    """Kmen příjmení, který zůstane i ve skloňovaném tvaru: poslední slovo jména (u spojovníku první část)
+    bez posledních dvou znaků, nejméně tři znaky („Poslanec“ → „Poslan“, „Malá“ → „Mal“)."""
+    surname = jmeno.split()[-1].split("-")[0]
+    return surname[:max(3, len(surname) - 2)]
+
+
+def _author_errors(card: dict, caption: str) -> list[str]:
+    """Video k vybraným PN: popisek jmenuje autora (stačí kmen příjmení) a klub, když ho server uvádí."""
+    errs: list[str] = []
+    for a in caption_authors(card):
+        which = "PN " + ", ".join(str(n) for n in a["cisla"]) if a["cisla"] else "PN"
+        if _surname_stem(a["jmeno"]) not in caption:
+            errs.append(f"popisek neuvádí autora {which} ({a['jmeno']})")
+        if a["klub"] and not has_word(caption, a["klub"]):
+            errs.append(f"popisek neuvádí klub autora {which}: „{a['jmeno']} ({a['klub']})“")
     return errs
 
 
@@ -100,6 +152,8 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
         errs.append(f"popisek nemá větu „{CLOSING}“")
     if focus_pn:
         errs += _focus_errors(card, caption, focus_pn)
+    if card.get("pn_autor"):  # doplňuje normalizace z údajů serveru o zadaných PN
+        errs += _author_errors(card, caption)
     return errs
 
 

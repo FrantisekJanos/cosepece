@@ -11,8 +11,9 @@ import re
 from .validate import CLOSING
 
 # „800 mil. Kč“, „1,5 mld. Kč“, „2 000 mil. Kč“: číslo (tisíce oddělené mezerou, desetinná čárka) + jednotka
-# začínající písmenem; „10 → 4“ ani samotné „2 000“ se nerozdělí
-_NUM_UNIT = re.compile(r"^\s*(\d{1,3}(?:[  ]\d{3})+|\d+)(,\d+)?\s+([^\W\d_].*?)\s*$")
+# začínající písmenem a bez číslic; „10 → 4“, „10 z 12“, „4 roky místo 10“ ani samotné „2 000“ se nerozdělí
+# (jednotka s dalším číslem by změnila, jak se fakt čte)
+_NUM_UNIT = re.compile(r"^\s*(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(,\d+)?\s+([^\W\d_][^\d]*?)\s*$")
 
 
 def _split_hook(card: dict, notes: list[str]) -> None:

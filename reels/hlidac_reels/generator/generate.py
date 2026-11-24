@@ -46,6 +46,17 @@ class GenResult:
     runs: list[dict] = field(default_factory=list)  # stav běhů claude -p (timeout, návratový kód)
 
 
+def _append_notes(path: Path, notes: list[str]) -> None:
+    """Připojí zásahy normalizace k těm z dřívějších kontrol varianty (oprava jede nad už upravenou kartou)."""
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = []
+    if not isinstance(old, list):
+        old = []
+    path.write_text(json.dumps(old + notes, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
            focus_pn: list[int] | None = None, focus_info: list[dict] | None = None) -> dict | None:
     """Načte, znormalizuje a ověří variantu; vrací kartu, nebo None (chyby v v.errors).
@@ -73,7 +84,7 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
             if caption != v.caption:
                 (d / "caption.txt").write_text(caption + "\n", encoding="utf-8")
         v.caption = caption
-        (d / "normalize.json").write_text(json.dumps(notes, ensure_ascii=False, indent=1), encoding="utf-8")
+        _append_notes(d / "normalize.json", notes)
         v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
                                     fmt=v.format, focus_pn=focus_pn)
         if not v.errors and layout:

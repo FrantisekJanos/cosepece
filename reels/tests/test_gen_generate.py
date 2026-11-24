@@ -281,3 +281,30 @@ def test_normalizace_zapise_kartu_a_zasahy(tmp_path, fake):
     assert len(notes) == 2
     # bez zásahu se normalize.json zapíše prázdný
     assert json.loads((tmp_path / "out" / "variant-1" / "normalize.json").read_text(encoding="utf-8")) == []
+
+
+def test_zasah_normalizace_prezije_opravu(tmp_path, fake, monkeypatch):
+    # 1. kontrola rozdělí hook.big a variantu vyřadí jiná chyba; oprava jede nad upravenou kartou
+    # a 2. kontrola už nic nezmění: záznam zásahu z 1. kontroly musí v normalize.json zůstat
+    def prepare(wd):
+        d = wd / "variant-2"
+        card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+        card["hook"] = dict(card["hook"], big="800 mil. Kč", unit="")
+        card["ct"] = 999
+        (d / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = prepare
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        if len(fake["calls"]) == 2:  # oprava: model opraví jen ct
+            d = Path(kw["workdir"]) / "variant-2"
+            card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+            card["ct"] = 311
+            (d / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    r = _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 2 and r.variants[1].ok, r.variants[1].errors
+    notes = json.loads((tmp_path / "out" / "variant-2" / "normalize.json").read_text(encoding="utf-8"))
+    assert len(notes) == 1 and "800 mil. Kč" in notes[0]

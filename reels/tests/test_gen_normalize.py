@@ -41,7 +41,7 @@ def test_jednotka_uz_v_unit_se_nezdvoji():
 
 
 def test_cislo_bez_jednotky_nemeni():
-    for big in (30, "30", "2 000", "10 → 4", "1,5"):
+    for big in (30, "30", "2 000", "10 → 4", "1,5", "10 z 12", "4 roky místo 10"):
         card = {"hook": {"big": big, "unit": "dní", "sub": ""}}
         new, cap, notes = _norm(card, fmt="cesta")
         assert new["hook"] == {"big": big, "unit": "dní", "sub": ""} and notes == [] and cap == CAPTION

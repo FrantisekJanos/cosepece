@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-24', 'U jmen poslanců je poslanecký klub',
+        'U předkladatelů pozměňovacích návrhů teď v závorce uvádíme poslanecký klub, například „Jan Novák (ODS)“: na stránce tisku, na stránce zákona a v přehledu nejaktivnějších předkladatelů. Jde o klub ke dni podání návrhu, takže poslanec, který klub změnil, je u starších návrhů veden pod původním. Údaj je z otevřených dat Sněmovny a slouží jen k orientaci. Skóre se nemění a nadále nezávisí na straně ani na jménu předkladatele.',
+        [86], false],
     ['2026-11-24', 'Kratší adresy stránek',
         'Stránky mají adresy bez přípony .php a číslo tisku nebo zákona je přímo v adrese: cosepece.cz/tisk/221, cosepece.cz/zakon/159/2006, cosepece.cz/tisky. Staré adresy fungují dál a samy přesměrují na nové, takže dříve sdílené odkazy zůstávají platné. Adresy pro stroje (api.php, rss.php) se nemění. Skóre se nemění.',
         [85], false],

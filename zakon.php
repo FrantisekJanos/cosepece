@@ -89,7 +89,7 @@ View::header($title, 'zakony', 'Co v tomto volebním období mění ' . $title .
     <?php foreach ($amendments as $a): ?>
       <li>
         <a class="upcoming-title" href="<?= e(url('tisk', ['ct' => (int)$a['ct']], 'pn-' . (int)$a['cislo'])) ?>">Pozměňovací návrh č. <?= (int)$a['cislo'] ?> k tisku <?= (int)$a['ct'] ?> · <?= e($a['nazev']) ?></a>
-        <div class="muted small"><?= e((string)$a['osoba']) ?> · <?= e(formatDate((string)$a['cas'])) ?><?php if ($a['ai_score'] !== null): ?> · AI <?= (int)$a['ai_score'] ?>/10<?php endif; ?></div>
+        <div class="muted small"><?= View::person((string)$a['osoba'], $a['klub'] ?? null) ?> · <?= e(formatDate((string)$a['cas'])) ?><?php if ($a['ai_score'] !== null): ?> · AI <?= (int)$a['ai_score'] ?>/10<?php endif; ?></div>
         <?php if (!empty($a['ai']['titulek'])): ?><div class="small">AI: <?= e((string)$a['ai']['titulek']) ?></div><?php endif; ?>
       </li>
     <?php endforeach; ?>

@@ -243,6 +243,7 @@ UNL,
 1750|174|1|ANO2011|Poslanecký klub ANO 2011|Political group ANO 2011|08.10.2025||1||
 1751|174|1|ODS|Poslanecký klub ODS|Political group Civic Democratic Party|08.10.2025||2||
 1745|174|1|Piráti|Poslanecký klub Piráti|Political group Pirates|05.10.2025||4|0|
+1752|174|1|KDU-ČSL|Poslanecký klub KDU-ČSL|Political group KDU-CSL|08.10.2025||3||
 UNL,
             'poslanec.unl' => <<<'UNL'
 2137|6150|594|1104|174||||||||||1|
@@ -253,6 +254,9 @@ UNL,
 6150|1750|0|2025-10-08 00||||
 6433|1745|0|2025-10-05 00||||
 4|1751|0|2025-10-08 00||||
+6205|1752|0|2025-10-08 00||||
+6687|1751|0|2025-10-08 00|2026-06-30 00|||
+6687|1745|0|2026-07-01 00||||
 UNL,
         ],
         // hlasování 10. období a body schůzí (tisk 78; hlasování 87152 je k jinému tisku se stejným číslem bodu)

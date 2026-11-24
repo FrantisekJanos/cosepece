@@ -99,6 +99,7 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .suppressed { margin: 0; padding: 14px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; color: var(--muted); }
 .pn-item { flex-direction: column; align-items: stretch !important; }
 .pn-summary { color: var(--ink-2); }
+.club { color: var(--muted); font-weight: 400; white-space: nowrap; }
 .pn-flagged { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pn-flagged strong { margin-right: 2px; }
 .pn-flagged a.chip { text-decoration: none; }

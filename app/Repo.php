@@ -381,7 +381,8 @@ final class Repo
     public function topAuthors(int $days, int $limit): array
     {
         $since = date('Y-m-d H:i:s', strtotime("-$days days"));
-        return $this->db->all('SELECT osoba, COUNT(*) n FROM pn WHERE cas >= ? GROUP BY osoba ORDER BY n DESC, osoba LIMIT ' . $limit, [$since]);
+        // klub ke dni podání: kdo během období klub změnil, je v přehledu zvlášť za každý klub
+        return $this->db->all('SELECT osoba, klub, COUNT(*) n FROM pn WHERE cas >= ? GROUP BY osoba, klub ORDER BY n DESC, osoba LIMIT ' . $limit, [$since]);
     }
 
     public static function fold(?string $text): string
@@ -480,7 +481,8 @@ final class Repo
 
     public function amendmentAuthors(int $ct): array
     {
-        return $this->db->all('SELECT osoba, COUNT(*) n FROM pn WHERE ct = ? GROUP BY osoba ORDER BY n DESC, osoba', [$ct]);
+        // klub ke dni podání: kdo během období klub změnil, je v přehledu zvlášť za každý klub
+        return $this->db->all('SELECT osoba, klub, COUNT(*) n FROM pn WHERE ct = ? GROUP BY osoba, klub ORDER BY n DESC, osoba', [$ct]);
     }
 
     public function surgeSet(): array

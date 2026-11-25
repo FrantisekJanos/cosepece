@@ -2418,7 +2418,8 @@ check('F3: události nesou údaje přechodu', $f3D, [
     'claimed po návratu' => ['attempt' => 1],
     'failed' => ['kind' => 'failed', 'detail' => ['kind' => 'content', 'error' => '0 platných variant', 'attempts' => 1, 'env_retries' => 1, 'stage' => 'model'],
         'urgency' => 1, 'dedupe' => "failed:$f3J"],
-    'requeued bez kind' => ['kind' => 'content', 'error' => 'pád', 'next_hm' => date('H:i', $f3EnvAt + 901), 'env_retries' => 0],
+    // bez kind se úloha vrací bez odkladu: událost čas dalšího pokusu nenese (bot: „chyba, zkusí se znovu“)
+    'requeued bez kind' => ['kind' => 'content', 'error' => 'pád', 'env_retries' => 0],
     'waiting' => ['kind' => 'waiting', 'detail' => ['reason' => 'ai_title', 'next_hm' => date('H:i', $f3WaitAt + 1800)], 'urgency' => 0,
         'dedupe' => "waiting:$f3W:ai_title"],
     'lease' => ['next_hm' => date('H:i', $rjClock + 600), 'attempts' => 1, 'stage' => 'render'],
@@ -2485,6 +2486,27 @@ check('F3: running bez uloženého stavu nic, running → paused worker_paused',
     [[], [['worker_paused', ['reason' => 'login', 'detail' => null, 'until_hm' => null], 1, null]]]);
 db()->run('DELETE FROM reel_events');
 db()->run("DELETE FROM reel_state WHERE $rjKey = 'worker_state'");
+$f3EvReset();
+
+// okno nasazení: web už zapisuje události, ale bot ještě nezaložil reel_events. Přechod úlohy platí (worker dostane
+// úlohu i odpověď na progress), chyba zápisu události jde jen do error_log.
+$f3Nt = $rjAdd('manual', 221);
+$f3LogFile = (string)tempnam(sys_get_temp_dir(), 'f3log');
+$f3LogPrev = ini_set('error_log', $f3LogFile);
+db()->run('DROP TABLE reel_events');
+$f3C = $jobs->claim();
+$f3NtRow = $f3Row($f3Nt);
+$f3NtProg = $jobs->progress($f3Nt, (string)($f3C['claim_token'] ?? ''), 'model');
+$f3NtFail = $jobs->fail($f3Nt, (string)($f3C['claim_token'] ?? ''), 'chybí Chromium', 'env');
+ini_set('error_log', $f3LogPrev === false ? '' : $f3LogPrev);
+$f3Log = (string)file_get_contents($f3LogFile);
+@unlink($f3LogFile);
+// stejné DDL jako na začátku bloku ReelJobs
+db()->run("CREATE TABLE IF NOT EXISTS reel_events (id $rjId, at $rjTs NOT NULL, kind VARCHAR(60) NOT NULL, job_id BIGINT, set_id BIGINT,
+    reel_id BIGINT, detail TEXT, dedupe VARCHAR(190) UNIQUE, urgency SMALLINT NOT NULL DEFAULT 0, notified_at $rjTs)");
+check('F3: bez tabulky reel_events claim vydá úlohu, progress a fail projdou, chyba jen v error_log',
+    [$f3C['job_id'] ?? null, $f3NtRow['status'], $f3NtProg, $f3NtFail, $f3Row($f3Nt)['status'], str_contains($f3Log, 'reels event: ')],
+    [$f3Nt, 'claimed', 'ok', 'queued', 'queued', true]);
 $f3EvReset();
 
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";

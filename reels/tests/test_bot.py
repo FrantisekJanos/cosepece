@@ -4231,6 +4231,20 @@ def test_texty_stavove_zpravy():
     assert m.job_cancel_buttons(5) == [("Zrušit", "jobcancel:5")]
 
 
+def test_text_requeued_bez_casu():
+    # fail bez druhu (starý worker, varianta čeká jen na render) vrací úlohu bez odkladu: server next_hm neposílá
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    from hlidac_reels.events import Event
+    at = datetime(2026, 11, 25, 13, 2, tzinfo=timezone.utc)
+    history = [Event(1, at, "requeued", 5, None, None, {"kind": "content", "error": "pád", "env_retries": 0},
+                     None, 0, None, "14:05"),
+               Event(2, at, "requeued", 5, None, None, {"kind": "env", "error": "e", "next_hm": ""}, None, 0, None,
+                     "14:06")]
+    assert m.job_status_text(5, "tisk 221", history).split("\n")[1:] == [
+        "14:05 chyba, zkusí se znovu", "14:06 chyba prostředí, zkusí se znovu"]
+
+
 def _claim(conn, job_id: int) -> None:
     with conn.cursor() as cur:
         cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', claimed_at=now() "

@@ -330,7 +330,8 @@ final class ReelJobs
               WHERE $where",
             [$error, $jobId, $token]
         );
-        return $this->requeuedResult($stmt, $jobId, 'content', $error, $now, (int)$row['env_retries']);
+        // bez odkladu: událost čas dalšího pokusu nenese (úloha se vydá, jakmile si ji PC vezme)
+        return $this->requeuedResult($stmt, $jobId, 'content', $error, null, (int)$row['env_retries']);
     }
 
     /**
@@ -686,13 +687,20 @@ final class ReelJobs
         return 'failed';
     }
 
-    /** Výsledek fail() po UPDATE zpět do fronty: 'queued' a událost requeued (další pokus v $nextTs), jinak 'conflict'. */
-    private function requeuedResult(\PDOStatement $stmt, int $jobId, string $kind, string $error, int $nextTs, int $envRetries): string
+    /**
+     * Výsledek fail() po UPDATE zpět do fronty: 'queued' a událost requeued, jinak 'conflict'. Další pokus v $nextTs
+     * (next_hm); null = bez odkladu, událost next_hm nemá.
+     */
+    private function requeuedResult(\PDOStatement $stmt, int $jobId, string $kind, string $error, ?int $nextTs, int $envRetries): string
     {
         if ($stmt->rowCount() === 0) {
             return 'conflict';
         }
-        $this->event('requeued', $jobId, ['kind' => $kind, 'error' => $error, 'next_hm' => date('H:i', $nextTs), 'env_retries' => $envRetries]);
+        $detail = ['kind' => $kind, 'error' => $error];
+        if ($nextTs !== null) {
+            $detail['next_hm'] = date('H:i', $nextTs);
+        }
+        $this->event('requeued', $jobId, $detail + ['env_retries' => $envRetries]);
         return 'queued';
     }
 
@@ -723,10 +731,16 @@ final class ReelJobs
      */
     private function stageEvent(int $jobId, string $stage, ?string $note): void
     {
-        $last = $this->db->one(
-            "SELECT kind, detail FROM reel_events WHERE job_id = ? AND kind IN ('claimed', 'stage') ORDER BY id DESC LIMIT 1",
-            [$jobId]
-        );
+        try {
+            $last = $this->db->one(
+                "SELECT kind, detail FROM reel_events WHERE job_id = ? AND kind IN ('claimed', 'stage') ORDER BY id DESC LIMIT 1",
+                [$jobId]
+            );
+        } catch (\PDOException $e) {
+            // tabulka ještě není (okno nasazení, viz event()): průběh platí, událost se nezapíše
+            error_log('reels event: ' . $e->getMessage());
+            return;
+        }
         if ($last !== null && $last['kind'] === 'stage') {
             $prev = json_decode((string)$last['detail'], true);
             if (is_array($prev) && ($prev['stage'] ?? null) === $stage && ($prev['note'] ?? null) === $note) {
@@ -739,8 +753,10 @@ final class ReelJobs
     /**
      * Událost do reel_events (historie úlohy a fronta zpráv bota; text zprávy skládá bot). Volá se jen po podmíněném
      * UPDATE, který řádek opravdu změnil. Klíč dedupe, který už v tabulce je (opakované čekání, selhání převzaté
-     * botem), se tiše přeskočí. Web zapisuje bez transakce (autocommit), takže odmítnutý INSERT v PostgreSQL
-     * neruší další dotazy.
+     * botem), se tiše přeskočí. Jiná chyba (např. tabulka nebo sloupec ještě není: web dostal novou verzi dřív, než
+     * bot založil reel_events) jde jen do error_log: přechod úlohy už platí a worker musí dostat odpověď, jinak by
+     * ztratil token a úloha by visela do propadnutí vydání. Web zapisuje bez transakce (autocommit), takže odmítnutý
+     * INSERT v PostgreSQL neruší další dotazy.
      */
     private function event(string $kind, ?int $jobId, array $detail = [], int $urgency = 0, ?string $dedupe = null): void
     {
@@ -752,9 +768,9 @@ final class ReelJobs
                 [$this->stamp(($this->now)()), $kind, $jobId, $json === false ? '{}' : $json, $urgency, $dedupe]
             );
         } catch (\PDOException $e) {
-            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL)
+            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL): klíč dedupe už je
             if (!in_array((string)$e->getCode(), ['23505', '23000'], true)) {
-                throw $e;
+                error_log('reels event: ' . $e->getMessage());
             }
         }
     }

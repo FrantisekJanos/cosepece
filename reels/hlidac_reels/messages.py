@@ -590,10 +590,13 @@ def _status_line(kind: str, d: dict) -> str | None:
     if kind == "waiting":
         nxt = _next_try(d)
         return f"čeká na rozbor AI ({nxt})" if nxt else "čeká na rozbor AI"
-    if kind in ("requeued", "lease"):
-        what = _REQUEUE_TEXT.get(d.get("kind"), "chyba") if kind == "requeued" else "PC nedokončilo vydání"
+    if kind == "requeued":
+        # bez next_hm (fail bez druhu: zpět do fronty bez odkladu) se zkusí hned, jak bude PC volné
+        what = _REQUEUE_TEXT.get(d.get("kind"), "chyba")
+        return f"{what}, {_next_try(d) or 'zkusí se znovu'}"
+    if kind == "lease":
         nxt = _next_try(d)
-        return f"{what}, {nxt}" if nxt else what
+        return f"PC nedokončilo vydání, {nxt}" if nxt else "PC nedokončilo vydání"
     if kind == "silent":
         return "PC neodpovídá"
     if kind == "done":

@@ -117,6 +117,7 @@ AUTOPILOT_SKIPPED_KEY = "autopilot_skipped:"
 HELP = ("Příkazy: /fronta (přehled: na co která položka čeká), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
+        "/pnnew (PN za posledních 48 h, ke kterým video ještě není ani se nedělá),\n"
         "/zrus <číslo zadání> (zrušit zadání ve frontě nebo rozpracované),\n"
         "/stav (čerstvost dat a Reels: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem,\n"
         "videa ke schválení, zprávy, které neodešly),\n"
@@ -642,6 +643,8 @@ class Bot:
             self._add_job("auto_pick", None, None)
         elif command == "/pn":
             self._cmd_pn((text or "").strip().partition(" ")[2])
+        elif command == "/pnnew":
+            self._pn_list(only_new=True)
         elif command == "/zrus":
             self._cmd_zrus((text or "").strip().partition(" ")[2])
         elif command == "/stav":
@@ -893,20 +896,30 @@ class Bot:
         # autopilot platí jen pro /pn (příkaz i tlačítko); /video a /vyber ho nenastavují
         self._add_job("manual", tisky[0], None, focus_pn=pns, autopilot=self._autopilot_on())
 
-    def _pn_list(self) -> None:
-        """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
+    def _pn_list(self, only_new: bool = False) -> None:
+        """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání.
+
+        only_new (/pnnew): jen PN bez videa. PN má video, když je v zadání (i společném s jinými PN), které běží
+        (queued, claimed), nebo je hotové a z jeho sady nezůstalo jen zamítnuté, propadlé či stažené (sada, která
+        ještě nedorazila do fronty, se počítá jako video). Selhané a zrušené zadání video nemá."""
         from .clubs import label as club_label  # import zde: horní blok importů mění souběžná větev
+        new_only = (
+            "AND NOT EXISTS (SELECT 1 FROM reel_jobs j WHERE p.cislo = ANY(j.focus_pn) AND ("
+            "j.status IN ('queued', 'claimed') OR (j.status = 'done' AND NOT ("
+            "EXISTS (SELECT 1 FROM reel_queue q WHERE q.set_id = j.id) AND NOT EXISTS (SELECT 1 FROM reel_queue q "
+            "WHERE q.set_id = j.id AND q.status NOT IN ('rejected', 'expired', 'withdrawn')))))) "
+        ) if only_new else ""
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT p.cislo, p.ct, p.osoba, p.klub, p.cas, x.ai_json, left(x.text, 6000) FROM pn p "
                 "LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
                 "WHERE p.cas >= to_char((%s::timestamptz AT TIME ZONE 'Europe/Prague') - interval '48 hours', "
-                "'YYYY-MM-DD HH24:MI:SS') ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
+                "'YYYY-MM-DD HH24:MI:SS') " + new_only + "ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
                 (self.now(), PN_LIST))
             rows = cur.fetchall()
         self.conn.commit()
         if not rows:
-            self._say("Za posledních 48 h žádný nový PN.")
+            self._say("Za posledních 48 h žádný PN bez videa." if only_new else "Za posledních 48 h žádný nový PN.")
             return
         lines, buttons, nums = [], [], []
         for cislo, ct, osoba, klub, cas, ai_json, text in rows:
@@ -930,7 +943,7 @@ class Bot:
             nums.pop()
         if len(nums) >= 2:
             buttons.append((f"Všechny zvlášť ({len(nums)} {_videa(len(nums))})", "pnall:" + ",".join(nums)))
-        head = "PN za posledních 48 h:"
+        head = "PN bez videa za posledních 48 h:" if only_new else "PN za posledních 48 h:"
         if self._autopilot_on():
             head += "\n" + AUTOPILOT_PN_LIST_HEADER
         self._say(self._clip(head + "\n\n" + "\n\n".join(lines)), buttons)

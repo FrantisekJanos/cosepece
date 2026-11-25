@@ -104,11 +104,30 @@ def caption_authors(card: dict) -> list[dict]:
     return authors
 
 
+VOWELS = "aeiouyáéíóúůýě"
+
+
 def _surname_stem(jmeno: str) -> str:
-    """Kmen příjmení, který zůstane i ve skloňovaném tvaru: poslední slovo jména (u spojovníku první část)
-    bez posledních dvou znaků, nejméně tři znaky („Poslanec“ → „Poslan“, „Malá“ → „Mal“)."""
+    """Kmen příjmení, který zůstane i ve skloňovaném tvaru; poslední slovo jména, u spojovníku první část.
+
+    Pohyblivé e na konci (e + souhláska) zmizí s poslední souhláskou („Pavel“ → „Pav“, „Zedníček“ → „Zedníč“,
+    „Poslanec“ → „Poslan“), koncová samohláska zmizí („Jurečka“ → „Jurečk“, „Malá“ → „Mal“), jinak zůstane celé
+    příjmení („Novák“, aby „Novela“ autora nesplnila). Nejméně tři znaky.
+    """
     surname = jmeno.split()[-1].split("-")[0]
-    return surname[:max(3, len(surname) - 2)]
+    low = surname.lower()
+    if len(low) >= 2 and low[-2] == "e" and low[-1].isalpha() and low[-1] not in VOWELS:
+        stem = surname[:-2]
+    elif low and low[-1] in VOWELS:
+        stem = surname[:-1]
+    else:
+        stem = surname
+    return stem if len(stem) >= 3 else surname[:3]
+
+
+def _names_author(caption: str, jmeno: str) -> bool:
+    """Jmenuje popisek autora? Slovo, které začíná kmenem příjmení (rozlišuje velikost písmen)."""
+    return re.search(rf"(?<!\w){re.escape(_surname_stem(jmeno))}", caption) is not None
 
 
 def _author_errors(card: dict, caption: str) -> list[str]:
@@ -116,7 +135,7 @@ def _author_errors(card: dict, caption: str) -> list[str]:
     errs: list[str] = []
     for a in caption_authors(card):
         which = "PN " + ", ".join(str(n) for n in a["cisla"]) if a["cisla"] else "PN"
-        if _surname_stem(a["jmeno"]) not in caption:
+        if not _names_author(caption, a["jmeno"]):
             errs.append(f"popisek neuvádí autora {which} ({a['jmeno']})")
         if a["klub"] and not has_word(caption, a["klub"]):
             errs.append(f"popisek neuvádí klub autora {which}: „{a['jmeno']} ({a['klub']})“")

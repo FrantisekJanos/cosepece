@@ -207,6 +207,28 @@ def test_popisek_bez_autora_chyba():
         "popisek neuvádí autora PN 9801 (Jana Nováková-Svobodová)"]
 
 
+@pytest.mark.parametrize("jmeno, text, ok", [
+    # kmen příjmení: celé, jen bez koncové samohlásky nebo bez pohyblivého e; slovo musí kmenem začínat
+    ("Jan Novák", "Novela zákona, PN 9801, mění lhůtu.", False),
+    ("Jan Novák", "PN 9801 je návrh Jana Nováka.", True),
+    ("Jan Novák", "PN 9801: dík Janu Novákovi.", True),
+    ("Jan Novák", "PN 9801 je návrh Petra Novotného.", False),
+    ("Jan Novák", "PN 9801 podal poslanec SuperNovák.", False),
+    ("Jan Novák", "PN 9801 podal poslanec novák.", False),
+    ("Jan Pavel", "PN 9801 je návrh Jana Pavla.", True),
+    ("Marie Jurečková", "PN 9801 podala poslankyně Jurečkové.", True),
+    ("Petr Zedníček", "PN 9801 je návrh Petra Zedníčka.", True),
+    ("Jan Němec", "PN 9801 je návrh Jana Němce.", True),
+    ("Marian Jurečka", "PN 9801 je návrh Mariana Jurečky.", True),
+    ("Jana Malá", "PN 9801 je návrh Jany Malé.", True),
+    ("Jan Bém", "PN 9801 je návrh Jana Béma.", True),
+])
+def test_popisek_kmen_prijmeni(jmeno, text, ok):
+    card = _pn_card([{"cislo": 9801, "jmeno": jmeno, "klub": None}])
+    errs = _author_errs(card, text)
+    assert errs == ([] if ok else [f"popisek neuvádí autora PN 9801 ({jmeno})"]), errs
+
+
 def test_kontrola_jen_dvou_autoru():
     authors = [POSLANEC, {"cislo": 9802, "jmeno": "Jana Malá", "klub": "ODS"},
                {"cislo": 9803, "jmeno": "Petr Velký", "klub": "STAN"}]

@@ -4031,6 +4031,55 @@ def test_udalost_pri_chybe_telegramu_zustane(bot, conn, api):
 
 
 @pg
+def test_odmitnuta_udalost_nezastavi_dalsi(bot, conn, api, monkeypatch, caplog):
+    # Telegram zprávu trvale odmítl (4xx mimo 429): událost se označí jako vyřízená, průchod pokračuje další
+    from hlidac_reels import events
+    from hlidac_reels.telegram import TelegramError
+    tick = _event_clock(bot)
+    a = _failed_job(conn, ct=221)
+    b = _failed_job(conn, ct=222, error="druhá chyba")
+    real_send = bot.tg.send_text
+    tried: list[str] = []
+
+    def failing(*errors):
+        queue_ = list(errors)
+
+        def send(chat_id, text, *args, **kw):
+            tried.append(text)
+            if queue_:
+                raise queue_.pop(0)
+            return real_send(chat_id, text, *args, **kw)
+        return send
+
+    # přechodná chyba (síť, 5xx, 429): nic neodejde ani se neoznačí, průchod skončí u první události
+    for err in (httpx.ConnectError("down"), TelegramError("sendMessage: ConnectError"),
+                TelegramError("sendMessage: HTTP 502: Bad Gateway", status=502),
+                TelegramError("sendMessage: HTTP 429: Too Many Requests", status=429)):
+        tried.clear()
+        monkeypatch.setattr(bot.tg, "send_text", failing(err))
+        tick()
+        bot.maybe_events()
+        assert len(tried) == 1 and api.sent() == [], err
+        assert [e.job_id for e in events.unsent(conn, events.URGENT)] == [a, b]
+        assert _notified_at(conn, a) is None and _notified_at(conn, b) is None
+    # odmítnutí první zprávy: označí se (i notified_at úlohy), druhá odejde ve stejném průchodu
+    tried.clear()
+    monkeypatch.setattr(bot.tg, "send_text", failing(
+        TelegramError(f"sendMessage: HTTP 400: Bad Request: chat bot{TOKEN} nenalezen", status=400)))
+    tick()
+    with caplog.at_level(logging.INFO, logger="hlidac_reels.bot"):
+        bot.maybe_events()
+    assert len(tried) == 2
+    assert api.texts() == [f"Zadání #{b} (tisk 222) se nepodařilo: druhá chyba"]
+    assert events.unsent(conn, events.URGENT) == []
+    assert _notified_at(conn, a) is not None and _notified_at(conn, b) is not None
+    assert "Telegram odmítl" in caplog.text and TOKEN not in caplog.text
+    tick()
+    bot.maybe_events()
+    assert len(tried) == 2  # nic dalšího se nezkouší
+
+
+@pg
 def test_adopce_selhani_z_inboxu(bot, conn, api):
     from hlidac_reels import events, inbox, jobs
     j = jobs.add(conn, source="manual", ct=221)
@@ -4041,6 +4090,49 @@ def test_adopce_selhani_z_inboxu(bot, conn, api):
     assert _buttons(body) == [f"jobretry:{j}", f"jobcancel:{j}"]
     assert _notified_at(conn, j) is not None
     assert [e.dedupe for e in events.for_job(conn, j)] == [f"failed:{j}"]
+
+
+def _notify_old_bot(conn, *job_ids: int) -> None:
+    """Selhání ohlásil starý bot (_notify_failed) během výměny kontejnerů: reel_jobs.notified_at je vyplněné."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET notified_at = now() - interval '1 minute' WHERE id = ANY(%s)",
+                    (list(job_ids),))
+    conn.commit()
+
+
+@pg
+def test_selhani_ohlasene_starym_botem(bot, conn, api, monkeypatch):
+    from hlidac_reels import events, hlidani
+    old = _failed_job(conn, ct=221)
+    new = _failed_job(conn, ct=222, error="druhá chyba")
+    auto = _failed_job(conn, source="fresh", ct=90, error="automatická chyba")
+    _notify_old_bot(conn, old, auto)
+    bot.maybe_events()
+    # ohlášené selhání se jen označí, žádná druhá zpráva
+    assert api.texts() == [f"Zadání #{new} (tisk 222) se nepodařilo: druhá chyba"]
+    assert events.unsent(conn, events.URGENT) == []
+    # denní souhrn: ohlášené automatické selhání bez řádku, událost se označí
+    monkeypatch.setattr(hlidani, "summary_due", lambda c, now: "2026-11-25")
+    monkeypatch.setattr(hlidani, "summary_text", lambda c, now: "Stav dat")
+    bot._daily_summary()
+    assert api.texts()[-1] == "Stav dat"
+    assert events.unsent(conn, events.SUMMARY) == []
+
+
+@pg
+def test_selhani_ohlasene_starym_botem_po_vypadku(bot, conn, api):
+    from hlidac_reels import events
+    old = _failed_job(conn, ct=221)
+    new = _failed_job(conn, ct=222)
+    _notify_old_bot(conn, old)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours'")
+    conn.commit()
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"] == f"Během výpadku: nepovedená zadání: #{new}. /fronta"
+    assert _buttons(body) == [f"jobretry:{new}"]
+    assert events.unsent(conn, events.URGENT) == []
 
 
 @pg

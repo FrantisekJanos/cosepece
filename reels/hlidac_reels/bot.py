@@ -972,10 +972,17 @@ class Bot:
             events.add(self.conn, "silent", job_id=job.id, detail={"since_hm": jobs.hm(self.conn, since)},
                        urgency=urgency, dedupe=f"silent:{job.id}:{job.attempts}")
 
+    def _announced(self, e: events.Event, job: jobs.Job | None) -> bool:
+        """Selhání, které už ohlásil starší bot (_notify_failed během výměny kontejnerů): reel_jobs.notified_at
+        je vyplněné, událost se jen označí bez zprávy (urgentní, po výpadku i v denním souhrnu)."""
+        return e.kind == "failed" and job is not None and job.notified_at is not None
+
     def _event_message(self, e: events.Event) -> tuple[str, list[tuple[str, str]] | None] | None:
-        """Text a tlačítka naléhavé události; None = druh bez zprávy (jen se označí)."""
+        """Text a tlačítka naléhavé události; None = druh bez zprávy nebo už ohlášené selhání (jen se označí)."""
         if e.kind == "failed" and e.job_id is not None:
             what, job = self._job_label(e.job_id)
+            if self._announced(e, job):
+                return None
             return messages.failed_text(e.job_id, what, self._event_error(e, job)), messages.failed_buttons(e.job_id)
         if e.kind == "silent" and e.job_id is not None:
             what, _ = self._job_label(e.job_id)
@@ -996,10 +1003,12 @@ class Bot:
                 jobs.mark_notified(self.conn, e.job_id)
 
     def _send_urgent(self) -> None:
-        """Naléhavé události (urgency 1) po jedné v pořadí id; označí se až po úspěšném sendMessage.
+        """Naléhavé události (urgency 1) po jedné v pořadí id; označí se až po vyřízeném sendMessage.
 
-        Neodeslaná zpráva ukončí průchod a další cyklus začne od ní (pořadí zůstane). Když nejstarší neodeslaná
-        událost je starší než events.OUTAGE, odejde místo všech jedna souhrnná zpráva (_send_outage).
+        Přechodná chyba (síť, 5xx, 429) ukončí průchod a další cyklus začne od téže události (pořadí zůstane).
+        Zprávu, kterou Telegram trvale odmítl (TelegramError.rejected), bot zaloguje a označí jako vyřízenou, jinak
+        by zastavila všechny další naléhavé zprávy. Když nejstarší neodeslaná událost je starší než events.OUTAGE,
+        odejde místo všech jedna souhrnná zpráva (_send_outage).
         """
         pending = events.unsent(self.conn, events.URGENT)
         if not pending:
@@ -1010,28 +1019,49 @@ class Bot:
             return
         for e in pending:
             msg = self._event_message(e)
-            if msg is not None and not self._say(self._clip(msg[0]), msg[1]):
+            if msg is not None and not self._send_event(f"událost #{e.id} ({e.kind})", msg[0], msg[1]):
                 return
             self._mark_events([e])
 
+    def _send_event(self, what: str, text: str, buttons) -> bool:
+        """sendMessage zprávy z událostí; True = vyřízeno (odesláno, nebo Telegram zprávu trvale odmítl),
+        False = přechodná chyba (zkusí se v dalším cyklu). Chyba v logu bez tokenů."""
+        try:
+            self.tg.send_text(self.chat_id, self._clip(text), buttons)
+        except TelegramError as e:
+            if e.rejected:
+                log.error("%s: Telegram odmítl zprávu, beru jako vyřízenou: %s", what, self._safe(e))
+                return True
+            log.warning("%s: sendMessage selhalo: %s", what, self._safe(e))
+            return False
+        except Exception as e:  # noqa: BLE001 — výpadek spojení i nečekaná odpověď = zkusit znovu
+            log.warning("%s: sendMessage selhalo: %s", what, self._safe(e))
+            return False
+        return True
+
     def _send_outage(self, pending: list[events.Event], oldest: datetime) -> None:
         """Po dlouhém výpadku jedna zpráva: hotové sady od nejstarší neodeslané události, nepovedená zadání
-        (Zkusit znovu u nejvýš messages.OUTAGE_BUTTONS) a pozastavení PC. Bez obsahu se jen označí."""
+        (Zkusit znovu u nejvýš messages.OUTAGE_BUTTONS; bez selhání, která ohlásil starší bot) a pozastavení PC.
+        Bez obsahu, nebo když ji Telegram trvale odmítl, se události jen označí."""
         done = events.count_since(self.conn, "done", oldest)
-        failed = list(dict.fromkeys(e.job_id for e in pending if e.kind == "failed" and e.job_id is not None))
+        failed = list(dict.fromkeys(e.job_id for e in pending if e.kind == "failed" and e.job_id is not None
+                                    and not self._announced(e, jobs.get(self.conn, e.job_id))))
         paused = any(e.kind == "worker_paused" for e in pending)
         text = messages.outage_text(done, failed, paused)
-        if text and not self._say(self._clip(text), messages.outage_buttons(failed)):
+        if text and not self._send_event("zpráva po výpadku", text, messages.outage_buttons(failed)):
             return
         self._mark_events(pending)
 
     def _summary_event_lines(self, pending: list[events.Event]) -> list[str]:
-        """Řádky denního souhrnu z událostí urgency 2 (selhání a vypršení automatických úloh)."""
+        """Řádky denního souhrnu z událostí urgency 2 (selhání a vypršení automatických úloh); selhání, které
+        ohlásil starší bot, řádek nemá (událost se se souhrnem jen označí)."""
         lines = []
         for e in pending:
             if e.job_id is None:
                 continue
             what, job = self._job_label(e.job_id)
+            if self._announced(e, job):
+                continue
             line = messages.summary_event_line(e.kind, e.job_id, what, self._event_error(e, job))
             if line:
                 lines.append(line)

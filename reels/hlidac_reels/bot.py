@@ -97,6 +97,7 @@ PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
 PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
             f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
+WORKER_STATE_KEY = "worker_state"  # reel_state: JSON {state, reason, detail, until, at} z heartbeat workeru
 # reel_state job_status:<id> = id poslední události vykreslené ve stavové zprávě zadání; bez klíče se zpráva
 # nepřepisuje (smaže se po vykreslení konečného stavu)
 JOB_STATUS_KEY = "job_status:"
@@ -532,12 +533,16 @@ class Bot:
         """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, zkusí to opravná smyčka a /fronta).
+        Nevzniklé varianty (jobs.skipped) jsou jen v první zprávě sady (i když ji znovu posílá opravná smyčka
+        nebo Poslat tlačítka znovu), zpráva „zbývá varianta“ je neopakuje.
         """
         pending = self._unpicked_items(set_id)
         if not pending:
             return False
-        msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id,
-                             set_text(pending, remaining=remaining), set_buttons(pending))
+        skipped = None if remaining else jobs.skipped(self.conn, set_id)
+        # chyby nevzniklých variant píše generátor: bez tokenů jako ostatní hlášení
+        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped))
+        msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, text, set_buttons(pending))
         if not msg_id:
             return False
         for r in pending:
@@ -699,7 +704,7 @@ class Bot:
         before = ids[:position - 1] if position else []
         events.add(self.conn, "accepted", job_id=job_id, detail={"position": position, "before": before})
         history = events.for_job(self.conn, job_id)
-        text = messages.job_status_text(job_id, what, history, self._worker_seen())
+        text = messages.job_status_text(job_id, what, history, self._worker_line())
         if autopilot:
             text += "\n" + AUTOPILOT_QUEUED
         msg_id = self._say(self._clip(self._scrub(text)), messages.job_cancel_buttons(job_id))
@@ -868,17 +873,27 @@ class Bot:
             head += "\n" + AUTOPILOT_PN_LIST_HEADER
         self._say(self._clip(head + "\n\n" + "\n\n".join(lines)), buttons)
 
-    def _worker_seen(self) -> str:
+    def _worker_line(self) -> str:
+        """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru
+        z reel_state.worker_state (zapisuje server při heartbeat); nečitelný stav = jen kdy bylo PC vidět."""
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
-        if seen is None:
-            return "PC zatím nebylo vidět"
-        # čas v Europe/Prague přes PostgreSQL (obraz nepotřebuje tzdata)
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMDD. FMMM. FMHH24:MI')",
-                        (seen,))
-            text = cur.fetchone()[0]
-        self.conn.commit()
-        return f"PC naposledy: {text}"
+        seen_text = None
+        if seen is not None:
+            # čas v Europe/Prague přes PostgreSQL (obraz nepotřebuje tzdata)
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMDD. FMMM. FMHH24:MI')",
+                            (seen,))
+                seen_text = cur.fetchone()[0]
+            self.conn.commit()
+        try:
+            state = json.loads(queue.get_state(self.conn, WORKER_STATE_KEY) or "null")
+        except ValueError:
+            state = None
+        if not isinstance(state, dict):
+            return messages.worker_line(seen_text)
+        until = state.get("until")
+        until = _parse_time(until) if state.get("state") == "paused" and isinstance(until, str) else None
+        return messages.worker_line(seen_text, state, jobs.hm(self.conn, until) if until is not None else None)
 
     # --- události úloh a workeru (reel_events) ---------------------------
 
@@ -921,7 +936,7 @@ class Bot:
             return
         last = history[-1]
         what = _job_what(job.ct, job.focus_pn)
-        text = messages.job_status_text(job.id, what, history, None if final else self._worker_seen())
+        text = messages.job_status_text(job.id, what, history, None if final else self._worker_line())
         buttons = None if final else messages.job_cancel_buttons(job.id)
         try:
             self.tg.edit_text(self.chat_id, job.status_msg_id, self._clip(self._scrub(text)), buttons)
@@ -1029,7 +1044,8 @@ class Bot:
         """
         now = self.now()
         units = queue.open_units(self.conn, now, per_day=SETS_PER_DAY, stale_publishing=STALE_PUBLISHING)
-        text = messages.queue_overview(units, jobs.pending(self.conn), self._worker_seen(), now)
+        text = messages.queue_overview(units, jobs.pending(self.conn), self._worker_line(), now,
+                                       lambda t: jobs.hm(self.conn, t))
         self._say(self._scrub(text), messages.RESEND_BUTTONS)
 
     def _resend_buttons(self, _id: int, cb_id, msg_id) -> None:

@@ -25,12 +25,12 @@ pytestmark = pytest.mark.pg
 DRIVER = Path(__file__).with_name("php_result.php")
 WORKER_TOKEN = "w" * 32
 CLAIM = "c" * 32
-# šablona a formát varianty n
-TEMPLATES = {1: ("template_v3", "pn"), 2: ("template_v2", None), 3: ("template_v3", "cesta")}
+# šablona a formát varianty n (pořadí jako u generátoru: v2 z rozboru AI, pak formáty v3)
+TEMPLATES = {1: ("template_v2", None), 2: ("template_v3", "pn"), 3: ("template_v3", "zmena")}
 # nevzniklé varianty: sada s n variantami hlásí ty s vyšším n (u 1 varianty obě)
 SKIPPED = [
-    {"n": 2, "format": "zmena", "errors": ["render selhal"]},
-    {"n": 3, "format": "cesta", "errors": ["kontrola neprošla", "popisek je delší než limit"]},
+    {"n": 2, "format": "pn", "errors": ["render selhal"]},
+    {"n": 3, "format": "zmena", "errors": ["kontrola neprošla", "popisek je delší než limit"]},
 ]
 
 
@@ -156,3 +156,12 @@ def test_cely_retez(php, conn, bot, api, media_dir, tmp_path, n):
     assert _buttons(set_msgs[0]) == [f"pick:{i}" for i in res[0].reel_ids] + [f"doneset:{jid}"]
     assert [(r.status, r.set_id, r.variant) for r in queue.set_items(conn, jid)] == \
         [("pending", jid, k) for k in range(1, n + 1)]
+    # zpráva sady končí nevzniklými variantami (z reel_jobs.detail úlohy)
+    text = set_msgs[0]["text"]
+    expected = {3: [], 2: ["Varianta 3 (zmena) nevznikla: kontrola neprošla; popisek je delší než limit"],
+                1: ["Varianta 2 (pn) nevznikla: render selhal",
+                    "Varianta 3 (zmena) nevznikla: kontrola neprošla; popisek je delší než limit"]}[n]
+    if expected:
+        assert text.endswith("\n\n" + "\n".join(expected))
+    else:
+        assert "nevznikla" not in text

@@ -6,8 +6,10 @@ a výsledek řádek Threads. Bez něj se o Threads nepíše nic.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Callable
 
 from .caption import for_network
+from .jobs import lease_expired
 from .queue import (AUTO_HOLD, AUTO_SET_MAX, AUTO_SOURCE, HELD_MAX, PICKED_MAX, REQUESTED_SET_MAX,
                     UNPICKED_AFTER_DECISION, Expired, Reel, Unit)
 
@@ -49,10 +51,11 @@ def remaining_text(set_id: int, variants: list[int]) -> str:
     return f"Sada #{set_id}: zbývají varianty {', '.join(str(v) for v in variants)}. Vybrat, nebo Hotovo."
 
 
-def set_text(items: list[Reel], remaining: bool = False) -> str:
+def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None) -> str:
     """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku.
 
     remaining=True: úvod „zbývá varianta N“ (po rozhodnutí o vybraných variantách).
+    skipped = nevzniklé varianty sady (jobs.skipped): na konci řádky „Varianta 3 (zmena) nevznikla: …“.
     """
     first = items[0]
     if remaining:
@@ -66,10 +69,11 @@ def set_text(items: list[Reel], remaining: bool = False) -> str:
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])
         blocks.append(f"{r.variant} ({_variant_label(r)}):\n{lines}")
-    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty
-    room = (TEXT_LIMIT - len(head) - 2 * len(blocks)) // max(len(blocks), 1)
+    tail = [autopilot_skipped(skipped)] if skipped else []
+    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i nevzniklé varianty na konci
+    room = (TEXT_LIMIT - len(head) - sum(len(t) for t in tail) - 2 * (len(blocks) + len(tail))) // max(len(blocks), 1)
     blocks = [b if len(b) <= room else b[:max(room - 1, 0)] + "…" for b in blocks]
-    return "\n\n".join([head, *blocks])[:TEXT_LIMIT]
+    return "\n\n".join([head, *blocks, *tail])[:TEXT_LIMIT]
 
 
 def set_buttons(items: list[Reel]) -> list[tuple[str, str]]:
@@ -216,6 +220,9 @@ _MINE = ("approval", "untouched", "picked", "remaining")
 _READY = ("next", "deferred", "limit", "blocked", "autopilot", "approved", "publishing")
 _PROBLEMS = ("held", "failed", "unknown", "stale")
 _PER_VARIANT = ("autopilot", "approved", "publishing", "stale", "failed", "unknown")
+# proč úloha s odkladem čeká (reel_jobs.wait_reason); retry a neznámý důvod = jen „další pokus H:MM“
+_WAIT_TEXT = {"ai_title": "čeká na rozbor AI", "env": "čeká po chybě prostředí",
+              "limit": "čeká na limit předplatného"}
 
 
 def _age(since: datetime, now: datetime) -> str:
@@ -285,28 +292,57 @@ def _unit_line(u: Unit, now: datetime) -> str:
     return " · ".join([head, *which, *parts])
 
 
-def queue_overview(units: list[Unit], jobs: list, worker_line: str, now: datetime | None = None) -> str:
+def _hm_local(t: datetime) -> str:
+    """H:MM v časové zóně hodnoty (queue_overview bez hm; bot předává jobs.hm, tedy Europe/Prague)."""
+    return f"{t.hour}:{t.minute:02d}"
+
+
+def _job_generating(j, now: datetime) -> str:
+    """Řádek vydané úlohy: fáze (nebo „generuje se“), jak dlouho trvá, a PC neodpovídá u propadlého vydání."""
+    stage = _STAGE_TEXT.get(j.stage, j.stage) if j.stage else "generuje se"
+    parts = [f"#{j.id} {_what(j.ct, j.focus_pn)}", stage, _age(j.stage_at or j.claimed_at or j.created_at, now)]
+    if lease_expired(j, now):
+        parts.append("PC neodpovídá")
+    return " · ".join(parts)
+
+
+def _job_waiting(j, hm: Callable[[datetime], str]) -> str:
+    """Řádek úlohy s odkladem (not_before v budoucnu): proč čeká a kdy je další pokus."""
+    nxt = f"další pokus {hm(j.not_before)}"
+    why = _WAIT_TEXT.get(j.wait_reason or "")
+    return f"#{j.id} {_what(j.ct, j.focus_pn)} · " + (f"{why} ({nxt})" if why else nxt)
+
+
+def queue_overview(units: list[Unit], jobs: list, worker_line: str, now: datetime | None = None,
+                   hm: Callable[[datetime], str] | None = None) -> str:
     """Přehled /fronta (spec 4.2): sekce v pevném pořadí, prázdné se vynechají, poslední řádek stav PC.
 
-    units z queue.open_units, jobs = aktivní zadání generátoru (jobs.pending, v pořadí výdeje).
+    units z queue.open_units, jobs = aktivní zadání generátoru (jobs.pending, v pořadí výdeje), hm = čas H:MM
+    pro „další pokus“ (bot: jobs.hm v Europe/Prague). Ve frontě zadání nejdřív úlohy připravené k výdeji
+    (číslované podle pořadí výdeje), za nimi úlohy s odkladem; rozhoduje not_before, ne wait_reason (ten po
+    návratu do fronty zůstává).
     """
     now = now or datetime.now(timezone.utc)
+    hm = hm or _hm_local
     mine = [u for u in units if u.state in _MINE]
     ready = [u for u in units if u.state in _READY]
     problems = [u for u in units if u.state in _PROBLEMS]
     generating = [j for j in jobs if j.status == "claimed"]
-    waiting = [j for j in jobs if j.status == "queued"]
+    queued = [j for j in jobs if j.status == "queued"]
+    issuable, deferred = [], []
+    for j in queued:
+        (deferred if j.not_before is not None and j.not_before > now else issuable).append(j)
     blocks = []
     if mine:
         blocks.append([f"Čeká na tebe ({len(mine)})", *(_unit_line(u, now) for u in mine)])
     if ready:
         blocks.append([f"Hotové, čekají na odeslání ({len(ready)})", *(_unit_line(u, now) for u in ready)])
     if generating:
-        blocks.append(["Generuje se", *(f"#{j.id} {_what(j.ct, j.focus_pn)} · generuje se · "
-                                        f"{_age(j.claimed_at or j.created_at, now)}" for j in generating)])
-    if waiting:
-        blocks.append([f"Ve frontě zadání ({len(waiting)})",
-                       *(f"#{j.id} {_what(j.ct, j.focus_pn)} · {n}. v pořadí" for n, j in enumerate(waiting, 1))])
+        blocks.append(["Generuje se", *(_job_generating(j, now) for j in generating)])
+    if queued:
+        blocks.append([f"Ve frontě zadání ({len(queued)})",
+                       *(f"#{j.id} {_what(j.ct, j.focus_pn)} · {n}. v pořadí" for n, j in enumerate(issuable, 1)),
+                       *(_job_waiting(j, hm) for j in deferred)])
     if problems:
         blocks.append([f"Problémy ({len(problems)})", *(_unit_line(u, now) for u in problems)])
     if not blocks:
@@ -438,8 +474,9 @@ def failed_buttons(job_id: int) -> list[tuple[str, str]]:
 
 
 def _pause_reason(reason: str | None, detail: str | None) -> str:
-    """Důvod pozastavení workeru česky; neznámý důvod = ""."""
-    detail = (detail or "").strip()
+    """Důvod pozastavení workeru česky; neznámý nebo nečitelný důvod = ""."""
+    reason = reason if isinstance(reason, str) else None
+    detail = (detail if isinstance(detail, str) else "").strip()
     if reason == "nastroje":
         return f"chybí nástroje ({detail})" if detail else "chybí nástroje"
     if reason == "env":
@@ -454,6 +491,25 @@ def worker_paused_text(reason: str | None, detail: str | None, until_hm: str | N
     if until_hm:
         text += f" (do {until_hm})"
     return text + ". Zadání ve frontě počkají."
+
+
+def worker_line(seen: str | None, state: dict | None = None, until_hm: str | None = None) -> str:
+    """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru.
+
+    seen = čas posledního heartbeat („20. 11. 14:05“), None = PC zatím nebylo vidět; state = reel_state.worker_state
+    ({state, reason, detail}), důvod pozastavení stejnými slovy jako zpráva o pozastavení (worker_paused_text);
+    until_hm = do kdy je pozastaveno. Neznámý stav = jen kdy bylo PC vidět.
+    """
+    text = f"PC naposledy: {seen}" if seen else "PC zatím nebylo vidět"
+    st = state.get("state") if isinstance(state, dict) else None
+    if st == "running":
+        return text + " · generátor běží"
+    if st == "paused":
+        why = _pause_reason(state.get("reason"), state.get("detail"))
+        text += " · pozastaveno" + (f": {why}" if why else "")
+        if until_hm:
+            text += f" (do {until_hm})"
+    return text
 
 
 def silent_text(job_id: int, what: str, since_hm: str) -> str:

@@ -172,6 +172,33 @@ def silent(conn, now: datetime) -> list[Job]:
     return out
 
 
+def lease_expired(job: Job, now: datetime) -> bool:
+    """Vydání propadlo (stejné pravidlo jako silent): lease_until v minulosti, bez lease_until vydané před víc
+    než CLAIM_TIMEOUT. Úloha, která není claimed, nepropadá."""
+    if job.status != "claimed":
+        return False
+    if job.lease_until is not None:
+        return job.lease_until < now
+    return job.claimed_at is not None and job.claimed_at < now - CLAIM_TIMEOUT
+
+
+def skipped(conn, set_id: int) -> list[dict]:
+    """Nevzniklé varianty sady [{n, format, errors}] z reel_jobs.detail úlohy (id úlohy = set_id).
+
+    Bez úlohy, bez detail, s vadným JSON nebo bez pole skipped = []; položky, které nejsou objekt, se vynechají.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT detail FROM reel_jobs WHERE id=%s", (set_id,))
+        r = cur.fetchone()
+    conn.commit()
+    try:
+        data = json.loads(r[0]) if r and r[0] else None
+    except ValueError:
+        return []
+    items = data.get("skipped") if isinstance(data, dict) else None
+    return [s for s in items if isinstance(s, dict)] if isinstance(items, list) else []
+
+
 def hm(conn, ts: datetime) -> str:
     """Čas H:MM v Europe/Prague přes PostgreSQL (obraz bota nepotřebuje tzdata)."""
     with conn.cursor() as cur:

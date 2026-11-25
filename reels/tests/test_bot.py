@@ -4511,3 +4511,182 @@ def test_zkusit_znovu_ze_zpravy_po_vypadku(bot, conn, api):
     bot.handle(_cb(f"jobretry:{c}", msg_id=fail_msg, markup=fail["reply_markup"]))
     edit = api.sent("editMessageReplyMarkup")[-1]
     assert edit["message_id"] == fail_msg and _buttons(edit) == []
+
+
+# --- F3: /fronta s úlohami a stavem PC, zpráva sady s nevzniklými variantami (Task 11) ---
+
+def test_texty_fronty_uloh():
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import messages as m
+    from hlidac_reels.jobs import Job
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    later = now + timedelta(minutes=20)
+
+    def job(i, status="queued", **kw):
+        base = dict(id=i, source="manual", ct=100 + i, format_hint=None, reason_keys=None, status=status,
+                    claimed_at=None, claim_token=None, attempts=0, error=None, set_id=None,
+                    created_at=now - timedelta(hours=3), finished_at=None, notified_at=None)
+        return Job(**{**base, **kw})
+
+    claimed = dict(status="claimed", claimed_at=now - timedelta(minutes=30), lease_until=now + timedelta(minutes=10))
+    active = [
+        job(1, **claimed, stage="model", stage_at=now - timedelta(minutes=3)),
+        job(2, **claimed, stage="upload", stage_at=now - timedelta(minutes=1)),
+        # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min
+        job(3, status="claimed", claimed_at=now - timedelta(minutes=70)),
+        job(4, status="claimed", claimed_at=now - timedelta(minutes=20), lease_until=now - timedelta(minutes=1),
+            stage="oprava", stage_at=now - timedelta(minutes=16)),
+        job(5, status="claimed", claimed_at=now - timedelta(minutes=50)),
+        job(6, not_before=later, wait_reason="env"),
+        job(7, not_before=later, wait_reason="limit"),
+        job(8, not_before=later, wait_reason="retry"),
+        job(9, not_before=later, wait_reason=None),
+        job(10, not_before=later, wait_reason="ai_title", focus_pn=[2378]),
+        # po návratu do fronty zůstává wait_reason a fail_kind; rozhoduje not_before
+        job(11, not_before=now - timedelta(minutes=1), wait_reason="env", fail_kind="env"),
+        job(12, fail_kind="content"),
+    ]
+    text = m.queue_overview([], active, "PC", now, hm=lambda t: f"{t.hour + 1}:{t.minute:02d}")
+    assert text.split("\n\n") == [
+        "Generuje se\n"
+        "#1 tisk 101 · model píše varianty · 3 min\n"
+        "#2 tisk 102 · nahrávání videí · 1 min\n"
+        "#3 tisk 103 · generuje se · 1 h · PC neodpovídá\n"
+        "#4 tisk 104 · oprava · 16 min · PC neodpovídá\n"
+        "#5 tisk 105 · generuje se · 50 min",
+        "Ve frontě zadání (7)\n"
+        "#11 tisk 111 · 1. v pořadí\n"
+        "#12 tisk 112 · 2. v pořadí\n"
+        "#6 tisk 106 · čeká po chybě prostředí (další pokus 14:20)\n"
+        "#7 tisk 107 · čeká na limit předplatného (další pokus 14:20)\n"
+        "#8 tisk 108 · další pokus 14:20\n"
+        "#9 tisk 109 · další pokus 14:20\n"
+        "#10 PN 2378 · čeká na rozbor AI (další pokus 14:20)",
+        "PC"]
+    # stav PC: kdy bylo vidět a stav generátoru z worker_state (důvody jako ve zprávě o pozastavení)
+    assert m.worker_line(None) == "PC zatím nebylo vidět"
+    assert m.worker_line("25. 11. 14:05") == "PC naposledy: 25. 11. 14:05"
+    assert m.worker_line("25. 11. 14:05", {"state": "running"}) == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": "login"}) == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno: Claude Code není přihlášený")
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": "nastroje", "detail": "ffmpeg"}, "15:30") == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno: chybí nástroje (ffmpeg) (do 15:30)")
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": None}) == "PC naposledy: 1. 1. 9:00 · pozastaveno"
+    # nečitelný stav: jen kdy bylo PC vidět, nečitelný důvod se vynechá
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": ["x"], "detail": 5}) == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno")
+    assert m.worker_line("1. 1. 9:00", {"state": 5}) == "PC naposledy: 1. 1. 9:00"
+
+
+@pg
+def test_fronta_ulohy_a_pc(bot, conn, api):
+    import json
+    from datetime import datetime, timezone
+    from hlidac_reels import jobs, queue
+    now = datetime(2026, 11, 25, 13, 40, tzinfo=timezone.utc)  # 14:40 v Praze
+    bot.now = lambda: now
+    gen = jobs.add(conn, source="manual", ct=300)
+    silent = jobs.add(conn, source="manual", ct=311)
+    wait = jobs.add(conn, source="manual", ct=221)
+    ready = jobs.add(conn, source="manual", ct=90)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', "
+                    "claimed_at=%(now)s - interval '30 minutes', stage='render', "
+                    "stage_at=%(now)s - interval '5 minutes', lease_until=%(now)s + interval '10 minutes' "
+                    "WHERE id=%(id)s", {"now": now, "id": gen})
+        # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', "
+                    "claimed_at=%(now)s - interval '2 hours' WHERE id=%(id)s", {"now": now, "id": silent})
+        cur.execute("UPDATE reel_jobs SET not_before=%(now)s + interval '20 minutes', wait_reason='ai_title' "
+                    "WHERE id=%(id)s", {"now": now, "id": wait})
+    conn.commit()
+    queue.set_state(conn, "worker_seen_at", "2026-11-25T14:05:00+01:00")
+    queue.set_state(conn, "worker_state", json.dumps({
+        "state": "paused", "reason": "limit", "detail": None, "until": "2026-11-25T15:30:00+01:00",
+        "at": "2026-11-25T14:05:00+01:00"}))
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[-1]
+    assert (f"Generuje se\n#{gen} tisk 300 · render · 5 min\n"
+            f"#{silent} tisk 311 · generuje se · 2 h · PC neodpovídá") in text
+    assert (f"Ve frontě zadání (2)\n#{ready} tisk 90 · 1. v pořadí\n"
+            f"#{wait} tisk 221 · čeká na rozbor AI (další pokus 15:00)") in text
+    assert text.splitlines()[-1] == (
+        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného (do 15:30)")
+    # stavová zpráva nového zadání má stejný řádek stavu PC
+    _tisk(conn, 400)
+    bot.handle(_msg("/video 400"))
+    assert api.texts()[-1].splitlines()[-1] == text.splitlines()[-1]
+    queue.set_state(conn, "worker_state", json.dumps({"state": "running", "reason": None, "detail": None,
+                                                      "until": None, "at": "2026-11-25T14:05:00+01:00"}))
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    # nečitelný worker_state: jen kdy bylo PC vidět; nečitelné until se vynechá
+    queue.set_state(conn, "worker_state", "{")
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05"
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": 5}))
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == (
+        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného")
+
+
+@pg
+def test_skipped_z_detailu_ulohy(conn):
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    for detail, expected in [
+        (None, []), ("{", []), ('{"variants": [1]}', []), ('{"skipped": "x"}', []), ("[1]", []),
+        ('{"skipped": [1, {"n": 2, "format": "pn", "errors": ["e"]}]}', [{"n": 2, "format": "pn", "errors": ["e"]}]),
+    ]:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reel_jobs SET detail=%s WHERE id=%s", (detail, j))
+        conn.commit()
+        assert jobs.skipped(conn, j) == expected, detail
+    assert jobs.skipped(conn, j + 100) == []
+
+
+@pg
+def test_zprava_sady_s_vynechanymi(bot, conn, api, media_dir):
+    import json
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    detail = {"variants": [1, 2], "skipped": [{"n": 3, "format": "zmena", "errors": ["text PN zatím není v datech"]}]}
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done', finished_at=now(), detail=%s WHERE id=%s",
+                    (json.dumps(detail, ensure_ascii=False), j))
+    conn.commit()
+    ids = _add_set(conn, media_dir, j, n=2, source="manual")
+    bot.send_next()
+    body = _set_msg(api)
+    assert body["text"].startswith(f"Sada #{j} · tisk 221")
+    assert body["text"].endswith("\n\nVarianta 3 (zmena) nevznikla: text PN zatím není v datech")
+    # Poslat tlačítka znovu: zpráva sady znovu i s nevzniklou variantou
+    _fronta_resend(bot, api)
+    assert _set_msg(api)["text"].endswith("\n\nVarianta 3 (zmena) nevznikla: text PN zatím není v datech")
+    # zpráva „zbývá varianta“ po rozhodnutí o vybrané variantě ji neopakuje
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"no:{ids[1]}"))
+    (rem,) = _remaining(api)
+    assert f"Sada #{j}: zbývá varianta 1." in rem["text"] and "nevznikla" not in rem["text"]
+
+
+def test_texty_sady_s_vynechanymi():
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import TEXT_LIMIT, set_text
+    from hlidac_reels.queue import Reel
+    now = datetime.now(timezone.utc)
+    items = [Reel(id=11 + v, source="manual", ct=221, format="v2", video_path="x", video_sha256=str(v),
+                  caption="x" * 5000, status="pending", telegram_video_msg_id=None, telegram_msg_id=None,
+                  ig_container_id=None, ig_media_id=None, ig_permalink=None, fb_video_id=None,
+                  fb_permalink=None, public_token=None, error=None, attempts=0, created_at=now,
+                  sent_at=None, decided_at=None, published_at=None, threads_container_id=None,
+                  threads_media_id=None, threads_permalink=None, video_landscape_path=None,
+                  video_landscape_sha256=None, telegram_landscape_msg_id=None,
+                  telegram_landscape_sha256=None, set_id=5, variant=v, template="template_v2") for v in (1, 2)]
+    skipped = [{"n": 3, "format": "zmena", "errors": ["e" * 400]}]
+    # dlouhé popisky se zkrátí, řádek nevzniklé varianty zůstane celý na konci
+    text = set_text(items, skipped=skipped)
+    assert len(text) <= TEXT_LIMIT and text.endswith("\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
+    assert set_text(items, skipped=[]) == set_text(items)

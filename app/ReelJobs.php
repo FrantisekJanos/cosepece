@@ -79,21 +79,30 @@ final class ReelJobs
         foreach ($stale as $row) {
             $where = "id = ? AND claim_token = ? AND $staleCond";
             $params = [(int)$row['id'], (string)$row['claim_token'], ...$staleParams];
+            $stage = trim((string)($row['stage'] ?? ''));
             if ((int)$row['attempts'] >= self::MAX_ATTEMPTS) {
                 // po 3 vydáních failed; poslední fáze z průběhu napoví, kde PC uvázlo
-                $stage = trim((string)($row['stage'] ?? ''));
                 $error = 'PC nedokončilo úlohu ' . self::MAX_ATTEMPTS . '×' . ($stage !== '' ? " (poslední fáze: $stage)" : '');
-                $this->db->run(
+                $dead = $this->db->run(
                     "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = 'lease' WHERE $where",
                     [$error, $stampNow, ...$params]
                 );
+                if ($dead->rowCount() > 0) {
+                    $this->failedEvent((int)$row['id']);
+                }
             } else {
                 // zpět do fronty s odkladem: PC, které právě spadlo, nedostane úlohu hned znovu
-                $this->db->run(
+                $next = $now + self::LEASE_RETRY_MIN * 60;
+                $back = $this->db->run(
                     "UPDATE reel_jobs SET status = 'queued', claim_token = NULL, claimed_at = NULL, lease_until = NULL, stage = NULL,
                             stage_at = NULL, fail_kind = 'lease', not_before = ?, wait_reason = 'retry' WHERE $where",
-                    [$this->stamp($now + self::LEASE_RETRY_MIN * 60), ...$params]
+                    [$this->stamp($next), ...$params]
                 );
+                if ($back->rowCount() > 0) {
+                    $this->event('lease', (int)$row['id'], [
+                        'next_hm' => date('H:i', $next), 'attempts' => (int)$row['attempts'], 'stage' => $stage !== '' ? $stage : null,
+                    ]);
+                }
             }
         }
         // 2. fresh starší 7 dní se už nevydá; až po kroku 1, aby se nevydala ani prošlá úloha vrácená do fronty
@@ -102,10 +111,13 @@ final class ReelJobs
             [$this->stamp($now - self::FRESH_MAX_DAYS * 86400)]
         );
         foreach ($expired as $row) {
-            $this->db->run(
+            $gone = $this->db->run(
                 "UPDATE reel_jobs SET status = 'expired', finished_at = ? WHERE id = ? AND status = 'queued'",
                 [$stampNow, (int)$row['id']]
             );
+            if ($gone->rowCount() > 0) {
+                $this->event('expired', (int)$row['id'], [], 2, 'expired:' . (int)$row['id']);
+            }
         }
 
         // 3.–4. první úloha ve frontě bez odkladu; při souběhu nebo nepoužitelné úloze se zkusí další
@@ -155,6 +167,7 @@ final class ReelJobs
             // pořadí vydání a chyba předchozího pokusu (UPDATE výše error nemění)
             $issued = $this->db->one('SELECT attempts, error FROM reel_jobs WHERE id = ?', [$id]);
             $lastError = $issued !== null && $issued['error'] !== null && $issued['error'] !== '' ? (string)$issued['error'] : null;
+            $this->event('claimed', $id, ['attempt' => (int)($issued['attempts'] ?? 0)]);
             return [
                 'job_id' => $id,
                 'claim_token' => $token,
@@ -249,7 +262,14 @@ final class ReelJobs
               WHERE id = ? AND status = 'claimed' AND claim_token = ?",
             [$this->stamp(($this->now)()), $note, $json === false ? null : $json, $jobId, $token]
         );
-        return $done->rowCount() > 0;
+        if ($done->rowCount() === 0) {
+            return false;
+        }
+        $this->event('done', $jobId, [
+            'variants' => count((array)($detail['variants'] ?? [])),
+            'skipped' => array_values((array)($detail['skipped'] ?? [])),
+        ]);
+        return true;
     }
 
     /**
@@ -281,7 +301,7 @@ final class ReelJobs
                     "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = ? WHERE $where",
                     ['Zadání se ' . self::ENV_MAX_RETRIES . "× vrátilo kvůli prostředí (poslední: $error)", $this->stamp($now), $kind, $jobId, $token]
                 );
-                return $stmt->rowCount() > 0 ? 'failed' : 'conflict';
+                return $this->failedResult($stmt, $jobId);
             }
             // chyba prostředí pokus nespotřebuje; úloha počká, ať se PC (limit, přihlášení, síť) vzpamatuje
             $delay = max(self::RETRY_MIN_S, min(self::RETRY_MAX_S, $retryAfterS ?? self::RETRY_DEFAULT_S));
@@ -293,7 +313,7 @@ final class ReelJobs
                   WHERE $where",
                 [$error, $kind, $this->stamp($now + $delay), $wait, $jobId, $token]
             );
-            return $stmt->rowCount() > 0 ? 'queued' : 'conflict';
+            return $this->requeuedResult($stmt, $jobId, $kind, $error, $now + $delay, (int)$row['env_retries'] + 1);
         }
 
         // content a timeout jsou konečné; bez druhu (starší worker) do MAX_ATTEMPTS pokusů zpět do fronty bez odkladu
@@ -302,7 +322,7 @@ final class ReelJobs
                 "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, claim_token = NULL, fail_kind = ? WHERE $where",
                 [$error, $this->stamp($now), $kind ?? 'content', $jobId, $token]
             );
-            return $stmt->rowCount() > 0 ? 'failed' : 'conflict';
+            return $this->failedResult($stmt, $jobId);
         }
         $stmt = $this->db->run(
             "UPDATE reel_jobs SET status = 'queued', error = ?, fail_kind = 'content', claim_token = NULL, claimed_at = NULL,
@@ -310,14 +330,16 @@ final class ReelJobs
               WHERE $where",
             [$error, $jobId, $token]
         );
-        return $stmt->rowCount() > 0 ? 'queued' : 'conflict';
+        return $this->requeuedResult($stmt, $jobId, 'content', $error, $now, (int)$row['env_retries']);
     }
 
     /**
      * Worker se ozval (bot podle toho hlásí, že PC je dlouho offline): reel_state.worker_seen_at. Se stavem
      * ($state = {state: running|paused, reason?, detail?, until?}) navíc reel_state.worker_state jako JSON
      * {"state", "reason" (z PAUSE_REASONS, jinak null), "detail" (nejvýš 200 znaků), "until" (ISO 8601), "at"}.
-     * Neplatný stav se nezapíše; bez $state (starší worker) zůstane worker_state, jak byl.
+     * Neplatný stav se nezapíše; bez $state (starší worker) zůstane worker_state, jak byl. Při změně stavu proti
+     * uloženému událost (urgency 1): worker_paused (z running i bez uloženého stavu), worker_resumed (paused → running).
+     * Opakovaný paused s novým until (každá sonda workeru) událost nepřidá.
      */
     public function heartbeat(?array $state = null): void
     {
@@ -329,15 +351,25 @@ final class ReelJobs
         $reason = $state['reason'] ?? null;
         $detail = is_string($state['detail'] ?? null) ? trim($state['detail']) : '';
         $until = is_string($state['until'] ?? null) && trim($state['until']) !== '' ? strtotime(trim($state['until'])) : false;
-        $value = json_encode([
+        $stored = [
             'state' => $state['state'],
             'reason' => in_array($reason, self::PAUSE_REASONS, true) ? $reason : null,
             'detail' => $detail !== '' ? mb_substr($detail, 0, 200) : null,
             'until' => $until !== false ? date('c', $until) : null,
             'at' => date('c', $now),
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
-        if ($value !== false) {
-            $this->putState('worker_state', $value);
+        ];
+        $value = json_encode($stored, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($value === false) {
+            return;
+        }
+        $before = $this->workerState();
+        $this->putState('worker_state', $value);
+        if ($stored['state'] === 'paused' && $before !== 'paused') {
+            $this->event('worker_paused', null, [
+                'reason' => $stored['reason'], 'detail' => $stored['detail'], 'until_hm' => $until !== false ? date('H:i', $until) : null,
+            ], 1);
+        } elseif ($stored['state'] === 'running' && $before === 'paused') {
+            $this->event('worker_resumed', null, [], 1);
         }
     }
 
@@ -511,10 +543,13 @@ final class ReelJobs
     /** Úloha ve frontě, kterou nejde vydat, skončí jako failed (jen pokud je pořád queued); $kind = fail_kind. */
     private function markFailed(int $id, string $error, ?string $kind = null): void
     {
-        $this->db->run(
+        $stmt = $this->db->run(
             "UPDATE reel_jobs SET status = 'failed', error = ?, finished_at = ?, fail_kind = ? WHERE id = ? AND status = 'queued'",
             [$error, $this->stamp(($this->now)()), $kind, $id]
         );
+        if ($stmt->rowCount() > 0) {
+            $this->failedEvent($id);
+        }
     }
 
     /**
@@ -533,10 +568,15 @@ final class ReelJobs
             [$id, $this->stamp($now - self::AI_MAX_HOURS * 3600)]
         );
         if ($young !== null) {
-            $this->db->run(
+            $next = $now + self::AI_RETRY_MIN * 60;
+            $wait = $this->db->run(
                 "UPDATE reel_jobs SET not_before = ?, wait_reason = 'ai_title' WHERE id = ? AND status = 'queued'",
-                [$this->stamp($now + self::AI_RETRY_MIN * 60), $id]
+                [$this->stamp($next), $id]
             );
+            if ($wait->rowCount() > 0) {
+                // jedna událost na celé čekání (dedupe), další odklady po 30 min nic nepřidají
+                $this->event('waiting', $id, ['reason' => 'ai_title', 'next_hm' => date('H:i', $next)], 0, "waiting:$id:ai_title");
+            }
             return;
         }
         $this->markFailed($id, ($focus === null ? 'rozbor AI tisku' : 'rozbor AI zadaných PN') . ' nedorazil do ' . self::AI_MAX_HOURS . ' h', 'data');
@@ -568,7 +608,8 @@ final class ReelJobs
      * Worker hlásí průběh vydané úlohy: vydání platí PROGRESS_LEASE_MIN minut od teď. Fáze z STAGES se zapíše,
      * čas fáze (stage_at) jen při změně; jiná nebo chybějící fáze vydání jen prodlouží. Vrací 'ok', 'cancelled'
      * (uživatel úlohu zrušil, worker běh ukončí) nebo 'conflict' (token neplatí, úloha patří jinému vydání).
-     * $note = poznámka k fázi pro událost průběhu (nejvýš 120 znaků).
+     * $note = poznámka k fázi (nejvýš 120 znaků). Událost stage {stage, note} jen s platnou fází, když se fáze nebo
+     * poznámka liší od poslední události stage tohoto vydání (stageEvent).
      */
     public function progress(int $jobId, string $token, ?string $stage, ?string $note = null): string
     {
@@ -587,12 +628,16 @@ final class ReelJobs
                 [$lease, $stage, $this->stamp($now), $jobId, $token, $stage]
             );
             if ($changed->rowCount() > 0) {
+                $this->stageEvent($jobId, $stage, $note);
                 return 'ok';
             }
         }
         $extended = $this->db->run("UPDATE reel_jobs SET lease_until = ? WHERE $where", [$lease, $jobId, $token]);
         // MySQL hlásí 0 řádků i u UPDATE beze změny (dvě hlášení v téže sekundě), proto při 0 ještě kontrola tokenu
         if ($extended->rowCount() > 0 || $this->checkClaim($jobId, $token)) {
+            if ($stage !== null) {
+                $this->stageEvent($jobId, $stage, $note); // stejná fáze, nová poznámka (např. další varianta)
+            }
             return 'ok';
         }
         return $this->status($jobId) === 'cancelled' ? 'cancelled' : 'conflict';
@@ -616,6 +661,101 @@ final class ReelJobs
             $this->db->run("UPDATE reel_state SET value = ? WHERE $key = ?", [$value, $name]);
         } else {
             $this->db->run("INSERT INTO reel_state ($key, value) VALUES (?, ?)", [$name, $value]);
+        }
+    }
+
+    /** Uložený stav workeru (running, paused) z reel_state.worker_state, null = zatím žádný nebo nečitelný. */
+    private function workerState(): ?string
+    {
+        $key = $this->db->driver === 'mysql' ? '`key`' : 'key';
+        $value = $this->db->value("SELECT value FROM reel_state WHERE $key = ?", ['worker_state']);
+        $data = $value !== null ? json_decode((string)$value, true) : null;
+        return is_array($data) && is_string($data['state'] ?? null) ? $data['state'] : null;
+    }
+
+    /**
+     * Výsledek fail() po UPDATE do failed: 'failed' a událost failed, nebo 'conflict', když UPDATE nic nezměnil
+     * (token mezitím přestal platit).
+     */
+    private function failedResult(\PDOStatement $stmt, int $jobId): string
+    {
+        if ($stmt->rowCount() === 0) {
+            return 'conflict';
+        }
+        $this->failedEvent($jobId);
+        return 'failed';
+    }
+
+    /** Výsledek fail() po UPDATE zpět do fronty: 'queued' a událost requeued (další pokus v $nextTs), jinak 'conflict'. */
+    private function requeuedResult(\PDOStatement $stmt, int $jobId, string $kind, string $error, int $nextTs, int $envRetries): string
+    {
+        if ($stmt->rowCount() === 0) {
+            return 'conflict';
+        }
+        $this->event('requeued', $jobId, ['kind' => $kind, 'error' => $error, 'next_hm' => date('H:i', $nextTs), 'env_retries' => $envRetries]);
+        return 'queued';
+    }
+
+    /**
+     * Událost failed podle řádku úlohy (volá se hned po přechodu do failed). Vyžádaná úloha (manual, auto_pick)
+     * urgency 1 = zpráva hned, automatická (fresh) 2 = denní souhrn. Klíč failed:<id> je stejný, jakým bot převezme
+     * selhání bez události (events.adopt_failed), takže zpráva o selhání vznikne jen jednou.
+     */
+    private function failedEvent(int $id): void
+    {
+        $row = $this->db->one('SELECT source, error, fail_kind, attempts, env_retries, stage FROM reel_jobs WHERE id = ?', [$id]);
+        if ($row === null) {
+            return;
+        }
+        $stage = trim((string)($row['stage'] ?? ''));
+        $this->event('failed', $id, [
+            'kind' => $row['fail_kind'] !== null && $row['fail_kind'] !== '' ? (string)$row['fail_kind'] : null,
+            'error' => (string)($row['error'] ?? ''),
+            'attempts' => (int)$row['attempts'],
+            'env_retries' => (int)$row['env_retries'],
+            'stage' => $stage !== '' ? $stage : null,
+        ], (string)$row['source'] === 'fresh' ? 2 : 1, "failed:$id");
+    }
+
+    /**
+     * Událost stage, když se fáze nebo poznámka liší od poslední události stage tohoto vydání. Porovnává se s poslední
+     * událostí claimed nebo stage úlohy: po novém vydání (claimed) se první fáze zapíše, i když byla stejná jako minule.
+     */
+    private function stageEvent(int $jobId, string $stage, ?string $note): void
+    {
+        $last = $this->db->one(
+            "SELECT kind, detail FROM reel_events WHERE job_id = ? AND kind IN ('claimed', 'stage') ORDER BY id DESC LIMIT 1",
+            [$jobId]
+        );
+        if ($last !== null && $last['kind'] === 'stage') {
+            $prev = json_decode((string)$last['detail'], true);
+            if (is_array($prev) && ($prev['stage'] ?? null) === $stage && ($prev['note'] ?? null) === $note) {
+                return;
+            }
+        }
+        $this->event('stage', $jobId, ['stage' => $stage, 'note' => $note]);
+    }
+
+    /**
+     * Událost do reel_events (historie úlohy a fronta zpráv bota; text zprávy skládá bot). Volá se jen po podmíněném
+     * UPDATE, který řádek opravdu změnil. Klíč dedupe, který už v tabulce je (opakované čekání, selhání převzaté
+     * botem), se tiše přeskočí. Web zapisuje bez transakce (autocommit), takže odmítnutý INSERT v PostgreSQL
+     * neruší další dotazy.
+     */
+    private function event(string $kind, ?int $jobId, array $detail = [], int $urgency = 0, ?string $dedupe = null): void
+    {
+        // (object): prázdné pole jako {} (detail je vždy objekt JSON)
+        $json = json_encode((object)$detail, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        try {
+            $this->db->run(
+                'INSERT INTO reel_events (at, kind, job_id, detail, urgency, dedupe) VALUES (?, ?, ?, ?, ?, ?)',
+                [$this->stamp(($this->now)()), $kind, $jobId, $json === false ? '{}' : $json, $urgency, $dedupe]
+            );
+        } catch (\PDOException $e) {
+            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL)
+            if (!in_array((string)$e->getCode(), ['23505', '23000'], true)) {
+                throw $e;
+            }
         }
     }
 }

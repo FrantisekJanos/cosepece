@@ -4244,13 +4244,48 @@ def test_pc_neodpovida(bot, conn, api):
     # automatická úloha: jen do historie, žádná zpráva
     (silent_f,) = [e for e in events.for_job(conn, f) if e.kind == "silent"]
     assert silent_f.urgency == events.HISTORY and silent_f.detail == {"since_hm": "14:45"}
-    # nové vydání téže úlohy, které zase zmlkne: nová zpráva (dedupe silent:<id>:<attempts>)
+    # nové vydání téže úlohy, které zase zmlkne: nová zpráva (dedupe silent:<id>:<čas vydání>)
     with conn.cursor() as cur:
-        cur.execute("UPDATE reel_jobs SET attempts=2, stage_at='2026-11-24 15:00:00+00' WHERE id=%s", (j,))
+        cur.execute("UPDATE reel_jobs SET attempts=2, claimed_at='2026-11-24 14:50:00+00', "
+                    "stage_at='2026-11-24 15:00:00+00' WHERE id=%s", (j,))
     conn.commit()
     tick()
     bot.maybe_events()
     assert api.texts()[-1] == f"PC neodpovídá od 16:00, zadání #{j} (tisk 221) počká."
+    assert len(api.texts()) == 2
+
+
+@pg
+def test_pc_neodpovida_po_navratu_env(bot, conn, api):
+    # návrat env/infra sníží attempts: další vydání má stejné číslo pokusu, ale jiný čas vydání = nová zpráva
+    from hlidac_reels import jobs
+    tick = _event_clock(bot)
+    j = jobs.add(conn, source="manual", ct=221)
+
+    def issue(claimed_at: str) -> None:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', claimed_at=%s, "
+                        "lease_until=now() - interval '1 minute' WHERE id=%s", (claimed_at, j))
+        conn.commit()
+
+    issue("2026-11-24 12:00:00+00")
+    bot.maybe_events()
+    assert api.texts() == [f"PC neodpovídá od 13:00, zadání #{j} (tisk 221) počká."]
+    # fail env (PC se ozvalo): zpět do fronty, pokus se vrací
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='queued', attempts=0, claim_token=NULL, claimed_at=NULL, "
+                    "lease_until=NULL, fail_kind='env', env_retries=1 WHERE id=%s", (j,))
+    conn.commit()
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 1
+    issue("2026-11-24 14:00:00+00")
+    tick()
+    bot.maybe_events()
+    assert api.texts() == [f"PC neodpovídá od 13:00, zadání #{j} (tisk 221) počká.",
+                           f"PC neodpovídá od 15:00, zadání #{j} (tisk 221) počká."]
+    tick()
+    bot.maybe_events()
     assert len(api.texts()) == 2
 
 

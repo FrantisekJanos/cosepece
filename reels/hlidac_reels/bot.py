@@ -962,15 +962,18 @@ class Bot:
     def _check_silent(self) -> None:
         """Vydaná úloha bez známky života (propadlé vydání, PC je asi vypnuté): událost silent jednou na vydání.
 
-        Zprávu dostane jen vyžádaná úloha (manual, auto_pick), automatická jde jen do historie. „Od“ = poslední
-        známka života v pražském čase: nejpozdější z fáze (stage_at), vydání (claimed_at) a heartbeat workeru.
+        Vydání pozná klíč silent:<id>:<čas vydání claimed_at v s> (bez claimed_at čas založení), ne číslo pokusu:
+        návrat env/infra pokus vrací, takže další vydání má stejné attempts. Zprávu dostane jen vyžádaná úloha
+        (manual, auto_pick), automatická jde jen do historie. „Od“ = poslední známka života v pražském čase:
+        nejpozdější z fáze (stage_at), vydání (claimed_at) a heartbeat workeru.
         """
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
         for job in jobs.silent(self.conn, self.now()):
             since = max((t for t in (job.stage_at, job.claimed_at, seen) if t is not None), default=job.created_at)
             urgency = events.URGENT if job.source in ("manual", "auto_pick") else events.HISTORY
+            issued = int((job.claimed_at or job.created_at).timestamp())
             events.add(self.conn, "silent", job_id=job.id, detail={"since_hm": jobs.hm(self.conn, since)},
-                       urgency=urgency, dedupe=f"silent:{job.id}:{job.attempts}")
+                       urgency=urgency, dedupe=f"silent:{job.id}:{issued}")
 
     def _announced(self, e: events.Event, job: jobs.Job | None) -> bool:
         """Selhání, které už ohlásil starší bot (_notify_failed během výměny kontejnerů): reel_jobs.notified_at

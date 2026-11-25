@@ -118,7 +118,7 @@ def conn():
     db.migrate(c)
     with c.cursor() as cur:
         cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; "
-                    "TRUNCATE reel_jobs RESTART IDENTITY")
+                    "TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_events RESTART IDENTITY")
         created = []
         for name, ddl in _PHP_TABLES.items():
             cur.execute("SELECT to_regclass(%s) IS NOT NULL", (name,))
@@ -185,10 +185,13 @@ def _add(conn, media_dir: Path, n: int = 1, caption: str = "Sněmovna zkrátila 
 _uid = iter(range(1, 10_000))
 
 
-def _cb(data: str, chat: int = CHAT, msg_id: int = 1) -> dict:
+def _cb(data: str, chat: int = CHAT, msg_id: int = 1, markup: dict | None = None) -> dict:
+    """Stisk tlačítka; markup = reply_markup zprávy (Telegram ho posílá s každým callback_query)."""
+    message = {"message_id": msg_id, "chat": {"id": chat}}
+    if markup is not None:
+        message["reply_markup"] = markup
     return {"update_id": next(_uid), "callback_query": {
-        "id": f"cb{next(_uid)}", "from": {"id": chat}, "data": data,
-        "message": {"message_id": msg_id, "chat": {"id": chat}}}}
+        "id": f"cb{next(_uid)}", "from": {"id": chat}, "data": data, "message": message}}
 
 
 def _msg(text: str, chat: int = CHAT, reply_to: int | None = None) -> dict:
@@ -531,6 +534,19 @@ def test_telegram_api_chyba_je_telegram_error(api):
     with pytest.raises(TelegramError) as ei:
         tg.send_text(CHAT, "x")
     assert "chat not found" in str(ei.value) and "SECRET" not in str(ei.value)
+
+
+def test_edit_text_payload(api):
+    from hlidac_reels.telegram import Telegram
+    tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
+    tg.edit_text(CHAT, 77, "Zadání č. 5: model")
+    tg.edit_text(CHAT, 77, "Zadání č. 5: render", [("Zrušit", "jobcancel:5")])
+    assert api.methods() == ["editMessageText", "editMessageText"]
+    bare, with_buttons = api.sent("editMessageText")
+    assert bare == {"chat_id": CHAT, "message_id": 77, "text": "Zadání č. 5: model",
+                    "link_preview_options": {"is_disabled": True}, "reply_markup": {"inline_keyboard": []}}
+    assert with_buttons["text"] == "Zadání č. 5: render"
+    assert with_buttons["reply_markup"] == {"inline_keyboard": [[{"text": "Zrušit", "callback_data": "jobcancel:5"}]]}
 
 
 @pytest.mark.parametrize("missing", ["META_SYSTEM_TOKEN", "REELS_TELEGRAM_TOKEN", "REELS_TELEGRAM_CHAT_ID",
@@ -2455,6 +2471,14 @@ def _tisk(conn, ct: int) -> None:
     conn.commit()
 
 
+def _accepted_text(conn, job_id: int, what: str, queue_line: str = "1. ve frontě",
+                   worker: str = "PC zatím nebylo vidět") -> str:
+    """Odpověď na nové zadání (stavová zpráva): hlavička, řádek přijetí s časem události accepted, stav PC."""
+    from hlidac_reels import events
+    (ev,) = [e for e in events.for_job(conn, job_id) if e.kind == "accepted"]
+    return f"Zadání #{job_id} · {what}\n{ev.hm} přijato, {queue_line}\n{worker}"
+
+
 @pg
 def test_video_zalozi_ulohu(bot, conn, api):
     from hlidac_reels import jobs
@@ -2462,7 +2486,7 @@ def test_video_zalozi_ulohu(bot, conn, api):
     bot.handle(_msg("/video 221 pn"))
     (job,) = jobs.pending(conn)
     assert (job.source, job.ct, job.format_hint) == ("manual", 221, "pn")
-    assert api.texts()[-1] == f"Zadání #{job.id} (tisk 221) je 1. ve frontě."
+    assert api.texts()[-1] == _accepted_text(conn, job.id, "tisk 221")
 
 
 @pg
@@ -2513,7 +2537,7 @@ def test_vyber(bot, conn, api):
     bot.handle(_msg("/vyber"))
     (job,) = jobs.pending(conn)
     assert job.source == "auto_pick" and job.ct is None
-    assert api.texts()[-1] == f"Zadání #{job.id} (automatický výběr) je 1. ve frontě."
+    assert api.texts()[-1] == _accepted_text(conn, job.id, "automatický výběr")
 
 
 @pg
@@ -2540,11 +2564,12 @@ def test_hlaseni_chyby_jednou(bot, conn, api):
     conn.commit()
     t = [1000.0]
     bot.clock = lambda: t[0]
-    bot.maybe_notify_failed()
+    # selhání bez události (jako inbox._fail_job): bot ho převezme (adopt_failed) a ohlásí jednou
+    bot.maybe_events()
     msgs = [x for x in api.texts() if "se nepodařilo" in x]
     assert msgs == [f"Zadání #{j} (tisk 221) se nepodařilo: " + "x" * 300]
     t[0] += 61
-    bot.maybe_notify_failed()
+    bot.maybe_events()
     assert len([x for x in api.texts() if "se nepodařilo" in x]) == 1
 
 
@@ -2585,7 +2610,7 @@ def test_pn_jedno(bot, conn, api):
     bot.handle(_msg("/pn 2376"))
     (job,) = jobs.pending(conn)
     assert (job.source, job.ct, job.focus_pn, job.format_hint) == ("manual", 300, [2376], None)
-    assert api.texts()[-1] == f"Zadání #{job.id} (PN 2376, tisk 300) je 1. ve frontě."
+    assert api.texts()[-1] == _accepted_text(conn, job.id, "PN 2376, tisk 300")
 
 
 @pg
@@ -2606,7 +2631,7 @@ def test_pn_jedno_video_z_vic(bot, conn, api):
     bot.handle(_msg("/pn 2378+2376"))
     (job,) = jobs.pending(conn)
     assert job.focus_pn == [2376, 2378] and job.ct == 300
-    assert api.texts()[-1] == f"Zadání #{job.id} (PN 2376+2378, tisk 300) je 1. ve frontě."
+    assert api.texts()[-1] == _accepted_text(conn, job.id, "PN 2376+2378, tisk 300")
     # mezery kolem + nevadí; jiná množina je nová úloha
     bot.handle(_msg("/pn 2376 + 2377"))
     assert [j.focus_pn for j in jobs.pending(conn)] == [[2376, 2378], [2376, 2377]]
@@ -2770,7 +2795,7 @@ def test_pn_v_napovede_fronte_a_chybe(bot, conn, api):
     with conn.cursor() as cur:
         cur.execute("UPDATE reel_jobs SET status='failed', error='x' WHERE id=%s", (j,))
     conn.commit()
-    bot.maybe_notify_failed()
+    bot.maybe_events()
     assert api.texts()[-1] == f"Zadání #{j} (PN 2376+2377, tisk 300) se nepodařilo: x"
 
 
@@ -3234,8 +3259,8 @@ def test_pn_s_autopilotem_zalozi_priznak(bot, conn, api):
     bot.handle(_msg("/pn 2376"))
     (job,) = jobs.pending(conn)
     assert job.autopilot is True
-    assert api.texts()[-1] == (f"Zadání #{job.id} (PN 2376, tisk 300) je 1. ve frontě. "
-                               "Autopilot: po vygenerování se rovnou zveřejní.")
+    assert api.texts()[-1] == (_accepted_text(conn, job.id, "PN 2376, tisk 300")
+                               + "\nAutopilot: po vygenerování se rovnou zveřejní.")
 
 
 @pg
@@ -3461,7 +3486,7 @@ def test_texty_nevzniklych_variant():
 def test_smycka_vola_autopublish_po_ingestu(conn, api, meta, media_dir, monkeypatch):
     bot = _make_bot(conn, api, meta, media_dir)
     order = []
-    for name in ("maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_notify_failed"):
+    for name in ("maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_events"):
         monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
 
     class Stop(Exception):
@@ -3475,7 +3500,7 @@ def test_smycka_vola_autopublish_po_ingestu(conn, api, meta, media_dir, monkeypa
     monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
     with pytest.raises(SystemExit):
         bot.loop(sleep=lambda s: None)
-    assert order == ["maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_notify_failed"]
+    assert order == ["maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_events"]
 
 
 @pg
@@ -3873,3 +3898,994 @@ def test_necekana_chyba_odeslani_odlozi_jednotku(bot, conn, api, media_dir, monk
     assert _statuses(conn, b) == ["pending", "pending"]
     assert _get(conn, a[0]).status == "queued"
     assert queue.get(conn, a[1]).send_attempts == 1
+
+
+# --- F3: selhání a stav PC z událostí (Task 9) -----------------------------------
+
+def _failed_job(conn, source: str = "manual", ct: int = 221, error: str = "obsah neprošel kontrolou",
+                event: bool = True) -> int:
+    """Úloha ve stavu failed; event=True zapíše i událost jako server (ReelJobs::failedEvent)."""
+    from hlidac_reels import events, jobs
+    j = jobs.add(conn, source=source, ct=ct)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', error=%s, fail_kind='content', finished_at=now() "
+                    "WHERE id=%s", (error, j))
+    conn.commit()
+    if event:
+        events.add(conn, "failed", job_id=j,
+                   detail={"kind": "content", "error": error, "attempts": 1, "env_retries": 0, "stage": "kontrola"},
+                   urgency=events.SUMMARY if source == "fresh" else events.URGENT, dedupe=f"failed:{j}")
+    return j
+
+
+def _notified_at(conn, job_id: int):
+    with conn.cursor() as cur:
+        cur.execute("SELECT notified_at FROM reel_jobs WHERE id=%s", (job_id,))
+        value = cur.fetchone()[0]
+    conn.commit()
+    return value
+
+
+def _event_clock(bot):
+    """Hodiny smyčky bota; tick() je posune o víc než EVENTS_INTERVAL."""
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+
+    def tick():
+        t[0] += 61
+    return tick
+
+
+def test_texty_udalosti():
+    from hlidac_reels import messages as m
+    assert m.failed_text(12, "tisk 221", "x" * 400) == "Zadání #12 (tisk 221) se nepodařilo: " + "x" * 300
+    assert m.failed_buttons(12) == [("Zkusit znovu", "jobretry:12"), ("Zahodit", "jobcancel:12")]
+    head = "PC s generátorem je pozastavené: "
+    tail = ". Zadání ve frontě počkají."
+    assert m.worker_paused_text("limit", None, "15:00") == head + "vyčerpaný limit předplatného (do 15:00)" + tail
+    assert m.worker_paused_text("login", None, None) == head + "Claude Code není přihlášený" + tail
+    assert m.worker_paused_text("mcp", "", None) == head + "nefunguje MCP server" + tail
+    assert m.worker_paused_text("nastroje", "ffmpeg", None) == head + "chybí nástroje (ffmpeg)" + tail
+    assert m.worker_paused_text("env", "y" * 300, "9:05") == head + f"chyba prostředí ({'y' * 200}) (do 9:05)" + tail
+    assert m.WORKER_RESUMED == "PC s generátorem zase generuje."
+    assert m.silent_text(12, "tisk 221", "14:02") == "PC neodpovídá od 14:02, zadání #12 (tisk 221) počká."
+    assert m.outage_text(4, [12, 15], True) == ("Během výpadku: hotové sady: 4; nepovedená zadání: #12, #15; "
+                                                "PC se pozastavilo. /fronta")
+    assert m.outage_text(0, [], True) == "Během výpadku: PC se pozastavilo. /fronta"
+    assert m.outage_text(0, [], False) == ""
+    assert m.outage_buttons(list(range(1, 8))) == [(f"Zkusit znovu #{i}", f"jobretry:{i}") for i in range(1, 6)]
+    assert m.summary_event_line("failed", 7, "tisk 90", "z" * 300) == (
+        "Zadání #7 (tisk 90, automatické) se nepodařilo: " + "z" * 200)
+    assert m.summary_event_line("expired", 8, "tisk 91", "") == "Zadání #8 (tisk 91) vypršelo: 7 dní ve frontě"
+    assert m.summary_event_line("done", 9, "tisk 92", "") is None
+
+
+@pg
+def test_selhani_z_udalosti_s_tlacitky(bot, conn, api):
+    from hlidac_reels import events
+    tick = _event_clock(bot)
+    j = _failed_job(conn)
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"] == f"Zadání #{j} (tisk 221) se nepodařilo: obsah neprošel kontrolou"
+    assert _buttons(body) == [f"jobretry:{j}", f"jobcancel:{j}"]
+    assert _notified_at(conn, j) is not None and events.unsent(conn, events.URGENT) == []
+    tick()
+    bot.maybe_events()
+    assert len(api.sent()) == 1
+    # Zkusit znovu: nová úloha s vlastní stavovou zprávou, zpráva o selhání přijde o tlačítka
+    from hlidac_reels import jobs
+    fail_msg = api.next_id
+    bot.handle(_cb(f"jobretry:{j}", msg_id=fail_msg))
+    (new,) = jobs.pending(conn)
+    assert new.id != j and api.texts()[-1] == _accepted_text(conn, new.id, "tisk 221")
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == fail_msg
+
+
+@pg
+def test_neodeslana_udalost_zastavi_pruchod(bot, conn, api, monkeypatch):
+    from hlidac_reels import events
+    tick = _event_clock(bot)
+    a = _failed_job(conn, ct=221)
+    b = _failed_job(conn, ct=222, error="druhá chyba")
+    tried = []
+    real_send = bot.tg.send_text
+
+    def down(chat_id, text, *args, **kw):
+        tried.append(text)
+        raise httpx.ConnectError("down")
+    monkeypatch.setattr(bot.tg, "send_text", down)
+    bot.maybe_events()
+    # první neodeslaná zpráva ukončí průchod: druhá se nezkouší, obě zůstanou neodeslané
+    assert len(tried) == 1 and api.sent() == []
+    assert _notified_at(conn, a) is None and _notified_at(conn, b) is None
+    assert [e.job_id for e in events.unsent(conn, events.URGENT)] == [a, b]
+    monkeypatch.setattr(bot.tg, "send_text", real_send)
+    tick()
+    bot.maybe_events()
+    assert api.texts() == [f"Zadání #{a} (tisk 221) se nepodařilo: obsah neprošel kontrolou",
+                           f"Zadání #{b} (tisk 222) se nepodařilo: druhá chyba"]
+    assert _notified_at(conn, a) is not None and _notified_at(conn, b) is not None
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 2
+
+
+@pg
+def test_udalost_pri_chybe_telegramu_zustane(bot, conn, api):
+    from hlidac_reels import events
+    tick = _event_clock(bot)
+    j = _failed_job(conn)
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.maybe_events()
+    assert api.sent() == [] and _notified_at(conn, j) is None
+    assert [e.job_id for e in events.unsent(conn, events.URGENT)] == [j]
+    del api.fail["sendMessage"]
+    tick()
+    bot.maybe_events()
+    assert api.texts() == [f"Zadání #{j} (tisk 221) se nepodařilo: obsah neprošel kontrolou"]
+    assert _notified_at(conn, j) is not None
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 1
+
+
+@pg
+def test_odmitnuta_udalost_nezastavi_dalsi(bot, conn, api, monkeypatch, caplog):
+    # Telegram zprávu trvale odmítl (4xx mimo 429): událost se označí jako vyřízená, průchod pokračuje další
+    from hlidac_reels import events
+    from hlidac_reels.telegram import TelegramError
+    tick = _event_clock(bot)
+    a = _failed_job(conn, ct=221)
+    b = _failed_job(conn, ct=222, error="druhá chyba")
+    real_send = bot.tg.send_text
+    tried: list[str] = []
+
+    def failing(*errors):
+        queue_ = list(errors)
+
+        def send(chat_id, text, *args, **kw):
+            tried.append(text)
+            if queue_:
+                raise queue_.pop(0)
+            return real_send(chat_id, text, *args, **kw)
+        return send
+
+    # přechodná chyba (síť, 5xx, 429): nic neodejde ani se neoznačí, průchod skončí u první události
+    for err in (httpx.ConnectError("down"), TelegramError("sendMessage: ConnectError"),
+                TelegramError("sendMessage: HTTP 502: Bad Gateway", status=502),
+                TelegramError("sendMessage: HTTP 429: Too Many Requests", status=429)):
+        tried.clear()
+        monkeypatch.setattr(bot.tg, "send_text", failing(err))
+        tick()
+        bot.maybe_events()
+        assert len(tried) == 1 and api.sent() == [], err
+        assert [e.job_id for e in events.unsent(conn, events.URGENT)] == [a, b]
+        assert _notified_at(conn, a) is None and _notified_at(conn, b) is None
+    # odmítnutí první zprávy: označí se (i notified_at úlohy), druhá odejde ve stejném průchodu
+    tried.clear()
+    monkeypatch.setattr(bot.tg, "send_text", failing(
+        TelegramError(f"sendMessage: HTTP 400: Bad Request: chat bot{TOKEN} nenalezen", status=400)))
+    tick()
+    with caplog.at_level(logging.INFO, logger="hlidac_reels.bot"):
+        bot.maybe_events()
+    assert len(tried) == 2
+    assert api.texts() == [f"Zadání #{b} (tisk 222) se nepodařilo: druhá chyba"]
+    assert events.unsent(conn, events.URGENT) == []
+    assert _notified_at(conn, a) is not None and _notified_at(conn, b) is not None
+    assert "Telegram odmítl" in caplog.text and TOKEN not in caplog.text
+    tick()
+    bot.maybe_events()
+    assert len(tried) == 2  # nic dalšího se nezkouší
+
+
+@pg
+def test_adopce_selhani_z_inboxu(bot, conn, api):
+    from hlidac_reels import events, inbox, jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    inbox._fail_job(conn, j, "varianta 1: chybí video")
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"] == f"Zadání #{j} (tisk 221) se nepodařilo: varianta 1: chybí video"
+    assert _buttons(body) == [f"jobretry:{j}", f"jobcancel:{j}"]
+    assert _notified_at(conn, j) is not None
+    assert [e.dedupe for e in events.for_job(conn, j)] == [f"failed:{j}"]
+
+
+def _notify_old_bot(conn, *job_ids: int) -> None:
+    """Selhání ohlásil starý bot (_notify_failed) během výměny kontejnerů: reel_jobs.notified_at je vyplněné."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET notified_at = now() - interval '1 minute' WHERE id = ANY(%s)",
+                    (list(job_ids),))
+    conn.commit()
+
+
+@pg
+def test_selhani_ohlasene_starym_botem(bot, conn, api, monkeypatch):
+    from hlidac_reels import events, hlidani
+    old = _failed_job(conn, ct=221)
+    new = _failed_job(conn, ct=222, error="druhá chyba")
+    auto = _failed_job(conn, source="fresh", ct=90, error="automatická chyba")
+    _notify_old_bot(conn, old, auto)
+    bot.maybe_events()
+    # ohlášené selhání se jen označí, žádná druhá zpráva
+    assert api.texts() == [f"Zadání #{new} (tisk 222) se nepodařilo: druhá chyba"]
+    assert events.unsent(conn, events.URGENT) == []
+    # denní souhrn: ohlášené automatické selhání bez řádku, událost se označí
+    monkeypatch.setattr(hlidani, "summary_due", lambda c, now: "2026-11-25")
+    monkeypatch.setattr(hlidani, "summary_text", lambda c, now: "Stav dat")
+    bot._daily_summary()
+    assert api.texts()[-1] == "Stav dat"
+    assert events.unsent(conn, events.SUMMARY) == []
+
+
+@pg
+def test_selhani_ohlasene_starym_botem_po_vypadku(bot, conn, api):
+    from hlidac_reels import events
+    old = _failed_job(conn, ct=221)
+    new = _failed_job(conn, ct=222)
+    _notify_old_bot(conn, old)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours'")
+    conn.commit()
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"] == f"Během výpadku: nepovedená zadání: #{new}. /fronta"
+    assert _buttons(body) == [f"jobretry:{new}"]
+    assert events.unsent(conn, events.URGENT) == []
+
+
+@pg
+def test_slouceni_po_vypadku(bot, conn, api):
+    from hlidac_reels import events
+    j = _failed_job(conn)
+    events.add(conn, "worker_paused", detail={"reason": "limit", "detail": None, "until_hm": "15:00"},
+               urgency=events.URGENT)
+    events.add(conn, "worker_resumed", urgency=events.URGENT)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours' WHERE kind = 'failed'")
+    conn.commit()
+    # hotové sady: dvě v okně výpadku, jedna před ním se nepočítá
+    for hours in (8, 5, 1):
+        eid = events.add(conn, "done", job_id=900 + hours)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reel_events SET at = now() - make_interval(hours => %s) WHERE id = %s", (hours, eid))
+        conn.commit()
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"].startswith("Během výpadku:") and "hotové sady: 2" in body["text"]
+    assert body["text"] == f"Během výpadku: hotové sady: 2; nepovedená zadání: #{j}; PC se pozastavilo. /fronta"
+    assert _buttons(body) == [f"jobretry:{j}"]
+    assert events.unsent(conn, events.URGENT) == [] and _notified_at(conn, j) is not None
+
+
+@pg
+def test_slouceni_po_vypadku_pri_chybe_telegramu_zustane(bot, conn, api):
+    from hlidac_reels import events
+    tick = _event_clock(bot)
+    _failed_job(conn)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours'")
+    conn.commit()
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot.maybe_events()
+    assert len(events.unsent(conn, events.URGENT)) == 1
+    del api.fail["sendMessage"]
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 1 and api.texts()[0].startswith("Během výpadku:")
+    assert events.unsent(conn, events.URGENT) == []
+
+
+@pg
+def test_automaticke_selhani_jen_v_souhrnu(bot, conn, api, monkeypatch):
+    from hlidac_reels import events, hlidani, jobs
+    j = _failed_job(conn, source="fresh", ct=90, error="žádná platná varianta")
+    gone = jobs.add(conn, source="fresh", ct=91)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='expired', finished_at=now() WHERE id=%s", (gone,))
+    conn.commit()
+    events.add(conn, "expired", job_id=gone, urgency=events.SUMMARY, dedupe=f"expired:{gone}")
+    bot.maybe_events()
+    assert api.sent() == []
+    monkeypatch.setattr(hlidani, "summary_due", lambda c, now: "2026-11-25")
+    monkeypatch.setattr(hlidani, "summary_text", lambda c, now: "Stav dat")
+    # souhrn neodešel: události zůstanou na další pokus
+    api.fail["sendMessage"] = httpx.ConnectError("down")
+    bot._daily_summary()
+    assert len(events.unsent(conn, events.SUMMARY)) == 2 and _notified_at(conn, j) is None
+    del api.fail["sendMessage"]
+    bot._daily_summary()
+    text = api.texts()[-1]
+    assert text.startswith("Stav dat\n\nFronta Reels:\n")
+    assert f"- Zadání #{j} (tisk 90, automatické) se nepodařilo: žádná platná varianta" in text
+    assert f"- Zadání #{gone} (tisk 91) vypršelo: 7 dní ve frontě" in text
+    assert events.unsent(conn, events.SUMMARY) == [] and _notified_at(conn, j) is not None
+
+
+@pg
+def test_pozastaveni_workeru_jedna_zprava(bot, conn, api):
+    from hlidac_reels import events
+    tick = _event_clock(bot)
+    # naléhavá událost druhu bez textu se označí bez zprávy
+    events.add(conn, "claimed", job_id=5, urgency=events.URGENT)
+    events.add(conn, "worker_paused", detail={"reason": "limit", "detail": None, "until_hm": "15:00"},
+               urgency=events.URGENT)
+    bot.maybe_events()
+    events.add(conn, "worker_resumed", urgency=events.URGENT)
+    tick()
+    bot.maybe_events()
+    tick()
+    bot.maybe_events()
+    assert api.texts() == ["PC s generátorem je pozastavené: vyčerpaný limit předplatného (do 15:00). "
+                           "Zadání ve frontě počkají.",
+                           "PC s generátorem zase generuje."]
+    assert events.unsent(conn, events.URGENT) == []
+
+
+@pg
+def test_pc_neodpovida(bot, conn, api):
+    from hlidac_reels import events, jobs, queue
+    tick = _event_clock(bot)
+    j = jobs.add(conn, source="manual", ct=221)
+    f = jobs.add(conn, source="fresh", ct=90)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', "
+                    "claimed_at='2026-11-24 12:00:00+00', stage='render', stage_at='2026-11-24 12:30:00+00', "
+                    "lease_until=now() - interval '1 minute' WHERE id IN (%s, %s)", (j, f))
+    conn.commit()
+    # poslední známka života = nejpozdější z vydání, fáze a heartbeat workeru (14:45 v Praze)
+    queue.set_state(conn, "worker_seen_at", "2026-11-24T13:45:00+00:00")
+    bot.maybe_events()
+    assert api.texts() == [f"PC neodpovídá od 14:45, zadání #{j} (tisk 221) počká."]
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 1
+    # automatická úloha: jen do historie, žádná zpráva
+    (silent_f,) = [e for e in events.for_job(conn, f) if e.kind == "silent"]
+    assert silent_f.urgency == events.HISTORY and silent_f.detail == {"since_hm": "14:45"}
+    # nové vydání téže úlohy, které zase zmlkne: nová zpráva (dedupe silent:<id>:<čas vydání>)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET attempts=2, claimed_at='2026-11-24 14:50:00+00', "
+                    "stage_at='2026-11-24 15:00:00+00' WHERE id=%s", (j,))
+    conn.commit()
+    tick()
+    bot.maybe_events()
+    assert api.texts()[-1] == f"PC neodpovídá od 16:00, zadání #{j} (tisk 221) počká."
+    assert len(api.texts()) == 2
+
+
+@pg
+def test_pc_neodpovida_po_navratu_env(bot, conn, api):
+    # návrat env/infra sníží attempts: další vydání má stejné číslo pokusu, ale jiný čas vydání = nová zpráva
+    from hlidac_reels import jobs
+    tick = _event_clock(bot)
+    j = jobs.add(conn, source="manual", ct=221)
+
+    def issue(claimed_at: str) -> None:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', claimed_at=%s, "
+                        "lease_until=now() - interval '1 minute' WHERE id=%s", (claimed_at, j))
+        conn.commit()
+
+    issue("2026-11-24 12:00:00+00")
+    bot.maybe_events()
+    assert api.texts() == [f"PC neodpovídá od 13:00, zadání #{j} (tisk 221) počká."]
+    # fail env (PC se ozvalo): zpět do fronty, pokus se vrací
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='queued', attempts=0, claim_token=NULL, claimed_at=NULL, "
+                    "lease_until=NULL, fail_kind='env', env_retries=1 WHERE id=%s", (j,))
+    conn.commit()
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 1
+    issue("2026-11-24 14:00:00+00")
+    tick()
+    bot.maybe_events()
+    assert api.texts() == [f"PC neodpovídá od 13:00, zadání #{j} (tisk 221) počká.",
+                           f"PC neodpovídá od 15:00, zadání #{j} (tisk 221) počká."]
+    tick()
+    bot.maybe_events()
+    assert len(api.texts()) == 2
+
+
+@pg
+def test_udalosti_bez_tokenu(bot, conn, api):
+    from hlidac_reels import events
+    j = _failed_job(conn, error=f"HTTP 401 pro bot{TOKEN}/sendVideo")
+    events.add(conn, "worker_paused", detail={"reason": "env", "detail": f"token {TOKEN}", "until_hm": None},
+               urgency=events.URGENT)
+    bot.maybe_events()
+    texts = api.texts()
+    assert texts == [f"Zadání #{j} (tisk 221) se nepodařilo: HTTP 401 pro bot***/sendVideo",
+                     "PC s generátorem je pozastavené: chyba prostředí (token ***). Zadání ve frontě počkají."]
+    assert all(TOKEN not in t for t in texts)
+
+
+# --- F3: stavová zpráva zadání, Zrušit, Zkusit znovu, /zrus (Task 10) -------------
+
+def test_texty_stavove_zpravy():
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    from hlidac_reels.events import Event
+    at = datetime(2026, 11, 25, 13, 2, tzinfo=timezone.utc)
+
+    def ev(event_kind, hm="14:02", **detail):
+        return Event(1, at, event_kind, 12, None, None, detail, None, 0, None, hm)
+
+    history = [ev("accepted", position=2, before=[11]), ev("claimed", "14:16", attempt=1),
+               ev("stage", "14:16", stage="model", note=None), ev("stage", "14:24", stage="kontrola", note="v2"),
+               ev("stage", "14:25", stage="oprava", note="varianta 2 přetéká"),
+               ev("stage", "14:27", stage="render", note="2/3"), ev("stage", "14:29", stage="upload", note=None),
+               ev("done", "14:31", variants=3, skipped=[])]
+    assert m.job_status_text(12, "PN 2376, tisk 300", history) == (
+        "Zadání #12 · PN 2376, tisk 300\n"
+        "14:02 přijato, 2. ve frontě (před ním #11)\n"
+        "14:16 generuje se\n"
+        "14:16 model píše varianty\n"
+        "14:24 kontrola\n"
+        "14:25 oprava: varianta 2 přetéká\n"
+        "14:27 render: 2/3\n"
+        "14:29 nahrávání videí\n"
+        "14:31 hotovo: 3 varianty")
+    pc = "PC naposledy: 25. 11. 14:05"
+
+    def lines(*evs):
+        return m.job_status_text(5, "tisk 221", list(evs), pc).split("\n")[1:]
+
+    assert lines(ev("accepted", position=1, before=[]), ev("claimed", "9:00", attempt=2),
+                 ev("waiting", "9:01", reason="ai_title", next_hm="9:31"),
+                 ev("requeued", "9:02", kind="env", error="e", next_hm="9:17", env_retries=1),
+                 ev("requeued", "9:03", kind="infra", error="e", next_hm="9:18", env_retries=2),
+                 ev("requeued", "9:04", kind="content", error="e", next_hm="9:04", env_retries=0),
+                 ev("lease", "9:05", next_hm="9:15", attempts=1, stage="render"),
+                 ev("silent", "9:06", since_hm="8:50"), ev("done", "9:07", variants=1, skipped=[{"n": 2}]),
+                 ev("worker_paused", "9:08")) == [
+        "14:02 přijato, 1. ve frontě", "9:00 generuje se (2. pokus)",
+        "9:01 čeká na rozbor AI (další pokus 9:31)", "9:02 chyba prostředí, další pokus 9:17",
+        "9:03 chyba sítě, další pokus 9:18", "9:04 chyba, další pokus 9:04",
+        "9:05 PC nedokončilo vydání, další pokus 9:15", "9:06 PC neodpovídá", "9:07 hotovo: 1 varianta", pc]
+    assert lines(ev("done", "9:07", variants=2), ev("failed", "9:08", kind="content", error="x" * 300),
+                 ev("cancelled", "9:09"), ev("expired", "9:10")) == [
+        "9:07 hotovo: 2 varianty", "9:08 nepodařilo se: " + "x" * 200, "9:09 zrušeno",
+        "9:10 vypršelo (7 dní ve frontě)", pc]
+    assert lines(ev("accepted", position=6, before=[1, 2, 3, 4, 5]))[0] == (
+        "14:02 přijato, 6. ve frontě (před ním #1, #2, #3 a 2 další)")
+    # dlouhá historie: zkrátí se od nejstarších řádků, hlavička a stav PC zůstanou
+    long = m.job_status_text(5, "tisk 221", [ev("failed", error="y" * 200)] * 40, "PC")
+    assert len(long) <= m.STATUS_TEXT_LIMIT and long.startswith("Zadání #5 · tisk 221\n…\n") and long.endswith("\nPC")
+    assert long.split("\n")[-2] == "14:02 nepodařilo se: " + "y" * 200  # poslední událost zůstane celá
+    assert m.job_cancel_buttons(5) == [("Zrušit", "jobcancel:5")]
+
+
+def test_text_requeued_bez_casu():
+    # fail bez druhu (starý worker, varianta čeká jen na render) vrací úlohu bez odkladu: server next_hm neposílá
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    from hlidac_reels.events import Event
+    at = datetime(2026, 11, 25, 13, 2, tzinfo=timezone.utc)
+    history = [Event(1, at, "requeued", 5, None, None, {"kind": "content", "error": "pád", "env_retries": 0},
+                     None, 0, None, "14:05"),
+               Event(2, at, "requeued", 5, None, None, {"kind": "env", "error": "e", "next_hm": ""}, None, 0, None,
+                     "14:06")]
+    assert m.job_status_text(5, "tisk 221", history).split("\n")[1:] == [
+        "14:05 chyba, zkusí se znovu", "14:06 chyba prostředí, zkusí se znovu"]
+
+
+def _claim(conn, job_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', claimed_at=now() "
+                    "WHERE id=%s", (job_id,))
+    conn.commit()
+
+
+def _finish(conn, job_id: int, status: str = "done") -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status=%s, finished_at=now(), claim_token=NULL WHERE id=%s",
+                    (status, job_id))
+    conn.commit()
+
+
+@pg
+def test_stavova_zprava_se_prepisuje(bot, conn, api):
+    from hlidac_reels import events, jobs, queue
+    tick = _event_clock(bot)
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221"))
+    (job,) = jobs.pending(conn)
+    (body,) = api.sent()
+    assert body["text"] == _accepted_text(conn, job.id, "tisk 221")
+    assert _buttons(body) == [f"jobcancel:{job.id}"]
+    msg_id = api.next_id
+    assert jobs.get(conn, job.id).status_msg_id == msg_id
+    # bez nové události se zpráva nepřepisuje
+    bot.maybe_events()
+    assert "editMessageText" not in api.methods()
+    _claim(conn, job.id)
+    events.add(conn, "claimed", job_id=job.id, detail={"attempt": 1})
+    events.add(conn, "stage", job_id=job.id, detail={"stage": "render", "note": "2/3"})
+    tick()
+    bot.maybe_events()
+    (edit,) = api.sent("editMessageText")
+    assert (edit["chat_id"], edit["message_id"]) == (CHAT, msg_id)
+    lines = edit["text"].split("\n")
+    assert lines[0] == f"Zadání #{job.id} · tisk 221" and " přijato, 1. ve frontě" in lines[1]
+    assert lines[2].endswith(" generuje se") and lines[3].endswith(" render: 2/3")
+    assert lines[4] == "PC zatím nebylo vidět" and len(lines) == 5
+    assert _buttons(edit) == [f"jobcancel:{job.id}"]
+    tick()
+    bot.maybe_events()
+    assert len(api.sent("editMessageText")) == 1
+    # hotovo: poslední přepis bez tlačítek a bez stavu PC, potom se zpráva nesleduje
+    _finish(conn, job.id)
+    events.add(conn, "done", job_id=job.id, detail={"variants": 2, "skipped": []})
+    tick()
+    bot.maybe_events()
+    last = api.sent("editMessageText")[-1]
+    assert last["text"].endswith(" hotovo: 2 varianty") and _buttons(last) == []
+    assert queue.get_state(conn, f"job_status:{job.id}") is None
+    tick()
+    bot.maybe_events()
+    assert len(api.sent("editMessageText")) == 2 and len(api.sent()) == 1
+
+
+@pg
+def test_stavova_zprava_ceka_na_konecnou_udalost(bot, conn, api):
+    # server zapíše stav a událost dvěma příkazy: konečný stav bez konečné události se ještě sleduje
+    from hlidac_reels import events, jobs, queue
+    tick = _event_clock(bot)
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221"))
+    (job,) = jobs.pending(conn)
+    _claim(conn, job.id)
+    events.add(conn, "stage", job_id=job.id, detail={"stage": "upload", "note": None})
+    _finish(conn, job.id)
+    bot.maybe_events()
+    assert _buttons(api.sent("editMessageText")[-1]) == []
+    assert queue.get_state(conn, f"job_status:{job.id}") is not None
+    events.add(conn, "done", job_id=job.id, detail={"variants": 1, "skipped": []})
+    tick()
+    bot.maybe_events()
+    assert api.sent("editMessageText")[-1]["text"].endswith(" hotovo: 1 varianta")
+    assert queue.get_state(conn, f"job_status:{job.id}") is None
+    # konečná událost nepřišla ani po STATUS_FINAL_WAIT: zpráva se přestane sledovat bez přepisu
+    _tisk(conn, 222)
+    bot.handle(_msg("/video 222"))
+    (other,) = jobs.pending(conn)
+    with conn.cursor() as cur:
+        # notified_at: selhání bez události by jinak převzal adopt_failed (a vykreslilo by se)
+        cur.execute("UPDATE reel_jobs SET status='failed', notified_at=now(), "
+                    "finished_at=now() - interval '11 minutes' WHERE id=%s", (other.id,))
+    conn.commit()
+    edits = len(api.sent("editMessageText"))
+    tick()
+    bot.maybe_events()
+    assert len(api.sent("editMessageText")) == edits
+    assert queue.get_state(conn, f"job_status:{other.id}") is None
+
+
+@pg
+def test_automaticka_uloha_bez_prubehu(bot, conn, api):
+    from hlidac_reels import events, jobs
+    from hlidac_reels.messages import AUTOPILOT_QUEUED
+    tick = _event_clock(bot)
+    _pn(conn, 2376, 300)
+    fresh = jobs.add(conn, source="fresh", ct=90)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (auto,) = [j for j in jobs.pending(conn) if j.autopilot]
+    body = api.sent()[-1]
+    # odpověď na zadání s autopilotem má Zrušit, ale průběh se nepřepisuje
+    assert body["text"].endswith("\n" + AUTOPILOT_QUEUED) and _buttons(body) == [f"jobcancel:{auto.id}"]
+    assert jobs.get(conn, auto.id).status_msg_id is None
+    sent = len(api.sent())
+    for j in (fresh, auto.id):
+        _claim(conn, j)
+        events.add(conn, "claimed", job_id=j, detail={"attempt": 1})
+        events.add(conn, "stage", job_id=j, detail={"stage": "model", "note": None})
+    bot.maybe_events()
+    tick()
+    bot.maybe_events()
+    assert "editMessageText" not in api.methods() and len(api.sent()) == sent
+
+
+@pg
+def test_stavova_zprava_smazana_nebo_stejna(bot, conn, api):
+    from hlidac_reels import events, jobs, queue
+    tick = _event_clock(bot)
+    _tisk(conn, 221)
+    _tisk(conn, 222)
+    bot.handle(_msg("/video 221"))
+    bot.handle(_msg("/video 222"))
+    a, b = [j.id for j in jobs.pending(conn)]
+    assert api.texts()[-1] == _accepted_text(conn, b, "tisk 222", f"2. ve frontě (před ním #{a})")
+    accepted = queue.get_state(conn, f"job_status:{a}")
+    # přechodná chyba (síť): zkusí se v dalším cyklu
+    api.fail["editMessageText"] = httpx.ConnectError("down")
+    claimed = events.add(conn, "claimed", job_id=a, detail={"attempt": 1})
+    bot.maybe_events()
+    assert queue.get_state(conn, f"job_status:{a}") == accepted
+    # Telegram přepis odmítne (zpráva smazaná nebo „message is not modified“): vyřízené
+    api.fail["editMessageText"] = httpx.Response(
+        400, json={"ok": False, "description": "Bad Request: message is not modified"})
+    tick()
+    bot.maybe_events()
+    assert queue.get_state(conn, f"job_status:{a}") == str(claimed)
+    del api.fail["editMessageText"]
+    tick()
+    bot.maybe_events()
+    assert api.sent("editMessageText") == []
+    # jiná úloha se přepisuje dál
+    events.add(conn, "claimed", job_id=b, detail={"attempt": 1})
+    tick()
+    bot.maybe_events()
+    assert [e["message_id"] for e in api.sent("editMessageText")] == [jobs.get(conn, b).status_msg_id]
+
+
+@pg
+def test_zrusit_tlacitkem_a_prikazem(bot, conn, api):
+    from hlidac_reels import events, jobs, queue
+    tick = _event_clock(bot)
+    _tisk(conn, 221)
+    bot.handle(_msg("/video 221"))
+    (job,) = jobs.pending(conn)
+    msg_id = jobs.get(conn, job.id).status_msg_id
+    bot.handle(_cb(f"jobcancel:{job.id}", msg_id=msg_id))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zrušeno."
+    assert jobs.get(conn, job.id).status == "cancelled"
+    assert [e.kind for e in events.for_job(conn, job.id)] == ["accepted", "cancelled"]
+    # stavová zpráva se přepíše hned (zrušeno, bez tlačítek) a dál se nesleduje
+    (edit,) = api.sent("editMessageText")
+    assert edit["message_id"] == msg_id and edit["text"].endswith(" zrušeno") and _buttons(edit) == []
+    assert queue.get_state(conn, f"job_status:{job.id}") is None
+    tick()
+    bot.maybe_events()
+    assert len(api.sent("editMessageText")) == 1
+    # Zahodit u zprávy o selhání: úloha se nemění, zpráva jen přijde o tlačítka
+    from hlidac_reels import messages
+    from hlidac_reels.telegram import _markup
+    j = _failed_job(conn, ct=222)
+    bot.handle(_cb(f"jobcancel:{j}", msg_id=77, markup=_markup(messages.failed_buttons(j))))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zahozeno."
+    assert jobs.get(conn, j).status == "failed" and events.for_job(conn, j)[-1].kind == "failed"
+    assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": 77,
+                                                       "reply_markup": {"inline_keyboard": []}}
+    # Zrušit u odpovědi na zadání s autopilotem (bez stavové zprávy): odpověď přijde o tlačítko
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (auto,) = jobs.pending(conn)
+    reply = api.next_id
+    bot.handle(_cb(f"jobcancel:{auto.id}", msg_id=reply))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zrušeno."
+    assert jobs.get(conn, auto.id).status == "cancelled"
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == reply
+    # /zrus
+    _tisk(conn, 223)
+    bot.handle(_msg("/video 223"))
+    (k,) = [j.id for j in jobs.pending(conn)]
+    bot.handle(_msg(f"/zrus {k}"))
+    assert api.texts()[-1] == f"Zadání #{k} zrušeno."
+    assert jobs.get(conn, k).status == "cancelled" and events.for_job(conn, k)[-1].kind == "cancelled"
+    assert api.sent("editMessageText")[-1]["text"].endswith(" zrušeno")
+    d = jobs.add(conn, source="manual", ct=224)
+    _finish(conn, d)
+    bot.handle(_msg(f"/zrus {d}"))
+    assert api.texts()[-1] == f"Zadání #{d} už neběží (stav done)."
+    bot.handle(_msg(f"/zrus {k}"))
+    assert api.texts()[-1] == f"Zadání #{k} už neběží (stav cancelled)."
+    for text in ("/zrus", "/zrus abc", f"/zrus {d} {k}", "/zrus ²", "/zrus 99999999999999999999"):
+        bot.handle(_msg(text))
+        assert api.texts()[-1] == "Použití: /zrus <číslo zadání>", text
+    bot.handle(_msg("/zrus 999"))
+    assert api.texts()[-1] == "Zadání #999 neznám."
+    bot.handle(_msg("/neco"))
+    assert "/zrus <číslo zadání>" in api.texts()[-1]
+
+
+@pg
+def test_zrusit_u_skonceneho_zadani(bot, conn, api):
+    # Zrušit u odpovědi na zadání s autopilotem (stavová zpráva u něj není) po skončení úlohy: „už neběží“
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (auto,) = jobs.pending(conn)
+    reply = api.sent()[-1]
+    assert _buttons(reply) == [f"jobcancel:{auto.id}"]
+    reply_id = api.next_id
+    _finish(conn, auto.id)
+    sent = len(api.sent())
+    bot.handle(_cb(f"jobcancel:{auto.id}", msg_id=reply_id, markup=reply["reply_markup"]))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zadání už neběží."
+    assert jobs.get(conn, auto.id).status == "done" and len(api.sent()) == sent
+    assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": reply_id,
+                                                       "reply_markup": {"inline_keyboard": []}}
+    # zpráva o selhání (Zkusit znovu + Zahodit): Zahodit dál „Zahozeno.“
+    j = _failed_job(conn, ct=222)
+    bot.maybe_events()
+    fail = api.sent()[-1]
+    assert _buttons(fail) == [f"jobretry:{j}", f"jobcancel:{j}"]
+    fail_id = api.next_id
+    bot.handle(_cb(f"jobcancel:{j}", msg_id=fail_id, markup=fail["reply_markup"]))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zahozeno."
+    assert jobs.get(conn, j).status == "failed"
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == fail_id
+
+
+@pg
+def test_zkusit_znovu(bot, conn, api):
+    from hlidac_reels import jobs, queue
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (old,) = jobs.pending(conn)
+    assert old.autopilot is True
+    # aktivní úloha se neopakuje
+    bot.handle(_cb(f"jobretry:{old.id}", msg_id=50))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zadání ještě běží."
+    assert len(jobs.pending(conn)) == 1
+    _finish(conn, old.id, "failed")
+    bot.handle(_cb(f"jobretry:{old.id}", msg_id=50))
+    (new,) = jobs.pending(conn)
+    assert new.id != old.id
+    assert (new.source, new.ct, new.focus_pn, new.autopilot) == ("manual", 300, [2376], False)
+    # odpověď jako u nového zadání: stavová zpráva se Zrušit; stará zpráva přijde o tlačítka
+    body = api.sent()[-1]
+    assert body["text"] == _accepted_text(conn, new.id, "PN 2376, tisk 300")
+    assert _buttons(body) == [f"jobcancel:{new.id}"]
+    assert jobs.get(conn, new.id).status_msg_id == api.next_id
+    assert queue.get_state(conn, f"job_status:{new.id}") is not None
+    assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": 50,
+                                                       "reply_markup": {"inline_keyboard": []}}
+    # druhý stisk téhož Zkusit znovu (tlačítko se nepodařilo odebrat): jen odpověď tlačítkem, nic nového
+    sent = len(api.sent())
+    bot.handle(_cb(f"jobretry:{old.id}", msg_id=51))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání už se opakuje (#{new.id})."
+    assert len(api.sent()) == sent and [j.id for j in jobs.pending(conn)] == [new.id]
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == 51
+    # stejné zadání už ve frontě je (jiná úloha se stejným PN): odpověď tlačítkem, bez zprávy v chatu
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_jobs (source, ct, focus_pn, status, finished_at) "
+                    "VALUES ('manual', 300, '{2376}', 'failed', now()) RETURNING id")
+        other = cur.fetchone()[0]
+    conn.commit()
+    bot.handle(_cb(f"jobretry:{other}", msg_id=53))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "PN 2376 (tisk 300) už ve frontě je."
+    assert len(api.sent()) == sent and [j.id for j in jobs.pending(conn)] == [new.id]
+    assert queue.get_state(conn, f"job_retried:{other}") is None  # opakovat půjde, až fronta zadání pustí
+    # hotová úloha: není co opakovat
+    _finish(conn, new.id)
+    bot.handle(_cb(f"jobretry:{new.id}", msg_id=52))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Není co opakovat."
+    assert jobs.pending(conn) == []
+
+
+@pg
+def test_zkusit_znovu_auto_pick_jednou(bot, conn, api):
+    # auto_pick bez tisku unikátní index nehlídá: dvojí stisk založí jen jedno zadání
+    from hlidac_reels import jobs
+    a = jobs.add(conn, source="auto_pick")
+    _finish(conn, a, "failed")
+    bot.handle(_cb(f"jobretry:{a}", msg_id=60))
+    bot.handle(_cb(f"jobretry:{a}", msg_id=60))
+    (new,) = jobs.pending(conn)
+    assert (new.source, new.ct) == ("auto_pick", None)
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání už se opakuje (#{new.id})."
+    assert api.texts() == [_accepted_text(conn, new.id, "automatický výběr")]  # jen stavová zpráva nového
+
+
+@pg
+def test_zkusit_znovu_ze_zpravy_po_vypadku(bot, conn, api):
+    # zpráva po výpadku má Zkusit znovu u více zadání: stisk odebere jen tlačítko stisknutého zadání
+    from hlidac_reels import jobs
+    tick = _event_clock(bot)
+    a = _failed_job(conn, ct=221)
+    b = _failed_job(conn, ct=222)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours'")
+    conn.commit()
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"].startswith("Během výpadku:") and _buttons(body) == [f"jobretry:{a}", f"jobretry:{b}"]
+    outage = api.next_id
+    bot.handle(_cb(f"jobretry:{a}", msg_id=outage, markup=body["reply_markup"]))
+    assert [(j.ct, j.source) for j in jobs.pending(conn)] == [(221, "manual")]
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == outage
+    assert edit["reply_markup"] == {"inline_keyboard": [[{"text": f"Zkusit znovu #{b}",
+                                                          "callback_data": f"jobretry:{b}"}]]}
+    # poslední tlačítko: zpráva přijde o všechna
+    bot.handle(_cb(f"jobretry:{b}", msg_id=outage, markup=edit["reply_markup"]))
+    assert sorted(j.ct for j in jobs.pending(conn)) == [221, 222]
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == outage and _buttons(edit) == []
+    # zpráva o selhání jednoho zadání (Zkusit znovu + Zahodit): po Zkusit znovu bez tlačítek jako dřív
+    c = _failed_job(conn, ct=223)
+    tick()
+    bot.maybe_events()
+    fail = api.sent()[-1]
+    assert _buttons(fail) == [f"jobretry:{c}", f"jobcancel:{c}"]
+    fail_msg = api.next_id
+    bot.handle(_cb(f"jobretry:{c}", msg_id=fail_msg, markup=fail["reply_markup"]))
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == fail_msg and _buttons(edit) == []
+
+
+# --- F3: /fronta s úlohami a stavem PC, zpráva sady s nevzniklými variantami (Task 11) ---
+
+def test_texty_fronty_uloh():
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import messages as m
+    from hlidac_reels.jobs import Job
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    later = now + timedelta(minutes=20)
+
+    def job(i, status="queued", **kw):
+        base = dict(id=i, source="manual", ct=100 + i, format_hint=None, reason_keys=None, status=status,
+                    claimed_at=None, claim_token=None, attempts=0, error=None, set_id=None,
+                    created_at=now - timedelta(hours=3), finished_at=None, notified_at=None)
+        return Job(**{**base, **kw})
+
+    claimed = dict(status="claimed", claimed_at=now - timedelta(minutes=30), lease_until=now + timedelta(minutes=10))
+    active = [
+        job(1, **claimed, stage="model", stage_at=now - timedelta(minutes=3)),
+        job(2, **claimed, stage="upload", stage_at=now - timedelta(minutes=1)),
+        # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min
+        job(3, status="claimed", claimed_at=now - timedelta(minutes=70)),
+        job(4, status="claimed", claimed_at=now - timedelta(minutes=20), lease_until=now - timedelta(minutes=1),
+            stage="oprava", stage_at=now - timedelta(minutes=16)),
+        job(5, status="claimed", claimed_at=now - timedelta(minutes=50)),
+        job(6, not_before=later, wait_reason="env"),
+        job(7, not_before=later, wait_reason="limit"),
+        job(8, not_before=later, wait_reason="retry"),
+        job(9, not_before=later, wait_reason=None),
+        job(10, not_before=later, wait_reason="ai_title", focus_pn=[2378]),
+        # po návratu do fronty zůstává wait_reason a fail_kind; rozhoduje not_before
+        job(11, not_before=now - timedelta(minutes=1), wait_reason="env", fail_kind="env"),
+        job(12, fail_kind="content"),
+    ]
+    text = m.queue_overview([], active, "PC", now, hm=lambda t: f"{t.hour + 1}:{t.minute:02d}")
+    assert text.split("\n\n") == [
+        "Generuje se\n"
+        "#1 tisk 101 · model píše varianty · 3 min\n"
+        "#2 tisk 102 · nahrávání videí · 1 min\n"
+        "#3 tisk 103 · generuje se · 1 h · PC neodpovídá\n"
+        "#4 tisk 104 · oprava · 16 min · PC neodpovídá\n"
+        "#5 tisk 105 · generuje se · 50 min",
+        "Ve frontě zadání (7)\n"
+        "#11 tisk 111 · 1. v pořadí\n"
+        "#12 tisk 112 · 2. v pořadí\n"
+        "#6 tisk 106 · čeká po chybě prostředí (další pokus 14:20)\n"
+        "#7 tisk 107 · čeká na limit předplatného (další pokus 14:20)\n"
+        "#8 tisk 108 · další pokus 14:20\n"
+        "#9 tisk 109 · další pokus 14:20\n"
+        "#10 PN 2378 · čeká na rozbor AI (další pokus 14:20)",
+        "PC"]
+    # stav PC: kdy bylo vidět a stav generátoru z worker_state (důvody jako ve zprávě o pozastavení)
+    assert m.worker_line(None) == "PC zatím nebylo vidět"
+    assert m.worker_line("25. 11. 14:05") == "PC naposledy: 25. 11. 14:05"
+    assert m.worker_line("25. 11. 14:05", {"state": "running"}) == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": "login"}) == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno: Claude Code není přihlášený")
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": "nastroje", "detail": "ffmpeg"}, "15:30") == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno: chybí nástroje (ffmpeg) (do 15:30)")
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": None}) == "PC naposledy: 1. 1. 9:00 · pozastaveno"
+    # nečitelný stav: jen kdy bylo PC vidět, nečitelný důvod se vynechá
+    assert m.worker_line("1. 1. 9:00", {"state": "paused", "reason": ["x"], "detail": 5}) == (
+        "PC naposledy: 1. 1. 9:00 · pozastaveno")
+    assert m.worker_line("1. 1. 9:00", {"state": 5}) == "PC naposledy: 1. 1. 9:00"
+
+
+@pg
+def test_fronta_ulohy_a_pc(bot, conn, api):
+    import json
+    from datetime import datetime, timezone
+    from hlidac_reels import jobs, queue
+    now = datetime(2026, 11, 25, 13, 40, tzinfo=timezone.utc)  # 14:40 v Praze
+    bot.now = lambda: now
+    gen = jobs.add(conn, source="manual", ct=300)
+    silent = jobs.add(conn, source="manual", ct=311)
+    wait = jobs.add(conn, source="manual", ct=221)
+    ready = jobs.add(conn, source="manual", ct=90)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', "
+                    "claimed_at=%(now)s - interval '30 minutes', stage='render', "
+                    "stage_at=%(now)s - interval '5 minutes', lease_until=%(now)s + interval '10 minutes' "
+                    "WHERE id=%(id)s", {"now": now, "id": gen})
+        # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min
+        cur.execute("UPDATE reel_jobs SET status='claimed', attempts=1, claim_token='t', "
+                    "claimed_at=%(now)s - interval '2 hours' WHERE id=%(id)s", {"now": now, "id": silent})
+        cur.execute("UPDATE reel_jobs SET not_before=%(now)s + interval '20 minutes', wait_reason='ai_title' "
+                    "WHERE id=%(id)s", {"now": now, "id": wait})
+    conn.commit()
+    queue.set_state(conn, "worker_seen_at", "2026-11-25T14:05:00+01:00")
+    queue.set_state(conn, "worker_state", json.dumps({
+        "state": "paused", "reason": "limit", "detail": None, "until": "2026-11-25T15:30:00+01:00",
+        "at": "2026-11-25T14:05:00+01:00"}))
+    bot.handle(_msg("/fronta"))
+    text = api.texts()[-1]
+    assert (f"Generuje se\n#{gen} tisk 300 · render · 5 min\n"
+            f"#{silent} tisk 311 · generuje se · 2 h · PC neodpovídá") in text
+    assert (f"Ve frontě zadání (2)\n#{ready} tisk 90 · 1. v pořadí\n"
+            f"#{wait} tisk 221 · čeká na rozbor AI (další pokus 15:00)") in text
+    assert text.splitlines()[-1] == (
+        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného (do 15:30)")
+    # stavová zpráva nového zadání má stejný řádek stavu PC
+    _tisk(conn, 400)
+    bot.handle(_msg("/video 400"))
+    assert api.texts()[-1].splitlines()[-1] == text.splitlines()[-1]
+    queue.set_state(conn, "worker_state", json.dumps({"state": "running", "reason": None, "detail": None,
+                                                      "until": None, "at": "2026-11-25T14:05:00+01:00"}))
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    # nečitelný worker_state: jen kdy bylo PC vidět; nečitelné until se vynechá
+    queue.set_state(conn, "worker_state", "{")
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05"
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": 5}))
+    bot.handle(_msg("/fronta"))
+    assert api.texts()[-1].splitlines()[-1] == (
+        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného")
+
+
+@pg
+def test_skipped_z_detailu_ulohy(conn):
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    for detail, expected in [
+        (None, []), ("{", []), ('{"variants": [1]}', []), ('{"skipped": "x"}', []), ("[1]", []),
+        ('{"skipped": [1, {"n": 2, "format": "pn", "errors": ["e"]}]}', [{"n": 2, "format": "pn", "errors": ["e"]}]),
+    ]:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reel_jobs SET detail=%s WHERE id=%s", (detail, j))
+        conn.commit()
+        assert jobs.skipped(conn, j) == expected, detail
+    assert jobs.skipped(conn, j + 100) == []
+
+
+@pg
+def test_zprava_sady_s_vynechanymi(bot, conn, api, media_dir):
+    import json
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    detail = {"variants": [1, 2], "skipped": [{"n": 3, "format": "zmena", "errors": ["text PN zatím není v datech"]}]}
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done', finished_at=now(), detail=%s WHERE id=%s",
+                    (json.dumps(detail, ensure_ascii=False), j))
+    conn.commit()
+    ids = _add_set(conn, media_dir, j, n=2, source="manual")
+    bot.send_next()
+    body = _set_msg(api)
+    assert body["text"].startswith(f"Sada #{j} · tisk 221")
+    assert body["text"].endswith("\n\nVarianta 3 (zmena) nevznikla: text PN zatím není v datech")
+    # Poslat tlačítka znovu: zpráva sady znovu i s nevzniklou variantou
+    _fronta_resend(bot, api)
+    assert _set_msg(api)["text"].endswith("\n\nVarianta 3 (zmena) nevznikla: text PN zatím není v datech")
+    # zpráva „zbývá varianta“ po rozhodnutí o vybrané variantě ji neopakuje
+    set_msg = _set_msg_id(conn, ids[0])
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=set_msg))
+    api.calls.clear()
+    bot.handle(_cb(f"no:{ids[1]}"))
+    (rem,) = _remaining(api)
+    assert f"Sada #{j}: zbývá varianta 1." in rem["text"] and "nevznikla" not in rem["text"]
+
+
+def test_texty_sady_s_vynechanymi():
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import TEXT_LIMIT, set_text
+    from hlidac_reels.queue import Reel
+    now = datetime.now(timezone.utc)
+    items = [Reel(id=11 + v, source="manual", ct=221, format="v2", video_path="x", video_sha256=str(v),
+                  caption="x" * 5000, status="pending", telegram_video_msg_id=None, telegram_msg_id=None,
+                  ig_container_id=None, ig_media_id=None, ig_permalink=None, fb_video_id=None,
+                  fb_permalink=None, public_token=None, error=None, attempts=0, created_at=now,
+                  sent_at=None, decided_at=None, published_at=None, threads_container_id=None,
+                  threads_media_id=None, threads_permalink=None, video_landscape_path=None,
+                  video_landscape_sha256=None, telegram_landscape_msg_id=None,
+                  telegram_landscape_sha256=None, set_id=5, variant=v, template="template_v2") for v in (1, 2)]
+    skipped = [{"n": 3, "format": "zmena", "errors": ["e" * 400]}]
+    # dlouhé popisky se zkrátí, řádek nevzniklé varianty zůstane celý na konci
+    text = set_text(items, skipped=skipped)
+    assert len(text) <= TEXT_LIMIT and text.endswith("\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
+    assert set_text(items, skipped=[]) == set_text(items)

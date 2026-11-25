@@ -5,26 +5,54 @@ result. Video na šířku 16:9 se nahraje před videem na výšku: server, kter�
 ignoruje), ho tak přepíše videem na výšku a sada projde bez šířky. Chyba šířky variantu nevyřadí. Bez úlohy nebo při chybě sítě čeká 5 minut. Vždy jen jedna úloha a jedna instance (zámek root/worker.lock),
 naplánovaná úloha při přihlášení a ruční spuštění se tak nepotkají.
 
-Chyba prostředí (EnvError: vyčerpaný limit předplatného, odhlášení) úlohu nahlásí jako chybu a worker se pozastaví
-s odstupy PAUSE_STEPS; další úlohu vezme až po úspěšné sondě (krátký claude -p). Bez nástrojů (claude, Chromium,
-ffmpeg/ffprobe, konfigurace MCP) úlohy nebere vůbec. Výpadek sítě nebo 5xx při nahrávání se opakuje (RETRY_DELAYS).
+Chyba prostředí (EnvError: vyčerpaný limit předplatného, odhlášení) úlohu nahlásí jako chybu a worker se pozastaví;
+další úlohu vezme až po úspěšné sondě (krátký claude -p). Důvod pozastavení určí pause_reason() podle vzorů
+PAUSE_PATTERNS (limit, login, mcp, jinak env). První odstup: když hláška uvádí čas obnovení limitu (epocha za
+svislítkem, ISO čas s pásmem, „resets 3pm“ v místním čase PC), čeká do něj (pause_wait, 60 s až MAX_RESET_WAIT_S),
+jinak PAUSE_STEPS[0]; po neúspěšné sondě další kroky PAUSE_STEPS. Bez nástrojů (claude, Chromium, ffmpeg/ffprobe,
+konfigurace MCP) úlohy nebere vůbec. Výpadek sítě nebo 5xx při nahrávání se opakuje (RETRY_DELAYS).
+
+Stav workeru: každý průchod smyčky pošle heartbeat se stavem {"state": "running"}, pozastavený worker
+{"state": "paused", "reason", "detail" (text chyby bez cest k PC, nejvýš 200 znaků), "until" (konec odstupu, ISO
+s pásmem)}, bez nástrojů {"state": "paused", "reason": "nastroje", "detail": seznam}. Po úspěšné sondě pošle running
+hned, ještě před claim. Server stav ukládá do reel_state.worker_state.
+
+Průběh: během úlohy běží vlákno Progress a posílá serveru `progress` hned po startu, při každé změně fáze
+(model, kontrola, oprava, render, upload) a každých PROGRESS_S s; server tím prodlužuje vydání o 15 min.
+409 na progress = úlohu zrušil uživatel nebo vydání propadlo a úloha odešla jinému vydání: generování skončí
+na nejbližší kontrole (před během modelu nebo renderem, běžící claude -p doběhne), nic se nenahraje, fail se
+nevolá a práce zůstane ve složce (příští vydání téže úlohy pokračuje ze state.json). 400 = starší server
+progress nezná: worker ho přestane posílat a pracuje dál (vydání pak platí 60 min od claim).
+
+Druh chyby ve fail: 0 platných variant = content (timeout, když vypršel poslední běh claude -p); když ale některá
+platná varianta čeká jen na render (GenResult.unrendered), bez druhu: další vydání ji vyrenderuje. 400, 413
+a 422 při nahrávání nebo result (server odmítl data) = content; 5xx nebo výpadek sítě po opakováních a ostatní
+4xx (403 Cloudflare, 404, 429) = infra (zpět do fronty za RETRY_INFRA_S), chyba prostředí = env (zpět do fronty,
+pokus se vrací); ostatní výjimky bez druhu (server: dnešní chování). Po přijatém result se vlákno Progress hned
+zastaví, ať tik po skončené úloze nedostane 409.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from collections import deque
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .api import ApiError, ReelsApi
 from .claude import DEFAULT_MODEL, EnvError, _bin, parse_output
-from .generate import MIN_OK, generate
+from .generate import MIN_OK, Cancelled, generate
 
 log = logging.getLogger("hlidac_reels.worker")
 
@@ -37,8 +65,87 @@ PAUSE_STEPS = (900, 3600, 10800)  # s: odstupy po chybě prostředí; poslední 
 PROBE_TIMEOUT_S = 120
 PROBE_PROMPT = "odpověz OK"
 RETRY_DELAYS = (60, 300, 900)  # s: opakování nahrávání a result při výpadku sítě nebo 5xx
+PROGRESS_S = 120  # s: opakování progress bez změny fáze (server po hlášení drží vydání 15 min)
+RETRY_INFRA_S = 900  # s: odklad úlohy po chybě infra (síť, 5xx i po opakováních, 4xx mimo CONTENT_STATUSES)
+# HTTP kódy, kterými server odmítá data úlohy (vadné tělo, velké video, neplatná sada): chyba content, konečná
+CONTENT_STATUSES = frozenset({400, 413, 422})
+MIN_RESET_WAIT_S = 60  # s: nejkratší čekání do obnovení limitu (čas těsně před chvílí nebo za pár sekund)
+MAX_RESET_WAIT_S = 21600  # s: nejdelší čekání do obnovení limitu (6 h, pak stejně sonda)
+STATE_DETAIL_LIMIT = 200  # znaků popisu stavu v heartbeat (server delší ořízne)
+
+# Důvod pozastavení podle hlášky claude -p: první skupina, jejíž vzor se najde (bez ohledu na velikost písmen),
+# jinak "env". Nové hlášky stačí doplnit sem. Čísla a „log in“ s hranicí slova (PID, epocha, „catalog index“),
+# „usage“ bez „Usage Policy“ (odmítnutí požadavku není limit).
+PAUSE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("limit", (r"limit", r"usage(?! polic)", r"quota", r"rate.?limit", r"too many requests", r"\b429\b")),
+    ("login", (r"\blog ?in", r"logged out", r"authenticat", r"\b401\b", r"credential", r"oauth")),
+    ("mcp", (r"\bmcp\b",)),
+)
+
+# čas obnovení limitu v hlášce: epocha za svislítkem, ISO čas s pásmem, hodina („resets 3pm“, „resets at 9:30 am“)
+_RESET_EPOCH_RE = re.compile(r"\|\s*(\d{9,11})(?!\d)")
+_RESET_ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})(?![\d:])")
+_RESET_CLOCK_RE = re.compile(r"\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 
 _chromium_path: str | None = None  # nalezené Chromium Playwrightu (driver se pak už nespouští)
+
+
+def _local_now() -> datetime:
+    """Místní čas PC s časovým pásmem (čas obnovení limitu, until v heartbeat)."""
+    return datetime.now().astimezone()
+
+
+def pause_reason(text: str) -> str:
+    """Důvod pozastavení po chybě prostředí: limit, login, mcp (PAUSE_PATTERNS), jinak env."""
+    text = text or ""
+    for reason, patterns in PAUSE_PATTERNS:
+        if any(re.search(p, text, re.IGNORECASE) for p in patterns):
+            return reason
+    return "env"
+
+
+def _clock_reset(m: re.Match, now: datetime) -> datetime | None:
+    """„resets 3pm“ / „resets at 9:30 am“ / „resets 17:45“: nejbližší budoucí výskyt v časovém pásmu now."""
+    hour, minute, ampm = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+    if ampm:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if ampm == "pm" else 0)
+    elif hour > 23:
+        return None
+    if minute > 59:
+        return None
+    at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return at if at > now else at + timedelta(days=1)
+
+
+def reset_at(text: str, now: datetime) -> datetime | None:
+    """Čas obnovení limitu z hlášky claude -p; None = hláška ho neuvádí, je nečitelný nebo v minulosti.
+
+    Pořadí: epocha za svislítkem („Claude AI usage limit reached|1764000000“), ISO čas s pásmem, hodina
+    („resets 3pm“, „resets at 9:30 am“) v časovém pásmu `now` (místní čas PC). Rozhoduje první nalezený tvar.
+    """
+    text = text or ""
+    try:
+        if m := _RESET_EPOCH_RE.search(text):
+            at = datetime.fromtimestamp(int(m.group(1)), now.tzinfo)
+        elif m := _RESET_ISO_RE.search(text):
+            at = datetime.fromisoformat(m.group(0))
+        elif m := _RESET_CLOCK_RE.search(text):
+            at = _clock_reset(m, now)
+        else:
+            return None
+        return at if at is not None and at > now else None
+    except (ValueError, OverflowError, OSError, TypeError):  # nečitelné datum, mimo rozsah, naivní now proti pásmu
+        return None
+
+
+def pause_wait(text: str, now: datetime, step: int) -> int:
+    """Odstup pozastaveného workeru v s: do obnovení limitu (60 s až MAX_RESET_WAIT_S), jinak krok PAUSE_STEPS."""
+    at = reset_at(text, now)
+    if at is not None:
+        return max(MIN_RESET_WAIT_S, min(MAX_RESET_WAIT_S, math.ceil((at - now).total_seconds())))
+    return PAUSE_STEPS[min(max(step, 0), len(PAUSE_STEPS) - 1)]
 
 
 def _chromium_ok() -> bool:
@@ -144,11 +251,105 @@ def clean_error(text: str, root: Path) -> str:
     return text.strip()[:ERROR_LIMIT] or "neznámá chyba"
 
 
-def _report_fail(api, job_id: int, claim_token: str, error: str, root: Path) -> bool:
+class Progress:
+    """Pomocné vlákno úlohy: posílá serveru progress (prodloužení vydání a fáze práce).
+
+    Pošle hned po startu, potom každou změnu fáze ze set() v pořadí (fronta, žádná změna se neztratí ani nesloučí)
+    a bez změny každých `interval` s znovu poslední fázi. 409 = úloha zrušena nebo vydání propadlo: nastaví
+    `cancelled` a skončí. 400 = starší server akci nezná: `unsupported`, skončí, úloha běží dál bez průběhu.
+    Jiná chyba (síť, 5xx) jen varování, další pokus po intervalu. Konec bloku with vlákno zastaví a počká na něj,
+    stop() totéž dřív (po přijatém result).
+    """
+
+    def __init__(self, api, job_id: int, claim_token: str, interval: float = PROGRESS_S):
+        self.api = api
+        self.job_id = job_id
+        self.claim_token = claim_token
+        self.interval = interval
+        self.cancelled = threading.Event()
+        self.unsupported = False
+        self._changes: deque[tuple[str, str | None]] = deque()
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stop = False
+        self._thread = threading.Thread(target=self._loop, name=f"reels-progress-{job_id}", daemon=True)
+
+    def __enter__(self) -> Progress:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+
+    def stop(self) -> None:
+        """Zastaví vlákno a počká, až dokončí rozeslaný progress; opakované volání nic nemění."""
+        with self._lock:
+            self._stop = True
+        self._wake.set()
+        self._thread.join()
+
+    def set(self, stage: str, note: str | None = None) -> None:
+        """Nová fáze práce: zařadí ji do fronty a vlákno hned probudí."""
+        with self._lock:
+            self._changes.append((stage, note))
+        self._wake.set()
+
+    def _loop(self) -> None:
+        stage: str | None = None
+        note: str | None = None
+        while True:
+            with self._lock:
+                if self._stop:
+                    return
+            if not self._send(stage, note):
+                return
+            change = self._next()
+            if change is False:
+                return
+            if change is not None:
+                stage, note = change
+
+    def _next(self) -> tuple[str, str | None] | bool | None:
+        """Počká na změnu fáze nebo na interval: (fáze, poznámka), None = znovu poslední, False = konec."""
+        deadline = time.monotonic() + self.interval
+        while True:
+            with self._lock:  # pravdu má fronta, událost jen probouzí (set() mezi wait a clear se neztratí)
+                if self._stop:
+                    return False
+                if self._changes:
+                    return self._changes.popleft()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            self._wake.wait(remaining)
+            self._wake.clear()
+
+    def _send(self, stage: str | None, note: str | None) -> bool:
+        """Jeden progress; False = vlákno končí (409 zrušeno nebo propadlo, 400 starší server)."""
+        try:
+            self.api.progress(self.job_id, self.claim_token, stage, note)
+        except ApiError as e:
+            if e.status == 409:
+                log.info("úloha %s: server progress odmítl (409): %s", self.job_id, e.snippet)
+                self.cancelled.set()
+                return False
+            if e.status == 400:
+                self.unsupported = True
+                log.warning("úloha %s: server progress neumí (starší verze), pokračuji bez průběhu", self.job_id)
+                return False
+            log.warning("úloha %s: progress selhal: %s", self.job_id, e)
+        except Exception as e:  # noqa: BLE001 — výpadek sítě ani jiná chyba průběhu úlohu nezastaví
+            log.warning("úloha %s: progress selhal (%s: %s)", self.job_id, type(e).__name__, e)
+        return True
+
+
+def _report_fail(api, job_id: int, claim_token: str, error: str, root: Path, kind: str | None = None,
+                 retry_after_s: int | None = None, reason: str | None = None) -> bool:
+    """Nahlásí chybu úlohy s druhem (kind None = starý význam: server ji počítá jako content)."""
     error = clean_error(error, root)
-    log.warning("úloha %s: chyba – %s", job_id, error)
+    log.warning("úloha %s: chyba (%s) – %s", job_id, kind or "bez druhu", error)
     try:
-        status = api.fail(job_id, claim_token, error)
+        status = api.fail(job_id, claim_token, error, kind=kind, retry_after_s=retry_after_s, reason=reason)
         log.info("úloha %s: chyba nahlášena, stav %s", job_id, status)
     except ApiError as e:
         if e.status == 409:
@@ -185,12 +386,22 @@ def _upload_landscape(api, job_id: int, claim: str, v, sleep=time.sleep) -> None
         log.warning("úloha %s: server video na šířku nepřijal (starší verze), varianta %s jen na výšku", job_id, v.n)
 
 
+def _gone(job_id: int) -> bool:
+    """Úloha už workeru nepatří (409 na progress): nic se nenahraje, fail se nevolá, práce zůstane ve složce."""
+    log.warning("úloha %s: zrušena nebo propadla (409), práce zůstává ve složce", job_id)
+    return False
+
+
 def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generate=generate,
-            sleep=time.sleep) -> bool:
+            sleep=time.sleep, now: Callable[[], datetime] = _local_now) -> bool:
     """Zpracuje jednu vydanou úlohu; True, když server sadu přijal.
 
-    Chybu prostředí (EnvError) nahlásí serveru jako chybu úlohy (do F3 stojí jeden pokus) a vyhodí dál:
-    smyčka se podle ní pozastaví. `sleep` čeká mezi opakováními nahrávání.
+    Po celou dobu běží vlákno Progress (fáze ze generate() přes on_stage, před nahráváním „upload“). Když server
+    progress odmítne (409), generate() skončí na nejbližší kontrole (Cancelled) nebo doběhne; potom ani před
+    žádným dalším nahráním se nic nenahraje, fail se nevolá a práce zůstane ve složce pro příští vydání.
+    Chybu prostředí (EnvError) nahlásí jako env s důvodem pause_reason() a odkladem pause_wait() (úloha se vrátí
+    do fronty po stejném odstupu, jaký čeká worker) a vyhodí dál: smyčka se podle ní pozastaví. `sleep` čeká mezi
+    opakováními nahrávání, `now` dává místní čas pro čas obnovení limitu.
     """
     root = Path(root)
     try:
@@ -205,99 +416,156 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
     workdir = root / str(job_id)
     log.info("úloha %s: tisk %s%s (%s), generuji", job_id, job.get("ct"),
              f", PN {job['focus_pn']}" if job.get("focus_pn") else "", job.get("source"))
-    try:
-        res = generate(ct=int(job["ct"]), card_v2=job["card_v2"], reason_keys=list(job.get("reason_keys") or []),
-                       has_amendments=bool(job.get("has_amendments")), out=workdir, mcp_config=Path(mcp_config),
-                       model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S,
-                       published=list(job.get("published") or []),
-                       # video k vybraným PN (/pn); starší server pole neposílá = celý tisk
-                       focus_pn=[int(n) for n in job.get("focus_pn") or []] or None,
-                       focus_info=list(job.get("focus_pn_info") or []),
-                       # úloha autopilota: jen 2 varianty (v2 + v3 pn); starší server pole neposílá
-                       autopilot=job.get("autopilot") is True)
-        good = []
-        for v in res.variants:
-            if not (v.ok and v.video):
-                continue
-            size = Path(v.video).stat().st_size
-            if size > MAX_VIDEO_BYTES:
-                # server by video odmítl (413) a celá sada by padla: varianta vypadne jako nepovedená
-                v.errors = [*v.errors, f"video má {size / 1024 / 1024:.1f} MB, limit je 30 MB"]
-                log.warning("úloha %s: video %s je větší než 30 MB, vynechávám", job_id, v.n)
-                continue
-            good.append(v)
-        if not res.ok or len(good) < MIN_OK:
-            detail = "; ".join(f"{v.n}: {', '.join(v.errors) or 'bez videa'}" for v in res.variants
-                               if v not in good)
-            return _report_fail(api, job_id, claim,
-                                f"málo platných variant ({len(good)}/{len(res.variants)}): {detail}", root)
-        variants = []
-        for v in good:
-            card = json.loads((workdir / f"variant-{v.n}" / "card.json").read_text(encoding="utf-8"))
-            variants.append({"n": v.n, "template": v.template,
-                             # template_v2 formát nemá (inbox jiný než null odmítne), template_v3 ho nese
-                             "format": v.format if v.template == "template_v3" else None,
-                             "caption": v.caption, "card": card})
-        for v in good:
-            for w in v.warnings:
-                log.warning("úloha %s: varianta %s: %s", job_id, v.n, w)
-            _upload_landscape(api, job_id, claim, v, sleep)
-            _retrying(lambda: api.upload_video(job_id, claim, v.n, v.video),
-                      f"úloha {job_id}: nahrání videa {v.n}", sleep)
-            log.info("úloha %s: video %s nahráno", job_id, v.n)
-        # nevzniklé varianty: bot je ohlásí u sady, server je uloží jako poznámku úlohy
-        skipped = [{"n": v.n, "format": v.format,
-                    "errors": [clean_error(e, root) for e in v.errors] or ["bez videa"]}
-                   for v in res.variants if v not in good]
-        _retrying(lambda: api.result(job_id, claim, variants, skipped), f"úloha {job_id}: odeslání sady", sleep)
-    except EnvError as e:
-        _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root)
-        raise
-    except ApiError as e:
-        if e.status == 409:
-            # úloha mezitím vypršela a vrátila se do fronty: server ji už vydal znovu, fail by nic nezměnil
-            log.warning("úloha %s: už nepatří workeru (409), končím bez hlášení", job_id)
-            return False
-        return _report_fail(api, job_id, claim, f"API {e}", root)
-    except Exception as e:  # noqa: BLE001 — každá chyba úlohy se hlásí serveru, worker běží dál
-        return _report_fail(api, job_id, claim, f"{type(e).__name__}: {e}", root)
+    uploading = False  # výpadek sítě při nahrávání (i po opakováních) = infra, jinde chyba bez druhu
+    with Progress(api, job_id, claim, interval=PROGRESS_S) as prog:
+        gone = prog.cancelled.is_set
+        try:
+            res = generate(ct=int(job["ct"]), card_v2=job["card_v2"],
+                           reason_keys=list(job.get("reason_keys") or []),
+                           has_amendments=bool(job.get("has_amendments")), out=workdir, mcp_config=Path(mcp_config),
+                           model=model, hint=job.get("format_hint"), render=True, timeout_s=TIMEOUT_S,
+                           published=list(job.get("published") or []),
+                           # video k vybraným PN (/pn); starší server pole neposílá = celý tisk
+                           focus_pn=[int(n) for n in job.get("focus_pn") or []] or None,
+                           focus_info=list(job.get("focus_pn_info") or []),
+                           # úloha autopilota: jen 2 varianty (v2 + v3 pn); starší server pole neposílá
+                           autopilot=job.get("autopilot") is True,
+                           on_stage=prog.set, should_stop=gone)
+            if gone():
+                return _gone(job_id)
+            good = []
+            for v in res.variants:
+                if not (v.ok and v.video):
+                    continue
+                size = Path(v.video).stat().st_size
+                if size > MAX_VIDEO_BYTES:
+                    # server by video odmítl (413) a celá sada by padla: varianta vypadne jako nepovedená
+                    v.errors = [*v.errors, f"video má {size / 1024 / 1024:.1f} MB, limit je 30 MB"]
+                    log.warning("úloha %s: video %s je větší než 30 MB, vynechávám", job_id, v.n)
+                    continue
+                good.append(v)
+            if not res.ok or len(good) < MIN_OK:
+                detail = "; ".join(f"{v.n}: {', '.join(v.errors) or 'bez videa'}" for v in res.variants
+                                   if v not in good)
+                if res.unrendered:
+                    # platná varianta čeká jen na render (selhal Chromium nebo ffmpeg): bez druhu = další pokus,
+                    # který ji vyrenderuje bez běhu modelu; content by úlohu hned uzavřel
+                    kind = None
+                else:  # obojí konečné: vypršel poslední běh claude -p = timeout, jinak obsah
+                    kind = "timeout" if res.runs and res.runs[-1].get("timed_out") else "content"
+                return _report_fail(api, job_id, claim,
+                                    f"málo platných variant ({len(good)}/{len(res.variants)}): {detail}", root,
+                                    kind=kind)
+            variants = []
+            for v in good:
+                card = json.loads((workdir / f"variant-{v.n}" / "card.json").read_text(encoding="utf-8"))
+                variants.append({"n": v.n, "template": v.template,
+                                 # template_v2 formát nemá (inbox jiný než null odmítne), template_v3 ho nese
+                                 "format": v.format if v.template == "template_v3" else None,
+                                 "caption": v.caption, "card": card})
+            prog.set("upload")
+            uploading = True
+            for v in good:
+                for w in v.warnings:
+                    log.warning("úloha %s: varianta %s: %s", job_id, v.n, w)
+                if gone():
+                    return _gone(job_id)
+                _upload_landscape(api, job_id, claim, v, sleep)
+                if gone():
+                    return _gone(job_id)
+                _retrying(lambda: api.upload_video(job_id, claim, v.n, v.video),
+                          f"úloha {job_id}: nahrání videa {v.n}", sleep)
+                log.info("úloha %s: video %s nahráno", job_id, v.n)
+            # nevzniklé varianty: bot je ohlásí u sady, server je uloží jako poznámku úlohy
+            skipped = [{"n": v.n, "format": v.format,
+                        "errors": [clean_error(e, root) for e in v.errors] or ["bez videa"]}
+                       for v in res.variants if v not in good]
+            if gone():
+                return _gone(job_id)
+            _retrying(lambda: api.result(job_id, claim, variants, skipped), f"úloha {job_id}: odeslání sady",
+                      sleep)
+            # sada přijata, úloha je done: další progress by dostal 409 (zavádějící „odmítl“ v logu)
+            prog.stop()
+        except Cancelled:
+            return _gone(job_id)
+        except EnvError as e:
+            if not gone():
+                # důvod a odklad z hlášky bez cest k PC (cesta nesmí důvod ani čas ovlivnit)
+                text = clean_error(e.reason, root)
+                _report_fail(api, job_id, claim, f"prostředí: {e.reason}", root, kind="env",
+                             reason=pause_reason(text), retry_after_s=pause_wait(text, now(), 0))
+            raise
+        except ApiError as e:
+            if e.status == 409:
+                # úloha mezitím vypršela a vrátila se do fronty: server ji už vydal znovu, fail by nic nezměnil
+                log.warning("úloha %s: už nepatří workeru (409), končím bez hlášení", job_id)
+                return False
+            if gone():
+                return _gone(job_id)
+            # server odmítl data (CONTENT_STATUSES) = content; 5xx i po opakováních (RETRY_DELAYS) a ostatní 4xx
+            # (403 kontrola prohlížeče Cloudflare, 404, 429 omezení pokusů) jsou přechodné = infra
+            kind = "content" if e.status in CONTENT_STATUSES else "infra" if e.status >= 400 else None
+            return _report_fail(api, job_id, claim, f"API {e}", root, kind=kind,
+                                retry_after_s=RETRY_INFRA_S if kind == "infra" else None)
+        except Exception as e:  # noqa: BLE001 — každá chyba úlohy se hlásí serveru, worker běží dál
+            if gone():
+                return _gone(job_id)
+            infra = uploading and isinstance(e, OSError)  # URLError i timeout jsou OSError
+            return _report_fail(api, job_id, claim, f"{type(e).__name__}: {e}", root,
+                                kind="infra" if infra else None, retry_after_s=RETRY_INFRA_S if infra else None)
     log.info("úloha %s: sada %s variant odeslána", job_id, len(variants))
     return True
 
 
 def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once: bool = False,
-        probe=None) -> None:
+        probe=None, now: Callable[[], datetime] = _local_now) -> None:
     """Smyčka workeru; once=True = jeden průchod (i s čekáním, když nic není).
 
-    Bez nástrojů (check_tools) úlohy nebere. Po chybě prostředí je pozastavený: před dalším claim počká krok
-    z PAUSE_STEPS a pustí sondu; neúspěch = delší odstup, úspěch = odstup se nuluje a worker bere úlohy.
-    `probe` jde podvrhnout v testech (výchozí = skutečná sonda).
+    Každý průchod pošle heartbeat se stavem workeru (running, paused s důvodem). Bez nástrojů (check_tools)
+    úlohy nebere. Po chybě prostředí je pozastavený: před dalším claim počká odstup a pustí sondu. První odstup
+    je do času obnovení limitu z hlášky (pause_wait), jinak PAUSE_STEPS[0]; neúspěšná sonda = další krok
+    PAUSE_STEPS (čas z hlášky už prošel), úspěch = heartbeat running, odstup se nuluje a worker bere úlohy.
+    `probe` a `now` (místní čas s pásmem) jde podvrhnout v testech (výchozí = skutečná sonda a hodiny PC).
     """
     probe = probe or globals()["probe"]
     pause: int | None = None  # index do PAUSE_STEPS, None = worker není pozastavený
+    paused: dict = {}  # důvod a popis posledního pozastavení po chybě prostředí
+    wait = PAUSE_STEPS[0]  # s: nejbližší odstup pozastaveného workeru
     while True:
         try:
-            api.heartbeat()
             missing = check_tools(mcp_config)
+            if missing:
+                state = {"state": "paused", "reason": "nastroje", "detail": ", ".join(missing)[:STATE_DETAIL_LIMIT]}
+            elif pause is not None:
+                until = now() + timedelta(seconds=wait)
+                state = {"state": "paused", **paused, "until": until.isoformat(timespec="seconds")}
+            else:
+                state = {"state": "running"}
+            api.heartbeat(state)
             if missing:
                 log.error("chybí nástroje, úlohy neberu: %s", ", ".join(missing))
                 sleep(IDLE_S)
-            elif pause is not None and not _resume(pause, model, sleep, probe):
+            elif pause is not None and not _resume(wait, model, sleep, probe):
                 pause = min(pause + 1, len(PAUSE_STEPS) - 1)
+                wait = PAUSE_STEPS[pause]
             else:
                 if pause is not None:
                     log.info("sonda prošla, pozastavení končí")
                     pause = None
+                    api.heartbeat({"state": "running"})  # bot obnovení ohlásí hned, ne až po celé úloze
                 job = api.claim()
                 if job is None:
                     log.debug("žádná úloha")
                     sleep(IDLE_S)
                 elif not process(api, job, root=root, mcp_config=mcp_config, model=model, generate=generate,
-                                 sleep=sleep):
+                                 sleep=sleep, now=now):
                     sleep(FAIL_PAUSE_S)
         except EnvError as e:
+            text = clean_error(e.reason, root)  # bez cest k PC: jde na server a cesta nesmí určit důvod
             pause = 0
-            log.error("chyba prostředí (%s), pozastavuji, sonda za %s s", e.reason, PAUSE_STEPS[0])
+            wait = pause_wait(text, now(), 0)
+            paused = {"reason": pause_reason(text), "detail": text[:STATE_DETAIL_LIMIT]}
+            log.error("chyba prostředí (%s: %s), pozastavuji, sonda za %s s", paused["reason"], text, wait)
         except (ApiError, OSError) as e:  # URLError a timeout jsou OSError
             log.error("API nedostupné: %s", e)
             sleep(IDLE_S)
@@ -308,10 +576,10 @@ def run(api, *, root: Path, mcp_config: Path, model: str, sleep=time.sleep, once
             return
 
 
-def _resume(step: int, model: str, sleep, probe) -> bool:
-    """Pozastavený worker: počká odstup PAUSE_STEPS[step] a pustí sondu; True = může zase brát úlohy."""
-    log.info("pozastaveno po chybě prostředí, čekám %s s, pak sonda", PAUSE_STEPS[step])
-    sleep(PAUSE_STEPS[step])
+def _resume(wait: int, model: str, sleep, probe) -> bool:
+    """Pozastavený worker: počká odstup `wait` s a pustí sondu; True = může zase brát úlohy."""
+    log.info("pozastaveno po chybě prostředí, čekám %s s, pak sonda", wait)
+    sleep(wait)
     ok = probe(model)
     if not ok:
         log.warning("sonda neprošla, pozastavení pokračuje")

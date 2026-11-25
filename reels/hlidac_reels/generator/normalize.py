@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import re
 
-from .validate import CLOSING, caption_authors, has_word
+from .validate import CAPTION_LIMIT, CLOSING, caption_authors, club_before, find_name
 
 # „800 mil. Kč“, „1,5 mld. Kč“, „2 000 mil. Kč“: číslo (tisíce oddělené mezerou, desetinná čárka) + jednotka
 # začínající písmenem a bez číslic; „10 → 4“, „10 z 12“, „4 roky místo 10“ ani samotné „2 000“ se nerozdělí
@@ -152,20 +152,24 @@ def _fix_autori(card: dict, server: dict[int, dict], notes: list[str]) -> None:
 
 
 def _caption_clubs(card: dict, caption: str, notes: list[str]) -> str:
-    """Za první výskyt celého jména autora bez závorky za ním doplní klub, když ho popisek ještě nemá.
+    """Za první výskyt celého jména autora doplní ` (KLUB)`, když za ním závorka není.
 
-    Skloňované jméno („návrh Jana Nováka“) se nenajde a popisek zůstane; chybu s klubem pak vrátí kontrola.
+    Nic nemění, když se celé jméno nenajde (skloňované „návrh Jana Nováka“), když za ním už závorka je (správný
+    klub, nebo chyba pro kontrolu), když klub stojí těsně před jménem („za ANO Jan Novák“) a když by popisek
+    přesáhl limit. Chybu klubu pak vrátí kontrola (`validate._club_error`).
     """
     for author in caption_authors(card):
         jmeno, klub = author["jmeno"], author["klub"]
-        if not klub or has_word(caption, klub):
+        found = find_name(caption, jmeno) if klub else None
+        if found is None:
             continue
-        # celé jméno: ne část delšího slova ani dvojitého příjmení („Novák-Dlouhý“), bez závorky za ním
-        name = r"\s+".join(re.escape(part) for part in jmeno.split())
-        m = re.search(rf"(?<![\w-]){name}(?![\w-])(?!\s*\()", caption)
-        if not m:
+        start, end, paren = found
+        if paren is not None or club_before(caption, start, klub):
             continue
-        caption = f"{caption[:m.end()]} ({klub}){caption[m.end():]}"
+        new = f"{caption[:end]} ({klub}){caption[end:]}"
+        if len(new) > CAPTION_LIMIT:
+            continue
+        caption = new
         notes.append(f"popisek: za „{jmeno}“ doplněn klub ({klub})")
     return caption
 

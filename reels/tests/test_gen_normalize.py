@@ -7,7 +7,7 @@ from pathlib import Path
 
 from conftest import load_fixture
 from hlidac_reels.generator.normalize import normalize
-from hlidac_reels.generator.validate import CLOSING, validate_variant
+from hlidac_reels.generator.validate import CAPTION_LIMIT, CLOSING, validate_variant
 
 CAPTION = "Popisek k tisku.\n\n" + CLOSING + "\n\n#snemovna"
 
@@ -250,8 +250,15 @@ def test_popisek_doplni_klub():
 def test_popisek_doplni_klub_za_prvni_vyskyt_bez_zavorky():
     card = _pn_card()
     info = [dict(_info()[0], klub="ODS")]
-    _, cap, _ = _pn(card, _caption("Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec tvrdí opak."), info)
-    assert cap == _caption("Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec (ODS) tvrdí opak.")
+    # rozhoduje první výskyt celého jména: závorka za ním se nemění (správný klub, nebo chyba pro kontrolu)
+    text = "Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec tvrdí opak."
+    new, cap, notes = _pn(card, _caption(text), info)
+    assert cap == _caption(text) and not any(n.startswith("popisek") for n in notes)
+    keys = [r["key"] for r in new["reasons"]]
+    assert validate_variant(new, cap, template="template_v3", ct=311, reason_keys=keys, fmt="pn", focus_pn=[9801]) == [
+        "popisek uvádí u autora PN 9801 jiný klub: „Test Poslanec (předkladatel)“, ze serveru (ODS)"]
+    _, cap, _ = _pn(card, _caption("PN 9801 podal Test Poslanec, Test Poslanec (předkladatel) tvrdí opak."), info)
+    assert cap == _caption("PN 9801 podal Test Poslanec (ODS), Test Poslanec (předkladatel) tvrdí opak.")
     # skloňované jméno („Test Poslance“) ani delší slovo („Test Poslanecký“) se za celé jméno nepočítá
     _, cap, notes = _pn(card, _caption("Návrh Test Poslance a Test Poslanecký klub, PN 9801."), info)
     assert cap == _caption("Návrh Test Poslance a Test Poslanecký klub, PN 9801.")
@@ -259,6 +266,36 @@ def test_popisek_doplni_klub_za_prvni_vyskyt_bez_zavorky():
     # dvojité příjmení jiného člověka se nerozdělí; jméno s nezlomitelnou mezerou se najde
     _, cap, _ = _pn(card, _caption("PN 9801 podal Test Poslanec-Dlouhý, ne Test Poslanec."), info)
     assert cap == _caption("PN 9801 podal Test Poslanec-Dlouhý, ne Test Poslanec (ODS).")
+
+
+def test_popisek_doplni_klub_obema_autorum_tehoz_klubu():
+    # klub prvního autora v popisku neznamená, že ho má i druhý autor z téhož klubu
+    card = _pn_card()
+    info = [_info()[0], {"cislo": 9803, "osoba": "Jana Malá", "klub": "ANO"}]
+    new, cap, notes = _pn(card, _caption("PN 9801 podal Test Poslanec, PN 9803 Jana Malá."), info)
+    assert cap == _caption("PN 9801 podal Test Poslanec (ANO), PN 9803 Jana Malá (ANO).")
+    assert [n for n in notes if n.startswith("popisek")] == ["popisek: za „Test Poslanec“ doplněn klub (ANO)",
+                                                            "popisek: za „Jana Malá“ doplněn klub (ANO)"]
+    keys = [r["key"] for r in new["reasons"]]
+    assert validate_variant(new, cap, template="template_v3", ct=311, reason_keys=keys, fmt="pn",
+                            focus_pn=[9801, 9803]) == []
+    # klub už u jména je: druhá normalizace nic nevloží
+    _, cap2, notes2 = _pn(new, cap, info)
+    assert cap2 == cap and not any(n.startswith("popisek") for n in notes2)
+
+
+def test_popisek_klub_nad_limit_nevlozi():
+    # vložení by popisek dostalo přes limit: zůstane, jak je, a chybu klubu vrátí kontrola
+    card = _pn_card()
+    head = "PN 9801 podal Test Poslanec. "
+    pad = CAPTION_LIMIT - len(_caption(head)) - 3
+    caption = _caption(head + "x" * pad)
+    assert len(caption) == CAPTION_LIMIT - 3
+    new, cap, notes = _pn(card, caption, info=_info()[:1])
+    assert cap == caption and not any(n.startswith("popisek") for n in notes)
+    keys = [r["key"] for r in new["reasons"]]
+    assert validate_variant(new, cap, template="template_v3", ct=311, reason_keys=keys, fmt="pn", focus_pn=[9801]) == [
+        "popisek neuvádí klub autora PN 9801: „Test Poslanec (ANO)“"]
 
 
 def test_popisek_s_klubem_nemeni():

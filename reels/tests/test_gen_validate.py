@@ -9,7 +9,7 @@ import pytest
 
 from conftest import load_fixture
 from hlidac_reels.generator.normalize import normalize
-from hlidac_reels.generator.validate import caption_authors, check_layout, has_word, validate_variant
+from hlidac_reels.generator.validate import caption_authors, check_layout, club_matches, has_word, validate_variant
 
 CAPTION_OK = (
     "Na mimořádnou daň pro rafinerie dostaly sněmovní výbory 30 dní. Běžná lhůta je 60.\n\n"
@@ -174,8 +174,50 @@ POSLANEC = {"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"}
 def test_popisek_bez_klubu_chyba():
     card = _pn_card([POSLANEC])
     assert _author_errs(card, "PN 9801 podal Test Poslanec (ANO).") == []
+    # klub patří k celému jménu: závorka s jiným textem za jménem je jiný klub
     errs = _author_errs(card, "PN 9801 podal Test Poslanec (ANO2011).")
+    assert errs == ["popisek uvádí u autora PN 9801 jiný klub: „Test Poslanec (ANO2011)“, ze serveru (ANO)"]
+    # celé jméno bez klubu u něj: klub jinde v popisku nestačí
+    errs = _author_errs(card, "PN 9801 podal Test Poslanec. Klub ANO ho podpořil.")
     assert errs == ["popisek neuvádí klub autora PN 9801: „Test Poslanec (ANO)“"]
+
+
+def test_popisek_jiny_klub_u_jmena():
+    # špatný klub v závorce za jménem neomluví správný klub jinde v popisku
+    card = _pn_card([POSLANEC])
+    errs = _author_errs(card, "PN 9801 podal Test Poslanec (Piráti), podporuje ho i ANO.")
+    assert errs == ["popisek uvádí u autora PN 9801 jiný klub: „Test Poslanec (Piráti)“, ze serveru (ANO)"]
+    # rozhoduje první výskyt celého jména
+    errs = _author_errs(card, "PN 9801 podal Test Poslanec (Piráti). Test Poslanec (ANO) to vysvětlil.")
+    assert errs == ["popisek uvádí u autora PN 9801 jiný klub: „Test Poslanec (Piráti)“, ze serveru (ANO)"]
+
+
+def test_popisek_klub_pred_jmenem():
+    # „za ANO Test Poslanec“: klub ve 40 znacích před jménem stačí, normalizace nic nevloží
+    card = _pn_card([POSLANEC])
+    text = "PN 9801 podal poslanec za ANO Test Poslanec."
+    assert _author_errs(card, text) == []
+    _, cap, notes = normalize(card, _caption(text), fmt="pn", focus_info=[{"cislo": 9801, "osoba": "Test Poslanec", "klub": "ANO"}])
+    assert cap == _caption(text) and not any(n.startswith("popisek") for n in notes)
+    # dál než 40 znaků před jménem už klub ke jménu nepatří
+    far = "Klub ANO chce změnu, a proto PN 9801 dnes podal Test Poslanec."
+    assert _author_errs(card, far) == ["popisek neuvádí klub autora PN 9801: „Test Poslanec (ANO)“"]
+    # klub v závorce jiného autora těsně před jménem se nepočítá
+    card = _pn_card([POSLANEC, {"cislo": 9802, "jmeno": "Jana Malá", "klub": "ANO"}])
+    assert _author_errs(card, "PN 9801 podal Test Poslanec (ANO), PN 9802 Jana Malá.") == [
+        "popisek neuvádí klub autora PN 9802: „Jana Malá (ANO)“"]
+
+
+def test_popisek_nezarazena():
+    # popisek klubu „nezařazení“ splní i tvar podle rodu a čísla
+    card = _pn_card([{"cislo": 9801, "jmeno": "Jana Malá", "klub": "nezařazení"}])
+    for text in ("PN 9801 podala Jana Malá (nezařazená).", "PN 9801 podal Jana Malá (nezařazený).",
+                 "PN 9801 podala Jana Malá (nezařazení)."):
+        assert _author_errs(card, text) == [], text
+    assert _author_errs(card, "PN 9801 podala Jana Malá (nezařazenka).") == [
+        "popisek uvádí u autora PN 9801 jiný klub: „Jana Malá (nezařazenka)“, ze serveru (nezařazení)"]
+    assert club_matches("poslankyně nezařazená", "nezařazení") and not club_matches("nezařazená", "ANO")
+    assert club_matches("(ANO)", "ANO") and not club_matches("ANO2011", "ANO")
 
 
 def test_popisek_sklonovane_jmeno_bez_klubu():

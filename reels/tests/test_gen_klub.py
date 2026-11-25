@@ -132,3 +132,18 @@ def test_dva_autori_v_zavorce_s_prohozenymi_kluby():
     caption = _caption("PN 2376 a 2377 (Jan Novák, ANO a Jana Malá, ODS) mění lhůtu.")
     new, cap, _ = normalize(_novak_card(), caption, fmt="pn", focus_info=info)
     assert cap == caption and _errs(new, cap, (2376, 2377)) == []
+
+
+def test_zavorka_na_drivejsim_radku_jmeno_do_zavorky_nedava():
+    # „(“ na dřívějším řádku (smajlík „:(“, neuzavřená závorka) jméno na dalším řádku do závorky nedává: klub se
+    # doplní za jméno v závorce a kontrola projde
+    card = _novak_card()
+    for head in ("Novela (tisk 300 :(", "Novela (tisk 300"):
+        text = f"{head}\nJan Novák navrhuje v PN 2376 zrušit lhůtu …"
+        assert _name_in_paren(_caption(text)) is None, head
+        new, cap, notes = normalize(card, _caption(text), fmt="pn", focus_info=NOVAK)
+        assert cap == _caption(f"{head}\nJan Novák (ANO) navrhuje v PN 2376 zrušit lhůtu …"), head
+        assert "popisek: za „Jan Novák“ doplněn klub (ANO)" in notes
+        assert _errs(new, cap) == [], head
+        # bez normalizace chyba radí závorku za jménem, ne tvar „Jan Novák, ANO“
+        assert _errs(new, _caption(text)) == ["popisek neuvádí klub autora PN 2376: „Jan Novák (ANO)“"], head

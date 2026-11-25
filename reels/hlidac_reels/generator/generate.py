@@ -408,6 +408,22 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
             cards[v.n] = None
             save(v, RENDER_FAILED, fails)
 
+    def recheck_changed(skip: set[int]) -> None:
+        """Platné a vyrenderované varianty (mimo skip), jejichž card.json se od kontroly změnil: opravný běh nad
+        jinými variantami ho může přepsat. Znovu kontrola; platnou pak vyrenderuje render_pending (nová karta =
+        render_fails od nuly, pokus i v tomto vydání). Staré video ke kartě nepatří, worker by jinak nahrál novou
+        kartu se starým videem."""
+        for v in variants:
+            entry = entries[str(v.n)]
+            if v.n in skip or entry["state"] not in (VALID, RENDERED):
+                continue
+            if _sha(out / f"variant-{v.n}" / "card.json") == entry.get("card_sha"):
+                continue
+            v.video = v.video_landscape = None
+            v.warnings = []
+            tried.discard(v.n)
+            check(v)
+
     def broken() -> dict[int, list[str]]:
         """Varianty pro opravný běh modelu: chybí nebo vadná karta (render_selhal se modelem neopravuje)."""
         return {v.n: v.errors or ["varianta chybí"] for v in variants
@@ -434,6 +450,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
         for v in variants:
             if v.n in bad:
                 check(v, unchanged)
+        recheck_changed(set(bad))
         render_pending()
 
     for v in variants:

@@ -118,12 +118,14 @@ def find_name(text: str, jmeno: str) -> tuple[int, int, str | None] | None:
 def name_in_paren(text: str, start: int, end: int) -> str | None:
     """Stojí jméno (`start`–`end`) uvnitř otevřené závorky („PN 2376 (Jan Novák) mění …“)? Vrací text od konce
     jména po nejbližší `)`, `(` nebo konec řádku (`""`, `", ANO"`); `None`, když poslední `(` před jménem má před
-    ním svou `)`, když před jménem žádná `(` není, nebo když za jménem nic z toho nenásleduje.
+    ním svou `)`, když před jménem na jeho řádku žádná `(` není, nebo když za jménem nic z toho nenásleduje.
 
     Klub pak patří do téže závorky za čárku („(Jan Novák, ANO)“), ne do vnořené závorky. Konec na `(` a na konci
-    řádku: klub jiného autora ve vnořené závorce nebo za neuzavřenou závorkou na dalším řádku se nepočítá.
+    řádku: klub jiného autora ve vnořené závorce nebo za neuzavřenou závorkou na dalším řádku se nepočítá. Stejně
+    se `(` hledá jen na řádku jména: neuzavřená závorka nebo „:(“ na dřívějším řádku jméno do závorky nedává.
     """
-    opened = text.rfind("(", 0, start)
+    line_start = text.rfind("\n", 0, start) + 1
+    opened = text.rfind("(", line_start, start)
     if opened < 0 or text.find(")", opened, start) >= 0:
         return None
     stop = PAREN_STOP.search(text, end)

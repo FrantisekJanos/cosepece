@@ -751,3 +751,67 @@ def test_kazde_vydani_vlastni_log(tmp_path, fake, monkeypatch):
     assert first == "=== běh 1 ===\n"
     assert "=== běh 1 ===" not in last and all(f"=== běh {n} ===" in last for n in range(2, len(fake["calls"]) + 1))
     assert sorted(p.name for p in out.glob("claude-*.log")) == ["claude-1.log"]
+
+
+def test_oprava_zmeni_kartu_vyrenderovane_varianty(tmp_path, fake, monkeypatch):
+    # opravný běh nad vadnou variantou 3 přepíše i card.json už vyrenderované varianty 2: ta se znovu zkontroluje
+    # a vyrenderuje, jinak by worker nahrál novou kartu se starým videem
+    def bad(wd):
+        card = json.loads((wd / "variant-3" / "card.json").read_text(encoding="utf-8"))
+        card["reasons"].append({"key": "p90_passed", "label": "x", "points": 1})
+        (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = bad
+    title = "Daň pro rafinerie: výborům zbylo 30 dní místo 60"
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        if "OPRAVA:" in prompt:  # model opraví variantu 3 a mimochodem přepíše kartu varianty 2
+            _copy_variant(kw["workdir"], 3)
+            _retitle(tmp_path, 2, title)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    portrait = []
+
+    def render_reel(card, out_path, **kw):
+        fake["render_reel"](card, out_path, **kw)
+        Path(out_path).write_text(card.title, encoding="utf-8")  # video „nese“ titulek své karty
+        if kw.get("orientation", "portrait") == "portrait":
+            portrait.append(Path(out_path).parent.name)
+    monkeypatch.setattr(gen, "render_reel", render_reel)
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 2 and "variant-2" not in fake["calls"][1]
+    assert portrait.count("variant-2") == 2 and portrait.count("variant-3") == 1
+    assert r.ok and all(v.ok for v in r.variants)
+    v2 = r.variants[1]
+    assert v2.video.read_text(encoding="utf-8") == title and v2.video_landscape.read_text(encoding="utf-8") == title
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "vyrenderovana" and st["render_fails"] == 0
+    assert st["card_sha"] == gen._sha(tmp_path / "out" / "variant-2" / "card.json")
+
+
+def test_oprava_rozbije_kartu_vyrenderovane_varianty(tmp_path, fake, monkeypatch):
+    # opravný běh nad variantou 3 kartu vyrenderované varianty 2 rozbije: varianta 2 jde do dalšího opravného běhu
+    def bad(wd, n):
+        card = json.loads((wd / f"variant-{n}" / "card.json").read_text(encoding="utf-8"))
+        card["reasons"].append({"key": "p90_passed", "label": "x", "points": 1})
+        (wd / f"variant-{n}" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = lambda wd: bad(wd, 3)
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        wd = Path(kw["workdir"])
+        if "OPRAVA:" in prompt and "variant-3" in prompt:
+            _copy_variant(wd, 3)
+            bad(wd, 2)
+        elif "OPRAVA:" in prompt:
+            _copy_variant(wd, 2)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 3
+    assert "variant-2" in fake["calls"][2] and "p90_passed" in fake["calls"][2] and "variant-3" not in fake["calls"][2]
+    assert r.ok and all(v.ok for v in r.variants)
+    assert _rendered_variants(fake).count("variant-2") == 4  # dvakrát na výšku a na šířku
+    assert _state(tmp_path)["variants"]["2"]["state"] == "vyrenderovana"

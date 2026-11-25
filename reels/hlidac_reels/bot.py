@@ -23,7 +23,8 @@ denní souhrn, /stav na požádání.
 Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague) a další automatická až po výběru
 z předchozí (nejdéle AUTO_HOLD h); vyžádané sady (/video, /pn, /vyber) limit neomezují a nepočítají se do něj,
 /dalsi limit obchází. Čekání automatické sady bot ohlásí jednou za sadu. Smyčka
-každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
+každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh)
+a uklízí stav (uklid: klíče reel_state 30 dní po konečném stavu, události po 90 dnech, složky zrušených úloh).
 Selhání úloh a stav PC s generátorem hlásí bot z událostí (reel_events, maybe_events, každou minutu): převezme
 selhání bez události (events.adopt_failed, např. z inboxu), u vydání bez známky života zapíše „PC neodpovídá“
 a naléhavé události (urgency 1: selhání vyžádané úlohy s tlačítky Zkusit znovu / Zahodit, pozastavení a obnovení
@@ -54,7 +55,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue
+from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
@@ -1553,7 +1554,7 @@ class Bot:
             queue.delete_state(self.conn, key)
 
     def maybe_fresh(self) -> None:
-        """Čerstvé nálezy, stažení sad, lhůty čekání a připomínky, nejvýš jednou za FRESH_INTERVAL s.
+        """Čerstvé nálezy, stažení sad, lhůty čekání, připomínky a úklid stavu, nejvýš jednou za FRESH_INTERVAL s.
 
         Každý krok běží zvlášť: chyba jednoho nezastaví ostatní.
         """
@@ -1565,6 +1566,15 @@ class Bot:
         self._guard("stažení sad mimo nálezy", self._retire)
         self._guard("vypršení lhůt", self._expire)
         self._guard("připomínky automatických sad", self._remind)
+        self._guard("úklid stavu", self._cleanup)
+
+    def _cleanup(self) -> None:
+        """Úklid reel_state, starých událostí a složek zrušených úloh (uklid.run); nenulové počty do logu."""
+        inbox_dir = Path(self.inbox_dir) if self.inbox_dir is not None else None
+        counts = uklid.run(self.conn, self.now(), inbox_dir)
+        if any(counts.values()):
+            log.info("úklid: klíče stavu %s, události %s, složky zrušených úloh %s",
+                     counts.get("state", 0), counts.get("events", 0), counts.get("inbox", 0))
 
     def _retire(self) -> None:
         for set_id, status in fresh.retire(self.conn, self.now()):

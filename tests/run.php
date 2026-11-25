@@ -2672,6 +2672,20 @@ $rbSet('nesmysl');
 $rbBad = Hlidac\Sync::reelsBot(db(), $rbNow);
 check('bot_seen_at: nečitelná hodnota stale, stáří neznámé', [$rbBad['stale'] ?? null, count($rbSent), $rbEvent($rbSent[1] ?? '')['extra'] ?? null],
     [true, 2, ['bot_seen_at' => 'nesmysl', 'minut' => null]]);
+// kontrola živosti bota běží na začátku synchronizace: pád importu (chybí tisky.zip) ji nepřeskočí
+Hlidac\Sentry::reset();
+$rbSent = [];
+$rbSet(gmdate('Y-m-d\TH:i:s+00:00', time() - 1200));
+rename($sbZip, $sbZip . '.bak');
+$rbError = null;
+try {
+    Hlidac\Sync::run();
+} catch (Throwable $ex) {
+    $rbError = $ex->getMessage();
+}
+rename($sbZip . '.bak', $sbZip);
+check('Sync::run: živost bota zkontrolována i při pádu importu', [$rbError !== null,
+    count(array_filter($rbSent, fn(string $b): bool => str_contains($b, 'Reels bot neodpovídá')))], [true, 1]);
 restore_exception_handler();
 restore_error_handler();
 Hlidac\Sentry::setTransport(null);

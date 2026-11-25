@@ -48,6 +48,13 @@ final class Sync
         );
         // jednorázově: dosavadní texty a rozbory jako první verze historie (meta revize_backfill)
         $backfill = Revisions::backfill(db());
+        // živost bota Reels hned na začátku: pád importu nebo textů dál (nejsou v try) ji nesmí přeskočit
+        try {
+            $reelsBot = self::reelsBot(db(), time());
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/ReelsBot']);
+            $reelsBot = ['error' => Http::redact($ex->getMessage())];
+        }
         try {
             // nové kroky a PN ze stránek historie tisků (rychleji než noční otevřená data); Importer je přimíchá
             $history = (new HistoryHtml(db(), $source, $config))->run();
@@ -88,12 +95,6 @@ final class Sync
         $scorer->scoreBills();
         $scorer->scoreAlerts();
         $reels = self::reelsSnapshot($config);
-        try {
-            $reelsBot = self::reelsBot(db(), time());
-        } catch (\Throwable $ex) {
-            Sentry::capture($ex, ['kde' => 'Sync/ReelsBot']);
-            $reelsBot = ['error' => Http::redact($ex->getMessage())];
-        }
         // úklid: prošlé záznamy limitů dotazů a nepoužívané tokeny MCP vydané na webu
         RateLimit::cleanup();
         try {

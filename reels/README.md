@@ -86,6 +86,28 @@ Příkazy:
 Nově zařazené video bot pošle sám do minuty. Video, které Telegram odmítne (např. přes 50 MB) nebo jehož soubor chybí,
 vyřadí (stav rejected) a ohlásí. Zprávy z jiných chatů bot ignoruje.
 
+### Zadání a události (F3, F5)
+
+- Vyžádané zadání bez autopilota má jednu stavovou zprávu „Zadání #N · …“, kterou bot přepisuje (`editMessageText`,
+  `reel_state` `job_status:<id>`): přijato, fáze generování, hotovo. Tlačítko Zrušit (`jobcancel:<id>`), příkaz `/zrus <číslo>`.
+- Selhání vyžádaného zadání: zpráva s důvodem, Zkusit znovu (`jobretry:<id>`, jen jednou na úlohu, `job_retried:<id>`,
+  ne pro úlohu starší 30 dní) a Zahodit. Selhání a vypršení automatických úloh (`fresh`) jen v denním souhrnu.
+- Události jsou v tabulce `reel_events` (`kind`, `detail` JSON, `urgency` 0 historie / 1 hned / 2 souhrn, `dedupe`,
+  `notified_at` až po odeslání). Zapisuje je PHP při přechodu úlohy i bot; bot je posílá každých 60 s v pořadí `id`
+  (`maybe_events`), po výpadku delším než 6 h sloučené do jedné zprávy. Druhy: `accepted`, `claimed`, `stage`,
+  `waiting`, `requeued`, `lease`, `done`, `failed`, `expired`, `worker_paused`, `worker_resumed`, `silent`, `cancelled`.
+- Pozastavení PC jedna zpráva, obnovení jedna zpráva. Propadlé vydání vyžádané úlohy: „PC neodpovídá od HH:MM“.
+- `/fronta` má sekce Generuje se (fáze, stáří) a Ve frontě zadání (důvod čekání, další pokus) a řádek PC; po 30 min
+  bez heartbeatu „PC neodpovídá od …“ (u pauzy až po `until + 30 min`). Dlouhý přehled se ořezává od Hotových,
+  Problémy a řádek PC zůstanou.
+- Zpráva sady uvádí nevzniklé varianty a vadné video na šířku (`set_warnings:<set_id>`). Připomínka nedotčené
+  automatické sady po 12 h přijde jako zpráva sady s Vybrat/Hotovo. Vícedílný náhled si pamatuje odeslané části
+  (`preview_sent:<id>`). `/pn` ukazuje klub za jménem autora.
+- Živost bota: `reel_state.bot_seen_at` po každém průchodu smyčky bez výjimky (nejvýš 1× za 60 s); hodinová
+  synchronizace pošle při stáří nad 15 min událost do Sentry.
+- Úklid (`uklid.py`, hodinově): klíče `reel_state` u položek, sad a úloh v konečném stavu starších 30 dní,
+  `reel_events` starší 90 dní (neodeslané urgency 1/2 zůstávají), složky zrušených úloh bez manifestu po 1 dni.
+
 ## Threads
 
 Threads je volitelné: bez `THREADS_USER_ID` bot publikuje jen na FB a IG a o Threads nepíše. S ním ukáže náhled
@@ -256,6 +278,25 @@ variantou se bere jako samostatné video.
 - denní souhrn (8:00) má oddíl „Fronta Reels“ (`queue.summary_lines`): vypršelé nevybrané varianty a stažené sady za
   24 h a vybrané varianty, kterým lhůta vyprší zítra.
 
+### Protokol úloh, druhy chyb a stav workeru (F3–F5)
+
+- Worker hlásí fázi (`model`, `kontrola`, `oprava`, `render`, `upload`) vláknem `Progress` přes akci `progress`
+  (každých 120 s a při změně); lhůta vydání `lease_until` se prodlouží o 15 min, bez hlášení platí 60 min.
+  409 na `progress` nebo nahrávání = zrušeno nebo propadlo, worker skončí bez `fail`, práce zůstane ve složce;
+  400 = starý server, `progress` se přestane volat.
+- `fail` s `kind`: `content`/`timeout` konečné; `env` (limit, přihlášení) vrací pokus a odkládá úlohu (`not_before`);
+  `infra` (síť, 5xx, 4xx mimo 400/413/422) odklad 15 min; po 5 návratech `failed`. Bez `kind` = 3 pokusy.
+- `heartbeat` nese stav workeru (`running`/`paused`, `reason` `limit`/`login`/`mcp`/`nastroje`/`env`, `until`), server
+  ho drží v `reel_state` `worker_state`. Limit předplatného: čekání do času obnovení z hlášky (strop 6 h).
+- Úloha k tisku nebo PN bez rozboru AI čeká (`wait_reason = ai_title`, pokus za 30 min), po 6 h `failed` (`data`).
+- Klub autora PN: `claim` posílá ve `focus_pn_info` `id_osoba`, `klub`, `klub_ke_dni`, `has_text` (smlouva
+  `tests/contract/focus-pn-info.json`). Normalizace zapíše `pn_autor`, přepíše autora a klub zadaných PN v `pn.top`
+  a `pn.autori`, do popisku vloží „ (ANO)“ za jméno (u jména v závorce „(Jan Novák, ANO)“). Kontrola chce příjmení
+  a klub jako první údaj za jménem. Šablony ukazují „PN 2376 · Jan Novák“ se šedým štítkem.
+- Generátor: vyrenderovaná varianta se použije jen se stejným `card_sha`; render nejvýš 2× na variantu
+  (`RENDER_TRIES`, pak stav `render_selhal`); log `claude-<n>.log` na vydání (posledních 5); rozvržení na šířku se
+  kontroluje před renderem (chyba vyřadí jen šířku); „10 z dvanácti“ zůstane v háčku celé.
+
 ## Autopilot (`/pn` bez schválení)
 
 Přepínač `autopilot` (tabulka `reel_state`, výchozí vypnuto) mění jen chování `/pn`. Zapnutý autopilot nastaví nové
@@ -293,6 +334,11 @@ na požádání. Poslední výsledek kontroly ukládá do `reel_state` `hlidani_
 | tisk Vyhlášeno bez čísla Sbírky | > 14 dní od kroku Sbírka | `tisky`, `kroky` |
 | tisk mění jednací řád 90/1995 nebo Ústavu 1/1993 | fáze 3. čtení a dál; nová výstraha při každé změně fáze, bez „Obnoveno“ | jako MCP `tisky_menici_zakon`; pak zkontrolovat `generator/examples/lhuty.md` a `pravidla.md` |
 | PC s generátorem | `worker_seen_at` > 24 h, jen v denním souhrnu | `reel_state` |
+| Reels: nerozhodnutá jednotka, `held`, pozastavený worker, vydání bez známky života | jen denní souhrn a `/stav` | `reel_queue`, `reel_jobs`, `reel_state` |
+| Reels: neodeslané události | > 1 h, výstraha a obnovení | `reel_events` |
+| Reels: PC neodpovídá a čeká vyžádané zadání | heartbeat > 30 min (u pauzy po `until + 30 min`), výstraha a obnovení | `reel_state`, `reel_jobs` |
+
+Výstrahy Reels se nezapisují do `hlidani_vystrahy` (MCP `stav_dat` hlásí jen čerstvost dat). `/stav` a souhrn procházejí `_scrub`.
 
 ## Testy
 

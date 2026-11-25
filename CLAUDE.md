@@ -136,6 +136,8 @@ hezkých adres na skripty dělá `.htaccess` (stejná pravidla má `Url::route()
 staré adresy s `.php` přesměruje `bootstrap.php` (301, jen GET/HEAD). Nová stránka = řádek v `Url::PAGES`
 a pravidlo v `.htaccess`. Bez mod_rewrite: `config.php → pretty_urls = false`.
 
+Reels: `reels_api.php` (generátor Reels na PC): akce `claim` (odpověď navíc `attempt`, `last_error`, `lease_s`, `progress_s`; `focus_pn_info` s klubem ke dni podání a `has_text`), `progress`, `result`, `fail` (`kind`, `retry_after_s`, `reason`), `heartbeat` (stav workeru); 409 u zrušené úlohy. `ReelJobs` zapisuje přechody do `reel_events` (časy `G:i`, `dedupe` nejdřív ověří). `Sync` hned po `Revisions::backfill` hlídá živost bota Reels (`reel_state.bot_seen_at` > 15 min → Sentry, výsledek `reels_bot`). Klub poslance ke dni: `app/Clubs.php`, v den přestupu platí novější klub (uložené hlasy z toho dne `Votes` přepočítá, `Clubs::ambiguous`).
+
 Vstupy a limity: `bootstrap.php` odmítá jiné metody než GET/HEAD (POST jen mcp.php a ai_api.php), parametry-pole
 zahazuje a čísla o 10+ číslicích ořízne (jinak chyba INTEGER v PostgreSQL). `RateLimit` počítá IPv4 adresu
 a u IPv6 síť /56; za CDN je nutné doplnit důvěryhodné proxy do `RemoteIPInternalProxy` (docker/Dockerfile),

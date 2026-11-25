@@ -2414,15 +2414,15 @@ check('F3: události nesou údaje přechodu', $f3D, [
     'claimed' => ['attempt' => 1],
     'stage' => ['stage' => 'model', 'note' => null],
     'stage note' => ['stage' => 'model', 'note' => 'varianta 2'],
-    'requeued' => ['kind' => 'env', 'error' => 'chybí Chromium', 'next_hm' => date('H:i', $f3EnvAt + 900), 'env_retries' => 1],
+    'requeued' => ['kind' => 'env', 'error' => 'chybí Chromium', 'next_hm' => date('G:i', $f3EnvAt + 900), 'env_retries' => 1],
     'claimed po návratu' => ['attempt' => 1],
     'failed' => ['kind' => 'failed', 'detail' => ['kind' => 'content', 'error' => '0 platných variant', 'attempts' => 1, 'env_retries' => 1, 'stage' => 'model'],
         'urgency' => 1, 'dedupe' => "failed:$f3J"],
     // bez kind se úloha vrací bez odkladu: událost čas dalšího pokusu nenese (bot: „chyba, zkusí se znovu“)
     'requeued bez kind' => ['kind' => 'content', 'error' => 'pád', 'env_retries' => 0],
-    'waiting' => ['kind' => 'waiting', 'detail' => ['reason' => 'ai_title', 'next_hm' => date('H:i', $f3WaitAt + 1800)], 'urgency' => 0,
+    'waiting' => ['kind' => 'waiting', 'detail' => ['reason' => 'ai_title', 'next_hm' => date('G:i', $f3WaitAt + 1800)], 'urgency' => 0,
         'dedupe' => "waiting:$f3W:ai_title"],
-    'lease' => ['next_hm' => date('H:i', $rjClock + 600), 'attempts' => 1, 'stage' => 'render'],
+    'lease' => ['next_hm' => date('G:i', $rjClock + 600), 'attempts' => 1, 'stage' => 'render'],
     'failed lease' => ['kind' => 'lease', 'error' => 'PC nedokončilo úlohu 3× (poslední fáze: render)', 'attempts' => 3, 'env_retries' => 0, 'stage' => 'render'],
     'done' => ['variants' => 1, 'skipped' => [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal']]]],
     'expired' => ['kind' => 'expired', 'detail' => [], 'urgency' => 2, 'dedupe' => "expired:$f3Ex"],
@@ -2507,6 +2507,24 @@ db()->run("CREATE TABLE IF NOT EXISTS reel_events (id $rjId, at $rjTs NOT NULL, 
 check('F3: bez tabulky reel_events claim vydá úlohu, progress a fail projdou, chyba jen v error_log',
     [$f3C['job_id'] ?? null, $f3NtRow['status'], $f3NtProg, $f3NtFail, $f3Row($f3Nt)['status'], str_contains($f3Log, 'reels event: ')],
     [$f3Nt, 'claimed', 'ok', 'queued', 'queued', true]);
+$f3EvReset();
+
+// F5: opakované čekání na rozbor AI nezkouší INSERT s klíčem dedupe, který už v tabulce je (PostgreSQL by odmítnutý
+// INSERT každých 30 min zapsal do logu jako ERROR). Časy v událostech bez úvodní nuly jako bot (FMHH24:MI).
+// Vlastní instance ReelJobs se stejnými hodinami: počítadlo dedupeConflicts začíná na 0.
+$f5ClockBak = $rjClock;
+$rjClock = strtotime('2026-11-20 08:35:00'); // odklad 30 min → další pokus v 9:05 místního času
+$f5Jobs = new Hlidac\ReelJobs(db(), config(), function () use (&$rjClock): int { return $rjClock; });
+$f5W = $rjAdd('manual', 78); // tisk 78 rozbor AI nemá
+$f5Jobs->claim();
+$rjClock += 31 * 60; // odklad prošel, druhý claim úlohu znovu odloží
+$f5Jobs->claim();
+$f5Waits = db()->all("SELECT detail FROM reel_events WHERE job_id = ? AND kind = 'waiting'", [$f5W]);
+check('F5: čekání na rozbor AI bez odmítnutého INSERTu',
+    [count($f5Waits), $f5Jobs->dedupeConflicts, $f3Row($f5W)['wait_reason'], $f3Ts($f3Row($f5W)['not_before'])],
+    [1, 0, 'ai_title', $rjClock + 1800]);
+check('F5: next_hm bez úvodní nuly', json_decode((string)($f5Waits[0]['detail'] ?? ''), true)['next_hm'] ?? null, '9:05');
+$rjClock = $f5ClockBak;
 $f3EvReset();
 
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
@@ -2608,6 +2626,77 @@ check('sync_beh: chyba běhu prošla dál', $sbError !== null, true);
 check('sync_beh: chybný běh ok = 0 s textem chyby', [(int)$sbLast['ok'], $sbLast['konec'] !== null, $sbLast['chyba'] !== null && $sbLast['chyba'] !== ''],
     [0, true, true]);
 check('sync_beh: lastOk přeskočí chybný běh', (int)(Hlidac\SyncRuns::lastOk(db())['ok'] ?? 0), 1);
+
+echo "Živost bota Reels (bot_seen_at → Sentry)\n";
+// bot zapisuje reel_state.bot_seen_at (ISO s pásmem z Pythonu); synchronizace pošle do Sentry, když je starší než 15 min
+$rbSent = [];
+Hlidac\Sentry::reset();
+Hlidac\Sentry::setTransport(function (string $url, array $headers, string $body) use (&$rbSent): bool {
+    $rbSent[] = $body;
+    return true;
+});
+Hlidac\Sentry::init(['dsn' => 'https://abc@o1.ingest.de.sentry.io/456', 'environment' => 'test', 'throttle_dir' => ''], 'cli');
+$rbSet = function (?string $value) use ($rjKey): void {
+    db()->run("DELETE FROM reel_state WHERE $rjKey = 'bot_seen_at'");
+    if ($value !== null) {
+        db()->run("INSERT INTO reel_state ($rjKey, value) VALUES ('bot_seen_at', ?)", [$value]);
+    }
+};
+// tělo obálky Sentry: hlavička, typ, událost (JSON)
+$rbEvent = fn(string $body): array => (array)json_decode(explode("\n", $body)[2] ?? '', true);
+$rbNow = time();
+$rbSet(null);
+check('bot_seen_at: bez klíče nic', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)], [null, 0]);
+$rbFresh = gmdate('Y-m-d\TH:i:s+00:00', $rbNow - 300);
+$rbSet($rbFresh);
+check('bot_seen_at: před 5 min v pořádku, do Sentry nic', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)],
+    [['seen_at' => $rbFresh, 'stale' => false], 0]);
+// tvar z Pythonu (mikrosekundy) v časové zóně serveru východně od UTC: pásmo z hodnoty platí, ne zóna serveru
+$rbTz = date_default_timezone_get();
+date_default_timezone_set('Asia/Tokyo');
+$rbPy = gmdate('Y-m-d\TH:i:s', $rbNow - 600) . '.123456+00:00';
+$rbSet($rbPy);
+check('bot_seen_at: čas z Pythonu v jiné zóně serveru', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)],
+    [['seen_at' => $rbPy, 'stale' => false], 0]);
+date_default_timezone_set($rbTz);
+$rbOld = gmdate('Y-m-d\TH:i:s+00:00', $rbNow - 1200);
+$rbSet($rbOld);
+$rbStale = Hlidac\Sync::reelsBot(db(), $rbNow);
+check('bot_seen_at: před 20 min stale, jedna zpráva do Sentry', [$rbStale, count($rbSent),
+    str_contains($rbSent[0] ?? '', 'Reels bot neodpovídá')], [['seen_at' => $rbOld, 'stale' => true], 1, true]);
+$rbEv = $rbEvent($rbSent[0] ?? '');
+check('bot_seen_at: zpráva error se stálým textem a stářím', [$rbEv['level'] ?? null, $rbEv['message']['formatted'] ?? null, $rbEv['extra'] ?? null],
+    ['error', 'Reels bot neodpovídá: bot_seen_at je starší než 15 min', ['bot_seen_at' => $rbOld, 'minut' => 20]]);
+Hlidac\Sentry::reset();
+$rbSet('nesmysl');
+$rbBad = Hlidac\Sync::reelsBot(db(), $rbNow);
+check('bot_seen_at: nečitelná hodnota stale, stáří neznámé', [$rbBad['stale'] ?? null, count($rbSent), $rbEvent($rbSent[1] ?? '')['extra'] ?? null],
+    [true, 2, ['bot_seen_at' => 'nesmysl', 'minut' => null]]);
+// kontrola živosti bota běží na začátku synchronizace: pád importu (chybí tisky.zip) ji nepřeskočí
+Hlidac\Sentry::reset();
+$rbSent = [];
+$rbSet(gmdate('Y-m-d\TH:i:s+00:00', time() - 1200));
+rename($sbZip, $sbZip . '.bak');
+$rbError = null;
+try {
+    Hlidac\Sync::run();
+} catch (Throwable $ex) {
+    $rbError = $ex->getMessage();
+}
+rename($sbZip . '.bak', $sbZip);
+check('Sync::run: živost bota zkontrolována i při pádu importu', [$rbError !== null,
+    count(array_filter($rbSent, fn(string $b): bool => str_contains($b, 'Reels bot neodpovídá')))], [true, 1]);
+restore_exception_handler();
+restore_error_handler();
+Hlidac\Sentry::setTransport(null);
+Hlidac\Sentry::init(['dsn' => ''], 'cli');
+Hlidac\Sentry::reset();
+// běh synchronizace dá výsledek do reels_bot
+$rbFresh = gmdate('Y-m-d\TH:i:s+00:00', time() - 60);
+$rbSet($rbFresh);
+check('Sync::run: výsledek reels_bot', Hlidac\Sync::run()['reels_bot'] ?? 'chybí', ['seen_at' => $rbFresh, 'stale' => false]);
+// další Sync::run v testu nesmí hlásit
+$rbSet(null);
 
 echo "Stránky historie tisků (HistoryHtml, díra 6)\n";
 // uložená stránka historie tisku 311 z psp.cz (windows-1250) ze 19. 11. 2026

@@ -51,15 +51,39 @@ def remaining_text(set_id: int, variants: list[int]) -> str:
     return f"Sada #{set_id}: zbývají varianty {', '.join(str(v) for v in variants)}. Vybrat, nebo Hotovo."
 
 
-def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None) -> str:
+def landscape_warnings_lines(warnings: dict | None) -> list[str]:
+    """Řádky „Varianta 2: video na šířku vynecháno: …“ z {varianta: [důvody]} (klíč reel_state set_warnings:).
+
+    Seřazené podle varianty, důvody nejvýš REASON_LIMIT znaků. Nečitelný obsah (není slovník, klíč není číslo
+    varianty, důvody nejsou neprázdný seznam) se vynechá; nic čitelného = [].
+    """
+    if not isinstance(warnings, dict):
+        return []
+    found = []
+    for key, reasons in warnings.items():
+        # isdecimal, ne isdigit: „²“ je číslice, ale int() ho nepřečte
+        if not str(key).isdecimal() or not isinstance(reasons, list) or not reasons:
+            continue
+        found.append((int(key), "; ".join(str(r) for r in reasons)[:REASON_LIMIT]))
+    return [f"Varianta {n}: video na šířku vynecháno: {reason}" for n, reason in sorted(found)]
+
+
+def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None,
+             reminder: bool = False, warnings: dict | None = None) -> str:
     """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku.
 
     remaining=True: úvod „zbývá varianta N“ (po rozhodnutí o vybraných variantách).
+    reminder=True: úvod „Sada #N čeká 12 h“ (připomínka nedotčené automatické sady), varianty stejně jako
+    v první zprávě sady.
     skipped = nevzniklé varianty sady (jobs.skipped): na konci řádky „Varianta 3 (zmena) nevznikla: …“.
+    warnings = varianty bez videa na šířku (reel_state set_warnings:): na konci řádky „Varianta 2: video
+    na šířku vynecháno: …“, jen v první zprávě sady (ne u remaining ani reminder) a jen u variant v `items`
+    (vyřazená nebo už vybraná varianta tlačítko nemá, zpráva ji nejmenuje).
     """
     first = items[0]
-    if remaining:
-        head = remaining_text(first.set_id, [r.variant for r in items])
+    if remaining or reminder:
+        head = (reminder_text(first.set_id) if reminder
+                else remaining_text(first.set_id, [r.variant for r in items]))
         if first.ct is not None:
             head += f"\nTisk {first.ct}"
     else:
@@ -69,8 +93,14 @@ def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | N
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])
         blocks.append(f"{r.variant} ({_variant_label(r)}):\n{lines}")
-    tail = [autopilot_skipped(skipped)] if skipped else []
-    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i nevzniklé varianty na konci
+    shown = {r.variant for r in items}
+    if isinstance(warnings, dict):
+        # nečitelné klíče vynechá landscape_warnings_lines (isdecimal jako tam)
+        warnings = {k: v for k, v in warnings.items() if str(k).isdecimal() and int(k) in shown}
+    warning_lines = [] if remaining or reminder else landscape_warnings_lines(warnings)
+    tail = (["\n".join(warning_lines)] if warning_lines else []) + ([autopilot_skipped(skipped)] if skipped else [])
+    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i řádky na konci (varování
+    # a nevzniklé varianty)
     room = (TEXT_LIMIT - len(head) - sum(len(t) for t in tail) - 2 * (len(blocks) + len(tail))) // max(len(blocks), 1)
     blocks = [b if len(b) <= room else b[:max(room - 1, 0)] + "…" for b in blocks]
     return "\n\n".join([head, *blocks, *tail])[:TEXT_LIMIT]
@@ -320,7 +350,8 @@ def queue_overview(units: list[Unit], jobs: list, worker_line: str, now: datetim
     units z queue.open_units, jobs = aktivní zadání generátoru (jobs.pending, v pořadí výdeje), hm = čas H:MM
     pro „další pokus“ (bot: jobs.hm v Europe/Prague). Ve frontě zadání nejdřív úlohy připravené k výdeji
     (číslované podle pořadí výdeje), za nimi úlohy s odkladem; rozhoduje not_before, ne wait_reason (ten po
-    návratu do fronty zůstává).
+    návratu do fronty zůstává). Přehled delší než TEXT_LIMIT zkrátí _fit_overview tak, že Problémy a stav PC
+    zůstanou celé.
     """
     now = now or datetime.now(timezone.utc)
     hm = hm or _hm_local
@@ -332,28 +363,55 @@ def queue_overview(units: list[Unit], jobs: list, worker_line: str, now: datetim
     issuable, deferred = [], []
     for j in queued:
         (deferred if j.not_before is not None and j.not_before > now else issuable).append(j)
-    blocks = []
+    sections: list[tuple[str, str, list[str]]] = []  # (klíč pro _TRIM_ORDER, nadpis, řádky položek)
     if mine:
-        blocks.append([f"Čeká na tebe ({len(mine)})", *(_unit_line(u, now) for u in mine)])
+        sections.append(("mine", f"Čeká na tebe ({len(mine)})", [_unit_line(u, now) for u in mine]))
     if ready:
-        blocks.append([f"Hotové, čekají na odeslání ({len(ready)})", *(_unit_line(u, now) for u in ready)])
+        sections.append(("ready", f"Hotové, čekají na odeslání ({len(ready)})", [_unit_line(u, now) for u in ready]))
     if generating:
-        blocks.append(["Generuje se", *(_job_generating(j, now) for j in generating)])
+        sections.append(("generating", "Generuje se", [_job_generating(j, now) for j in generating]))
     if queued:
-        blocks.append([f"Ve frontě zadání ({len(queued)})",
-                       *(f"#{j.id} {_what(j.ct, j.focus_pn)} · {n}. v pořadí" for n, j in enumerate(issuable, 1)),
-                       *(_job_waiting(j, hm) for j in deferred)])
+        sections.append(("queued", f"Ve frontě zadání ({len(queued)})",
+                         [*(f"#{j.id} {_what(j.ct, j.focus_pn)} · {n}. v pořadí" for n, j in enumerate(issuable, 1)),
+                          *(_job_waiting(j, hm) for j in deferred)]))
     if problems:
-        blocks.append([f"Problémy ({len(problems)})", *(_unit_line(u, now) for u in problems)])
-    if not blocks:
-        blocks.append([QUEUE_EMPTY])
-    blocks.append([worker_line])
-    text = "\n\n".join("\n".join(b) for b in blocks)
-    if len(text) > TEXT_LIMIT:
-        # dlouhý přehled: zkrátí se, stav PC zůstane na konci
-        tail = "\n…\n\n" + worker_line
-        text = text[:TEXT_LIMIT - len(tail)].rsplit("\n", 1)[0] + tail
-    return text
+        sections.append(("problems", f"Problémy ({len(problems)})", [_unit_line(u, now) for u in problems]))
+    if not sections:
+        return f"{QUEUE_EMPTY}\n\n{worker_line}"
+    return _fit_overview(sections, worker_line)
+
+
+# pořadí, ve kterém dlouhý přehled ubírá řádky položek: Problémy až nakonec, stav PC nikdy
+_TRIM_ORDER = ("ready", "queued", "mine", "generating", "problems")
+
+
+def _overview_section(head: str, lines: list[str], keep: int) -> str:
+    """Sekce přehledu s prvními keep řádky položek; zkrácená končí „… a další N“."""
+    hidden = len(lines) - keep
+    return "\n".join([head, *lines[:keep], *([f"… a další {hidden}"] if hidden else [])])
+
+
+def _fit_overview(sections: list[tuple[str, str, list[str]]], worker_line: str) -> str:
+    """Přehled /fronta do TEXT_LIMIT: ubírá řádky položek od konce sekcí v pořadí _TRIM_ORDER (Hotové, Ve frontě
+    zadání, Čeká na tebe, Generuje se), až když nestačí, i konec Problémů; stav PC zůstane posledním řádkem."""
+    texts = [_overview_section(head, lines, len(lines)) for _, head, lines in sections]
+    total = sum(len(t) for t in texts) + 2 * len(texts) + len(worker_line)  # „\n\n“ před každou další částí
+    for key in _TRIM_ORDER:
+        for i, (k, head, lines) in enumerate(sections):
+            if k != key:
+                continue
+            keep = len(lines)
+            while total > TEXT_LIMIT and keep > 0:
+                keep -= 1
+                shorter = _overview_section(head, lines, keep)
+                total += len(shorter) - len(texts[i])
+                texts[i] = shorter
+    body = "\n\n".join(texts)
+    tail = "\n\n" + worker_line
+    if len(body) + len(tail) > TEXT_LIMIT:
+        # pojistka (samé nadpisy přes limit nevzniknou): uříznout tělo, stav PC zůstane na konci
+        body = body[:max(TEXT_LIMIT - len(tail), 0)]
+    return body + tail
 
 
 NOTHING_READY = "Teď není co poslat: položky ve frontě jsou odložené po chybě odeslání, zkusím je znovu."
@@ -493,13 +551,17 @@ def worker_paused_text(reason: str | None, detail: str | None, until_hm: str | N
     return text + ". Zadání ve frontě počkají."
 
 
-def worker_line(seen: str | None, state: dict | None = None, until_hm: str | None = None) -> str:
+def worker_line(seen: str | None, state: dict | None = None, until_hm: str | None = None,
+                stale: bool = False) -> str:
     """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru.
 
     seen = čas posledního heartbeat („20. 11. 14:05“), None = PC zatím nebylo vidět; state = reel_state.worker_state
     ({state, reason, detail}), důvod pozastavení stejnými slovy jako zpráva o pozastavení (worker_paused_text);
-    until_hm = do kdy je pozastaveno. Neznámý stav = jen kdy bylo PC vidět.
+    until_hm = do kdy je pozastaveno. Neznámý stav = jen kdy bylo PC vidět. stale = heartbeat je starší než
+    jobs.WORKER_STALE (rozhoduje bot): „PC neodpovídá od …“ bez stavu generátoru, ten už nemusí platit.
     """
+    if stale and seen:
+        return f"PC neodpovídá od {seen}"
     text = f"PC naposledy: {seen}" if seen else "PC zatím nebylo vidět"
     st = state.get("state") if isinstance(state, dict) else None
     if st == "running":

@@ -4,9 +4,11 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
+import hlidac_reels
 from conftest import FIXTURES, load_fixture
 from hlidac_reels.card import Card
 from hlidac_reels.render import LANDSCAPE_SAFE, _page, audio_cues, measure_blocks, render_reel, scene_ids, stamps_for
@@ -16,6 +18,9 @@ SAFE = {"top": 150, "bottom": 1920 - 340, "left": 60, "right": 1020}
 # na šířku (1920 × 1080, X.com): stejný okraj dokola
 SAFE_LAND = {"top": LANDSCAPE_SAFE, "bottom": 1080 - LANDSCAPE_SAFE, "left": LANDSCAPE_SAFE, "right": 1920 - LANDSCAPE_SAFE}
 ALL = sorted(p.name for p in FIXTURES.glob("v3-*.json"))
+# vzorové karty, které generátor dává modelu (gen/examples)
+EXAMPLES = Path(hlidac_reels.__file__).parent / "generator" / "examples"
+EXAMPLE_CARDS = sorted(p.name for p in EXAMPLES.glob("v3-*.json"))
 COMMON = {"s-hook", "s-ctx", "s-end"}
 PREFIX = {"cesta": ("s-c-",), "zmena": ("s-z-",), "rozprava": ("s-r-",), "pn": ("s-p-",)}
 LONG = "Velmi dlouhý text, který má prověřit vměstnání do bezpečné zóny a zkrácení na celé slovo bez přetečení. " * 6
@@ -214,6 +219,16 @@ def test_landscape_fixture_blocks_in_safe_zone(name):
 
 
 @pytest.mark.render
+@pytest.mark.parametrize("name", EXAMPLE_CARDS)
+def test_vzorove_karty_projdou_kontrolou_na_sirku(name):
+    # generátor kontroluje rozvržení na šířku před renderem šířky (zóna SAFE_LAND); vzorové karty modelu musí projít
+    from hlidac_reels.generator.validate import check_layout
+
+    raw = json.loads((EXAMPLES / name).read_text(encoding="utf-8"))
+    assert check_layout(raw, V3, orientation="landscape") == []
+
+
+@pytest.mark.render
 @pytest.mark.parametrize("name", LONG_CARDS)
 def test_landscape_long_texts_stay_in_safe_zone(name):
     card, _ = _long_card(name)
@@ -313,6 +328,19 @@ def test_regresni_karty_bez_preteceni(raw, orientation):
         assert check_layout(raw, V3) == []
     else:
         _assert_safe(measure_blocks(Card.from_json(raw), V3, "landscape"), SAFE_LAND)
+
+
+@pytest.mark.render
+def test_hacek_10_z_dvanacti_bez_preteceni():
+    # F5: „10 z dvanácti“ zůstane po normalizaci celé ve velkém čísle (nezalomitelné mezery) a po fit() nepřeteče
+    from hlidac_reels.generator.normalize import normalize
+    from hlidac_reels.generator.validate import CLOSING, check_layout
+
+    raw = copy.deepcopy(load_fixture("v3-pn-311.json"))
+    raw["hook"] = {"big": "10 z dvanácti", "sub": "návrhů přišlo v den konce podrobné rozpravy"}
+    card, _, _ = normalize(raw, CLOSING, fmt="pn", focus_info=[])
+    assert card["hook"] == {"big": "10\u00a0z\u00a0dvanácti", "sub": "návrhů přišlo v den konce podrobné rozpravy"}
+    assert check_layout(card, V3) == []
 
 
 # ---------- F4: autor zadaného PN se štítkem klubu v háčku (karta.pn_autor ze serveru) ----------

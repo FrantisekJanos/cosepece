@@ -11,25 +11,33 @@ Kontroly nad databází webu (PostgreSQL), bez sítě:
 - tisk ve fázi Vyhlášeno bez čísla Sbírky déle než 14 dní,
 - tisk měnící jednací řád (90/1995 Sb.) nebo Ústavu (1/1993 Sb.) ve 3. čtení a dál: podklady generátoru
   (`generator/examples/lhuty.md`, `pravidla.md`) pak můžou být neplatné,
-- PC s generátorem Reels (`worker_seen_at`) neviděno 24 h: jen v denním souhrnu, PC nemusí běžet pořád.
+- PC s generátorem Reels (`worker_seen_at`) neviděno 24 h: jen v denním souhrnu, PC nemusí běžet pořád,
+- Reels jen do souhrnu a `/stav` (řádek přehledu „Reels ke schválení“ vždy): jednotka čekající na rozhodnutí vlastníka
+  déle než 24 h, položky held, pozastavené PC (`worker_state`), vydaná zadání bez známky života (`jobs.silent`);
+  held, pozastavení a vydání bez známky života mají vlastní zprávu (F1, F3), nerozhodnuté jednotky připomíná F1,
+- Reels s výstrahou: naléhavé zprávy generátoru (`reel_events` urgency 1) neodeslané déle než 1 h, a PC bez
+  heartbeatu déle než `jobs.WORKER_STALE`, když čeká vyžádané zadání (manual, auto_pick); pozastavené PC
+  (`worker_state` paused s `until`) pošle heartbeat jen na začátku pauzy a spí do `until`, výpadek se mu proto
+  počítá až od `until` + `jobs.WORKER_STALE`.
 
 Bot volá `zkontroluj` každou hodinu: nový nález (nebo změněný podpis, např. jiná fáze tisku) pošle jednou
 jako výstrahu, nález, který zmizel, jako „obnoveno“. Stav drží reel_state `hlidani_aktivni` (klíč nálezu →
-podpis), poslední výsledek pro MCP `stav_dat` reel_state `hlidani_vystrahy`. Denní souhrn jde v 8:00
-Europe/Prague, `/stav` ho pošle na požádání.
+podpis), poslední výsledek pro MCP `stav_dat` reel_state `hlidani_vystrahy` (jen čerstvost dat, bez nálezů
+Reels: MCP je veřejné). Denní souhrn jde v 8:00 Europe/Prague, `/stav` ho pošle na požádání.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from . import queue
+from . import events, jobs, messages, queue
 
 ACTIVE_KEY = "hlidani_aktivni"
 SNAPSHOT_KEY = "hlidani_vystrahy"
 SUMMARY_DAY_KEY = "hlidani_souhrn_den"
 WORKER_SEEN_KEY = "worker_seen_at"
+WORKER_STATE_KEY = "worker_state"  # JSON {state, reason, detail, until, at} z heartbeat workeru
 SUMMARY_HOUR = 8  # Europe/Prague
 
 SYNC_MAX = timedelta(hours=2)
@@ -37,6 +45,14 @@ STENO_MAX = timedelta(hours=3)
 AI_WAIT_MAX = timedelta(hours=12)
 AI_RESULT_MAX = timedelta(hours=24)
 WORKER_MAX = timedelta(hours=24)
+REELS_UNDECIDED_MAX = timedelta(hours=24)
+REELS_EVENTS_MAX = timedelta(hours=1)
+# stavy jednotek fronty (queue.Unit.state), které čekají na rozhodnutí vlastníka
+REELS_OWNER_STATES = ("approval", "untouched", "picked", "remaining")
+# vyžádaná zadání (vlastník na ně čeká); fresh je automatické
+REELS_REQUESTED = ("manual", "auto_pick")
+# klíče nálezů o provozu Reels: do Telegramu a /stav ano, do veřejného snapshotu pro MCP stav_dat ne
+REELS_PREFIX = "reels_"
 REC_DAYS = 7
 SBIRKA_DAYS = 14
 # vyhlášený tisk měnící podklady se v souhrnu ukazuje ještě tolik dní
@@ -93,6 +109,36 @@ def fmt(conn, at: datetime | None) -> str:
         return "nikdy"
     return _one(conn, "SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMDD. FMMM. HH24:MI')",
                 (at,))[0]
+
+
+def _when(conn, at: datetime) -> str:
+    """Čas v Europe/Prague jako „20. 11. 9:05“: hodina bez úvodní nuly jako ve zprávách bota Reels."""
+    return _one(conn, "SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMDD. FMMM. FMHH24:MI')",
+                (at,))[0]
+
+
+def _parse_time(raw) -> datetime | None:
+    """ISO čas z reel_state; nečitelný = None, bez časové zóny = UTC (jako bot._parse_time)."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        t = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=timezone.utc)
+
+
+def _worker_seen(conn) -> datetime | None:
+    return _parse_time(queue.get_state(conn, WORKER_SEEN_KEY))
+
+
+def _worker_state(conn) -> dict | None:
+    """reel_state worker_state ({state, reason, detail, until, at}); nečitelný nebo jiný než objekt = None."""
+    try:
+        state = json.loads(queue.get_state(conn, WORKER_STATE_KEY) or "null")
+    except ValueError:
+        return None
+    return state if isinstance(state, dict) else None
 
 
 def _age(now: datetime, at: datetime) -> str:
@@ -247,18 +293,137 @@ def _podklady(conn, now: datetime, st: Status) -> None:
 
 
 def _worker(conn, now: datetime, st: Status) -> None:
-    raw = queue.get_state(conn, WORKER_SEEN_KEY)
-    try:
-        seen = datetime.fromisoformat(raw) if raw else None
-    except ValueError:
-        seen = None
+    seen = _worker_seen(conn)
     st.lines.append(f"PC s generátorem Reels: naposledy {fmt(conn, seen)}")
     if seen is None or now - seen > WORKER_MAX:
         st.findings.append(Finding("worker", f"PC s generátorem Reels nebylo vidět {_age(now, seen) if seen else 'nikdy'}"
                                              " (úloha cosepece-reels-worker).", alert=False))
 
 
-CHECKS = (_sync, _steno, _ai, _worker, _rec, _sbirka, _podklady)
+def _unit_name(u: queue.Unit) -> str:
+    return f"sada #{u.set_id}" if u.set_id is not None else f"video #{u.label}"
+
+
+def _unit_names(units: list[queue.Unit]) -> list[str]:
+    """Názvy jednotek od nejstarší; sada s víc řádky (vybrané a zbylé varianty) jen jednou."""
+    return list(dict.fromkeys(_unit_name(u) for u in sorted(units, key=lambda u: u.since)))
+
+
+def _job_what(job: jobs.Job) -> str:
+    """Popis zadání jako bot._job_what („PN 2376+2377, tisk 300“); bot importuje hlidani, opačně import nejde."""
+    if job.ct is None:
+        return "automatický výběr"
+    if job.focus_pn:
+        return "PN " + "+".join(str(n) for n in job.focus_pn) + f", tisk {job.ct}"
+    return f"tisk {job.ct}"
+
+
+def _reels_waiting(conn, now: datetime, st: Status) -> None:
+    """Jednotky Reels čekající na vlastníka: řádek přehledu vždy, déle než 24 h nález jen do souhrnu
+    (nerozhodnuté jednotky připomíná F1)."""
+    if not _exists(conn, "reel_queue"):
+        return
+    waiting = [u for u in queue.open_units(conn, now) if u.state in REELS_OWNER_STATES]
+    if not waiting:
+        st.lines.append("Reels ke schválení: nic nečeká")
+        return
+    oldest = min(waiting, key=lambda u: u.since)
+    since = _when(conn, oldest.since)
+    st.lines.append(f"Reels ke schválení: {len(_unit_names(waiting))} (nejstarší {_unit_name(oldest)} od {since})")
+    old = [u for u in waiting if now - u.since > REELS_UNDECIDED_MAX]
+    if old:
+        st.findings.append(Finding("reels_ceka", f"Reels bez rozhodnutí déle než 24 h: {', '.join(_unit_names(old))} "
+                                                 f"(nejstarší od {since}).", alert=False))
+
+
+def _reels_held(conn, now: datetime, st: Status) -> None:
+    """Položky, které nejde doručit do Telegramu (held): vlastní zprávu má F1, tady jen souhrn."""
+    if not _exists(conn, "reel_queue"):
+        return
+    held = [u for u in queue.open_units(conn, now) if u.state == "held"]
+    if held:
+        st.findings.append(Finding("reels_held", f"Reels nejde doručit do Telegramu: {', '.join(_unit_names(held))} "
+                                                 "(/fronta: Zkusit znovu / Zahodit).", alert=False))
+
+
+def _reels_paused(conn, now: datetime, st: Status) -> None:
+    """Pozastavené PC (reel_state worker_state): zprávu o pozastavení posílá F3, tady jen souhrn.
+
+    Pauza s `until`, po kterém uplynulo víc než jobs.WORKER_STALE bez nového stavu (PC během pauzy vypnuli),
+    už neplatí: nález nevzniká (stejné pravidlo jako _reels_pc a bot._worker_line), výpadek hlídá _reels_pc."""
+    state = _worker_state(conn)
+    if state is None or state.get("state") != "paused":
+        return
+    until = _parse_time(state.get("until"))
+    if until is not None and until + jobs.WORKER_STALE < now:
+        return
+    st.findings.append(Finding("reels_pauza", messages.worker_paused_text(
+        state.get("reason"), state.get("detail"), jobs.hm(conn, until) if until is not None else None), alert=False))
+
+
+def _reels_silent(conn, now: datetime, st: Status) -> None:
+    """Vydaná zadání bez známky života (jobs.silent): zprávu posílá F3, tady jen souhrn, všechna v jednom nálezu."""
+    if not _exists(conn, "reel_jobs"):
+        return
+    silent = jobs.silent(conn, now)
+    if not silent:
+        return
+    seen = _worker_seen(conn)
+    parts = []
+    for job in silent:
+        # poslední známka života jako bot._check_silent: fáze, vydání nebo heartbeat workeru
+        since = max((t for t in (job.stage_at, job.claimed_at, seen) if t is not None), default=job.created_at)
+        parts.append(f"Zadání #{job.id} ({_job_what(job)}) bez známky života od {jobs.hm(conn, since)}.")
+    st.findings.append(Finding("reels_ticho", " ".join(parts), alert=False))
+
+
+def _reels_events(conn, now: datetime, st: Status) -> None:
+    """Naléhavé zprávy generátoru (reel_events urgency 1), které bot neodeslal déle než REELS_EVENTS_MAX."""
+    if not _exists(conn, "reel_events"):
+        return
+    count, oldest = _one(conn, "SELECT count(*), min(at) FROM reel_events "
+                               "WHERE urgency = %s AND notified_at IS NULL AND at < %s",
+                         (events.URGENT, now - REELS_EVENTS_MAX))
+    if not count:
+        return
+    if count == 1:
+        what = "1 zpráva generátoru Reels čeká"
+    elif count <= 4:
+        what = f"{count} zprávy generátoru Reels čekají"
+    else:
+        what = f"{count} zpráv generátoru Reels čeká"
+    st.findings.append(Finding("reels_udalosti",
+                               f"{what} na odeslání déle než 1 h (nejstarší od {_when(conn, oldest)})."))
+
+
+def _reels_pc(conn, now: datetime, st: Status) -> None:
+    """PC bez heartbeatu déle než jobs.WORKER_STALE, když čeká vyžádané zadání (manual, auto_pick).
+
+    Pozastavený worker (limit, chyba prostředí) pošle heartbeat se stavem paused a `until` jednou a pak spí až
+    do `until` (worker._resume), teprve potom sonda a další heartbeat: do `until` + WORKER_STALE se proto
+    výpadek nehlásí (zprávu o pozastavení posílá F3). Pauza bez `until` (chybí nástroje) heartbeat posílá dál,
+    výjimku nepotřebuje. Podpis se s novými zadáními nemění: jedna výstraha za výpadek, „obnoveno“ až po
+    heartbeatu, nebo když už žádné vyžádané zadání nečeká."""
+    if not _exists(conn, "reel_jobs"):
+        return
+    ids = [r[0] for r in _all(conn, "SELECT id FROM reel_jobs WHERE status = ANY(%s) AND source = ANY(%s) "
+                                    "ORDER BY id", (list(jobs.ACTIVE), list(REELS_REQUESTED)))]
+    if not ids:
+        return
+    seen = _worker_seen(conn)
+    if seen is not None and now - seen <= jobs.WORKER_STALE:
+        return
+    state = _worker_state(conn)
+    until = _parse_time(state.get("until")) if state is not None and state.get("state") == "paused" else None
+    if until is not None and now <= until + jobs.WORKER_STALE:
+        return
+    who = f"PC s generátorem neodpovídá od {_when(conn, seen)}" if seen else "PC s generátorem zatím nebylo vidět"
+    what = "čekají vyžádaná zadání" if len(ids) > 1 else "čeká vyžádané zadání"
+    st.findings.append(Finding("reels_pc", f"{who} a {what}: {', '.join(f'#{i}' for i in ids)}."))
+
+
+CHECKS = (_sync, _steno, _ai, _worker, _reels_waiting, _reels_held, _reels_paused, _reels_silent, _reels_events,
+          _reels_pc, _rec, _sbirka, _podklady)
 
 
 def status(conn, now: datetime) -> Status:
@@ -290,8 +455,10 @@ def check(conn, now: datetime) -> tuple[list[Finding], list[str]]:
     gone = [k for k in active if k not in current]
     recovered = [k for k in gone if not k.startswith("podklady:")]
     queue.set_state(conn, ACTIVE_KEY, json.dumps({k: f.sig for k, f in current.items()}, ensure_ascii=False))
+    # veřejný MCP stav_dat ukazuje čerstvost dat: provoz Reels (zprávy, PC) do snapshotu nepatří
     queue.set_state(conn, SNAPSHOT_KEY, json.dumps(
-        {"at": now.isoformat(), "vystrahy": [f.text for f in st.findings if f.alert and f.summary]},
+        {"at": now.isoformat(), "vystrahy": [f.text for f in st.findings if f.alert and f.summary
+                                             and not f.key.startswith(REELS_PREFIX)]},
         ensure_ascii=False))
     return new, [_RECOVERED.get(k.split(":")[0], "{}").format(k.partition(":")[2] or k) for k in recovered]
 
@@ -302,6 +469,8 @@ _RECOVERED = {
     "ai": "AI rozbor zase běží.",
     "rec": "Schůze {} už má údaje řečník–bod (rec).",
     "sbirka": "Tisk {} už má číslo Sbírky.",
+    "reels_udalosti": "Zprávy generátoru Reels zase odcházejí do Telegramu.",
+    "reels_pc": "PC s generátorem se ozvalo, nebo už nečeká žádné vyžádané zadání.",
 }
 
 

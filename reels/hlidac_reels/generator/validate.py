@@ -82,6 +82,9 @@ def has_word(text: str, word: str) -> bool:
 # kolik znaků před jménem autora smí stát klub („za ANO Jan Novák“)
 CLUB_BEFORE = 40
 NAME_FOLLOWING = r"[^\S\n]*\(([^()\n]*)\)?"
+# jméno uvnitř závorky: text za ním končí na `)`, `(` nebo na konci řádku; klub je první údaj za čárkou
+PAREN_STOP = re.compile(r"[()\n]")
+NAME_COMMA = r"[^\S\n]*,[^\S\n]*"
 
 
 def _club_pattern(klub: str) -> str:
@@ -110,6 +113,29 @@ def find_name(text: str, jmeno: str) -> tuple[int, int, str | None] | None:
         return None
     paren = re.match(NAME_FOLLOWING, text[m.end():])
     return m.start(), m.end(), paren.group(1) if paren else None
+
+
+def name_in_paren(text: str, start: int, end: int) -> str | None:
+    """Stojí jméno (`start`–`end`) uvnitř otevřené závorky („PN 2376 (Jan Novák) mění …“)? Vrací text od konce
+    jména po nejbližší `)`, `(` nebo konec řádku (`""`, `", ANO"`); `None`, když poslední `(` před jménem má před
+    ním svou `)`, když před jménem na jeho řádku žádná `(` není, nebo když za jménem nic z toho nenásleduje.
+
+    Klub pak patří do téže závorky za čárku („(Jan Novák, ANO)“), ne do vnořené závorky. Konec na `(` a na konci
+    řádku: klub jiného autora ve vnořené závorce nebo za neuzavřenou závorkou na dalším řádku se nepočítá. Stejně
+    se `(` hledá jen na řádku jména: neuzavřená závorka nebo „:(“ na dřívějším řádku jméno do závorky nedává.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    opened = text.rfind("(", line_start, start)
+    if opened < 0 or text.find(")", opened, start) >= 0:
+        return None
+    stop = PAREN_STOP.search(text, end)
+    return text[end:stop.start()] if stop else None
+
+
+def club_after_name(inner: str, klub: str) -> bool:
+    """Je klub prvním údajem za jménem v závorce („, ANO“ i „, ANO, předkladatel“)? Klub dál v závorce
+    („, ODS, ANO“, „, ODS a Jana Malá, ANO“) se nepočítá."""
+    return re.match(rf"{NAME_COMMA}(?:{_club_pattern(klub)})", inner) is not None
 
 
 def club_before(text: str, start: int, klub: str) -> bool:
@@ -173,17 +199,29 @@ def _names_author(caption: str, jmeno: str) -> bool:
 
 
 def _club_error(caption: str, jmeno: str, klub: str, which: str) -> str | None:
-    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, nebo v `CLUB_BEFORE` znacích před ním
-    („za ANO Jan Novák“). Bez celého jména (skloňovaný tvar) stačí klub kdekoli v popisku."""
+    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, jako první údaj za jménem v téže
+    závorce, ve které jméno stojí („(Jan Novák, ANO)“, „(Jan Novák, ANO, předkladatel)“), nebo v `CLUB_BEFORE`
+    znacích před ním („za ANO Jan Novák“). Bez celého jména (skloňovaný tvar) stačí klub kdekoli v popisku.
+
+    Jméno v závorce, za kterým následuje jiný text než klub („(Jan Novák, ODS)“, „(Jan Novák, ODS a Jana Malá,
+    ANO)“), je chyba i se správným klubem dál v závorce nebo před jménem: klub patří k nejbližšímu jménu."""
     missing = f"popisek neuvádí klub autora {which}: „{jmeno} ({klub})“"
     found = find_name(caption, jmeno)
     if found is None:
         return None if club_matches(caption, klub) else missing
-    start, _, paren = found
+    start, end, paren = found
     if paren is not None:
         return None if club_matches(paren, klub) else (
             f"popisek uvádí u autora {which} jiný klub: „{jmeno} ({paren})“, ze serveru ({klub})")
-    return None if club_before(caption, start, klub) else missing
+    inner = name_in_paren(caption, start, end)
+    if inner is not None and inner.strip():
+        return None if club_after_name(inner, klub) else (
+            f"popisek uvádí u autora {which} jiný klub nebo text za jménem: „{jmeno}{inner.rstrip()}“, "
+            f"ze serveru ({klub})")
+    if club_before(caption, start, klub):
+        return None
+    # jméno v závorce: chyba radí tvar bez vnořené závorky
+    return missing if inner is None else f"popisek neuvádí klub autora {which}: „{jmeno}, {klub}“"
 
 
 def _author_errors(card: dict, caption: str) -> list[str]:
@@ -242,11 +280,20 @@ def _overflow_text(box: dict) -> str:
     return f"{text} ({', '.join(fields)})" if fields else text
 
 
-def check_layout(card: dict, template: str) -> list[str]:
-    """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium)."""
-    from ..render import measure_blocks
+def check_layout(card: dict, template: str, orientation: str = "portrait") -> list[str]:
+    """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium).
 
-    boxes = measure_blocks(Card.from_json(card), template)
+    Na výšku platí zóny Instagramu (SAFE), na šířku (1920 × 1080) render.LANDSCAPE_SAFE px dokola; texty chyb stejné.
+    """
+    from ..render import LANDSCAPE_SAFE, SIZES, measure_blocks
+
+    if orientation == "landscape":
+        width, height = SIZES["landscape"]
+        safe = {"top": LANDSCAPE_SAFE, "bottom": height - LANDSCAPE_SAFE,
+                "left": LANDSCAPE_SAFE, "right": width - LANDSCAPE_SAFE}
+    else:
+        safe = SAFE
+    boxes = measure_blocks(Card.from_json(card), template, orientation=orientation)
     errs: list[str] = []
     for name, b in boxes.items():
         if not name.startswith("scene:"):
@@ -255,6 +302,6 @@ def check_layout(card: dict, template: str) -> list[str]:
             errs.append(f"{name}: {_overflow_text(b)}")
         if b.get("cut_mid_word"):
             errs.append(f"{name}: text useknutý uprostřed slova")
-        if b["top"] < SAFE["top"] or b["bottom"] > SAFE["bottom"] or b["left"] < SAFE["left"] or b["right"] > SAFE["right"]:
+        if b["top"] < safe["top"] or b["bottom"] > safe["bottom"] or b["left"] < safe["left"] or b["right"] > safe["right"]:
             errs.append(f"{name}: mimo bezpečnou zónu")
     return errs

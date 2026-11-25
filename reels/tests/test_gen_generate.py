@@ -19,7 +19,7 @@ KEYS = [r["key"] for r in load_fixture("v3-cesta-311.json")["reasons"]]
 @pytest.fixture
 def fake(monkeypatch):
     state = {"calls": [], "renders": [], "landscape": [], "active": 0, "prepare": None, "timed_out": False,
-             "skip": set(), "land_fail": None}
+             "skip": set(), "land_fail": None, "paths": []}
 
     def run_claude(prompt, *, workdir, mcp_config, model, timeout_s=1200):
         state["calls"].append(prompt)
@@ -37,6 +37,7 @@ def fake(monkeypatch):
     def render_reel(card, out_path, *, template="template", orientation="portrait", **kw):
         state["active"] += 1
         assert state["active"] == 1, "render běží souběžně"
+        state["paths"].append(Path(out_path))  # výstup prozradí variantu (variant-N/…)
         if orientation == "landscape":
             assert Path(out_path).name.endswith("-sirka.mp4")
             state["landscape"].append(template)
@@ -52,7 +53,7 @@ def fake(monkeypatch):
     monkeypatch.setattr(gen, "run_claude", run_claude)
     monkeypatch.setattr(gen, "render_reel", render_reel)
     state["render_reel"] = render_reel  # test si render podvrhne jinak a pak vrátí tento
-    monkeypatch.setattr(gen, "check_layout", lambda card, template: [])
+    monkeypatch.setattr(gen, "check_layout", lambda card, template, orientation="portrait": [])
     def probe(p):
         # video na šířku má rozměry 16:9; land_fail="ratio" u varianty 2 podvrhne šířku s poměrem 9:16
         if Path(p).name.endswith("-sirka.mp4") and not (state["land_fail"] == "ratio" and "variant-2" in str(p)):
@@ -237,6 +238,36 @@ def test_pad_renderu_sirky_nevyradi_variantu(tmp_path, fake):
     r = _run(tmp_path)
     assert r.ok and all(v.ok and v.video and v.video_landscape is None for v in r.variants)
     assert all(any("Chromium spadl" in w for w in v.warnings) for v in r.variants)
+
+
+def test_sirka_s_chybou_rozvrzeni_se_nerenderuje(tmp_path, fake, monkeypatch):
+    # rozvržení na šířku se kontroluje před renderem šířky; chyba vyřadí jen šířku, varianta zůstane platná na výšku
+    calls: list[str] = []
+
+    def layout(card, template, orientation="portrait"):
+        calls.append(orientation)
+        return ["scene:s-hook: mimo bezpečnou zónu"] if orientation == "landscape" else []
+    monkeypatch.setattr(gen, "check_layout", layout)
+    r = _run(tmp_path)
+    assert fake["landscape"] == []  # render_reel s orientation="landscape" se nezavolal
+    assert calls.count("landscape") == 3
+    assert r.ok and all(v.ok and v.video and v.video_landscape is None and not v.errors for v in r.variants)
+    for v in r.variants:
+        assert v.warnings == ["video na šířku vynecháno: rozvržení: scene:s-hook: mimo bezpečnou zónu"]
+    assert not list((tmp_path / "out").glob("variant-*/*-sirka.mp4"))
+
+
+def test_pad_kontroly_rozvrzeni_sirky_nevyradi_variantu(tmp_path, fake, monkeypatch):
+    def layout(card, template, orientation="portrait"):
+        if orientation == "landscape":
+            raise RuntimeError("Chromium spadl")
+        return []
+    monkeypatch.setattr(gen, "check_layout", layout)
+    r = _run(tmp_path)
+    assert fake["landscape"] == []
+    assert r.ok and all(v.ok and v.video and v.video_landscape is None for v in r.variants)
+    assert all(any("rozvržení" in w and "kontrola rozvržení selhala" in w and "Chromium spadl" in w
+                   for w in v.warnings) for v in r.variants)
 
 
 def test_sablona_bez_sirky(tmp_path, fake, monkeypatch):
@@ -490,8 +521,8 @@ def test_oprava_jen_vadnych_s_chybou(tmp_path, fake, monkeypatch):
     err = "scene:s-hook: přetéká o 3 px (hook.unit 7 znaků, title 41 znaků)"
     seen = {"n": 0}
 
-    def layout(card, template):
-        if card.get("format") == "pn":
+    def layout(card, template, orientation="portrait"):
+        if card.get("format") == "pn" and orientation == "portrait":
             seen["n"] += 1
             if seen["n"] == 1:
                 return [err]
@@ -566,9 +597,10 @@ def test_platna_bez_renderu_se_pri_renderu_zkontroluje(tmp_path, fake, monkeypat
     _run(tmp_path, render=False)
     assert _state(tmp_path)["variants"]["2"]["state"] == "platna"
     checked = []
-    monkeypatch.setattr(gen, "check_layout", lambda card, template: checked.append(template) or [])
+    monkeypatch.setattr(gen, "check_layout",
+                        lambda card, template, orientation="portrait": checked.append(orientation) or [])
     r = _run(tmp_path)
-    assert len(fake["calls"]) == 1 and len(checked) == 3 and r.ok and all(v.video for v in r.variants)
+    assert len(fake["calls"]) == 1 and checked.count("portrait") == 3 and r.ok and all(v.video for v in r.variants)
 
 
 # --- F3: fáze práce (on_stage) a zrušení (should_stop) ---
@@ -619,3 +651,167 @@ def test_generate_cancelled_pred_modelem(tmp_path, fake):
     with pytest.raises(gen.Cancelled):
         _run(tmp_path, should_stop=lambda: True)
     assert fake["calls"] == [] and _state(tmp_path)["model_runs"] == 0
+
+
+# --- F5: otisk vyrenderované karty, strop renderu, log na vydání ---
+
+def _rendered_variants(fake) -> list[str]:
+    """Složky variant, pro které proběhl render (na výšku i na šířku), v pořadí volání."""
+    return [p.parent.name for p in fake["paths"]]
+
+
+def _retitle(tmp_path, n: int, title: str) -> None:
+    d = tmp_path / "out" / f"variant-{n}"
+    card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+    card["title"] = title
+    (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def test_pokracovani_vyrenderovana_se_zmenenou_kartou_renderuje_znovu(tmp_path, fake):
+    # karta vyrenderované varianty se změnila (ruční úprava, zásah modelu): staré video ke kartě nepatří
+    _run(tmp_path)
+    assert sorted(set(_rendered_variants(fake))) == ["variant-1", "variant-2", "variant-3"]
+    _retitle(tmp_path, 2, "Daň pro rafinerie: výborům zbylo 30 dní místo 60")
+    fake["paths"].clear()
+    r = _run(tmp_path)
+    assert _rendered_variants(fake) == ["variant-2", "variant-2"]  # na výšku a na šířku, jen varianta 2
+    assert len(fake["calls"]) == 1 and r.ok and all(v.ok for v in r.variants)
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "vyrenderovana"
+    assert st["card_sha"] == gen._sha(tmp_path / "out" / "variant-2" / "card.json")
+
+
+def _render_fails_for(fake, monkeypatch, folder: str) -> list[Path]:
+    """Podvrhne render, který u jedné varianty vždy spadne (prostředí); vrací seznam jejích pokusů."""
+    tries: list[Path] = []
+
+    def render_reel(card, out_path, **kw):
+        if Path(out_path).parent.name == folder:
+            tries.append(Path(out_path))
+            raise RuntimeError("Chromium spadl")
+        return fake["render_reel"](card, out_path, **kw)
+    monkeypatch.setattr(gen, "render_reel", render_reel)
+    return tries
+
+
+def test_render_selze_dvakrat_varianta_vyrazena(tmp_path, fake, monkeypatch):
+    # Review Focus 4: render padá kvůli prostředí jen u varianty 2; po RENDER_TRIES pokusech varianta skončí
+    # ve stavu render_selhal bez opravného běhu modelu a další vydání na její render nečekají
+    assert gen.RENDER_TRIES == 2 and gen.RENDER_FAILED == "render_selhal"
+    tries = _render_fails_for(fake, monkeypatch, "variant-2")
+    r1 = _run(tmp_path)
+    assert len(tries) == 1 and r1.ok and r1.unrendered == [2]
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "platna" and st["render_fails"] == 1
+    r2 = _run(tmp_path)
+    assert len(tries) == 2 and r2.ok and r2.unrendered == []
+    v = r2.variants[1]
+    assert not v.ok and v.errors and v.errors[0].startswith("render selhal 2×") and "Chromium spadl" in v.errors[0]
+    assert len(fake["calls"]) == 1 and r2.model_runs == 1 and r2.runs == []  # žádný opravný běh
+    st = _state(tmp_path)
+    assert st["model_runs"] == 1
+    assert st["variants"]["2"]["state"] == "render_selhal" and st["variants"]["2"]["render_fails"] == 2
+    assert st["variants"]["2"]["errors"] == v.errors
+    r3 = _run(tmp_path)
+    assert len(tries) == 2 and len(fake["calls"]) == 1 and r3.unrendered == [] and r3.ok
+    assert not r3.variants[1].ok and r3.variants[1].errors[0].startswith("render selhal 2×")
+    assert [v.ok for v in r3.variants] == [True, False, True]
+
+
+def test_neuspesne_rendery_se_nuluji_s_novou_kartou(tmp_path, fake, monkeypatch):
+    # počet neúspěšných renderů patří ke kartě: změněná karta dostane znovu RENDER_TRIES pokusů
+    tries = _render_fails_for(fake, monkeypatch, "variant-2")
+    _run(tmp_path)
+    assert _state(tmp_path)["variants"]["2"]["render_fails"] == 1
+    _retitle(tmp_path, 2, "Daň pro rafinerie: výborům zbylo 30 dní místo 60")
+    r = _run(tmp_path)
+    st = _state(tmp_path)["variants"]["2"]
+    assert len(tries) == 2 and st["state"] == "platna" and st["render_fails"] == 1 and r.unrendered == [2]
+
+
+def test_kazde_vydani_vlastni_log(tmp_path, fake, monkeypatch):
+    # claude.log patří jednomu vydání: log minulého vydání se přesune do claude-1.log
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):  # jako skutečný run_claude: běhy připisuje na konec logu
+        log = Path(kw["workdir"]) / "claude.log"
+        before = log.read_text(encoding="utf-8") if log.is_file() else ""
+        r = real(prompt, **kw)
+        log.write_text(before + f"=== běh {len(fake['calls'])} ===\n", encoding="utf-8")
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 1
+    # jiný vstup: nové generování ve stejné složce (varianta 2 má jiný formát, vydání má i opravné běhy)
+    _run(tmp_path, render=False, autopilot=True)
+    assert len(fake["calls"]) > 2
+    out = tmp_path / "out"
+    first = (out / "claude-1.log").read_text(encoding="utf-8")
+    last = (out / "claude.log").read_text(encoding="utf-8")
+    assert first == "=== běh 1 ===\n"
+    assert "=== běh 1 ===" not in last and all(f"=== běh {n} ===" in last for n in range(2, len(fake["calls"]) + 1))
+    assert sorted(p.name for p in out.glob("claude-*.log")) == ["claude-1.log"]
+
+
+def test_oprava_zmeni_kartu_vyrenderovane_varianty(tmp_path, fake, monkeypatch):
+    # opravný běh nad vadnou variantou 3 přepíše i card.json už vyrenderované varianty 2: ta se znovu zkontroluje
+    # a vyrenderuje, jinak by worker nahrál novou kartu se starým videem
+    def bad(wd):
+        card = json.loads((wd / "variant-3" / "card.json").read_text(encoding="utf-8"))
+        card["reasons"].append({"key": "p90_passed", "label": "x", "points": 1})
+        (wd / "variant-3" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = bad
+    title = "Daň pro rafinerie: výborům zbylo 30 dní místo 60"
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        if "OPRAVA:" in prompt:  # model opraví variantu 3 a mimochodem přepíše kartu varianty 2
+            _copy_variant(kw["workdir"], 3)
+            _retitle(tmp_path, 2, title)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    portrait = []
+
+    def render_reel(card, out_path, **kw):
+        fake["render_reel"](card, out_path, **kw)
+        Path(out_path).write_text(card.title, encoding="utf-8")  # video „nese“ titulek své karty
+        if kw.get("orientation", "portrait") == "portrait":
+            portrait.append(Path(out_path).parent.name)
+    monkeypatch.setattr(gen, "render_reel", render_reel)
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 2 and "variant-2" not in fake["calls"][1]
+    assert portrait.count("variant-2") == 2 and portrait.count("variant-3") == 1
+    assert r.ok and all(v.ok for v in r.variants)
+    v2 = r.variants[1]
+    assert v2.video.read_text(encoding="utf-8") == title and v2.video_landscape.read_text(encoding="utf-8") == title
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "vyrenderovana" and st["render_fails"] == 0
+    assert st["card_sha"] == gen._sha(tmp_path / "out" / "variant-2" / "card.json")
+
+
+def test_oprava_rozbije_kartu_vyrenderovane_varianty(tmp_path, fake, monkeypatch):
+    # opravný běh nad variantou 3 kartu vyrenderované varianty 2 rozbije: varianta 2 jde do dalšího opravného běhu
+    def bad(wd, n):
+        card = json.loads((wd / f"variant-{n}" / "card.json").read_text(encoding="utf-8"))
+        card["reasons"].append({"key": "p90_passed", "label": "x", "points": 1})
+        (wd / f"variant-{n}" / "card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    fake["prepare"] = lambda wd: bad(wd, 3)
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        wd = Path(kw["workdir"])
+        if "OPRAVA:" in prompt and "variant-3" in prompt:
+            _copy_variant(wd, 3)
+            bad(wd, 2)
+        elif "OPRAVA:" in prompt:
+            _copy_variant(wd, 2)
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    r = _run(tmp_path)
+    assert len(fake["calls"]) == 3
+    assert "variant-2" in fake["calls"][2] and "p90_passed" in fake["calls"][2] and "variant-3" not in fake["calls"][2]
+    assert r.ok and all(v.ok for v in r.variants)
+    assert _rendered_variants(fake).count("variant-2") == 4  # dvakrát na výšku a na šířku
+    assert _state(tmp_path)["variants"]["2"]["state"] == "vyrenderovana"

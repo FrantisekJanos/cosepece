@@ -16,13 +16,14 @@ Kontroly nad databází webu (PostgreSQL), bez sítě:
   déle než 24 h, položky held, pozastavené PC (`worker_state`), vydaná zadání bez známky života (`jobs.silent`);
   held, pozastavení a vydání bez známky života mají vlastní zprávu (F1, F3), nerozhodnuté jednotky připomíná F1,
 - Reels s výstrahou: naléhavé zprávy generátoru (`reel_events` urgency 1) neodeslané déle než 1 h, a PC bez
-  heartbeatu déle než `jobs.WORKER_STALE`, když čeká vyžádané zadání (manual, auto_pick); pozastavené PC posílá
-  heartbeat dál, takže výstrahu nespustí.
+  heartbeatu déle než `jobs.WORKER_STALE`, když čeká vyžádané zadání (manual, auto_pick); pozastavené PC
+  (`worker_state` paused s `until`) pošle heartbeat jen na začátku pauzy a spí do `until`, výpadek se mu proto
+  počítá až od `until` + `jobs.WORKER_STALE`.
 
 Bot volá `zkontroluj` každou hodinu: nový nález (nebo změněný podpis, např. jiná fáze tisku) pošle jednou
 jako výstrahu, nález, který zmizel, jako „obnoveno“. Stav drží reel_state `hlidani_aktivni` (klíč nálezu →
-podpis), poslední výsledek pro MCP `stav_dat` reel_state `hlidani_vystrahy`. Denní souhrn jde v 8:00
-Europe/Prague, `/stav` ho pošle na požádání.
+podpis), poslední výsledek pro MCP `stav_dat` reel_state `hlidani_vystrahy` (jen čerstvost dat, bez nálezů
+Reels: MCP je veřejné). Denní souhrn jde v 8:00 Europe/Prague, `/stav` ho pošle na požádání.
 """
 from __future__ import annotations
 
@@ -50,6 +51,8 @@ REELS_EVENTS_MAX = timedelta(hours=1)
 REELS_OWNER_STATES = ("approval", "untouched", "picked", "remaining")
 # vyžádaná zadání (vlastník na ně čeká); fresh je automatické
 REELS_REQUESTED = ("manual", "auto_pick")
+# klíče nálezů o provozu Reels: do Telegramu a /stav ano, do veřejného snapshotu pro MCP stav_dat ne
+REELS_PREFIX = "reels_"
 REC_DAYS = 7
 SBIRKA_DAYS = 14
 # vyhlášený tisk měnící podklady se v souhrnu ukazuje ještě tolik dní
@@ -127,6 +130,15 @@ def _parse_time(raw) -> datetime | None:
 
 def _worker_seen(conn) -> datetime | None:
     return _parse_time(queue.get_state(conn, WORKER_SEEN_KEY))
+
+
+def _worker_state(conn) -> dict | None:
+    """reel_state worker_state ({state, reason, detail, until, at}); nečitelný nebo jiný než objekt = None."""
+    try:
+        state = json.loads(queue.get_state(conn, WORKER_STATE_KEY) or "null")
+    except ValueError:
+        return None
+    return state if isinstance(state, dict) else None
 
 
 def _age(now: datetime, at: datetime) -> str:
@@ -336,11 +348,8 @@ def _reels_held(conn, now: datetime, st: Status) -> None:
 
 def _reels_paused(conn, now: datetime, st: Status) -> None:
     """Pozastavené PC (reel_state worker_state): zprávu o pozastavení posílá F3, tady jen souhrn."""
-    try:
-        state = json.loads(queue.get_state(conn, WORKER_STATE_KEY) or "null")
-    except ValueError:
-        return
-    if not isinstance(state, dict) or state.get("state") != "paused":
+    state = _worker_state(conn)
+    if state is None or state.get("state") != "paused":
         return
     until = _parse_time(state.get("until"))
     st.findings.append(Finding("reels_pauza", messages.worker_paused_text(
@@ -385,8 +394,11 @@ def _reels_events(conn, now: datetime, st: Status) -> None:
 def _reels_pc(conn, now: datetime, st: Status) -> None:
     """PC bez heartbeatu déle než jobs.WORKER_STALE, když čeká vyžádané zadání (manual, auto_pick).
 
-    Pozastavené PC posílá heartbeat dál, výstrahu tedy nespustí. Podpis se s novými zadáními nemění: jedna
-    výstraha za výpadek, „obnoveno“ až po heartbeatu, nebo když už žádné vyžádané zadání nečeká."""
+    Pozastavený worker (limit, chyba prostředí) pošle heartbeat se stavem paused a `until` jednou a pak spí až
+    do `until` (worker._resume), teprve potom sonda a další heartbeat: do `until` + WORKER_STALE se proto
+    výpadek nehlásí (zprávu o pozastavení posílá F3). Pauza bez `until` (chybí nástroje) heartbeat posílá dál,
+    výjimku nepotřebuje. Podpis se s novými zadáními nemění: jedna výstraha za výpadek, „obnoveno“ až po
+    heartbeatu, nebo když už žádné vyžádané zadání nečeká."""
     if not _exists(conn, "reel_jobs"):
         return
     ids = [r[0] for r in _all(conn, "SELECT id FROM reel_jobs WHERE status = ANY(%s) AND source = ANY(%s) "
@@ -395,6 +407,10 @@ def _reels_pc(conn, now: datetime, st: Status) -> None:
         return
     seen = _worker_seen(conn)
     if seen is not None and now - seen <= jobs.WORKER_STALE:
+        return
+    state = _worker_state(conn)
+    until = _parse_time(state.get("until")) if state is not None and state.get("state") == "paused" else None
+    if until is not None and now <= until + jobs.WORKER_STALE:
         return
     who = f"PC s generátorem neodpovídá od {_when(conn, seen)}" if seen else "PC s generátorem zatím nebylo vidět"
     what = "čekají vyžádaná zadání" if len(ids) > 1 else "čeká vyžádané zadání"
@@ -434,8 +450,10 @@ def check(conn, now: datetime) -> tuple[list[Finding], list[str]]:
     gone = [k for k in active if k not in current]
     recovered = [k for k in gone if not k.startswith("podklady:")]
     queue.set_state(conn, ACTIVE_KEY, json.dumps({k: f.sig for k, f in current.items()}, ensure_ascii=False))
+    # veřejný MCP stav_dat ukazuje čerstvost dat: provoz Reels (zprávy, PC) do snapshotu nepatří
     queue.set_state(conn, SNAPSHOT_KEY, json.dumps(
-        {"at": now.isoformat(), "vystrahy": [f.text for f in st.findings if f.alert and f.summary]},
+        {"at": now.isoformat(), "vystrahy": [f.text for f in st.findings if f.alert and f.summary
+                                             and not f.key.startswith(REELS_PREFIX)]},
         ensure_ascii=False))
     return new, [_RECOVERED.get(k.split(":")[0], "{}").format(k.partition(":")[2] or k) for k in recovered]
 

@@ -354,20 +354,37 @@ def test_reels_neodeslane_udalosti_vystraha_a_obnoveni(conn):
 
 def test_reels_pc_offline_jen_s_vyzadanou_ulohou(conn):
     from hlidac_reels import hlidani, jobs, queue
-    # pozastavené PC (limit předplatného) dál posílá heartbeat: vyžádané zadání čeká, výstraha nepřijde
-    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(minutes=5)).isoformat())
-    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit"}))
+
+    def paused(until: datetime | None) -> None:
+        state = {"state": "paused", "reason": "limit"}
+        if until is not None:
+            state["until"] = until.isoformat()
+        queue.set_state(conn, "worker_state", json.dumps(state))
+
+    # pozastavené PC (limit předplatného) pošle heartbeat jednou a spí až do until (worker._resume):
+    # vyžádané zadání čeká, heartbeat je 40 min starý, výstraha nepřijde
+    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(minutes=40)).isoformat())
+    paused(NOW + timedelta(hours=2))
     manual = _job(conn)
     assert "reels_pc" not in _findings(conn)
     assert hlidani.check(conn, NOW) == ([], [])
-    # heartbeat ustal před 40 min (12:20 v Praze): výstraha jednou
-    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(minutes=40)).isoformat())
+    # pauza od 10:00 v Praze (heartbeat), until prošel před 20 min: sonda a nový heartbeat mají ještě čas
+    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(hours=3)).isoformat())
+    paused(NOW - timedelta(minutes=20))
+    assert "reels_pc" not in _findings(conn)
+    # until prošel před víc než 30 min a heartbeat nepřišel: výstraha jednou
+    paused(NOW - timedelta(minutes=40))
     auto = _job(conn, source="auto_pick", ct=None)
     new, rec = hlidani.check(conn, NOW)
     assert [f.key for f in new] == ["reels_pc"] and rec == []
-    assert new[0].text == (f"PC s generátorem neodpovídá od 21. 11. 12:20 a čekají vyžádaná zadání: "
+    assert new[0].text == (f"PC s generátorem neodpovídá od 21. 11. 10:00 a čekají vyžádaná zadání: "
                            f"#{manual}, #{auto}.")
     assert hlidani.check(conn, NOW) == ([], [])
+    # pauza bez until (chybí nástroje: worker posílá heartbeat každých 5 min) ani nečitelné until výpadek nekryjí
+    paused(None)
+    assert "reels_pc" in _findings(conn)
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": "zítra"}))
+    assert "reels_pc" in _findings(conn)
     # vlastník vyžádaná zadání zrušil: jedna zpráva o obnovení
     assert jobs.cancel(conn, manual) and jobs.cancel(conn, auto)
     assert hlidani.check(conn, NOW) == ([], ["PC s generátorem se ozvalo, nebo už nečeká žádné vyžádané zadání."])
@@ -380,6 +397,24 @@ def test_reels_pc_offline_jen_s_vyzadanou_ulohou(conn):
     queued = _job(conn, ct=400)
     assert _findings(conn)["reels_pc"].text == (f"PC s generátorem zatím nebylo vidět a čeká vyžádané zadání: "
                                                 f"#{queued}.")
+
+
+def test_reels_vystrahy_mimo_snapshot_mcp(conn):
+    """Výstrahy Reels jdou do Telegramu, ale ne do reel_state hlidani_vystrahy (veřejný MCP stav_dat = čerstvost dat)."""
+    from hlidac_reels import events, hlidani, queue
+    sql(conn, "INSERT INTO tisky VALUES (6, 47, '3. čtení', NULL, '1/1993', NULL)")
+    e = events.add(conn, "failed", job_id=1, urgency=events.URGENT)
+    sql(conn, "UPDATE reel_events SET at = %s WHERE id = %s", (NOW - timedelta(hours=2), e))
+    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(hours=2)).isoformat())
+    _job(conn)
+    new, _ = hlidani.check(conn, NOW)
+    assert sorted(f.key for f in new) == ["podklady:47", "reels_pc", "reels_udalosti"]
+    # jen výstraha k datům (podklady), texty Reels ne
+    snap = json.loads(queue.get_state(conn, hlidani.SNAPSHOT_KEY))
+    assert snap["vystrahy"] == [next(f.text for f in new if f.key == "podklady:47")]
+    # v /stav a souhrnu zůstávají
+    text = hlidani.summary_text(conn, NOW)
+    assert "zpráva generátoru Reels čeká" in text and "PC s generátorem neodpovídá" in text
 
 
 # --- bot ---------------------------------------------------------------------

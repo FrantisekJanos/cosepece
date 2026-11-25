@@ -3,6 +3,7 @@
 // Stav obrazu závisí jen na t (žádné časovače, rAF ani CSS animace), render jde snímek po snímku.
 // Volitelná pole karty (blok se ukáže jen s daty): typ_navrhu, predlozeno, shift, timeline, pn, deadline,
 // predkladatel (scéna „Kdo to přináší“) a predkladatel.citace (scéna „Úvodní slovo na plénu“).
+// Pod titulkem volitelně karta.pn_autor = [{cislo, jmeno, klub}] (autoři zadaných PN a klub ke dni podání).
 (function () {
   'use strict';
 
@@ -166,6 +167,41 @@
     list.forEach(function (s) { box.appendChild(mk('div', 'stamp', s)); });
   }
 
+  function pnAuthors(list) {
+    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub}] ze serveru, klub už jako popisek) seskupení
+    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá
+    var groups = [];
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+      if (!x || !x.jmeno || x.cislo == null || String(x.cislo) === '') return;
+      var jmeno = String(x.jmeno), klub = x.klub ? String(x.klub) : '';
+      var g = groups.filter(function (y) { return y.jmeno === jmeno && y.klub === klub; })[0];
+      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [] });
+      g.cisla.push(String(x.cislo));
+    });
+    return groups;
+  }
+
+  function fillPnAuthors(row, list) {
+    // „PN 2376 · Jan Novák“ a za ním šedý štítek klubu jako #who-klub, ale bez předpony „klub“ (jen když klub je);
+    // nejvýš dva autoři, pak „a další“. v2 mapu klubů nemá: popisek je takový, jak ho poslal server (ANO).
+    // Text a štítek jednoho autora drží jeden obal, aby se štítek při zalomení neoddělil od svého jména.
+    // Mezi jménem a štítkem je mezera (ne okraj): na začátku zalomeného řádku zmizí a štítek nebude odsazený
+    var groups = pnAuthors(list);
+    row.innerHTML = '';
+    groups.slice(0, 2).forEach(function (g) {
+      var nums = g.cisla.slice(0, 2).join(', ') + (g.cisla.length > 2 ? ' a další' : '');
+      var pna = mk('span', 'pna');
+      pna.appendChild(mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno));
+      if (g.klub) {
+        pna.appendChild(document.createTextNode(' '));
+        pna.appendChild(mk('span', 'klub', g.klub));
+      }
+      row.appendChild(pna);
+    });
+    if (groups.length > 2) row.appendChild(mk('span', 'm', 'a další'));
+    row.style.display = groups.length ? '' : 'none';
+  }
+
   // ---------- naplnění karty ----------
 
   function validOptional(c) {
@@ -242,6 +278,8 @@
 
     // titulek, perex, citace
     fill($('title'), c.title || '', function (t) { setWords($('title'), t, true); });
+    // autor zadaného PN se nezkracuje: místo mu uvolní titulek přes fit()
+    fillPnAuthors($('title-pn'), c.pn_autor);
     fill($('perex'), c.perex || '', function (t) { setWords($('perex'), t, true); });
     var quote = (c.quote || '').replace(/^[„"“]+|[“"”]+$/g, '');
     fill($('quote'), quote, function (t) { setTyped($('quote'), t); });
@@ -503,8 +541,9 @@
       out[id] = { top: r.top, bottom: r.bottom, left: r.left, right: r.right, cut_mid_word: midWord };
       if (!s) sc.style.display = 'none';
     });
-    // volitelné scény předkladatele: jen když jsou v osnově
-    [['who', 'who-name', 's-who'], ['said', 'said-quote', 's-said'], ['said_unauth', 'said-unauth', 's-said']].forEach(function (x) {
+    // volitelné scény předkladatele (jen když jsou v osnově) a řádek autorů PN pod titulkem (bez dat visible: false)
+    [['who', 'who-name', 's-who'], ['said', 'said-quote', 's-said'], ['said_unauth', 'said-unauth', 's-said'],
+     ['pn_autor', 'title-pn', 's-title']].forEach(function (x) {
       var s = scenes.filter(function (y) { return y.id === x[2]; })[0];
       if (!s) return;
       window.seek(s.end - WIPE - 0.1);
@@ -777,6 +816,8 @@
       $('title-sq').style.opacity = Math.floor(L * 2.5) % 2 ? 0.25 : 1;
       var end = maskWords($('title'), L, 0.1, 1.1);
       $('title').style.transform = 'translateY(' + (-3 * Math.max(0, L)) + 'px)';
+      // řádek autorů PN naběhne s koncem titulku, těsně před linkou; délku scény neprodlužuje
+      show($('title-pn'), P(L, end - 0.4, 0.35), -30, 0);
       $('title-rule').style.transform = 'scaleX(' + out5(P(L, end - 0.3, 0.5)) + ')';
     },
 

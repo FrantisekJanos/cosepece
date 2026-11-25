@@ -211,6 +211,11 @@ _PN_BODY = re.compile(r"(?:takto|tyto úpravy|následovně)\s*:\s*", re.IGNORECA
 _PN_TISK = re.compile(r"\(?\b(?:sněmovní\w*\s+tisk\w*|ST)\s*(?:č\.\s*)?\d+(?:/\d+)?\)?\.?\s*", re.IGNORECASE)
 
 
+def _videa(n: int) -> str:
+    """Tvar slova video za číslovkou: 2–4 videa, jinak videí."""
+    return "videa" if 2 <= n <= 4 else "videí"
+
+
 def _pn_excerpt(text: str | None) -> str:
     """Úryvek textu PN bez hlavičky s předkladateli, nejvýš PN_EXCERPT znaků. Pro seznam /pn u PN, které ještě
     nemají rozbor AI. Začátek: za „… se mění takto:“ (i „provedou tyto úpravy:“), jinak za posledním odkazem
@@ -309,10 +314,13 @@ class Bot:
         cb_id = cq.get("id")
         markup = (cq.get("message") or {}).get("reply_markup")
         self._cb_markup = markup if isinstance(markup, dict) else None
-        if action == "pn":  # tlačítka seznamu /pn: „pn:2376“ nebo „pn:2376+2377“
+        if action in ("pn", "pnall"):  # seznam /pn: „pn:2376“, „pn:2376+2377“; „pnall:2376,2377“ = každé zvlášť
             self._answered = False
             try:
-                self._pn_request(raw_id)
+                if action == "pn":
+                    self._pn_request(raw_id)
+                else:
+                    self._pn_each(raw_id)
             finally:
                 if not self._answered:
                     self._answer(cb_id)
@@ -852,6 +860,12 @@ class Bot:
         for token in tokens:
             self._pn_request(token)
 
+    def _pn_each(self, raw: str) -> None:
+        """Tlačítko Všechny zvlášť („2376,2377“): ke každému PN samostatné zadání (vlastní video), jako /pn 2376 2377."""
+        for token in raw.split(","):
+            if token.strip().isdigit():
+                self._pn_request(token.strip())
+
     def _pn_request(self, token: str) -> None:
         """Jedno zadání z „2376“ nebo „2376+2377“ (příkaz i tlačítko): ověří PN a založí úlohu."""
         pns = _parse_pn_group(token)
@@ -894,8 +908,7 @@ class Bot:
         if not rows:
             self._say("Za posledních 48 h žádný nový PN.")
             return
-        lines, buttons = [], []
-        by_ct: dict[int, list[int]] = {}
+        lines, buttons, nums = [], [], []
         for cislo, ct, osoba, klub, cas, ai_json, text in rows:
             # klub ke dni podání z dat psp.cz (pn.klub plní web); bez údaje se neuvádí
             club = club_label(klub)
@@ -910,12 +923,13 @@ class Bot:
                 line += f"\n„{excerpt}“ (text PN, rozbor AI zatím chybí)" if excerpt else "\n(rozbor AI zatím chybí)"
             lines.append(line)
             buttons.append((f"Video k PN {cislo}", f"pn:{cislo}"))
-            by_ct.setdefault(ct, []).append(cislo)
-        for ct, nums in by_ct.items():
-            if len(nums) >= 2:
-                # nejnovějších nejvýš PN_PER_VIDEO PN tisku (víc jedno video neunese)
-                group = "+".join(str(n) for n in sorted(nums[:PN_PER_VIDEO]))
-                buttons.append((f"Jedno video ze všech ({group})", f"pn:{group}"))
+            nums.append(str(cislo))
+        # Všechny zvlášť: ke každému PN seznamu vlastní video (ne jedno společné). Jedno video z víc PN
+        # zůstává jen příkazem /pn 2376+2377. callback_data má v Telegramu nejvýš 64 bajtů.
+        while len(nums) >= 2 and len("pnall:" + ",".join(nums)) > 64:
+            nums.pop()
+        if len(nums) >= 2:
+            buttons.append((f"Všechny zvlášť ({len(nums)} {_videa(len(nums))})", "pnall:" + ",".join(nums)))
         head = "PN za posledních 48 h:"
         if self._autopilot_on():
             head += "\n" + AUTOPILOT_PN_LIST_HEADER

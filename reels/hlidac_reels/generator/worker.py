@@ -25,9 +25,11 @@ nevolá a práce zůstane ve složce (příští vydání téže úlohy pokraču
 progress nezná: worker ho přestane posílat a pracuje dál (vydání pak platí 60 min od claim).
 
 Druh chyby ve fail: 0 platných variant = content (timeout, když vypršel poslední běh claude -p); když ale některá
-platná varianta čeká jen na render (GenResult.unrendered), bez druhu: další vydání ji vyrenderuje. 4xx při
-nahrávání = content, 5xx nebo výpadek sítě po opakováních = infra (zpět do fronty za RETRY_INFRA_S), chyba
-prostředí = env (zpět do fronty, pokus se vrací); ostatní výjimky bez druhu (server: dnešní chování).
+platná varianta čeká jen na render (GenResult.unrendered), bez druhu: další vydání ji vyrenderuje. 400, 413
+a 422 při nahrávání nebo result (server odmítl data) = content; 5xx nebo výpadek sítě po opakováních a ostatní
+4xx (403 Cloudflare, 404, 429) = infra (zpět do fronty za RETRY_INFRA_S), chyba prostředí = env (zpět do fronty,
+pokus se vrací); ostatní výjimky bez druhu (server: dnešní chování). Po přijatém result se vlákno Progress hned
+zastaví, ať tik po skončené úloze nedostane 409.
 """
 from __future__ import annotations
 
@@ -64,7 +66,9 @@ PROBE_TIMEOUT_S = 120
 PROBE_PROMPT = "odpověz OK"
 RETRY_DELAYS = (60, 300, 900)  # s: opakování nahrávání a result při výpadku sítě nebo 5xx
 PROGRESS_S = 120  # s: opakování progress bez změny fáze (server po hlášení drží vydání 15 min)
-RETRY_INFRA_S = 900  # s: odklad úlohy po chybě infra (síť nebo 5xx i po opakováních)
+RETRY_INFRA_S = 900  # s: odklad úlohy po chybě infra (síť, 5xx i po opakováních, 4xx mimo CONTENT_STATUSES)
+# HTTP kódy, kterými server odmítá data úlohy (vadné tělo, velké video, neplatná sada): chyba content, konečná
+CONTENT_STATUSES = frozenset({400, 413, 422})
 MIN_RESET_WAIT_S = 60  # s: nejkratší čekání do obnovení limitu (čas těsně před chvílí nebo za pár sekund)
 MAX_RESET_WAIT_S = 21600  # s: nejdelší čekání do obnovení limitu (6 h, pak stejně sonda)
 STATE_DETAIL_LIMIT = 200  # znaků popisu stavu v heartbeat (server delší ořízne)
@@ -253,7 +257,8 @@ class Progress:
     Pošle hned po startu, potom každou změnu fáze ze set() v pořadí (fronta, žádná změna se neztratí ani nesloučí)
     a bez změny každých `interval` s znovu poslední fázi. 409 = úloha zrušena nebo vydání propadlo: nastaví
     `cancelled` a skončí. 400 = starší server akci nezná: `unsupported`, skončí, úloha běží dál bez průběhu.
-    Jiná chyba (síť, 5xx) jen varování, další pokus po intervalu. Konec bloku with vlákno zastaví a počká na něj.
+    Jiná chyba (síť, 5xx) jen varování, další pokus po intervalu. Konec bloku with vlákno zastaví a počká na něj,
+    stop() totéž dřív (po přijatém result).
     """
 
     def __init__(self, api, job_id: int, claim_token: str, interval: float = PROGRESS_S):
@@ -274,6 +279,10 @@ class Progress:
         return self
 
     def __exit__(self, *exc) -> None:
+        self.stop()
+
+    def stop(self) -> None:
+        """Zastaví vlákno a počká, až dokončí rozeslaný progress; opakované volání nic nemění."""
         with self._lock:
             self._stop = True
         self._wake.set()
@@ -475,6 +484,8 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
                 return _gone(job_id)
             _retrying(lambda: api.result(job_id, claim, variants, skipped), f"úloha {job_id}: odeslání sady",
                       sleep)
+            # sada přijata, úloha je done: další progress by dostal 409 (zavádějící „odmítl“ v logu)
+            prog.stop()
         except Cancelled:
             return _gone(job_id)
         except EnvError as e:
@@ -491,8 +502,9 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
                 return False
             if gone():
                 return _gone(job_id)
-            # 5xx zůstalo i po opakováních (RETRY_DELAYS) = infra; 4xx server sadu odmítl = content
-            kind = "infra" if e.status >= 500 else "content" if e.status >= 400 else None
+            # server odmítl data (CONTENT_STATUSES) = content; 5xx i po opakováních (RETRY_DELAYS) a ostatní 4xx
+            # (403 kontrola prohlížeče Cloudflare, 404, 429 omezení pokusů) jsou přechodné = infra
+            kind = "content" if e.status in CONTENT_STATUSES else "infra" if e.status >= 400 else None
             return _report_fail(api, job_id, claim, f"API {e}", root, kind=kind,
                                 retry_after_s=RETRY_INFRA_S if kind == "infra" else None)
         except Exception as e:  # noqa: BLE001 — každá chyba úlohy se hlásí serveru, worker běží dál

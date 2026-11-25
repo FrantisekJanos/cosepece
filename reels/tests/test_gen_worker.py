@@ -924,6 +924,33 @@ def test_novy_worker_stary_server(tmp_path, monkeypatch, caplog):
     assert caplog.text.count("server progress neumí") == 1
 
 
+def test_po_result_zadny_progress(tmp_path, monkeypatch):
+    # přijatá sada: úloha je done, tik vlákna Progress po result by dostal 409 a zalogoval zavádějící odmítnutí.
+    # Nahrání čeká na odeslanou fázi upload, takže do result vlákno pošle vše, co mělo ve frontě.
+    class Api(_UploadWaitsApi):
+        after_result: int | None = None  # počet progress v okamžiku, kdy server sadu přijal
+
+        def result(self, job_id, claim_token, variants, skipped=None):
+            super().result(job_id, claim_token, variants, skipped)
+            with self._progress_cv:
+                self.after_result = len(self.progress_calls)
+
+    api = Api()
+
+    class Prog(worker.Progress):
+        def __exit__(self, *exc):
+            # vlákno, které po result ještě běží, by poslalo tik: tady ho vyvolá změna fáze (bez čekání na interval)
+            if self._thread.is_alive() and api.after_result is not None:
+                self.set("upload", "tik po result")
+                api.wait_progress(lambda s: len(s) > api.after_result)
+            return super().__exit__(*exc)
+
+    monkeypatch.setattr(worker, "Progress", Prog)
+    assert _process(api, tmp_path, fake_generate({1, 2, 3})) is True
+    assert api.after_result is not None
+    assert len(api.progress_calls) == api.after_result, api.progress_calls[api.after_result:]
+
+
 def _gen_timeout(**kw):
     res = fake_generate(set())(**kw)
     res.runs = [{"ok": True, "timed_out": False}, {"ok": False, "timed_out": True}]
@@ -957,10 +984,20 @@ class _ApiOffline(FakeApi):
         raise OSError("síť nejede")
 
 
-class _Api403(FakeApi):
-    def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
-        raise ApiError(403, "<!DOCTYPE html><title>Just a moment...</title>")
+def _api_upload_status(status: int, body: str = '{"error": "x"}'):
+    """API, které nahrání videa odmítne s daným HTTP kódem."""
+    class Api(FakeApi):
+        def upload_video(self, job_id, claim_token, n, path, orientation="portrait"):
+            raise ApiError(status, body)
+    return Api
 
+
+class _ApiResult429(FakeApi):
+    def result(self, job_id, claim_token, variants, skipped=None):
+        raise ApiError(429, '{"error": "Příliš mnoho pokusů"}')
+
+
+_CLOUDFLARE = "<!DOCTYPE html><title>Just a moment...</title>"
 
 _FAIL_CASES = {
     # případ: (generate, třída API, druh, odklad)
@@ -971,7 +1008,15 @@ _FAIL_CASES = {
     "render-selhal-timeout": (_gen_unrendered(True), FakeApi, None, None),
     "nahravani-stale-503": (fake_generate({1, 2, 3}), _Api503, "infra", 900),
     "sit-pri-result": (fake_generate({1, 2, 3}), _ApiOffline, "infra", 900),
-    "403-pri-nahravani": (fake_generate({1, 2, 3}), _Api403, "content", None),
+    # server odmítl data (vadné tělo, velké video, neplatná sada) = content, konečné
+    "400-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(400), "content", None),
+    "413-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(413), "content", None),
+    "422-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(422), "content", None),
+    # ostatní 4xx jsou přechodné: kontrola prohlížeče Cloudflare, omezení pokusů (RateLimit), 404 = infra
+    "403-cloudflare-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(403, _CLOUDFLARE), "infra", 900),
+    "404-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(404), "infra", 900),
+    "429-pri-nahravani": (fake_generate({1, 2, 3}), _api_upload_status(429), "infra", 900),
+    "429-pri-result": (fake_generate({1, 2, 3}), _ApiResult429, "infra", 900),
     "keyerror-z-generate": (_gen_keyerror, FakeApi, None, None),
 }
 

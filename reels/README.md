@@ -230,7 +230,9 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 - `/pn` bez čísla: PN podané za posledních 48 h (podle `pn.cas`), nejvýš 10, nejnovější první, s autorem, časem
   a titulkem rozboru AI. U každého tlačítko „Video k PN N“, při dvou a víc PN navíc „Všechny zvlášť (N videí)“
   (`pnall:`): ke každému PN seznamu samostatná úloha, jako `/pn 2376 2377`. Jedno společné video jen příkazem,
-- `/pnnew`: stejný seznam, ale jen PN bez videa (ne v běžícím zadání ani v hotové sadě, ze které nezůstalo jen
+- Tlačítko „Video k PN“ a „Všechny zvlášť“ jen u PN se shrnutím AI (titulek rozboru); `/pn <číslo>` k PN bez shrnutí
+  zadání nezaloží a odkáže na `/pnnew`,
+- `/pnnew`: stejný seznam, ale jen PN se shrnutím AI a bez videa (ostatní jen počtem na konci) (ne v běžícím zadání ani v hotové sadě, ze které nezůstalo jen
   zamítnuté, propadlé či stažené; selhané a zrušené zadání video nemá),
 - `/pn 2376`: úloha k jednomu PN; `/pn 2376 2377 2378`: tři samostatné úlohy (každá vlastní sada),
 - `/pn 2376+2377`: jedno video o obou PN; všechny musí patřit k jednomu tisku, nejvýš 5,

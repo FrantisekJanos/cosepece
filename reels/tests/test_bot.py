@@ -185,10 +185,13 @@ def _add(conn, media_dir: Path, n: int = 1, caption: str = "Sněmovna zkrátila 
 _uid = iter(range(1, 10_000))
 
 
-def _cb(data: str, chat: int = CHAT, msg_id: int = 1) -> dict:
+def _cb(data: str, chat: int = CHAT, msg_id: int = 1, markup: dict | None = None) -> dict:
+    """Stisk tlačítka; markup = reply_markup zprávy (Telegram ho posílá s každým callback_query)."""
+    message = {"message_id": msg_id, "chat": {"id": chat}}
+    if markup is not None:
+        message["reply_markup"] = markup
     return {"update_id": next(_uid), "callback_query": {
-        "id": f"cb{next(_uid)}", "from": {"id": chat}, "data": data,
-        "message": {"message_id": msg_id, "chat": {"id": chat}}}}
+        "id": f"cb{next(_uid)}", "from": {"id": chat}, "data": data, "message": message}}
 
 
 def _msg(text: str, chat: int = CHAT, reply_to: int | None = None) -> dict:
@@ -4471,3 +4474,40 @@ def test_zkusit_znovu(bot, conn, api):
     bot.handle(_cb(f"jobretry:{new.id}", msg_id=52))
     assert api.sent("answerCallbackQuery")[-1]["text"] == "Není co opakovat."
     assert jobs.pending(conn) == []
+
+
+@pg
+def test_zkusit_znovu_ze_zpravy_po_vypadku(bot, conn, api):
+    # zpráva po výpadku má Zkusit znovu u více zadání: stisk odebere jen tlačítko stisknutého zadání
+    from hlidac_reels import jobs
+    tick = _event_clock(bot)
+    a = _failed_job(conn, ct=221)
+    b = _failed_job(conn, ct=222)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_events SET at = now() - interval '7 hours'")
+    conn.commit()
+    bot.maybe_events()
+    (body,) = api.sent()
+    assert body["text"].startswith("Během výpadku:") and _buttons(body) == [f"jobretry:{a}", f"jobretry:{b}"]
+    outage = api.next_id
+    bot.handle(_cb(f"jobretry:{a}", msg_id=outage, markup=body["reply_markup"]))
+    assert [(j.ct, j.source) for j in jobs.pending(conn)] == [(221, "manual")]
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == outage
+    assert edit["reply_markup"] == {"inline_keyboard": [[{"text": f"Zkusit znovu #{b}",
+                                                          "callback_data": f"jobretry:{b}"}]]}
+    # poslední tlačítko: zpráva přijde o všechna
+    bot.handle(_cb(f"jobretry:{b}", msg_id=outage, markup=edit["reply_markup"]))
+    assert sorted(j.ct for j in jobs.pending(conn)) == [221, 222]
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == outage and _buttons(edit) == []
+    # zpráva o selhání jednoho zadání (Zkusit znovu + Zahodit): po Zkusit znovu bez tlačítek jako dřív
+    c = _failed_job(conn, ct=223)
+    tick()
+    bot.maybe_events()
+    fail = api.sent()[-1]
+    assert _buttons(fail) == [f"jobretry:{c}", f"jobcancel:{c}"]
+    fail_msg = api.next_id
+    bot.handle(_cb(f"jobretry:{c}", msg_id=fail_msg, markup=fail["reply_markup"]))
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == fail_msg and _buttons(edit) == []

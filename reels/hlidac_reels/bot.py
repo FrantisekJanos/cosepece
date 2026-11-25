@@ -250,6 +250,8 @@ class Bot:
         self._next_events = float("-inf")
         self._next_watch = float("-inf")
         self._next_summary = float("-inf")
+        # reply_markup zprávy právě obsluhovaného tlačítka (Telegram ho posílá s každým callback_query)
+        self._cb_markup: dict | None = None
         # None = Threads není nastavené (bez THREADS_USER_ID)
         self.threads = threads
         self.threads_env_token = threads_env_token or None
@@ -296,6 +298,8 @@ class Bot:
     def _on_callback(self, cq: dict, msg_id: int | None) -> None:
         action, _, raw_id = str(cq.get("data") or "").partition(":")
         cb_id = cq.get("id")
+        markup = (cq.get("message") or {}).get("reply_markup")
+        self._cb_markup = markup if isinstance(markup, dict) else None
         if action == "pn":  # tlačítka seznamu /pn: „pn:2376“ nebo „pn:2376+2377“
             self._answered = False
             try:
@@ -746,11 +750,31 @@ class Bot:
             return
         except ValueError:  # hotové nebo neexistující zadání
             self._answer(cb_id, "Není co opakovat.")
-            self._drop_buttons(msg_id)
+            self._drop_job_buttons(msg_id, job_id)
             return
         self._answer(cb_id, "Zkouším znovu")
-        self._drop_buttons(msg_id)
+        self._drop_job_buttons(msg_id, job_id)
         self._announce_job(new_id, _job_what(job.ct, job.focus_pn), autopilot=False)
+
+    def _drop_job_buttons(self, msg_id: int | None, job_id: int) -> None:
+        """Odebere ze zprávy tlačítka zadání job_id (jobretry, jobcancel), ostatní nechá.
+
+        Zpráva po výpadku má Zkusit znovu u více zadání: po stisku zůstanou tlačítka ostatních. Zbylá tlačítka
+        jsou z reply_markup stisknuté zprávy; bez něj, nebo když nic nezbude (zpráva o selhání jednoho zadání),
+        zmizí všechna jako dřív.
+        """
+        own = {f"jobretry:{job_id}", f"jobcancel:{job_id}"}
+        rows = (self._cb_markup or {}).get("inline_keyboard")
+        rest = [(str(b.get("text") or ""), b["callback_data"])
+                for row in (rows if isinstance(rows, list) else []) if isinstance(row, list)
+                for b in row if isinstance(b, dict) and isinstance(b.get("callback_data"), str)
+                and b["callback_data"] not in own]
+        if not msg_id:
+            return
+        if not rest:
+            self._drop_buttons(msg_id)
+            return
+        self._try("editMessageReplyMarkup", self.tg.edit_buttons, self.chat_id, msg_id, rest)
 
     def _cmd_zrus(self, arg: str) -> None:
         """/zrus <číslo zadání>: zruší zadání ve frontě nebo rozpracované („#12“ i „12“)."""

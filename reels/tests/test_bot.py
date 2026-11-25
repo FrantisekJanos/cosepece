@@ -2736,7 +2736,8 @@ def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
 # --- /pn: video k vybraným PN -------------------------------------------------
 
 def _pn(conn, cislo: int, ct: int, osoba: str = "Jan Novák", cas: str = "2026-11-23 20:09:00",
-        titulek: str | None = None, text: str | None = None, klub: str | None = None) -> None:
+        titulek: str | None = "Shrnutí AI k PN", text: str | None = None, klub: str | None = None) -> None:
+    # výchozí PN má shrnutí AI (titulek rozboru); PN bez rozboru = titulek=None
     with conn.cursor() as cur:
         cur.execute("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas, klub) VALUES (%s,%s,%s,%s,%s,%s)",
                     (30000 + cislo, cislo, ct, osoba, cas, klub))
@@ -2876,8 +2877,8 @@ def test_pn_seznam_uryvek_bez_rozboru(bot, conn, api):
             "k vládnímu návrhu zákona o státním rozpočtu (ST 324)\nVládní návrh zákona (ST 324) se mění takto:\n"
             "1. V kapitole 313 – Ministerstvo práce a sociálních věcí se zvyšuje ukazatel „Výdaje celkem“ "
             "o částku 500 000 000 Kč. " + "Další text. " * 40)
-    _pn(conn, 2422, 324, cas="2026-11-24 10:00:00", text=body)
-    _pn(conn, 2423, 324, cas="2026-11-24 10:01:00", text="Text bez obvyklé formulace.")
+    _pn(conn, 2422, 324, cas="2026-11-24 10:00:00", titulek=None, text=body)
+    _pn(conn, 2423, 324, cas="2026-11-24 10:01:00", titulek=None, text="Text bez obvyklé formulace.")
     _pn(conn, 2424, 324, cas="2026-11-24 10:02:00", titulek="Titulek AI", text=body)
     bot.handle(_msg("/pn"))
     text = api.sent()[-1]["text"]
@@ -2886,6 +2887,23 @@ def test_pn_seznam_uryvek_bez_rozboru(bot, conn, api):
     assert "Činčily" not in text
     assert "PN 2423 · tisk 324 · Jan Novák · 24. 11. 10:01\n(rozbor AI zatím chybí)" in text
     assert "Titulek AI (shrnutí AI)" in text
+    # tlačítko jen PN se shrnutím AI
+    assert _buttons(api.sent()[-1]) == ["pn:2424"]
+
+
+@pg
+def test_pn_bez_shrnuti_ai_nezalozi(bot, conn, api):
+    # PN bez shrnutí AI (rozbor nedorazil nebo nedal titulek): zadání se nezaloží, PN zůstane pro /pnnew
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300, titulek=None)
+    _pn(conn, 2377, 300)
+    bot.handle(_msg("/pn 2376"))
+    assert jobs.pending(conn) == []
+    assert api.texts()[-1] == "PN 2376 zatím nemá shrnutí AI, video nezakládám. Až rozbor dorazí, najdeš ho v /pnnew."
+    bot.handle(_msg("/pn 2376+2377"))
+    assert jobs.pending(conn) == []
+    bot.handle(_cb("pnall:2376,2377"))
+    assert [j.focus_pn for j in jobs.pending(conn)] == [[2377]]
 
 
 @pg
@@ -2957,6 +2975,7 @@ def test_pnnew_jen_pn_bez_videa(bot, conn, api):
     _pn_bot(bot)
     for k, cislo in enumerate((2401, 2402, 2403, 2404, 2405, 2406, 2407)):
         _pn(conn, cislo, 300, cas=f"2026-11-24 0{k}:00:00")
+    _pn(conn, 2408, 300, cas="2026-11-24 08:00:00", titulek=None)  # bez shrnutí AI: jen v počtu na konci
     active = jobs.add(conn, source="manual", ct=300, focus_pn=[2401])          # generuje se
     published = jobs.add(conn, source="manual", ct=300, focus_pn=[2402, 2403])  # společné video, zveřejněné
     rejected = jobs.add(conn, source="manual", ct=300, focus_pn=[2404])         # všechny varianty zamítnuté
@@ -2974,8 +2993,10 @@ def test_pnnew_jen_pn_bez_videa(bot, conn, api):
     body = api.sent()[-1]
     assert body["text"].startswith("PN bez videa za posledních 48 h:")
     assert _buttons(body) == ["pn:2407", "pn:2405", "pn:2404", "pnall:2407,2405,2404"]
+    assert "PN 2408" not in body["text"]
+    assert body["text"].endswith("Na shrnutí AI čeká ještě PN bez videa: 1.")
     bot.handle(_msg("/pn"))
-    assert len([b for b in _buttons(api.sent()[-1]) if b.startswith("pn:")]) == 7
+    assert len([b for b in _buttons(api.sent()[-1]) if b.startswith("pn:")]) == 7  # 2408 bez tlačítka
 
 
 @pg
@@ -2985,7 +3006,7 @@ def test_pnnew_nic_noveho(bot, conn, api):
     _pn(conn, 2401, 300, cas="2026-11-24 01:00:00")
     jobs.add(conn, source="manual", ct=300, focus_pn=[2401])
     bot.handle(_msg("/pnnew"))
-    assert api.texts()[-1] == "Za posledních 48 h žádný PN bez videa."
+    assert api.texts()[-1] == "Za posledních 48 h žádný PN se shrnutím AI bez videa."
 
 
 @pg

@@ -100,6 +100,7 @@ MAX_PN = 999_999  # nejvyšší číslo PN, které /pn přijme (větší by v Po
 PN_PER_VIDEO = 5  # nejvýš PN v jednom videu (/pn 1+2+…)
 PN_ARGS = 10  # nejvýš samostatných zadání v jednom /pn
 PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
+PN_SCAN = 300  # /pnnew: kolik PN za 48 h projít, než se vyberou ty se shrnutím AI
 PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
             f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
@@ -893,6 +894,19 @@ class Bot:
             self._say(f"{', '.join(parts[:-1])} a {parts[-1]} patří k různým tiskům. "
                       "Jedno video jde jen z PN téhož tisku, zadej je zvlášť (mezerou místo +).")
             return
+        # video k PN jen se shrnutím AI (titulek rozboru): bez něj by video nemělo o čem mluvit (25. 11.);
+        # zadání se nezaloží, PN zůstane v /pnnew a zadá se, až rozbor dorazí
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT p.cislo, x.ai_json FROM pn p LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
+                        "WHERE p.cislo = ANY(%s) AND p.ct = %s", (pns, tisky[0]))
+            titled = {n for n, ai_json in cur.fetchall() if _ai_title(ai_json)}
+        self.conn.commit()
+        missing = [n for n in pns if n not in titled]
+        if missing:
+            verb = "nemá" if len(missing) == 1 else "nemají"
+            self._say(f"{_pn_label(missing)} zatím {verb} shrnutí AI, video nezakládám. "
+                      "Až rozbor dorazí, najdeš ho v /pnnew.")
+            return
         # autopilot platí jen pro /pn (příkaz i tlačítko); /video a /vyber ho nenastavují
         self._add_job("manual", tisky[0], None, focus_pn=pns, autopilot=self._autopilot_on())
 
@@ -901,7 +915,8 @@ class Bot:
 
         only_new (/pnnew): jen PN bez videa. PN má video, když je v zadání (i společném s jinými PN), které běží
         (queued, claimed), nebo je hotové a z jeho sady nezůstalo jen zamítnuté, propadlé či stažené (sada, která
-        ještě nedorazila do fronty, se počítá jako video). Selhané a zrušené zadání video nemá."""
+        ještě nedorazila do fronty, se počítá jako video). Selhané a zrušené zadání video nemá. /pnnew navíc
+        vynechá PN bez shrnutí AI (jen jejich počet na konci). V obou seznamech má tlačítko jen PN se shrnutím AI."""
         from .clubs import label as club_label  # import zde: horní blok importů mění souběžná větev
         new_only = (
             "AND NOT EXISTS (SELECT 1 FROM reel_jobs j WHERE p.cislo = ANY(j.focus_pn) AND ("
@@ -915,11 +930,18 @@ class Bot:
                 "LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
                 "WHERE p.cas >= to_char((%s::timestamptz AT TIME ZONE 'Europe/Prague') - interval '48 hours', "
                 "'YYYY-MM-DD HH24:MI:SS') " + new_only + "ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
-                (self.now(), PN_LIST))
+                (self.now(), PN_SCAN if only_new else PN_LIST))
             rows = cur.fetchall()
         self.conn.commit()
+        waiting = 0
+        if only_new:
+            ready = [r for r in rows if _ai_title(r[5])]
+            waiting = len(rows) - len(ready)
+            rows = ready[:PN_LIST]
+        tail = f"\n\nNa shrnutí AI čeká ještě PN bez videa: {waiting}." if waiting else ""
         if not rows:
-            self._say("Za posledních 48 h žádný PN bez videa." if only_new else "Za posledních 48 h žádný nový PN.")
+            self._say(("Za posledních 48 h žádný PN se shrnutím AI bez videa." + tail) if only_new
+                      else "Za posledních 48 h žádný nový PN.")
             return
         lines, buttons, nums = [], [], []
         for cislo, ct, osoba, klub, cas, ai_json, text in rows:
@@ -935,8 +957,9 @@ class Bot:
                 excerpt = _pn_excerpt(text)
                 line += f"\n„{excerpt}“ (text PN, rozbor AI zatím chybí)" if excerpt else "\n(rozbor AI zatím chybí)"
             lines.append(line)
-            buttons.append((f"Video k PN {cislo}", f"pn:{cislo}"))
-            nums.append(str(cislo))
+            if title:  # tlačítko jen k PN se shrnutím AI
+                buttons.append((f"Video k PN {cislo}", f"pn:{cislo}"))
+                nums.append(str(cislo))
         # Všechny zvlášť: ke každému PN seznamu vlastní video (ne jedno společné). Jedno video z víc PN
         # zůstává jen příkazem /pn 2376+2377. callback_data má v Telegramu nejvýš 64 bajtů.
         while len(nums) >= 2 and len("pnall:" + ",".join(nums)) > 64:
@@ -946,7 +969,7 @@ class Bot:
         head = "PN bez videa za posledních 48 h:" if only_new else "PN za posledních 48 h:"
         if self._autopilot_on():
             head += "\n" + AUTOPILOT_PN_LIST_HEADER
-        self._say(self._clip(head + "\n\n" + "\n\n".join(lines)), buttons)
+        self._say(self._clip(head + "\n\n" + "\n\n".join(lines) + tail), buttons)
 
     def _worker_line(self) -> str:
         """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru

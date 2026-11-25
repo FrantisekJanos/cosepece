@@ -45,6 +45,9 @@ final class ReelJobs
     /** @var callable(): int */
     private $now;
 
+    /** Počet INSERTů do reel_events, které databáze odmítla kvůli klíči dedupe (souběh; pro test). */
+    public int $dedupeConflicts = 0;
+
     public function __construct(private Db $db, private array $config, ?callable $now = null)
     {
         $this->now = $now ?? fn(): int => time();
@@ -100,7 +103,7 @@ final class ReelJobs
                 );
                 if ($back->rowCount() > 0) {
                     $this->event('lease', (int)$row['id'], [
-                        'next_hm' => date('H:i', $next), 'attempts' => (int)$row['attempts'], 'stage' => $stage !== '' ? $stage : null,
+                        'next_hm' => date('G:i', $next), 'attempts' => (int)$row['attempts'], 'stage' => $stage !== '' ? $stage : null,
                     ]);
                 }
             }
@@ -380,7 +383,7 @@ final class ReelJobs
         $this->putState('worker_state', $value);
         if ($stored['state'] === 'paused' && $before !== 'paused') {
             $this->event('worker_paused', null, [
-                'reason' => $stored['reason'], 'detail' => $stored['detail'], 'until_hm' => $until !== false ? date('H:i', $until) : null,
+                'reason' => $stored['reason'], 'detail' => $stored['detail'], 'until_hm' => $until !== false ? date('G:i', $until) : null,
             ], 1);
         } elseif ($stored['state'] === 'running' && $before === 'paused') {
             $this->event('worker_resumed', null, [], 1);
@@ -589,7 +592,7 @@ final class ReelJobs
             );
             if ($wait->rowCount() > 0) {
                 // jedna událost na celé čekání (dedupe), další odklady po 30 min nic nepřidají
-                $this->event('waiting', $id, ['reason' => 'ai_title', 'next_hm' => date('H:i', $next)], 0, "waiting:$id:ai_title");
+                $this->event('waiting', $id, ['reason' => 'ai_title', 'next_hm' => date('G:i', $next)], 0, "waiting:$id:ai_title");
             }
             return;
         }
@@ -711,7 +714,7 @@ final class ReelJobs
         }
         $detail = ['kind' => $kind, 'error' => $error];
         if ($nextTs !== null) {
-            $detail['next_hm'] = date('H:i', $nextTs);
+            $detail['next_hm'] = date('G:i', $nextTs);
         }
         $this->event('requeued', $jobId, $detail + ['env_retries' => $envRetries]);
         return 'queued';
@@ -766,23 +769,31 @@ final class ReelJobs
     /**
      * Událost do reel_events (historie úlohy a fronta zpráv bota; text zprávy skládá bot). Volá se jen po podmíněném
      * UPDATE, který řádek opravdu změnil. Klíč dedupe, který už v tabulce je (opakované čekání, selhání převzaté
-     * botem), se tiše přeskočí. Jiná chyba (např. tabulka nebo sloupec ještě není: web dostal novou verzi dřív, než
-     * bot založil reel_events) jde jen do error_log: přechod úlohy už platí a worker musí dostat odpověď, jinak by
-     * ztratil token a úloha by visela do propadnutí vydání. Web zapisuje bez transakce (autocommit), takže odmítnutý
-     * INSERT v PostgreSQL neruší další dotazy.
+     * botem), se přeskočí bez INSERTu: odmítnutý INSERT by PostgreSQL zapsal do logu jako ERROR (čekání na rozbor AI
+     * každých 30 min). Když klíč mezi dotazem a INSERTem zapíše souběžný požadavek nebo bot, odmítnutí se tiše
+     * přeskočí a započítá do dedupeConflicts. Jiná chyba (např. tabulka nebo sloupec ještě není: web dostal novou
+     * verzi dřív, než bot založil reel_events) jde jen do error_log: přechod úlohy už platí a worker musí dostat
+     * odpověď, jinak by ztratil token a úloha by visela do propadnutí vydání. Web zapisuje bez transakce (autocommit),
+     * takže odmítnutý INSERT v PostgreSQL neruší další dotazy.
      */
     private function event(string $kind, ?int $jobId, array $detail = [], int $urgency = 0, ?string $dedupe = null): void
     {
         // (object): prázdné pole jako {} (detail je vždy objekt JSON)
         $json = json_encode((object)$detail, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
         try {
+            if ($dedupe !== null && $dedupe !== '' && $this->db->value('SELECT 1 FROM reel_events WHERE dedupe = ?', [$dedupe]) !== null) {
+                return;
+            }
             $this->db->run(
                 'INSERT INTO reel_events (at, kind, job_id, detail, urgency, dedupe) VALUES (?, ?, ?, ?, ?, ?)',
                 [$this->stamp(($this->now)()), $kind, $jobId, $json === false ? '{}' : $json, $urgency, $dedupe]
             );
         } catch (\PDOException $e) {
-            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL): klíč dedupe už je
-            if (!in_array((string)$e->getCode(), ['23505', '23000'], true)) {
+            // 23505 = unique_violation (PostgreSQL), 23000 = porušení omezení (SQLite, MySQL): klíč dedupe mezitím
+            // zapsal souběžný požadavek
+            if (in_array((string)$e->getCode(), ['23505', '23000'], true)) {
+                $this->dedupeConflicts++;
+            } else {
                 error_log('reels event: ' . $e->getMessage());
             }
         }

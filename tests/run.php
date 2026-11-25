@@ -2414,15 +2414,15 @@ check('F3: události nesou údaje přechodu', $f3D, [
     'claimed' => ['attempt' => 1],
     'stage' => ['stage' => 'model', 'note' => null],
     'stage note' => ['stage' => 'model', 'note' => 'varianta 2'],
-    'requeued' => ['kind' => 'env', 'error' => 'chybí Chromium', 'next_hm' => date('H:i', $f3EnvAt + 900), 'env_retries' => 1],
+    'requeued' => ['kind' => 'env', 'error' => 'chybí Chromium', 'next_hm' => date('G:i', $f3EnvAt + 900), 'env_retries' => 1],
     'claimed po návratu' => ['attempt' => 1],
     'failed' => ['kind' => 'failed', 'detail' => ['kind' => 'content', 'error' => '0 platných variant', 'attempts' => 1, 'env_retries' => 1, 'stage' => 'model'],
         'urgency' => 1, 'dedupe' => "failed:$f3J"],
     // bez kind se úloha vrací bez odkladu: událost čas dalšího pokusu nenese (bot: „chyba, zkusí se znovu“)
     'requeued bez kind' => ['kind' => 'content', 'error' => 'pád', 'env_retries' => 0],
-    'waiting' => ['kind' => 'waiting', 'detail' => ['reason' => 'ai_title', 'next_hm' => date('H:i', $f3WaitAt + 1800)], 'urgency' => 0,
+    'waiting' => ['kind' => 'waiting', 'detail' => ['reason' => 'ai_title', 'next_hm' => date('G:i', $f3WaitAt + 1800)], 'urgency' => 0,
         'dedupe' => "waiting:$f3W:ai_title"],
-    'lease' => ['next_hm' => date('H:i', $rjClock + 600), 'attempts' => 1, 'stage' => 'render'],
+    'lease' => ['next_hm' => date('G:i', $rjClock + 600), 'attempts' => 1, 'stage' => 'render'],
     'failed lease' => ['kind' => 'lease', 'error' => 'PC nedokončilo úlohu 3× (poslední fáze: render)', 'attempts' => 3, 'env_retries' => 0, 'stage' => 'render'],
     'done' => ['variants' => 1, 'skipped' => [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal']]]],
     'expired' => ['kind' => 'expired', 'detail' => [], 'urgency' => 2, 'dedupe' => "expired:$f3Ex"],
@@ -2507,6 +2507,24 @@ db()->run("CREATE TABLE IF NOT EXISTS reel_events (id $rjId, at $rjTs NOT NULL, 
 check('F3: bez tabulky reel_events claim vydá úlohu, progress a fail projdou, chyba jen v error_log',
     [$f3C['job_id'] ?? null, $f3NtRow['status'], $f3NtProg, $f3NtFail, $f3Row($f3Nt)['status'], str_contains($f3Log, 'reels event: ')],
     [$f3Nt, 'claimed', 'ok', 'queued', 'queued', true]);
+$f3EvReset();
+
+// F5: opakované čekání na rozbor AI nezkouší INSERT s klíčem dedupe, který už v tabulce je (PostgreSQL by odmítnutý
+// INSERT každých 30 min zapsal do logu jako ERROR). Časy v událostech bez úvodní nuly jako bot (FMHH24:MI).
+// Vlastní instance ReelJobs se stejnými hodinami: počítadlo dedupeConflicts začíná na 0.
+$f5ClockBak = $rjClock;
+$rjClock = strtotime('2026-11-20 08:35:00'); // odklad 30 min → další pokus v 9:05 místního času
+$f5Jobs = new Hlidac\ReelJobs(db(), config(), function () use (&$rjClock): int { return $rjClock; });
+$f5W = $rjAdd('manual', 78); // tisk 78 rozbor AI nemá
+$f5Jobs->claim();
+$rjClock += 31 * 60; // odklad prošel, druhý claim úlohu znovu odloží
+$f5Jobs->claim();
+$f5Waits = db()->all("SELECT detail FROM reel_events WHERE job_id = ? AND kind = 'waiting'", [$f5W]);
+check('F5: čekání na rozbor AI bez odmítnutého INSERTu',
+    [count($f5Waits), $f5Jobs->dedupeConflicts, $f3Row($f5W)['wait_reason'], $f3Ts($f3Row($f5W)['not_before'])],
+    [1, 0, 'ai_title', $rjClock + 1800]);
+check('F5: next_hm bez úvodní nuly', json_decode((string)($f5Waits[0]['detail'] ?? ''), true)['next_hm'] ?? null, '9:05');
+$rjClock = $f5ClockBak;
 $f3EvReset();
 
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";

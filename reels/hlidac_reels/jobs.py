@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, fields as dc_fields
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psycopg
 
@@ -21,6 +21,9 @@ RETRYABLE = ("failed", "cancelled", "expired")  # konečné stavy, ze kterých j
 
 # reel_state job_retried:<id> = id úlohy, která úlohu <id> opakuje (Zkusit znovu jde u úlohy jen jednou)
 RETRIED_KEY = "job_retried:"
+# Zkusit znovu jen do tolika od konečného stavu (bez finished_at od založení): úklid (uklid.STATE_MAX_AGE, stejná
+# hodnota) pak klíč job_retried:<id> smaže a druhé opakování by už nic nezastavilo
+RETRY_MAX_AGE = timedelta(days=30)
 
 
 class ActiveJobExists(Exception):
@@ -33,6 +36,10 @@ class AlreadyRetried(Exception):
     def __init__(self, new_id: int | None):
         super().__init__(new_id)
         self.new_id = new_id
+
+
+class RetryTooOld(Exception):
+    """Úloha skončila (bez finished_at byla založena) před víc než RETRY_MAX_AGE: Zkusit znovu už nejde."""
 
 
 @dataclass
@@ -122,7 +129,7 @@ def cancel(conn, job_id: int) -> bool:
     return changed
 
 
-def retry(conn, job_id: int) -> int:
+def retry(conn, job_id: int, now: datetime | None = None) -> int:
     """Zkusit znovu: nová úloha (nové id) se stejným tiskem, formátem a PN; vrací její id.
 
     Jen z konečného stavu failed, cancelled, expired, jinak ValueError (i když úloha neexistuje). Nová úloha je
@@ -131,10 +138,15 @@ def retry(conn, job_id: int) -> int:
     transakci jako nová úloha; když už je, AlreadyRetried a nic se nezaloží (dvojí stisk, tlačítko, které se
     nepodařilo odebrat, auto_pick bez tisku, který unikátní index nehlídá). Stejné zadání, které už je aktivní,
     = ActiveJobExists; transakce se vrátí i s klíčem, takže po skončení aktivního zadání opakovat jde.
+    Úloha, která skončila (bez finished_at založena) před víc než RETRY_MAX_AGE od now (None = teď), = RetryTooOld:
+    klíč job_retried:<id> už mohl smazat úklid (stejná hranice jako uklid._live_jobs).
     """
     job = get(conn, job_id)
     if job is None or job.status not in RETRYABLE:
         raise ValueError(f"úlohu #{job_id} nejde opakovat ({job.status if job else 'neexistuje'})")
+    now = now if now is not None else datetime.now(timezone.utc)
+    if (job.finished_at or job.created_at) < now - RETRY_MAX_AGE:
+        raise RetryTooOld(job_id)
     source = "auto_pick" if job.source == "auto_pick" and job.ct is None else "manual"
     key = f"{RETRIED_KEY}{job_id}"
     try:

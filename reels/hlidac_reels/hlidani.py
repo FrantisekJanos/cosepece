@@ -347,11 +347,16 @@ def _reels_held(conn, now: datetime, st: Status) -> None:
 
 
 def _reels_paused(conn, now: datetime, st: Status) -> None:
-    """Pozastavené PC (reel_state worker_state): zprávu o pozastavení posílá F3, tady jen souhrn."""
+    """Pozastavené PC (reel_state worker_state): zprávu o pozastavení posílá F3, tady jen souhrn.
+
+    Pauza s `until`, po kterém uplynulo víc než jobs.WORKER_STALE bez nového stavu (PC během pauzy vypnuli),
+    už neplatí: nález nevzniká (stejné pravidlo jako _reels_pc a bot._worker_line), výpadek hlídá _reels_pc."""
     state = _worker_state(conn)
     if state is None or state.get("state") != "paused":
         return
     until = _parse_time(state.get("until"))
+    if until is not None and until + jobs.WORKER_STALE < now:
+        return
     st.findings.append(Finding("reels_pauza", messages.worker_paused_text(
         state.get("reason"), state.get("detail"), jobs.hm(conn, until) if until is not None else None), alert=False))
 

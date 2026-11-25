@@ -4876,6 +4876,52 @@ def test_zkusit_znovu_ze_zpravy_po_vypadku(bot, conn, api):
     assert edit["message_id"] == fail_msg and _buttons(edit) == []
 
 
+@pg
+def test_zkusit_znovu_po_30_dnech_odmitne(bot, conn, api):
+    # úklid maže job_retried:<id> 30 dní po konečném stavu úlohy: starší zadání Zkusit znovu odmítne, jinak by po
+    # smazání klíče šlo opakovat podruhé
+    from datetime import timedelta
+    from hlidac_reels import jobs, queue, uklid
+    assert jobs.RETRY_MAX_AGE == uklid.STATE_MAX_AGE == timedelta(days=30)
+    old = jobs.add(conn, source="manual", ct=221)
+    young = jobs.add(conn, source="manual", ct=222)
+    no_end = jobs.add(conn, source="manual", ct=223)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', finished_at = now() - interval '31 days' WHERE id=%s",
+                    (old,))
+        cur.execute("UPDATE reel_jobs SET status='failed', finished_at = now() - interval '29 days' WHERE id=%s",
+                    (young,))
+        # bez finished_at rozhoduje čas založení (jako úklid)
+        cur.execute("UPDATE reel_jobs SET status='expired', finished_at = NULL, "
+                    "created_at = now() - interval '31 days' WHERE id=%s", (no_end,))
+    conn.commit()
+    with pytest.raises(jobs.RetryTooOld):
+        jobs.retry(conn, no_end, now=bot.now())
+    # zpráva po výpadku se Zkusit znovu u dvou zadání: staré jen odpoví a přijde o svoje tlačítko, nic nezaloží
+    markup = {"inline_keyboard": [[{"text": f"Zkusit znovu #{old}", "callback_data": f"jobretry:{old}"}],
+                                  [{"text": f"Zkusit znovu #{young}", "callback_data": f"jobretry:{young}"}]]}
+    sent = len(api.sent())
+    bot.handle(_cb(f"jobretry:{old}", msg_id=70, markup=markup))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání #{old} je starší než 30 dní, zadej ho znovu."
+    assert jobs.pending(conn) == [] and len(api.sent()) == sent
+    assert queue.get_state(conn, f"job_retried:{old}") is None
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == 70 and _buttons(edit) == [f"jobretry:{young}"]
+    # mladší než 30 dní: nové zadání jako dřív
+    bot.handle(_cb(f"jobretry:{young}", msg_id=70, markup=edit["reply_markup"]))
+    (new,) = jobs.pending(conn)
+    assert (new.ct, new.source) == (222, "manual")
+    assert queue.get_state(conn, f"job_retried:{young}") == str(new.id)
+    # zpráva o selhání jednoho zadání (Zkusit znovu + Zahodit) přijde o obě tlačítka
+    fail = {"inline_keyboard": [[{"text": "Zkusit znovu", "callback_data": f"jobretry:{no_end}"},
+                                 {"text": "Zahodit", "callback_data": f"jobcancel:{no_end}"}]]}
+    bot.handle(_cb(f"jobretry:{no_end}", msg_id=71, markup=fail))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání #{no_end} je starší než 30 dní, zadej ho znovu."
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == 71 and _buttons(edit) == []
+    assert [j.id for j in jobs.pending(conn)] == [new.id]
+
+
 # --- F3: /fronta s úlohami a stavem PC, zpráva sady s nevzniklými variantami (Task 11) ---
 
 def test_texty_fronty_uloh():
@@ -5241,6 +5287,25 @@ def test_zbyva_varianta_bez_varovani(bot, conn, api, media_dir):
 
 
 @pg
+def test_varovani_sirky_jen_u_variant_ve_zprave(bot, conn, api, media_dir):
+    # zpráva sady jmenuje vadnou šířku jen u variant, které v ní mají tlačítko
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 9, n=3, source="manual")
+    queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}9", json.dumps({"2": ["poměr stran"], "3": ["soubor chybí"]}))
+    Path(_get(conn, ids[2]).video_path).unlink()  # video varianty 3 nejde poslat: varianta se vyřadí
+    bot.send_next()
+    body = _set_msg(api)
+    assert _buttons(body) == [f"pick:{ids[0]}", f"pick:{ids[1]}", "doneset:9"]
+    assert body["text"].endswith("\n\nVarianta 2: video na šířku vynecháno: poměr stran")
+    assert "Varianta 3: video" not in body["text"]
+    # vybraná varianta 2 v nové zprávě sady (Poslat tlačítka znovu) tlačítko nemá: ani řádek o šířce
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=_set_msg_id(conn, ids[0])))
+    _fronta_resend(bot, api)
+    body = _set_msg(api)
+    assert _buttons(body) == [f"pick:{ids[0]}", "doneset:9"] and "vynecháno" not in body["text"]
+
+
+@pg
 def test_nectitelna_varovani_bez_radku(bot, conn, api, media_dir):
     from hlidac_reels import queue
     from hlidac_reels.messages import REASON_LIMIT, landscape_warnings_lines
@@ -5282,6 +5347,9 @@ def test_texty_sady_s_varovanim():
                          + "\nVarianta 2: video na šířku vynecháno: kontrola videa na šířku selhala"
                          + "\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
     assert set_text(items, warnings={}) == set_text(items) == set_text(items, warnings={"2": []})
+    # varianta, která ve zprávě není (vyřazená, vybraná), řádek nemá
+    assert set_text(items, warnings={**warnings, "3": ["x"], "7": ["y"]}) == set_text(items, warnings=warnings)
+    assert set_text(items[:1], warnings=warnings).endswith("\n\nVarianta 1: video na šířku vynecháno: " + "w" * 300)
     # zbývá varianta ani připomínka varování neukazují
     assert "vynecháno" not in set_text(items, remaining=True, warnings=warnings)
     assert "vynecháno" not in set_text(items, reminder=True, warnings=warnings)
@@ -5311,31 +5379,71 @@ def test_bot_zapisuje_bot_seen_at(bot, conn, monkeypatch):
     bot.maybe_alive()
     assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
 
-    # chyba zápisu smyčku nezastaví (_guard)
+    # chyba zápisu smyčku nezastaví (_guard); čas se posune, aby zápis, kdyby proběhl, dal jinou hodnotu
     def boom(*a, **kw):
         raise RuntimeError("zápis selhal")
     monkeypatch.setattr(queue, "set_state", boom)
     t[0] += 60
+    now[0] += timedelta(seconds=60)
     bot.maybe_alive()
     assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
 
 
+# kroky průchodu smyčky v pořadí volání (Bot.loop)
+LOOP_STEPS = ("maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_events", "maybe_fresh",
+              "maybe_refresh_threads_token", "maybe_watch", "poll_once", "maybe_alive")
+
+
 @pg
-def test_loop_zapise_zivost_hned_po_startu(conn, api, meta, media_dir, monkeypatch):
+def test_loop_zapise_zivost_az_po_pruchodu(conn, api, meta, media_dir, monkeypatch):
+    # známka života až na konci průchodu (po poll_once): průchod, který spadne, ji nezapíše
     bot = _make_bot(conn, api, meta, media_dir)
     order = []
-    monkeypatch.setattr(bot, "start", lambda: order.append("start"))
-    for name in ("maybe_alive", "maybe_send_next"):
-        monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
 
     class Stop(Exception):
         pass
 
     def stop():
+        order.append("maybe_alive")
         raise Stop
-
-    monkeypatch.setattr(bot, "maybe_ingest", stop)
+    monkeypatch.setattr(bot, "start", lambda: order.append("start"))
+    for name in LOOP_STEPS[:-1]:
+        monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
+    monkeypatch.setattr(bot, "maybe_alive", stop)
     monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
     with pytest.raises(SystemExit):
         bot.loop(sleep=lambda s: None)
-    assert order == ["start", "maybe_alive", "maybe_send_next"]
+    assert order == ["start", *LOOP_STEPS]
+
+
+@pg
+def test_loop_zivost_jen_po_pruchodu_bez_chyby(conn, api, meta, media_dir, monkeypatch):
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir)
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    bot.now = lambda: datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot, "start", lambda: None)
+    for name in LOOP_STEPS[:-2]:
+        monkeypatch.setattr(bot, name, lambda: None)
+
+    class Stop(Exception):
+        pass
+    polls = []
+
+    def poll():
+        # 1. a 2. průchod: getUpdates selže; 3. projde; 4. ukončí smyčku
+        polls.append(queue.get_state(conn, "bot_seen_at"))
+        if len(polls) <= 2:
+            raise RuntimeError("getUpdates selhal")
+        if len(polls) == 4:
+            raise Stop
+    monkeypatch.setattr(bot, "poll_once", poll)
+    monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
+
+    def sleep(s):
+        t[0] += 120  # pauza po chybě je delší než ALIVE_INTERVAL: omezení zápisu nic nezakryje
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=sleep)
+    assert polls == [None, None, None, "2026-11-25T08:00:00+00:00"]

@@ -12,12 +12,16 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import psycopg
+
 from . import events, jobs, queue
 from .queue import _tx
 
 log = logging.getLogger("hlidac_reels.uklid")
 
-STATE_MAX_AGE = timedelta(days=30)  # klíč reel_state žije tak dlouho po konečném stavu vlastníka
+# klíč reel_state žije tak dlouho po konečném stavu vlastníka; stejná hodnota jako jobs.RETRY_MAX_AGE (Zkusit znovu
+# starší úlohy už nejde, takže smazaný job_retried:<id> nepovolí druhé opakování)
+STATE_MAX_AGE = timedelta(days=30)
 EVENTS_MAX_AGE = timedelta(days=90)  # stáří odeslané nebo jen historické události reel_events
 CANCELLED_DIR_AGE = timedelta(days=1)  # složka zrušené úlohy bez manifestu v mezisložce
 # konečné stavy položky; failed a unknown čekají na Zkusit znovu, held na Zkusit znovu / Zahodit
@@ -173,9 +177,28 @@ def prune_inbox(conn, inbox_dir: Path, now: datetime) -> list[int]:
 
 
 def run(conn, now: datetime, inbox_dir: Path | None) -> dict[str, int]:
-    """Celý úklid; vrací počty smazaných klíčů, událostí a složek (inbox_dir None = bez mezisložky)."""
-    return {
-        "state": len(prune_state(conn, now)),
-        "events": prune_events(conn, now),
-        "inbox": len(prune_inbox(conn, inbox_dir, now)) if inbox_dir is not None else 0,
-    }
+    """Celý úklid; vrací počty smazaných klíčů, událostí a složek (inbox_dir None = bez mezisložky).
+
+    Kroky běží každý zvlášť: pád jednoho se zaloguje (transakce se vrátí), počet zůstane 0 a další kroky běží.
+    Ztráta spojení s DB jde dál, ať ji zachytí Bot._guard a smyčka (konec procesu, Docker ho spustí znovu).
+    """
+    steps = (
+        ("state", "klíče stavu", lambda: len(prune_state(conn, now))),
+        ("events", "události", lambda: prune_events(conn, now)),
+        ("inbox", "složky zrušených úloh",
+         lambda: len(prune_inbox(conn, inbox_dir, now)) if inbox_dir is not None else 0),
+    )
+    counts = {}
+    for key, what, step in steps:
+        try:
+            counts[key] = step()
+        except Exception as e:  # noqa: BLE001
+            if isinstance(e, psycopg.OperationalError) or getattr(conn, "closed", False):
+                raise
+            log.warning("úklid (%s) selhal: %s: %s", what, type(e).__name__, e)
+            counts[key] = 0
+            try:
+                conn.rollback()  # nepovedený příkaz nesmí nechat spojení v přerušené transakci
+            except Exception:  # noqa: BLE001
+                pass
+    return counts

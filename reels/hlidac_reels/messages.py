@@ -77,7 +77,8 @@ def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | N
     v první zprávě sady.
     skipped = nevzniklé varianty sady (jobs.skipped): na konci řádky „Varianta 3 (zmena) nevznikla: …“.
     warnings = varianty bez videa na šířku (reel_state set_warnings:): na konci řádky „Varianta 2: video
-    na šířku vynecháno: …“, jen v první zprávě sady (ne u remaining ani reminder).
+    na šířku vynecháno: …“, jen v první zprávě sady (ne u remaining ani reminder) a jen u variant v `items`
+    (vyřazená nebo už vybraná varianta tlačítko nemá, zpráva ji nejmenuje).
     """
     first = items[0]
     if remaining or reminder:
@@ -92,6 +93,10 @@ def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | N
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])
         blocks.append(f"{r.variant} ({_variant_label(r)}):\n{lines}")
+    shown = {r.variant for r in items}
+    if isinstance(warnings, dict):
+        # nečitelné klíče vynechá landscape_warnings_lines (isdecimal jako tam)
+        warnings = {k: v for k, v in warnings.items() if str(k).isdecimal() and int(k) in shown}
     warning_lines = [] if remaining or reminder else landscape_warnings_lines(warnings)
     tail = (["\n".join(warning_lines)] if warning_lines else []) + ([autopilot_skipped(skipped)] if skipped else [])
     # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i řádky na konci (varování

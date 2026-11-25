@@ -310,6 +310,28 @@ def test_reels_pozastaveny_worker(conn):
     assert _findings(conn) == {}
 
 
+def test_reels_pauza_po_until_a_vypadku_zmizi(conn):
+    # PC vypnuté během pauzy: stav zůstane paused se starým until; po until + WORKER_STALE nález nevzniká
+    # (stejné pravidlo jako _reels_pc a bot._worker_line), výpadek pak hlídá _reels_pc
+    from hlidac_reels import jobs, queue
+
+    def paused(until: datetime) -> None:
+        queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "detail": None,
+                                                          "until": until.isoformat(), "at": NOW.isoformat()}))
+    assert jobs.WORKER_STALE == timedelta(minutes=30)
+    paused(NOW - timedelta(minutes=20))
+    assert list(_findings(conn)) == ["reels_pauza"]
+    paused(NOW - timedelta(minutes=30))
+    assert list(_findings(conn)) == ["reels_pauza"]
+    paused(NOW - timedelta(minutes=31))
+    assert _findings(conn) == {}
+    # pauza bez until (chybí nástroje) nebo s nečitelným until zůstává
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "nastroje", "detail": "ffmpeg"}))
+    assert list(_findings(conn)) == ["reels_pauza"]
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": "zítra"}))
+    assert list(_findings(conn)) == ["reels_pauza"]
+
+
 def test_reels_vydani_bez_znamky_zivota(conn):
     from hlidac_reels import hlidani
     # PC bylo vidět před 10 min (12:50 v Praze), vydání propadlo před 10 min
@@ -436,6 +458,21 @@ def test_bot_stav_prikaz(bot, conn):
     bot.handle(_msg("/stav"))
     text = bot.api.texts()[-1]
     assert text.startswith("Stav dat k 21. 11. 13:00") and "Vše v pořádku." in text
+
+
+def test_bot_stav_a_souhrn_bez_tokenu(bot, conn):
+    # detail pauzy workeru je text chyby prostředí: /stav i denní souhrn ho pošlou bez tokenů (jako zpráva o pauze)
+    from hlidac_reels import queue
+    queue.set_state(conn, "worker_state", json.dumps({
+        "state": "paused", "reason": "env", "detail": f"GET https://api.telegram.org/bot{TOKEN}/getMe: 401",
+        "until": (NOW + timedelta(hours=1)).isoformat(), "at": NOW.isoformat()}))
+    bot.handle(_msg("/stav"))
+    stav = bot.api.texts()[-1]
+    assert "PC s generátorem je pozastavené: chyba prostředí (GET https://api.telegram.org/bot***/getMe" in stav
+    assert TOKEN not in stav
+    bot._daily_summary()
+    souhrn = bot.api.texts()[-1]
+    assert souhrn.startswith("Stav dat k 21. 11. 13:00") and "bot***/getMe" in souhrn and TOKEN not in souhrn
 
 
 def test_bot_hodinova_kontrola_a_souhrn(bot, conn):

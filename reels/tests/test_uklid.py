@@ -225,6 +225,44 @@ def test_uklid_run_pocty(conn, tmp_path):
     assert _all_keys(conn) == {"tg_offset"}
 
 
+@pg
+def test_uklid_pad_kroku_nezastavi_ostatni(conn, tmp_path, monkeypatch, caplog):
+    import psycopg
+    from hlidac_reels import uklid
+
+    def broken(what: str):
+        def fail(*a):
+            raise RuntimeError(f"{what} spadl")
+        return fail
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_events (at, kind, urgency, notified_at) VALUES (%s, 'x', 1, %s)",
+                    (_ago(days=91), _ago(days=91)))
+    conn.commit()
+    _job(conn, "cancelled", _ago(days=3), _ago(days=2), jid=12)
+    (tmp_path / "12").mkdir()
+
+    def bad_sql(c, now):
+        with c.cursor() as cur:
+            cur.execute("SELECT * FROM tabulka_neni")
+    # klíče stavu spadnou chybou SQL: transakce se vrátí, události a složky zrušených úloh se uklidí přesto
+    monkeypatch.setattr(uklid, "prune_state", bad_sql)
+    with caplog.at_level("WARNING", logger="hlidac_reels.uklid"):
+        assert uklid.run(conn, NOW, tmp_path) == {"state": 0, "events": 1, "inbox": 1}
+    assert "tabulka_neni" in caplog.text and not (tmp_path / "12").exists()
+    # spadnou klíče i události: složky běží dál
+    _job(conn, "cancelled", _ago(days=3), _ago(days=2), jid=13)
+    (tmp_path / "13").mkdir()
+    monkeypatch.setattr(uklid, "prune_state", broken("úklid klíčů"))
+    monkeypatch.setattr(uklid, "prune_events", broken("úklid událostí"))
+    assert uklid.run(conn, NOW, tmp_path) == {"state": 0, "events": 0, "inbox": 1}
+    assert not (tmp_path / "13").exists()
+    # ztráta spojení jde dál: zachytí ji Bot._guard a smyčka (konec procesu, Docker ho spustí znovu)
+    monkeypatch.setattr(uklid, "prune_state", lambda c, now: (_ for _ in ()).throw(
+        psycopg.OperationalError("server closed the connection unexpectedly")))
+    with pytest.raises(psycopg.OperationalError):
+        uklid.run(conn, NOW, tmp_path)
+
+
 # --- napojení na bota ----------------------------------------------------------
 
 @pytest.fixture

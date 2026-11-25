@@ -77,7 +77,8 @@ FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuj
 WATCH_INTERVAL = 3600  # s, jak často smyčka kontroluje čerstvost dat (hlidani.check)
 SUMMARY_CHECK_INTERVAL = 300  # s, jak často smyčka zjišťuje, jestli už má odejít denní souhrn (8:00)
 ALIVE_INTERVAL = 60  # s, jak často smyčka zapíše známku života (reel_state.bot_seen_at)
-BOT_SEEN_KEY = "bot_seen_at"  # reel_state: čas posledního průchodu smyčkou; PHP (Sync) hlásí stáří > 15 min do Sentry
+# reel_state: čas posledního průchodu smyčkou bez chyby; PHP (Sync) hlásí stáří > 15 min do Sentry
+BOT_SEEN_KEY = "bot_seen_at"
 TELEGRAM_TEXT_LIMIT = 4000  # znaků zprávy (Telegram bere nejvýš 4096)
 SETS_PER_DAY = 2  # automatických sad ke schválení za den (Europe/Prague); ruční sady a /dalsi limit obchází
 LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot ohlásil čekání na limit
@@ -636,7 +637,8 @@ class Bot:
         elif command == "/zrus":
             self._cmd_zrus((text or "").strip().partition(" ")[2])
         elif command == "/stav":
-            self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
+            # nález o pauze PC nese text chyby prostředí z workeru: bez tokenů jako zpráva o pauze
+            self._say(self._clip(self._scrub(hlidani.summary_text(self.conn, self.now()))))
         elif command == "/autopilot":
             self._cmd_autopilot((text or "").strip().partition(" ")[2])
         else:
@@ -772,15 +774,21 @@ class Bot:
         """Zkusit znovu (zpráva o selhání, zpráva po výpadku): nové zadání se stavovou zprávou, stará zpráva
         přijde o tlačítka zadání. Aktivní zadání se neopakuje. Každé zadání jen jednou: další stisk (tlačítko, které
         se nepodařilo odebrat) jen odpoví „už se opakuje (#N)“ a tlačítka zadání odebere; stejné aktivní zadání =
-        odpověď „už ve frontě je“. Obojí jen odpovědí na tlačítko, bez nové zprávy v chatu."""
+        odpověď „už ve frontě je“. Obojí jen odpovědí na tlačítko, bez nové zprávy v chatu. Zadání skončené před víc
+        než jobs.RETRY_MAX_AGE (úklid mezitím smaže klíč „už opakováno“) se neopakuje: odpověď „zadej ho znovu“
+        a tlačítka zadání zmizí."""
         job = jobs.get(self.conn, job_id)
         if job is not None and job.status in jobs.ACTIVE:
             self._answer(cb_id, "Zadání ještě běží.")
             return
         try:
-            new_id = jobs.retry(self.conn, job_id)
+            new_id = jobs.retry(self.conn, job_id, now=self.now())
         except jobs.AlreadyRetried as e:
             self._answer(cb_id, f"Zadání už se opakuje (#{e.new_id})." if e.new_id else "Zadání už se opakuje.")
+            self._drop_job_buttons(msg_id, job_id)
+            return
+        except jobs.RetryTooOld:
+            self._answer(cb_id, f"Zadání #{job_id} je starší než {jobs.RETRY_MAX_AGE.days} dní, zadej ho znovu.")
             self._drop_job_buttons(msg_id, job_id)
             return
         except jobs.ActiveJobExists:
@@ -1474,7 +1482,9 @@ class Bot:
             self._rollback()
 
     def maybe_alive(self) -> None:
-        """Známka života pro synchronizaci webu (bot svůj pád sám nenahlásí), nejvýš jednou za ALIVE_INTERVAL s."""
+        """Známka života pro synchronizaci webu (bot svůj pád sám nenahlásí), nejvýš jednou za ALIVE_INTERVAL s.
+
+        Smyčka ji volá na konci průchodu, jen když průchod (i poll_once) proběhl bez výjimky."""
         now = self.clock()
         if now < self._next_alive:
             return
@@ -1633,15 +1643,17 @@ class Bot:
         if day is None:
             return
         text = hlidani.summary_text(self.conn, self.now())
-        # fronta Reels jen v denním souhrnu (události za 24 h), /stav ukazuje jen čerstvost dat
+        # řádky fronty Reels (vypršelé a stažené sady za 24 h, selhání automatických úloh) jen v denním souhrnu;
+        # /stav ukazuje stejný přehled a problémy (data i provoz Reels) bez nich
         lines = queue.summary_lines(self.conn, self.now())
         # selhání a vypršení automatických úloh (události urgency 2) jdou jen sem
         pending = events.unsent(self.conn, events.SUMMARY)
         lines += self._summary_event_lines(pending)
         if lines:
             text += "\n\nFronta Reels:\n" + "\n".join(f"- {line}" for line in lines)
-        # souhrn ani události se nezapíšou jako odeslané, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL)
-        if self._say(self._clip(text)):
+        # souhrn ani události se nezapíšou jako odeslané, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL);
+        # celý text bez tokenů (pauza PC nese text chyby prostředí z workeru)
+        if self._say(self._clip(self._scrub(text))):
             hlidani.mark_summary(self.conn, day)
             self._mark_events(pending)
 
@@ -1782,7 +1794,6 @@ class Bot:
                 if not started:
                     self.start()
                     started = True
-                self.maybe_alive()
                 self.maybe_send_next()
                 self.maybe_ingest()
                 self.maybe_autopublish()
@@ -1791,6 +1802,8 @@ class Bot:
                 self.maybe_refresh_threads_token()
                 self.maybe_watch()
                 self.poll_once()
+                # známka života jen po průchodu bez výjimky: bot, kterému průchod padá pořád, „nežije“
+                self.maybe_alive()
             except Exception as e:  # noqa: BLE001
                 if self._db_lost(e):
                     log.error("spojení s databází ztraceno, končím: %s", self._safe(e))

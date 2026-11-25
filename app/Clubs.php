@@ -30,15 +30,38 @@ final class Clubs
         }
     }
 
-    /** Zkratka klubu, ve kterém byl poslanec v daný den (YYYY-MM-DD); null = v žádném klubu nebo neznámá osoba. */
+    /**
+     * Zkratka klubu, ve kterém byl poslanec v daný den (YYYY-MM-DD); null = v žádném klubu nebo neznámá osoba.
+     * Při přestupu staré členství končí a nové začíná týž den, takže v den změny platí obě. Pak rozhoduje
+     * novější klub (členství s nejpozdějším od, návrh 5.2: ORDER BY od_dne DESC), aby web, hlasování i video
+     * uváděly stejný klub nezávisle na pořadí řádků v zarazeni.unl. Prázdné od = nejstarší členství.
+     */
     public function at(int $idOsoba, string $day): ?string
     {
+        $found = null;
+        $foundFrom = null;
         foreach ($this->member[$idOsoba] ?? [] as [$club, $from, $to]) {
-            if (($from === '' || $from <= $day) && ($to === '' || $to >= $day)) {
-                return $club;
+            if (($from === '' || $from <= $day) && ($to === '' || $to >= $day) && ($foundFrom === null || $from > $foundFrom)) {
+                $found = $club;
+                $foundFrom = $from;
             }
         }
-        return null;
+        return $found;
+    }
+
+    /**
+     * Platí v daný den (YYYY-MM-DD) víc členství, typicky v den přestupu? Pak `at()` vybírá novější klub
+     * a údaje uložené dřív (hlasy poslanců z doby, kdy rozhodovalo pořadí řádků) mohou mít starý klub.
+     */
+    public function ambiguous(int $idOsoba, string $day): bool
+    {
+        $count = 0;
+        foreach ($this->member[$idOsoba] ?? [] as [, $from, $to]) {
+            if (($from === '' || $from <= $day) && ($to === '' || $to >= $day) && ++$count > 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Zkratka klubu z dat Sněmovny v podobě, jak se běžně píše (ANO2011 → ANO, TOP09 → TOP 09). */

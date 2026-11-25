@@ -852,9 +852,10 @@ class Bot:
 
     def _pn_list(self) -> None:
         """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
+        from .clubs import label as club_label  # import zde: horní blok importů mění souběžná větev
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT p.cislo, p.ct, p.osoba, p.cas, x.ai_json, left(x.text, 6000) FROM pn p "
+                "SELECT p.cislo, p.ct, p.osoba, p.klub, p.cas, x.ai_json, left(x.text, 6000) FROM pn p "
                 "LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument "
                 "WHERE p.cas >= to_char((%s::timestamptz AT TIME ZONE 'Europe/Prague') - interval '48 hours', "
                 "'YYYY-MM-DD HH24:MI:SS') ORDER BY p.cas DESC, p.cislo DESC LIMIT %s",
@@ -866,8 +867,11 @@ class Bot:
             return
         lines, buttons = [], []
         by_ct: dict[int, list[int]] = {}
-        for cislo, ct, osoba, cas, ai_json, text in rows:
-            line = f"PN {cislo} · tisk {ct} · {osoba or 'autor neznámý'} · {_pn_time(cas)}"
+        for cislo, ct, osoba, klub, cas, ai_json, text in rows:
+            # klub ke dni podání z dat psp.cz (pn.klub plní web); bez údaje se neuvádí
+            club = club_label(klub)
+            author = (osoba or "autor neznámý") + (f" ({club})" if club else "")
+            line = f"PN {cislo} · tisk {ct} · {author} · {_pn_time(cas)}"
             title = _ai_title(ai_json)
             if title:
                 line += f"\n{title} (shrnutí AI)"

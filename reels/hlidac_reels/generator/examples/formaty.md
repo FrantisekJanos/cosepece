@@ -59,7 +59,7 @@ Každá scéna se shrnutím má štítek „shrnutí AI“, neautorizovaný proj
 | `s-p-jine` | Jiné zákony, do kterých PN sahají (číslo Sb., název, čísla PN), razítko PŘÍLEPEK jen s klíčem `pn_other_law` (volitelné) |
 | `s-p-top` | Až 3 PN: číslo, autor, klub, titulek; štítek „titulky: AI“ (volitelné) |
 
-**Data:** `pn.count`, `authors`, `autori[{jmeno,klub,count}]` ← `pn_k_tisku(ct)` + `najdi_osobu` (klub); `late_count`, `pn_dny` ← `pn[].cas` + `kroky`; `jine_zakony[{sb,nazev,pn}]` ← `pn[].laws`, `zakony_z_pn`; `top[{cislo,autor,klub,titulek,url}]` ← `pn[].titulek`, `ai_score`.
+**Data:** `pn.count`, `authors`, `autori[{jmeno,klub,count}]` ← `pn_k_tisku(ct)` + `najdi_osobu` (klub); `late_count`, `pn_dny` ← `pn[].cas` + `kroky`; `jine_zakony[{sb,nazev,pn}]` ← `pn[].laws`, `zakony_z_pn`; `top[{cislo,autor,klub,titulek,url}]` ← `pn[].titulek`, `ai_score`. U videa k vybraným PN (`podklady/zadani.md`) systém přepíše autora a klub zadaných PN v `top` údaji ze serveru (klub ke dni podání) a doplní pole `pn_autor`; model `pn_autor` nepíše.
 
 **Automatizace hned:** celé. Titulky PN už web má (AI fronta), jen se přebírají a označí.
 **AI potřeba:** žádná nová.

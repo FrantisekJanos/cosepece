@@ -214,25 +214,38 @@ final class ReelJobs
         return $nums;
     }
 
-    /** Údaje vybraných PN tisku pro zadání generátoru: číslo, autor, čas podání, titulek rozboru AI, odkaz na psp.cz. */
+    /**
+     * Údaje vybraných PN tisku pro zadání generátoru: číslo, autor, čas podání, titulek rozboru AI, odkaz na psp.cz,
+     * id osoby autora, klub autora ke dni podání (pn.klub z Importeru v podobě Clubs::label; bez údaje null, nic
+     * se neodhaduje), den, ke kterému klub platí, a zda je stažený text PN. Tvar drží tests/contract/focus-pn-info.json
+     * (čte ho i test generátoru v Pythonu). Starší worker nová pole ignoruje.
+     */
     private function pnInfo(int $ct, array $pns): array
     {
         $obdobi = (new Repo($this->db))->obdobi();
         $marks = implode(', ', array_fill(0, count($pns), '?'));
         $rows = $this->db->all(
-            "SELECT p.cislo, p.osoba, p.cas, x.ai_json FROM pn p LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
+            "SELECT p.cislo, p.osoba, p.cas, p.id_osoba, p.klub, x.ai_json,
+                    CASE WHEN x.text IS NOT NULL AND x.text <> '' THEN 1 ELSE 0 END AS has_text
+               FROM pn p LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
               WHERE p.ct = ? AND p.cislo IN ($marks) ORDER BY p.cislo",
             [$ct, ...$pns]
         );
         return array_map(function (array $r) use ($obdobi): array {
             $ai = json_decode((string)($r['ai_json'] ?? ''), true);
             $title = is_array($ai) ? trim((string)($ai['titulek'] ?? '')) : '';
+            $cas = $r['cas'] !== null ? (string)$r['cas'] : null;
+            $club = Clubs::label($r['klub'] !== null ? (string)$r['klub'] : null);
             return [
                 'cislo' => (int)$r['cislo'],
                 'osoba' => $r['osoba'] !== null ? (string)$r['osoba'] : null,
-                'cas' => $r['cas'] !== null ? (string)$r['cas'] : null,
+                'cas' => $cas,
                 'titulek' => $title !== '' ? $title : null,
                 'url_psp' => View::pspSdUrl((int)$r['cislo'], $obdobi),
+                'id_osoba' => $r['id_osoba'] !== null ? (int)$r['id_osoba'] : null,
+                'klub' => $club !== '' ? $club : null,
+                'klub_ke_dni' => $club !== '' && $cas !== null ? substr($cas, 0, 10) : null,
+                'has_text' => (int)$r['has_text'] === 1,
             ];
         }, $rows);
     }

@@ -142,7 +142,7 @@ def conn():
 _PHP_TABLES = {
     "tisky": "CREATE TABLE tisky (ct integer)",
     "pn": "CREATE TABLE pn (id_dokument integer PRIMARY KEY, cislo integer NOT NULL, ct integer NOT NULL, "
-          "id_osoba integer, osoba varchar(120), cas varchar(19))",
+          "id_osoba integer, osoba varchar(120), cas varchar(19), klub varchar(40))",
     "pn_text": "CREATE TABLE pn_text (id_dokument integer PRIMARY KEY, ct integer NOT NULL, cislo integer NOT NULL, "
                "ai_json text, text text)",
 }
@@ -2585,10 +2585,10 @@ def test_cizi_chat_prikaz_ignoruje(bot, conn, api):
 # --- /pn: video k vybraným PN -------------------------------------------------
 
 def _pn(conn, cislo: int, ct: int, osoba: str = "Jan Novák", cas: str = "2026-11-23 20:09:00",
-        titulek: str | None = None, text: str | None = None) -> None:
+        titulek: str | None = None, text: str | None = None, klub: str | None = None) -> None:
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (%s,%s,%s,%s,%s)",
-                    (30000 + cislo, cislo, ct, osoba, cas))
+        cur.execute("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas, klub) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (30000 + cislo, cislo, ct, osoba, cas, klub))
         if titulek is not None or text is not None:
             ai = json.dumps({"titulek": titulek}, ensure_ascii=False) if titulek is not None else None
             cur.execute("INSERT INTO pn_text (id_dokument, ct, cislo, ai_json, text) VALUES (%s,%s,%s,%s,%s)",
@@ -2734,6 +2734,19 @@ def test_pn_seznam_uryvek_bez_rozboru(bot, conn, api):
     assert "Činčily" not in text
     assert "PN 2423 · tisk 324 · Jan Novák · 24. 11. 10:01\n(rozbor AI zatím chybí)" in text
     assert "Titulek AI (shrnutí AI)" in text
+
+
+@pg
+def test_pn_seznam_klub(bot, conn, api):
+    # klub autora ke dni podání (pn.klub z webu) s popiskem jako na webu; bez klubu řádek jako dřív
+    _pn_bot(bot)
+    _pn(conn, 2376, 300, osoba="Jana Malá", cas="2026-11-23 20:09:00", klub="ANO2011")
+    _pn(conn, 2377, 300, cas="2026-11-23 21:00:00")
+    bot.handle(_msg("/pn"))
+    text = api.sent()[-1]["text"]
+    assert "PN 2376 · tisk 300 · Jana Malá (ANO) · 23. 11. 20:09" in text
+    assert "PN 2377 · tisk 300 · Jan Novák · 23. 11. 21:00" in text
+    assert "ANO2011" not in text
 
 
 def test_pn_uryvek_delka():

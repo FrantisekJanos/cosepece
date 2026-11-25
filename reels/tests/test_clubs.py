@@ -13,11 +13,14 @@ def _php_labels() -> dict[str, str]:
     src = CLUBS_PHP.read_text(encoding="utf-8")
     body = re.search(r"function label\(.*?match\s*\(\$club\)\s*\{(.*?)\};", src, re.S)
     assert body, "Clubs::label() bez match"
+    arms = re.findall(r"^\s*((?:'[^']*'\s*,\s*)*'[^']*')\s*=>\s*'([^']*)'", body.group(1), re.M)
+    # každá větev kromě default se musí přečíst, jinak by změna zápisu v PHP prošla bez kontroly
+    expected = body.group(1).count("=>") - len(re.findall(r"\bdefault\s*=>", body.group(1)))
+    assert arms and len(arms) == expected, f"přečteno {len(arms)} z {expected} větví match"
     pairs: dict[str, str] = {}
-    for keys, value in re.findall(r"^\s*((?:'[^']*'\s*,\s*)*'[^']*')\s*=>\s*'([^']*)'", body.group(1), re.M):
+    for keys, value in arms:
         for key in re.findall(r"'([^']*)'", keys):
             pairs[key] = value
-    assert pairs, "v match žádné páry"
     return pairs
 
 
@@ -26,9 +29,12 @@ def _js_labels() -> dict[str, str]:
     src = REEL_JS.read_text(encoding="utf-8")
     body = re.search(r"var KLUBY\s*=\s*\{(.*?)\};", src, re.S)
     assert body, "v reel.js chybí var KLUBY"
-    pairs = {quoted or bare: value
-             for quoted, bare, value in re.findall(r"(?:'([^']*)'|([A-Za-z0-9_]+))\s*:\s*'([^']*)'", body.group(1))}
-    assert pairs, "KLUBY bez párů"
+    entries = re.findall(r"(?:'([^']*)'|([A-Za-z0-9_]+))\s*:\s*'([^']*)'", body.group(1))
+    # každá položka (dvojtečka) se musí přečíst a žádný klíč se nesmí opakovat
+    assert entries and len(entries) == body.group(1).count(":"), \
+        f"přečteno {len(entries)} z {body.group(1).count(':')} položek KLUBY"
+    pairs = {quoted or bare: value for quoted, bare, value in entries}
+    assert len(pairs) == len(entries), "KLUBY má opakovaný klíč"
     return pairs
 
 

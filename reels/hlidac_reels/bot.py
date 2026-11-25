@@ -42,7 +42,6 @@ from typing import Callable
 import psycopg
 
 from . import db, fresh, hlidani, inbox, jobs, messages, publish, queue
-from .clubs import label as club_label
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
@@ -701,6 +700,7 @@ class Bot:
 
     def _pn_list(self) -> None:
         """PN podané za posledních 48 h (pn.cas je pražský čas), nejnovější první, s tlačítky pro zadání."""
+        from .clubs import label as club_label  # import zde: horní blok importů mění souběžná větev
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT p.cislo, p.ct, p.osoba, p.klub, p.cas, x.ai_json, left(x.text, 6000) FROM pn p "

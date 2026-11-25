@@ -206,6 +206,36 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
+LOG_KEEP = 5  # kolik logů minulých vydání (claude-<n>.log) zůstane ve složce úlohy
+
+
+def rotate_log(workdir: Path, keep: int = LOG_KEEP) -> None:
+    """Přesune `claude.log` minulého vydání do `claude-<n>.log` (n = nejvyšší existující + 1).
+
+    Ze starých logů nechá `keep` s nejvyšším n. Volá se na začátku vydání, takže každé vydání píše do nového
+    `claude.log`. Chyba souborového systému (log otevřený jiným programem) generování nezastaví.
+    """
+    workdir = Path(workdir)
+    old: dict[int, Path] = {}
+    for path in workdir.glob("claude-*.log"):
+        m = re.fullmatch(r"claude-(\d+)\.log", path.name)
+        if m:
+            old[int(m[1])] = path
+    log = workdir / "claude.log"
+    if log.is_file():
+        n = max(old, default=0) + 1
+        try:
+            log.replace(workdir / f"claude-{n}.log")
+            old[n] = workdir / f"claude-{n}.log"
+        except OSError:
+            pass
+    for n in sorted(old)[:max(len(old) - keep, 0)]:
+        try:
+            old[n].unlink()
+        except OSError:
+            pass
+
+
 def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEFAULT_MODEL,
                timeout_s: int = 1200) -> ClaudeRun:
     """Spustí `claude -p` v `workdir`; výstup a chyby do `workdir/claude.log`. Po timeoutu proces ukončí."""
@@ -225,7 +255,7 @@ def run_claude(prompt: str, *, workdir: Path, mcp_config: Path, model: str = DEF
         timed_out = True
         _kill_tree(proc)
         out, err = proc.communicate()
-    with log_path.open("a", encoding="utf-8") as log:  # oprava variant běží podruhé, první log zůstane
+    with log_path.open("a", encoding="utf-8") as log:  # běhy jednoho vydání (generování, opravy) do jednoho logu
         log.write(f"=== běh ===\n{out or ''}\n--- stderr ---\n{err or ''}\n" + ("--- timeout ---\n" if timed_out else ""))
     rc = None if timed_out else proc.returncode
     is_error, result = parse_output(out)

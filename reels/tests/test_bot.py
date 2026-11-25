@@ -2043,6 +2043,100 @@ def test_ztraceny_nahled_se_doplni(bot, conn, api, media_dir):
     assert len(api.sent("sendVideo")) == 1
 
 
+def _message_handler(api, decide):
+    """Telegram, kde decide(n) vrátí odpověď pro n-té sendMessage (None = normální odpověď)."""
+    count = [0]
+
+    def handler(request):
+        if request.url.path.endswith("/sendMessage"):
+            count[0] += 1
+            resp = decide(count[0])
+            if resp is not None:
+                return resp
+        return api(request)
+    return handler
+
+
+# popisek delší než zpráva Telegramu: náhled má víc částí (preview_parts)
+LONG_CAPTION = "Dlouhý popisek. " + "x" * 5000
+
+
+def _pending_long(conn, media_dir) -> int:
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir, caption=LONG_CAPTION)
+    assert queue.transition(conn, rid, "queued", "pending", sent_at=datetime.now(timezone.utc),
+                            telegram_video_msg_id=1)
+    return rid
+
+
+@pg
+def test_vicedilny_nahled_neopakuje_prvni_cast(conn, api, meta, media_dir):
+    """Druhá část náhledu neodešla (5xx): opravná smyčka pošle jen chybějící části, první už ne."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import approval_buttons, preview_parts
+    bad = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot = _make_bot(conn, _message_handler(api, lambda n: bad if n == 2 else None), meta, media_dir)
+    rid = _add(conn, media_dir, caption=LONG_CAPTION)
+    bot.send_next()
+    parts = preview_parts(_get(conn, rid))
+    assert len(parts) >= 3
+    r = _get(conn, rid)
+    assert r.status == "pending" and r.telegram_msg_id is None
+    first_id = api.next_id  # poslední přidělené id = první část náhledu (druhá neodešla)
+    assert api.texts() == [parts[0]]
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    saved = json.loads(queue.get_state(conn, key))
+    assert saved["sent"] == [first_id] and len(saved["sha"]) == 64
+    bot._repair_messages()
+    assert api.texts() == parts
+    assert api.texts().count(parts[0]) == 1
+    last = api.sent()[-1]
+    assert _buttons(last) == [d for _, d in approval_buttons(rid)]
+    assert not any(_buttons(b) for b in api.sent()[:-1])
+    assert _get(conn, rid).telegram_msg_id == api.next_id
+    assert queue.get_state(conn, key) is None
+    # na každou nekoncovou část jde odpovědět novým popiskem
+    assert queue.get_state(conn, f"edit_msg:{first_id}") == str(rid)
+    # další cyklus už nic neposílá
+    bot._repair_messages()
+    assert len(api.sent()) == len(parts)
+
+
+@pg
+def test_vicedilny_nahled_po_zmene_textu_posle_vse(bot, conn, api, media_dir):
+    """Uložené části patří jinému textu (jiný sha): náhled se pošle celý od první části."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import preview_parts
+    rid = _pending_long(conn, media_dir)
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    queue.set_state(conn, key, json.dumps({"sha": "0" * 64, "sent": [55, 56]}))
+    bot._repair_messages()
+    assert api.texts() == preview_parts(_get(conn, rid))
+    assert queue.get_state(conn, key) is None
+
+
+@pg
+def test_vicedilny_nahled_vadny_zaznam_posle_vse(conn, api, meta, media_dir):
+    """Nečitelný záznam preview_sent se bere jako žádný: odejdou všechny části."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import preview_parts
+    bad = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot = _make_bot(conn, _message_handler(api, lambda n: bad if n == 2 else None), meta, media_dir)
+    rid = _pending_long(conn, media_dir)
+    bot._repair_messages()
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    sha = json.loads(queue.get_state(conn, key))["sha"]
+    parts = preview_parts(_get(conn, rid))
+    for raw in ("{", "[1]", json.dumps({"sha": sha, "sent": "x"}), json.dumps({"sha": sha, "sent": [1, "a"]})):
+        api.calls.clear()
+        queue.set_fields(conn, rid, telegram_msg_id=None)
+        queue.set_state(conn, key, raw)
+        bot._repair_messages()
+        assert api.texts() == parts, raw
+        assert queue.get_state(conn, key) is None
+
+
 @pg
 def test_sendretry_a_drop(bot, conn, api, media_dir):
     """Zkusit znovu vrátí celou held sadu do fronty s nulovými pokusy, Zahodit ji zamítne; jinde „už nečeká“."""
@@ -2334,8 +2428,64 @@ def test_pripominka_automaticke_sady_jednou(bot, conn, api, media_dir):
     bot.maybe_fresh()
     _later(bot, hours=13)
     bot.maybe_fresh()
-    assert api.texts().count("Sada #3 čeká 12 h. Vybrat, nebo Hotovo.") == 1
+    assert sum(t.startswith("Sada #3 čeká 12 h. Vybrat, nebo Hotovo.") for t in api.texts()) == 1
     assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_pripominka_12h_s_tlacitky(bot, conn, api, media_dir):
+    """Připomínka nedotčené automatické sady je nová zpráva sady s tlačítky; stará zpráva o ně přijde."""
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    detail = {"variants": [1, 2, 3], "skipped": [{"n": 4, "format": "zmena", "errors": ["chybí text"]}]}
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done', finished_at=now(), detail=%s WHERE id=%s",
+                    (json.dumps(detail, ensure_ascii=False), j))
+    conn.commit()
+    ids = _add_set(conn, media_dir, j)
+    bot.send_next()
+    old_msg = _set_msg_id(conn, ids[0])
+    api.calls.clear()
+    _later(bot, hours=13)
+    bot._remind()
+    (body,) = api.sent()
+    text = body["text"]
+    assert text.startswith(f"Sada #{j} čeká 12 h. Vybrat, nebo Hotovo.\nTisk 221\n\n")
+    assert "Varianta 2 řádek 1\nřádek 2 varianty 2" in text and "řádek 3 se nevypíše" not in text
+    # nevzniklé varianty patří jen do první zprávy sady
+    assert "nevznikla" not in text
+    assert _buttons(body) == [f"pick:{i}" for i in ids] + [f"doneset:{j}"]
+    new_msg = _set_msg_id(conn, ids[0])
+    assert new_msg != old_msg and {_set_msg_id(conn, i) for i in ids} == {new_msg}
+    assert _edits(api) == [(old_msg, [])]
+    # druhá připomínka se neposílá
+    api.calls.clear()
+    bot._remind()
+    assert api.calls == []
+    # Vybrat z připomínky funguje, staré tlačítko ne
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=old_msg))
+    assert _previews(api) == []
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=new_msg))
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[1]}"]
+    assert _edits(api) == [(new_msg, [f"pick:{ids[0]}", f"pick:{ids[2]}", f"doneset:{j}"])]
+
+
+@pg
+def test_pripominka_neodeslana_zkusi_se_znovu(bot, conn, api, media_dir):
+    """Připomínka, která neodešla, se nezapíše jako odeslaná a stará zpráva sady si tlačítka nechá."""
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    old_msg = _set_msg_id(conn, ids[0])
+    api.calls.clear()
+    _later(bot, hours=13)
+    api.fail["sendMessage"] = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot._remind()
+    assert queue.get_state(conn, f"{queue.REMINDED_KEY}3") is None
+    assert _edits(api) == [] and _set_msg_id(conn, ids[0]) == old_msg
+    del api.fail["sendMessage"]
+    bot._remind()
+    assert len(_set_offers(api)) == 1 and queue.get_state(conn, f"{queue.REMINDED_KEY}3") == "1"
 
 
 @pg
@@ -2551,7 +2701,8 @@ def test_fronta_ukaze_ulohy_a_pc(bot, conn, api):
     bot.handle(_msg("/fronta"))
     text = api.texts()[-1]
     assert f"Ve frontě zadání (1)\n#{a} tisk 221 · 1. v pořadí" in text
-    assert "PC naposledy: 20. 11. 14:05" in text
+    # heartbeat starý víc než 30 min (F5): PC neodpovídá
+    assert text.splitlines()[-1] == "PC neodpovídá od 20. 11. 14:05"
 
 
 @pg
@@ -4725,6 +4876,52 @@ def test_zkusit_znovu_ze_zpravy_po_vypadku(bot, conn, api):
     assert edit["message_id"] == fail_msg and _buttons(edit) == []
 
 
+@pg
+def test_zkusit_znovu_po_30_dnech_odmitne(bot, conn, api):
+    # úklid maže job_retried:<id> 30 dní po konečném stavu úlohy: starší zadání Zkusit znovu odmítne, jinak by po
+    # smazání klíče šlo opakovat podruhé
+    from datetime import timedelta
+    from hlidac_reels import jobs, queue, uklid
+    assert jobs.RETRY_MAX_AGE == uklid.STATE_MAX_AGE == timedelta(days=30)
+    old = jobs.add(conn, source="manual", ct=221)
+    young = jobs.add(conn, source="manual", ct=222)
+    no_end = jobs.add(conn, source="manual", ct=223)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='failed', finished_at = now() - interval '31 days' WHERE id=%s",
+                    (old,))
+        cur.execute("UPDATE reel_jobs SET status='failed', finished_at = now() - interval '29 days' WHERE id=%s",
+                    (young,))
+        # bez finished_at rozhoduje čas založení (jako úklid)
+        cur.execute("UPDATE reel_jobs SET status='expired', finished_at = NULL, "
+                    "created_at = now() - interval '31 days' WHERE id=%s", (no_end,))
+    conn.commit()
+    with pytest.raises(jobs.RetryTooOld):
+        jobs.retry(conn, no_end, now=bot.now())
+    # zpráva po výpadku se Zkusit znovu u dvou zadání: staré jen odpoví a přijde o svoje tlačítko, nic nezaloží
+    markup = {"inline_keyboard": [[{"text": f"Zkusit znovu #{old}", "callback_data": f"jobretry:{old}"}],
+                                  [{"text": f"Zkusit znovu #{young}", "callback_data": f"jobretry:{young}"}]]}
+    sent = len(api.sent())
+    bot.handle(_cb(f"jobretry:{old}", msg_id=70, markup=markup))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání #{old} je starší než 30 dní, zadej ho znovu."
+    assert jobs.pending(conn) == [] and len(api.sent()) == sent
+    assert queue.get_state(conn, f"job_retried:{old}") is None
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == 70 and _buttons(edit) == [f"jobretry:{young}"]
+    # mladší než 30 dní: nové zadání jako dřív
+    bot.handle(_cb(f"jobretry:{young}", msg_id=70, markup=edit["reply_markup"]))
+    (new,) = jobs.pending(conn)
+    assert (new.ct, new.source) == (222, "manual")
+    assert queue.get_state(conn, f"job_retried:{young}") == str(new.id)
+    # zpráva o selhání jednoho zadání (Zkusit znovu + Zahodit) přijde o obě tlačítka
+    fail = {"inline_keyboard": [[{"text": "Zkusit znovu", "callback_data": f"jobretry:{no_end}"},
+                                 {"text": "Zahodit", "callback_data": f"jobcancel:{no_end}"}]]}
+    bot.handle(_cb(f"jobretry:{no_end}", msg_id=71, markup=fail))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání #{no_end} je starší než 30 dní, zadej ho znovu."
+    edit = api.sent("editMessageReplyMarkup")[-1]
+    assert edit["message_id"] == 71 and _buttons(edit) == []
+    assert [j.id for j in jobs.pending(conn)] == [new.id]
+
+
 # --- F3: /fronta s úlohami a stavem PC, zpráva sady s nevzniklými variantami (Task 11) ---
 
 def test_texty_fronty_uloh():
@@ -4828,18 +5025,120 @@ def test_fronta_ulohy_a_pc(bot, conn, api):
     _tisk(conn, 400)
     bot.handle(_msg("/video 400"))
     assert api.texts()[-1].splitlines()[-1] == text.splitlines()[-1]
+    # běžící worker posílá heartbeat průběžně (35 min starý by už byl „PC neodpovídá“)
+    queue.set_state(conn, "worker_seen_at", "2026-11-25T14:35:00+01:00")
     queue.set_state(conn, "worker_state", json.dumps({"state": "running", "reason": None, "detail": None,
-                                                      "until": None, "at": "2026-11-25T14:05:00+01:00"}))
+                                                      "until": None, "at": "2026-11-25T14:35:00+01:00"}))
     bot.handle(_msg("/fronta"))
-    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:35 · generátor běží"
     # nečitelný worker_state: jen kdy bylo PC vidět; nečitelné until se vynechá
     queue.set_state(conn, "worker_state", "{")
     bot.handle(_msg("/fronta"))
-    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05"
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:35"
     queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": 5}))
     bot.handle(_msg("/fronta"))
     assert api.texts()[-1].splitlines()[-1] == (
-        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného")
+        "PC naposledy: 25. 11. 14:35 · pozastaveno: vyčerpaný limit předplatného")
+
+
+# --- F5: /fronta s neviděným PC a dlouhý přehled (Task 4) ---
+
+def test_worker_line_dlouho_nevideno():
+    from hlidac_reels import messages as m
+    assert m.worker_line("21. 11. 13:05", {"state": "running"}, stale=True) == "PC neodpovídá od 21. 11. 13:05"
+    # stav generátoru se u neviděného PC nevypisuje (heartbeat je starý, stav nemusí platit)
+    assert m.worker_line("21. 11. 13:05", {"state": "paused", "reason": "limit"}, "15:30", stale=True) == (
+        "PC neodpovídá od 21. 11. 13:05")
+    assert m.worker_line("21. 11. 13:05", stale=True) == "PC neodpovídá od 21. 11. 13:05"
+    # bez času heartbeat beze změny
+    assert m.worker_line(None, stale=True) == "PC zatím nebylo vidět"
+
+
+@pg
+def test_fronta_pc_neodpovida_po_30_min(bot, conn, api):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    now = datetime(2026, 11, 25, 13, 40, tzinfo=timezone.utc)  # 14:40 v Praze
+    bot.now = lambda: now
+
+    def pc_line(seen_ago: timedelta, state: dict) -> str:
+        queue.set_state(conn, "worker_seen_at", (now - seen_ago).isoformat())
+        queue.set_state(conn, "worker_state", json.dumps(state))
+        bot.handle(_msg("/fronta"))
+        return api.texts()[-1].splitlines()[-1]
+
+    running = {"state": "running", "reason": None, "detail": None, "until": None}
+    line = pc_line(timedelta(minutes=40), running)
+    assert line.startswith("PC neodpovídá od") and "generátor běží" not in line
+    assert line == "PC neodpovídá od 25. 11. 14:00"
+    assert pc_line(timedelta(minutes=10), running) == "PC naposledy: 25. 11. 14:30 · generátor běží"
+    # pozastavené PC posílá heartbeat jen jednou a spí do until: starý heartbeat do until + 30 min není výpadek
+    paused = {"state": "paused", "reason": "limit", "detail": None, "until": (now + timedelta(hours=1)).isoformat()}
+    line = pc_line(timedelta(minutes=40), paused)
+    assert "pozastaveno" in line and "neodpovídá" not in line
+    assert line == "PC naposledy: 25. 11. 14:00 · pozastaveno: vyčerpaný limit předplatného (do 15:40)"
+    # pauza skončila před víc než 30 min a heartbeat pořád nepřišel: PC neodpovídá
+    paused["until"] = (now - timedelta(minutes=40)).isoformat()
+    assert pc_line(timedelta(hours=3), paused) == "PC neodpovídá od 25. 11. 11:40"
+    # pauza bez until (chybí nástroje) posílá heartbeat dál, starý heartbeat = PC neodpovídá
+    assert pc_line(timedelta(minutes=40), {"state": "paused", "reason": "nastroje", "detail": "ffmpeg"}) == (
+        "PC neodpovídá od 25. 11. 14:00")
+
+
+def _overview_units(state: str, ids, ct: int = 221, **kw):
+    from datetime import datetime, timezone
+    from hlidac_reels.queue import Unit
+    since = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    return [Unit(None, [i], "manual", ct, state, since, **kw) for i in ids]
+
+
+def test_prehled_dlouhy_necha_problemy():
+    import re
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    pc = "PC naposledy: 25. 11. 14:05 · generátor běží"
+    ready = _overview_units("next", range(1, 201))
+    held = _overview_units("held", (301, 302), note="Telegram timeout", attempts=5)
+    mine = _overview_units("approval", (401, 402, 403))
+    text = m.queue_overview(mine + ready + held, [], pc, now)
+    assert len(text) <= 4096
+    assert text.splitlines()[-1] == pc
+    # Problémy celé, těsně před stavem PC
+    assert text.endswith("Problémy (2)\n"
+                         "#301 tisk 221 · nejde doručit (Telegram timeout, 5×) · Zkusit znovu / Zahodit\n"
+                         "#302 tisk 221 · nejde doručit (Telegram timeout, 5×) · Zkusit znovu / Zahodit\n\n" + pc)
+    # ubírá se nejdřív z Hotové: Čeká na tebe zůstane celé
+    assert text.startswith("Čeká na tebe (3)\n#401 tisk 221 · čeká na schválení · 0 min\n"
+                           "#402 tisk 221 · čeká na schválení · 0 min\n#403 tisk 221 · čeká na schválení · 0 min\n\n"
+                           "Hotové, čekají na odeslání (200)\n#1 tisk 221 · na řadě\n")
+    (more,) = re.findall(r"\n… a další (\d+)\n\nProblémy", text)
+    shown = re.findall(r"^#\d+ tisk 221 · na řadě$", text, re.M)
+    assert len(shown) + int(more) == 200 and shown[-1] == f"#{len(shown)} tisk 221 · na řadě"
+    # když nestačí ani prázdné Hotové, ubírá se z Čeká na tebe; Problémy pořád celé
+    mine = _overview_units("approval", range(401, 551))
+    text = m.queue_overview(mine + ready + held, [], pc, now)
+    assert len(text) <= 4096 and text.splitlines()[-1] == pc
+    assert "\n\nHotové, čekají na odeslání (200)\n… a další 200\n\nProblémy (2)\n#301 " in text
+    (more,) = re.findall(r"\n… a další (\d+)\n\nHotové", text)
+    assert len(re.findall("čeká na schválení", text)) + int(more) == 150
+
+
+def test_prehled_jen_problemy_pres_limit():
+    """Review Focus 5: nevejdou se ani samotné Problémy, ořízne se jejich konec a stav PC zůstane poslední."""
+    import re
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    pc = "PC naposledy: 25. 11. 14:05 · generátor běží"
+    held = _overview_units("held", range(1, 301), note="Telegram timeout", attempts=5)
+    text = m.queue_overview(held, [], pc, now)
+    assert len(text) <= 4096
+    assert text.splitlines()[-1] == pc
+    assert text.startswith("Problémy (300)\n#1 tisk 221 · nejde doručit")
+    (more,) = re.findall(r"\n… a další (\d+)\n\n" + re.escape(pc) + "$", text)
+    assert len(re.findall("nejde doručit", text)) + int(more) == 300
 
 
 @pg
@@ -4902,3 +5201,249 @@ def test_texty_sady_s_vynechanymi():
     text = set_text(items, skipped=skipped)
     assert len(text) <= TEXT_LIMIT and text.endswith("\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
     assert set_text(items, skipped=[]) == set_text(items)
+
+
+# --- F5: vadné video na šířku ve zprávě sady -----------------------------------
+
+def _inbox_set(tmp_path, jid: int, land: dict[int, str]) -> None:
+    """Složka sady v mezisložce: varianty 1 a 2 na výšku; land = n -> obsah videa na šířku (wide = 16:9)."""
+    folder = tmp_path / "inbox" / str(jid)
+    folder.mkdir(parents=True)
+    variants = []
+    for n in (1, 2):
+        (folder / f"variant-{n}.mp4").write_bytes(f"ok-{n}".encode())
+        v = {"n": n, "template": "template_v3", "format": "pn", "caption": f"Popisek {n}", "card": {}}
+        if n in land:
+            v["landscape"] = True
+            (folder / f"variant-{n}-sirka.mp4").write_bytes(f"{land[n]}-{n}".encode())
+        variants.append(v)
+    (folder / "manifest.json").write_text(
+        json.dumps({"job_id": jid, "ct": 311, "source": "manual", "variants": variants}), encoding="utf-8")
+
+
+@pg
+def test_zprava_sady_uvadi_vadnou_sirku(bot, conn, api, tmp_path, monkeypatch):
+    from hlidac_reels import jobs, media, queue
+    from hlidac_reels.media import VideoInfo
+    assert queue.SET_WARNINGS_KEY == "set_warnings:"
+
+    def probe(path):
+        # obsah „wide“ = 16:9, jinak 9:16 (šířka s poměrem 9:16 je vadná)
+        wide = Path(path).read_bytes().startswith(b"wide")
+        return VideoInfo("h264", "aac", 1920 if wide else 1080, 1080 if wide else 1920, 30.0, 10)
+    monkeypatch.setattr(media, "probe", probe)
+    jid = jobs.add(conn, source="manual", ct=311)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (jid,))
+    conn.commit()
+    _inbox_set(tmp_path, jid, {1: "wide", 2: "ok"})
+    bot.inbox_dir = str(tmp_path / "inbox")
+    bot._ingest()
+    assert json.loads(queue.get_state(conn, f"set_warnings:{jid}")) == {
+        "2": ["poměr stran musí být 16:9, je 1080×1920"]}
+    bot.send_next()
+    text = _set_msg(api)["text"]
+    assert text.endswith("\n\nVarianta 2: video na šířku vynecháno: poměr stran musí být 16:9, je 1080×1920")
+    assert "Varianta 1: video na šířku" not in text
+
+
+@pg
+def test_ingest_varovani_jen_u_sady_ke_schvaleni(bot, conn, media_dir, monkeypatch):
+    from hlidac_reels import inbox, queue
+    from hlidac_reels.inbox import IngestResult
+    warns = {1: ["soubor videa na šířku chybí"]}
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on: [
+        IngestResult(5, [1], ok=True, warnings=warns),
+        IngestResult(6, [2], ok=True, autopilot=True, warnings=warns),  # autopilot: zpráva sady není
+        IngestResult(7, [], ok=False, warnings=warns),  # nepřevzatá sada
+        IngestResult(8, [3], ok=True)])
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot._ingest()
+    assert json.loads(queue.get_state(conn, "set_warnings:5")) == {"1": ["soubor videa na šířku chybí"]}
+    assert [queue.get_state(conn, f"set_warnings:{j}") for j in (6, 7, 8)] == [None] * 3
+
+
+@pg
+def test_zbyva_varianta_bez_varovani(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 8, n=2, source="manual")
+    queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}8", json.dumps({"2": ["poměr stran musí být 16:9"]}))
+    bot.send_next()
+    line = "\n\nVarianta 2: video na šířku vynecháno: poměr stran musí být 16:9"
+    assert _set_msg(api)["text"].endswith(line)
+    # Poslat tlačítka znovu je první zpráva sady: varování znovu
+    _fronta_resend(bot, api)
+    assert _set_msg(api)["text"].endswith(line)
+    # připomínka varování neopakuje
+    api.calls.clear()
+    assert bot._offer_set(8, reminder=True)
+    assert "vynecháno" not in _set_msg(api)["text"]
+    # zpráva „zbývá varianta“ po rozhodnutí o vybrané variantě taky ne
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=_set_msg_id(conn, ids[0])))
+    api.calls.clear()
+    bot.handle(_cb(f"no:{ids[1]}"))
+    (rem,) = _remaining(api)
+    assert "Sada #8: zbývá varianta 1." in rem["text"] and "vynecháno" not in rem["text"]
+
+
+@pg
+def test_varovani_sirky_jen_u_variant_ve_zprave(bot, conn, api, media_dir):
+    # zpráva sady jmenuje vadnou šířku jen u variant, které v ní mají tlačítko
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 9, n=3, source="manual")
+    queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}9", json.dumps({"2": ["poměr stran"], "3": ["soubor chybí"]}))
+    Path(_get(conn, ids[2]).video_path).unlink()  # video varianty 3 nejde poslat: varianta se vyřadí
+    bot.send_next()
+    body = _set_msg(api)
+    assert _buttons(body) == [f"pick:{ids[0]}", f"pick:{ids[1]}", "doneset:9"]
+    assert body["text"].endswith("\n\nVarianta 2: video na šířku vynecháno: poměr stran")
+    assert "Varianta 3: video" not in body["text"]
+    # vybraná varianta 2 v nové zprávě sady (Poslat tlačítka znovu) tlačítko nemá: ani řádek o šířce
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=_set_msg_id(conn, ids[0])))
+    _fronta_resend(bot, api)
+    body = _set_msg(api)
+    assert _buttons(body) == [f"pick:{ids[0]}", "doneset:9"] and "vynecháno" not in body["text"]
+
+
+@pg
+def test_nectitelna_varovani_bez_radku(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.messages import REASON_LIMIT, landscape_warnings_lines
+    for bad in (None, "x", [1], {}, {"x": ["a"]}, {"²": ["a"]}, {"2": "a"}, {"2": []}, {"2": None}):
+        assert landscape_warnings_lines(bad) == [], bad
+    # vadné položky se vynechají, platné zůstanou seřazené podle varianty
+    assert landscape_warnings_lines({"3": ["a", "b"], "x": ["c"], "1": ["e" * 400]}) == [
+        "Varianta 1: video na šířku vynecháno: " + "e" * REASON_LIMIT,
+        "Varianta 3: video na šířku vynecháno: a; b"]
+    # nečitelný klíč v reel_state: zpráva sady odejde bez řádků varování
+    for n, raw in enumerate(("{", '["a"]', '{"2": "a"}'), start=1):
+        set_id = 20 + n
+        _add_set(conn, media_dir, set_id, n=2, source="manual")
+        queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}{set_id}", raw)
+        bot.send_next()
+        body = _set_msg(api)
+        assert body["text"].startswith(f"Sada #{set_id}") and "vynecháno" not in body["text"]
+
+
+def test_texty_sady_s_varovanim():
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import TEXT_LIMIT, set_text
+    from hlidac_reels.queue import Reel
+    now = datetime.now(timezone.utc)
+    items = [Reel(id=11 + v, source="manual", ct=221, format="v2", video_path="x", video_sha256=str(v),
+                  caption="x" * 5000, status="pending", telegram_video_msg_id=None, telegram_msg_id=None,
+                  ig_container_id=None, ig_media_id=None, ig_permalink=None, fb_video_id=None,
+                  fb_permalink=None, public_token=None, error=None, attempts=0, created_at=now,
+                  sent_at=None, decided_at=None, published_at=None, threads_container_id=None,
+                  threads_media_id=None, threads_permalink=None, video_landscape_path=None,
+                  video_landscape_sha256=None, telegram_landscape_msg_id=None,
+                  telegram_landscape_sha256=None, set_id=5, variant=v, template="template_v2") for v in (1, 2)]
+    warnings = {"1": ["w" * 400], "2": ["kontrola videa na šířku selhala"]}
+    skipped = [{"n": 3, "format": "zmena", "errors": ["e" * 400]}]
+    # dlouhé popisky se zkrátí, varování i nevzniklá varianta zůstanou celé na konci
+    text = set_text(items, skipped=skipped, warnings=warnings)
+    assert len(text) <= TEXT_LIMIT
+    assert text.endswith("\n\nVarianta 1: video na šířku vynecháno: " + "w" * 300
+                         + "\nVarianta 2: video na šířku vynecháno: kontrola videa na šířku selhala"
+                         + "\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
+    assert set_text(items, warnings={}) == set_text(items) == set_text(items, warnings={"2": []})
+    # varianta, která ve zprávě není (vyřazená, vybraná), řádek nemá
+    assert set_text(items, warnings={**warnings, "3": ["x"], "7": ["y"]}) == set_text(items, warnings=warnings)
+    assert set_text(items[:1], warnings=warnings).endswith("\n\nVarianta 1: video na šířku vynecháno: " + "w" * 300)
+    # zbývá varianta ani připomínka varování neukazují
+    assert "vynecháno" not in set_text(items, remaining=True, warnings=warnings)
+    assert "vynecháno" not in set_text(items, reminder=True, warnings=warnings)
+
+
+# --- F5: živost bota (bot_seen_at) ---------------------------------------------
+
+@pg
+def test_bot_zapisuje_bot_seen_at(bot, conn, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import bot as botmod, queue
+    assert (botmod.BOT_SEEN_KEY, botmod.ALIVE_INTERVAL) == ("bot_seen_at", 60)
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    now = [datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)]
+    bot.now = lambda: now[0]
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:00:00+00:00"
+    # za 30 s se nic nepřepíše
+    t[0] += 30
+    now[0] += timedelta(seconds=30)
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:00:00+00:00"
+    # po 60 s od zápisu nový čas
+    t[0] += 30
+    now[0] += timedelta(seconds=30)
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
+
+    # chyba zápisu smyčku nezastaví (_guard); čas se posune, aby zápis, kdyby proběhl, dal jinou hodnotu
+    def boom(*a, **kw):
+        raise RuntimeError("zápis selhal")
+    monkeypatch.setattr(queue, "set_state", boom)
+    t[0] += 60
+    now[0] += timedelta(seconds=60)
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
+
+
+# kroky průchodu smyčky v pořadí volání (Bot.loop)
+LOOP_STEPS = ("maybe_send_next", "maybe_ingest", "maybe_autopublish", "maybe_events", "maybe_fresh",
+              "maybe_refresh_threads_token", "maybe_watch", "poll_once", "maybe_alive")
+
+
+@pg
+def test_loop_zapise_zivost_az_po_pruchodu(conn, api, meta, media_dir, monkeypatch):
+    # známka života až na konci průchodu (po poll_once): průchod, který spadne, ji nezapíše
+    bot = _make_bot(conn, api, meta, media_dir)
+    order = []
+
+    class Stop(Exception):
+        pass
+
+    def stop():
+        order.append("maybe_alive")
+        raise Stop
+    monkeypatch.setattr(bot, "start", lambda: order.append("start"))
+    for name in LOOP_STEPS[:-1]:
+        monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
+    monkeypatch.setattr(bot, "maybe_alive", stop)
+    monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=lambda s: None)
+    assert order == ["start", *LOOP_STEPS]
+
+
+@pg
+def test_loop_zivost_jen_po_pruchodu_bez_chyby(conn, api, meta, media_dir, monkeypatch):
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    bot = _make_bot(conn, api, meta, media_dir)
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    bot.now = lambda: datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(bot, "start", lambda: None)
+    for name in LOOP_STEPS[:-2]:
+        monkeypatch.setattr(bot, name, lambda: None)
+
+    class Stop(Exception):
+        pass
+    polls = []
+
+    def poll():
+        # 1. a 2. průchod: getUpdates selže; 3. projde; 4. ukončí smyčku
+        polls.append(queue.get_state(conn, "bot_seen_at"))
+        if len(polls) <= 2:
+            raise RuntimeError("getUpdates selhal")
+        if len(polls) == 4:
+            raise Stop
+    monkeypatch.setattr(bot, "poll_once", poll)
+    monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
+
+    def sleep(s):
+        t[0] += 120  # pauza po chybě je delší než ALIVE_INTERVAL: omezení zápisu nic nezakryje
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=sleep)
+    assert polls == [None, None, None, "2026-11-25T08:00:00+00:00"]

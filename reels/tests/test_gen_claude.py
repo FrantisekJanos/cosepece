@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from hlidac_reels.generator.claude import (ALLOWED_TOOLS, DISALLOWED_TOOLS, build_prompt, claude_argv,
-                                           prepare_workdir, run_claude, write_published)
+from hlidac_reels.generator.claude import (ALLOWED_TOOLS, DISALLOWED_TOOLS, LOG_KEEP, build_prompt, claude_argv,
+                                           prepare_workdir, rotate_log, run_claude, write_published)
 
 FAKE = Path(__file__).parent / "fake_claude.py"
 
@@ -107,6 +107,20 @@ def test_druhy_beh_log_neprepise(tmp_path, monkeypatch):
     r = run_claude("y", workdir=tmp_path, mcp_config=tmp_path / "mcp.json", timeout_s=30)
     log = r.log_path.read_text(encoding="utf-8")
     assert "chyba modelu" in log and '"result": "ok"' in log
+
+
+def test_rotate_log(tmp_path):
+    rotate_log(tmp_path)  # bez logu nic neudělá
+    assert list(tmp_path.iterdir()) == []
+    (tmp_path / "claude.log").write_text("1", encoding="utf-8")
+    rotate_log(tmp_path)
+    assert (tmp_path / "claude-1.log").read_text(encoding="utf-8") == "1" and not (tmp_path / "claude.log").exists()
+    for i in range(2, 8):
+        (tmp_path / "claude.log").write_text(str(i), encoding="utf-8")
+        rotate_log(tmp_path)
+    assert LOG_KEEP == 5
+    assert sorted(p.name for p in tmp_path.glob("claude-*.log")) == [f"claude-{n}.log" for n in range(3, 8)]
+    assert (tmp_path / "claude-7.log").read_text(encoding="utf-8") == "7" and not (tmp_path / "claude.log").exists()
 
 
 def test_run_claude_smaze_projektova_nastaveni(tmp_path, monkeypatch):

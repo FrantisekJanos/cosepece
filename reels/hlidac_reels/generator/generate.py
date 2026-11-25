@@ -18,7 +18,8 @@ from ..card import Card
 from ..media import probe
 from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
-from .claude import DEFAULT_MODEL, EnvError, build_prompt, prepare_workdir, run_claude, write_focus, write_published
+from .claude import (DEFAULT_MODEL, EnvError, build_prompt, prepare_workdir, rotate_log, run_claude, write_focus,
+                     write_published)
 from .formats import pick_formats
 from .normalize import normalize
 from .validate import check_layout, validate_variant
@@ -30,6 +31,10 @@ STATE_FILE = "state.json"
 PROMPTS = ("v2.md", "v3.md", "orchestrator.md")  # návody, jejichž verze patří do otisku vstupu
 # stavy variant ve state.json
 MISSING, BROKEN, VALID, RENDERED = "chybi", "vadna", "platna", "vyrenderovana"
+# platná karta, jejíž render RENDER_TRIES× selhal (obvykle prostředí: Chromium, ffmpeg): konečný stav varianty,
+# model ji neopravuje a na render se dál nečeká; počet pokusů je v záznamu varianty (render_fails) ke kartě
+RENDER_FAILED = "render_selhal"
+RENDER_TRIES = 2
 
 
 class Cancelled(Exception):
@@ -61,7 +66,8 @@ class GenResult:
     ok: bool
     runs: list[dict] = field(default_factory=list)  # běhy claude -p tohoto vydání (timeout, návratový kód)
     model_runs: int = 0  # běhy modelu úlohy přes všechna vydání (rozpočet BUDGET_RUNS)
-    # platné varianty bez videa (render selhal): další vydání je jen vyrenderuje, bez běhu modelu
+    # platné varianty bez videa (render selhal): další vydání je jen vyrenderuje, bez běhu modelu;
+    # varianta po RENDER_TRIES neúspěšných renderech (render_selhal) sem nepatří, další pokus nemá smysl
     unrendered: list[int] = field(default_factory=list)
 
 
@@ -125,10 +131,21 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
 
 
 def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
-    """Video na šířku k platné variantě; chyba jde do v.warnings, varianta zůstane platná na výšku."""
+    """Video na šířku k platné variantě; chyba jde do v.warnings, varianta zůstane platná na výšku.
+
+    Před renderem se zkontroluje rozvržení na šířku (bezpečná zóna, přetečení); chyba vyřadí jen šířku.
+    """
     if not has_landscape(v.template):
         return
     video = portrait.with_name(portrait.stem + "-sirka.mp4")
+    try:
+        layout_errs = check_layout(card, v.template, orientation="landscape")
+    except Exception as e:  # noqa: BLE001 — pád kontroly šířky variantu nevyřadí
+        layout_errs = [f"kontrola rozvržení selhala: {type(e).__name__}: {e}"]
+    if layout_errs:
+        v.warnings.append("video na šířku vynecháno: rozvržení: " + "; ".join(layout_errs))
+        video.unlink(missing_ok=True)  # šířka z dřívějšího renderu by ke kartě už nepatřila
+        return
     try:
         render_reel(Card.from_json(card), video, template=v.template, orientation="landscape")
         errs = media_validate(probe(video), orientation="landscape")
@@ -189,19 +206,21 @@ def _rel(path: Path | None, out: Path) -> str | None:
 def _resume(v: Variant, entry: dict, out: Path, layout: bool) -> dict | bool | None:
     """Obnoví variantu z minulého vydání bez modelu.
 
-    Vrací True = hotové video (nic dalšího), kartu = platná, None = vadná nebo chybí (chyby v v.errors),
-    False = stav nesedí se soubory a variantu je nutné znovu zkontrolovat.
+    Vrací True = hotové video (nic dalšího), kartu = platná, None = vadná, chybí nebo render selhal
+    (chyby v v.errors), False = stav nesedí se soubory a variantu je nutné znovu zkontrolovat.
+    Hotové video platí jen ke kartě, ze které vzniklo: změněná card.json (jiný otisk) = znovu kontrola a render.
     """
     d = out / f"variant-{v.n}"
     state = entry.get("state")
-    if state in (MISSING, BROKEN):
+    if state in (MISSING, BROKEN, RENDER_FAILED):
         v.errors = [str(e) for e in entry.get("errors") or []] or ["varianta chybí"]
         return None
     try:
         caption = (d / "caption.txt").read_text(encoding="utf-8").strip()
     except OSError:
         return False
-    if state == RENDERED and entry.get("video") and (out / entry["video"]).is_file():
+    same_card = _sha(d / "card.json") == entry.get("card_sha")
+    if state == RENDERED and same_card and entry.get("video") and (out / entry["video"]).is_file():
         v.caption, v.errors = caption, []
         v.video = out / entry["video"]
         land = entry.get("video_landscape")
@@ -209,7 +228,7 @@ def _resume(v: Variant, entry: dict, out: Path, layout: bool) -> dict | bool | N
         v.warnings = [str(w) for w in entry.get("warnings") or []]
         return True
     # platná (nebo vyrenderovaná bez videa): kartu stačí načíst, pokud se od kontroly nezměnila
-    if state not in (VALID, RENDERED) or _sha(d / "card.json") != entry.get("card_sha"):
+    if state not in (VALID, RENDERED) or not same_card:
         return False
     if layout and not entry.get("layout"):  # platná bez kontroly rozvržení (render=False) se před renderem zkontroluje
         return False
@@ -255,7 +274,8 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
     Stav úlohy je v `out/state.json`. Další vydání se stejným otiskem vstupu pokračuje: hotová videa
-    se nerenderují znovu, platné varianty se jen vyrenderují, vadné jdou do cíleného běhu se svými chybami.
+    se nerenderují znovu (jen ke stejné kartě), platné varianty se jen vyrenderují (nejvýš RENDER_TRIES pokusů
+    na kartu, pak render_selhal), vadné jdou do cíleného běhu se svými chybami.
     Rozpočet BUDGET_RUNS běhů modelu platí přes všechna vydání. Jiný vstup = složka se vyčistí.
     Chyba prostředí claude -p (limit, přihlášení) bez zapsaných souborů vyhodí EnvError; rozpočet nespálí
     a hotová práce zůstane ve stavu pro další vydání.
@@ -265,8 +285,9 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    rotate_log(out)  # každé vydání píše do nového claude.log, log minulého vydání zůstane jako claude-<n>.log
     focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
-    # server has_text zatím neposílá; chybějící pole = text PN je k dispozici
+    # server pole has_text posílá u každého zadaného PN (F4); chybějící pole (starší server) = text je k dispozici
     has_text = all(i.get("has_text", True) for i in focus_info or [] if isinstance(i, dict))
     # formáty jsou v otisku vstupu: přepnutí autopilota úlohu správně začne znovu
     formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text,
@@ -294,11 +315,23 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     cards: dict[int, dict | None] = {}  # platné karty, které čekají na render
     tried: set[int] = set()  # varianty, jejichž render v tomto vydání selhal (nezkoušet znovu)
 
-    def save(v: Variant, state: str) -> None:
+    def render_fails(n: int) -> int:
+        fails = entries.get(str(n), {}).get("render_fails")
+        return fails if isinstance(fails, int) and fails >= 0 else 0
+
+    def save(v: Variant, state: str, fails: int | None = None) -> None:
+        """Zapíše záznam varianty; fails = nový počet neúspěšných renderů.
+
+        Bez fails se počet přenese ze starého záznamu, jen když je karta stejná (nová karta začíná od nuly).
+        """
         d = out / f"variant-{v.n}"
-        entries[str(v.n)] = {"state": state, "errors": list(v.errors), "card_sha": _sha(d / "card.json"),
+        sha = _sha(d / "card.json")
+        if fails is None:
+            fails = render_fails(v.n) if entries.get(str(v.n), {}).get("card_sha") == sha else 0
+        entries[str(v.n)] = {"state": state, "errors": list(v.errors), "card_sha": sha,
                              "layout": render, "video": _rel(v.video, out),
-                             "video_landscape": _rel(v.video_landscape, out), "warnings": list(v.warnings)}
+                             "video_landscape": _rel(v.video_landscape, out), "warnings": list(v.warnings),
+                             "render_fails": fails}
         _save_state(out, st)
 
     def stage(name: str, note: str | None = None) -> None:
@@ -348,7 +381,11 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
         save(v, BROKEN if exists else MISSING)
 
     def render_pending() -> None:
-        """Vyrenderuje platné karty, které ještě video nemají; vždy jen jednu najednou."""
+        """Vyrenderuje platné karty, které ještě video nemají; vždy jen jednu najednou.
+
+        Render jedné karty se zkouší nejvýš jednou za vydání a RENDER_TRIES× celkem (render_fails přes vydání);
+        pak varianta skončí jako render_selhal s poslední chybou.
+        """
         for v in variants:
             card = cards.get(v.n)
             if card is None or not render or v.n in tried:
@@ -360,10 +397,35 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
             if not v.errors:
                 cards[v.n] = None
                 save(v, RENDERED)
-            else:  # stav zůstane platná: další vydání zkusí render znovu, bez běhu modelu
-                save(v, VALID)
+                continue
+            fails = render_fails(v.n) + 1
+            if fails < RENDER_TRIES:  # stav zůstane platná: další vydání zkusí render znovu, bez běhu modelu
+                save(v, VALID, fails)
+                continue
+            # opakovaný pád renderu (prostředí) nesmí pálit běhy modelu ani nechat úlohu čekat na další pokus
+            last = "; ".join(e.removeprefix("render selhal: ") for e in v.errors)
+            v.errors = [f"render selhal {RENDER_TRIES}×: {last}"]
+            cards[v.n] = None
+            save(v, RENDER_FAILED, fails)
+
+    def recheck_changed(skip: set[int]) -> None:
+        """Platné a vyrenderované varianty (mimo skip), jejichž card.json se od kontroly změnil: opravný běh nad
+        jinými variantami ho může přepsat. Znovu kontrola; platnou pak vyrenderuje render_pending (nová karta =
+        render_fails od nuly, pokus i v tomto vydání). Staré video ke kartě nepatří, worker by jinak nahrál novou
+        kartu se starým videem."""
+        for v in variants:
+            entry = entries[str(v.n)]
+            if v.n in skip or entry["state"] not in (VALID, RENDERED):
+                continue
+            if _sha(out / f"variant-{v.n}" / "card.json") == entry.get("card_sha"):
+                continue
+            v.video = v.video_landscape = None
+            v.warnings = []
+            tried.discard(v.n)
+            check(v)
 
     def broken() -> dict[int, list[str]]:
+        """Varianty pro opravný běh modelu: chybí nebo vadná karta (render_selhal se modelem neopravuje)."""
         return {v.n: v.errors or ["varianta chybí"] for v in variants
                 if entries[str(v.n)]["state"] in (MISSING, BROKEN)}
 
@@ -388,6 +450,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
         for v in variants:
             if v.n in bad:
                 check(v, unchanged)
+        recheck_changed(set(bad))
         render_pending()
 
     for v in variants:

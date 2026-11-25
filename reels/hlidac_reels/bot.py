@@ -23,7 +23,8 @@ denní souhrn, /stav na požádání.
 Do Telegramu odejdou nejvýš 2 automatické sady denně (den podle Europe/Prague) a další automatická až po výběru
 z předchozí (nejdéle AUTO_HOLD h); vyžádané sady (/video, /pn, /vyber) limit neomezují a nepočítají se do něj,
 /dalsi limit obchází. Čekání automatické sady bot ohlásí jednou za sadu. Smyčka
-každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh).
+každou minutu převezme hotové sady z mezisložky (inbox) a každou hodinu hledá čerstvé nálezy (fresh)
+a uklízí stav (uklid: klíče reel_state 30 dní po konečném stavu, události po 90 dnech, složky zrušených úloh).
 Selhání úloh a stav PC s generátorem hlásí bot z událostí (reel_events, maybe_events, každou minutu): převezme
 selhání bez události (events.adopt_failed, např. z inboxu), u vydání bez známky života zapíše „PC neodpovídá“
 a naléhavé události (urgency 1: selhání vyžádané úlohy s tlačítky Zkusit znovu / Zahodit, pozastavení a obnovení
@@ -40,6 +41,7 @@ jde opakovat jen jednou (reel_state job_retried:<id>).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import html
 import json
 import logging
@@ -53,7 +55,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue
+from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
@@ -74,6 +76,9 @@ EVENTS_INTERVAL = 60  # s, jak často smyčka pošle události (selhání, stav 
 FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuje staré sady
 WATCH_INTERVAL = 3600  # s, jak často smyčka kontroluje čerstvost dat (hlidani.check)
 SUMMARY_CHECK_INTERVAL = 300  # s, jak často smyčka zjišťuje, jestli už má odejít denní souhrn (8:00)
+ALIVE_INTERVAL = 60  # s, jak často smyčka zapíše známku života (reel_state.bot_seen_at)
+# reel_state: čas posledního průchodu smyčkou bez chyby; PHP (Sync) hlásí stáří > 15 min do Sentry
+BOT_SEEN_KEY = "bot_seen_at"
 TELEGRAM_TEXT_LIMIT = 4000  # znaků zprávy (Telegram bere nejvýš 4096)
 SETS_PER_DAY = 2  # automatických sad ke schválení za den (Europe/Prague); ruční sady a /dalsi limit obchází
 LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot ohlásil čekání na limit
@@ -113,7 +118,8 @@ HELP = ("Příkazy: /fronta (přehled: na co která položka čeká), /dalsi (po
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
         "/zrus <číslo zadání> (zrušit zadání ve frontě nebo rozpracované),\n"
-        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
+        "/stav (čerstvost dat a Reels: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem,\n"
+        "videa ke schválení, zprávy, které neodešly),\n"
         "/autopilot on|off (PN z /pn zveřejnit bez schválení; bez argumentu stav).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")
@@ -252,6 +258,7 @@ class Bot:
         self._next_events = float("-inf")
         self._next_watch = float("-inf")
         self._next_summary = float("-inf")
+        self._next_alive = float("-inf")
         # reply_markup zprávy právě obsluhovaného tlačítka (Telegram ho posílá s každým callback_query)
         self._cb_markup: dict | None = None
         # None = Threads není nastavené (bez THREADS_USER_ID)
@@ -530,19 +537,23 @@ class Bot:
         except Exception as e:  # noqa: BLE001 - rozhodnutí je hotové, připomínka nesmí shodit handler
             log.warning("připomínka zbylých variant sady #%s selhala: %s", set_id, self._safe(e))
 
-    def _offer_set(self, set_id: int, remaining: bool = False) -> bool:
+    def _offer_set(self, set_id: int, remaining: bool = False, reminder: bool = False) -> bool:
         """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, zkusí to opravná smyčka a /fronta).
-        Nevzniklé varianty (jobs.skipped) jsou jen v první zprávě sady (i když ji znovu posílá opravná smyčka
-        nebo Poslat tlačítka znovu), zpráva „zbývá varianta“ je neopakuje.
+        Nevzniklé varianty (jobs.skipped) a varianty bez videa na šířku (reel_state set_warnings:) jsou jen
+        v první zprávě sady (i když ji znovu posílá opravná smyčka nebo Poslat tlačítka znovu), zpráva „zbývá
+        varianta“ ani připomínka (reminder) je neopakují.
         """
         pending = self._unpicked_items(set_id)
         if not pending:
             return False
-        skipped = None if remaining else jobs.skipped(self.conn, set_id)
-        # chyby nevzniklých variant píše generátor: bez tokenů jako ostatní hlášení
-        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped))
+        first = not (remaining or reminder)
+        skipped = jobs.skipped(self.conn, set_id) if first else None
+        warnings = self._set_warnings(set_id) if first else None
+        # chyby nevzniklých variant a vadné šířky píše generátor: bez tokenů jako ostatní hlášení
+        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped, reminder=reminder,
+                                    warnings=warnings))
         msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, text, set_buttons(pending))
         if not msg_id:
             return False
@@ -551,6 +562,17 @@ class Bot:
         for old in {r.telegram_msg_id for r in pending if r.telegram_msg_id and r.telegram_msg_id != msg_id}:
             self._drop_buttons(old)
         return True
+
+    def _set_warnings(self, set_id: int) -> dict | None:
+        """Varianty sady bez videa na šířku z reel_state set_warnings:; chybějící nebo nečitelný JSON = None."""
+        raw = queue.get_state(self.conn, f"{queue.SET_WARNINGS_KEY}{set_id}")
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            log.warning("nečitelný klíč %s%s", queue.SET_WARNINGS_KEY, set_id)
+            return None
 
     def _send_set(self, set_id: int) -> bool:
         """Pošle videa sady a zprávu s tlačítky; False = žádné video sady nešlo poslat (sada vyřazena).
@@ -615,7 +637,8 @@ class Bot:
         elif command == "/zrus":
             self._cmd_zrus((text or "").strip().partition(" ")[2])
         elif command == "/stav":
-            self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
+            # nález o pauze PC nese text chyby prostředí z workeru: bez tokenů jako zpráva o pauze
+            self._say(self._clip(self._scrub(hlidani.summary_text(self.conn, self.now()))))
         elif command == "/autopilot":
             self._cmd_autopilot((text or "").strip().partition(" ")[2])
         else:
@@ -751,15 +774,21 @@ class Bot:
         """Zkusit znovu (zpráva o selhání, zpráva po výpadku): nové zadání se stavovou zprávou, stará zpráva
         přijde o tlačítka zadání. Aktivní zadání se neopakuje. Každé zadání jen jednou: další stisk (tlačítko, které
         se nepodařilo odebrat) jen odpoví „už se opakuje (#N)“ a tlačítka zadání odebere; stejné aktivní zadání =
-        odpověď „už ve frontě je“. Obojí jen odpovědí na tlačítko, bez nové zprávy v chatu."""
+        odpověď „už ve frontě je“. Obojí jen odpovědí na tlačítko, bez nové zprávy v chatu. Zadání skončené před víc
+        než jobs.RETRY_MAX_AGE (úklid mezitím smaže klíč „už opakováno“) se neopakuje: odpověď „zadej ho znovu“
+        a tlačítka zadání zmizí."""
         job = jobs.get(self.conn, job_id)
         if job is not None and job.status in jobs.ACTIVE:
             self._answer(cb_id, "Zadání ještě běží.")
             return
         try:
-            new_id = jobs.retry(self.conn, job_id)
+            new_id = jobs.retry(self.conn, job_id, now=self.now())
         except jobs.AlreadyRetried as e:
             self._answer(cb_id, f"Zadání už se opakuje (#{e.new_id})." if e.new_id else "Zadání už se opakuje.")
+            self._drop_job_buttons(msg_id, job_id)
+            return
+        except jobs.RetryTooOld:
+            self._answer(cb_id, f"Zadání #{job_id} je starší než {jobs.RETRY_MAX_AGE.days} dní, zadej ho znovu.")
             self._drop_job_buttons(msg_id, job_id)
             return
         except jobs.ActiveJobExists:
@@ -894,7 +923,12 @@ class Bot:
 
     def _worker_line(self) -> str:
         """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru
-        z reel_state.worker_state (zapisuje server při heartbeat); nečitelný stav = jen kdy bylo PC vidět."""
+        z reel_state.worker_state (zapisuje server při heartbeat); nečitelný stav = jen kdy bylo PC vidět.
+
+        Heartbeat starší než jobs.WORKER_STALE = „PC neodpovídá od …“ bez stavu generátoru. Výjimka stejná jako
+        hlidani._reels_pc: pozastavený worker pošle heartbeat se stavem paused a `until` jednou a spí až do `until`,
+        do `until` + WORKER_STALE proto zůstává „pozastaveno (do H:MM)“."""
+        now = self.now()
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
         seen_text = None
         if seen is not None:
@@ -909,10 +943,13 @@ class Bot:
         except ValueError:
             state = None
         if not isinstance(state, dict):
-            return messages.worker_line(seen_text)
-        until = state.get("until")
-        until = _parse_time(until) if state.get("state") == "paused" and isinstance(until, str) else None
-        return messages.worker_line(seen_text, state, jobs.hm(self.conn, until) if until is not None else None)
+            state = None
+        until = state.get("until") if state is not None and state.get("state") == "paused" else None
+        until = _parse_time(until) if isinstance(until, str) else None
+        stale = (seen is not None and now - seen > jobs.WORKER_STALE
+                 and not (until is not None and now <= until + jobs.WORKER_STALE))
+        return messages.worker_line(seen_text, state, jobs.hm(self.conn, until) if until is not None else None,
+                                    stale)
 
     # --- události úloh a workeru (reel_events) ---------------------------
 
@@ -1208,16 +1245,42 @@ class Bot:
     # --- odeslání ke schválení -------------------------------------------
 
     def _send_preview(self, reel: Reel) -> int:
-        """Pošle náhled popisku, tlačítka u poslední zprávy; vrací id zprávy s tlačítky."""
+        """Pošle náhled popisku, tlačítka u poslední zprávy; vrací id zprávy s tlačítky.
+
+        Vícedílný náhled si odeslané nekoncové části pamatuje (reel_state preview_sent:<id>): když další část
+        neodejde, nový pokus se stejným textem pošle jen chybějící části (jiný text = celý náhled od první
+        části). Po odeslání poslední části se záznam smaže.
+        """
         parts = preview_parts(reel, threads=self.threads is not None)
+        key = f"{queue.PREVIEW_SENT_KEY}{reel.id}"
+        sha = hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+        sent = self._preview_sent(key, sha) if len(parts) > 1 else []
         msg_id = 0
         for i, part in enumerate(parts):
             last = i == len(parts) - 1
+            if not last and i < len(sent):
+                continue  # tahle část náhledu už v chatu je
             msg_id = self.tg.send_text(self.chat_id, part, approval_buttons(reel.id) if last else None)
             if not last:
                 # i na první část náhledu jde odpovědět novým popiskem
                 queue.set_state(self.conn, f"edit_msg:{msg_id}", str(reel.id))
+                sent.append(msg_id)
+                queue.set_state(self.conn, key, json.dumps({"sha": sha, "sent": sent}))
+        queue.delete_state(self.conn, key)
         return msg_id
+
+    def _preview_sent(self, key: str, sha: str) -> list[int]:
+        """Id už odeslaných nekoncových částí náhledu se stejným textem; jiný text nebo vadný záznam = []."""
+        try:
+            data = json.loads(queue.get_state(self.conn, key) or "null")
+        except ValueError:
+            return []
+        if not isinstance(data, dict) or data.get("sha") != sha:
+            return []
+        sent = data.get("sent")
+        if not isinstance(sent, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in sent):
+            return []
+        return sent
 
     def send_next(self, force: bool = False) -> None:
         """Pošle ke schválení nejvýš jednu jednotku (sadu nebo samostatné video) podle pravidel R1–R4.
@@ -1418,6 +1481,16 @@ class Bot:
             log.warning("%s selhalo: %s", what, self._safe(e))
             self._rollback()
 
+    def maybe_alive(self) -> None:
+        """Známka života pro synchronizaci webu (bot svůj pád sám nenahlásí), nejvýš jednou za ALIVE_INTERVAL s.
+
+        Smyčka ji volá na konci průchodu, jen když průchod (i poll_once) proběhl bez výjimky."""
+        now = self.clock()
+        if now < self._next_alive:
+            return
+        self._next_alive = now + ALIVE_INTERVAL
+        self._guard("zápis známky života", lambda: queue.set_state(self.conn, BOT_SEEN_KEY, self.now().isoformat()))
+
     def maybe_ingest(self) -> None:
         """Hotové sady z mezisložky do fronty, nejvýš jednou za INGEST_INTERVAL s."""
         if self.inbox_dir is None:
@@ -1440,6 +1513,11 @@ class Bot:
                 # nevzniklé varianty se ohlásí až po zveřejnění poslední položky sady (_announce_skipped)
                 queue.set_state(self.conn, f"{AUTOPILOT_SKIPPED_KEY}{r.job_id}",
                                 json.dumps(r.skipped, ensure_ascii=False))
+            if r.ok and not r.autopilot and r.warnings:
+                # vadná šířka: řádek v první zprávě sady (_offer_set); sada autopilota zprávu sady nemá,
+                # zůstane jen log z inbox
+                queue.set_state(self.conn, f"{queue.SET_WARNINGS_KEY}{r.job_id}",
+                                json.dumps(r.warnings, ensure_ascii=False))
         # převzaté sady odešle smyčka (maybe_send_next, nejvýš jedna jednotka za SEND_INTERVAL, R3)
 
     def maybe_autopublish(self) -> None:
@@ -1486,7 +1564,7 @@ class Bot:
             queue.delete_state(self.conn, key)
 
     def maybe_fresh(self) -> None:
-        """Čerstvé nálezy, stažení sad, lhůty čekání a připomínky, nejvýš jednou za FRESH_INTERVAL s.
+        """Čerstvé nálezy, stažení sad, lhůty čekání, připomínky a úklid stavu, nejvýš jednou za FRESH_INTERVAL s.
 
         Každý krok běží zvlášť: chyba jednoho nezastaví ostatní.
         """
@@ -1498,6 +1576,15 @@ class Bot:
         self._guard("stažení sad mimo nálezy", self._retire)
         self._guard("vypršení lhůt", self._expire)
         self._guard("připomínky automatických sad", self._remind)
+        self._guard("úklid stavu", self._cleanup)
+
+    def _cleanup(self) -> None:
+        """Úklid reel_state, starých událostí a složek zrušených úloh (uklid.run); nenulové počty do logu."""
+        inbox_dir = Path(self.inbox_dir) if self.inbox_dir is not None else None
+        counts = uklid.run(self.conn, self.now(), inbox_dir)
+        if any(counts.values()):
+            log.info("úklid: klíče stavu %s, události %s, složky zrušených úloh %s",
+                     counts.get("state", 0), counts.get("events", 0), counts.get("inbox", 0))
 
     def _retire(self) -> None:
         for set_id, status in fresh.retire(self.conn, self.now()):
@@ -1520,9 +1607,13 @@ class Bot:
                 log.warning("zpráva o vypršení (%s, sada %s, položky %s) neodešla", e.kind, e.set_id, e.reel_ids)
 
     def _remind(self) -> None:
-        """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště."""
+        """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště.
+
+        Připomínka je nová zpráva sady s tlačítky Vybrat a Hotovo (stará zpráva o tlačítka přijde),
+        takže se dá vybrat rovnou z ní a nemusí se hledat původní zpráva nad videi.
+        """
         for set_id in queue.auto_reminders(self.conn, self.now()):
-            if self._say(messages.reminder_text(set_id)):
+            if self._offer_set(set_id, reminder=True):
                 queue.mark_reminded(self.conn, set_id)
 
     # --- hlídání čerstvosti dat ----------------------------------------------
@@ -1552,15 +1643,17 @@ class Bot:
         if day is None:
             return
         text = hlidani.summary_text(self.conn, self.now())
-        # fronta Reels jen v denním souhrnu (události za 24 h), /stav ukazuje jen čerstvost dat
+        # řádky fronty Reels (vypršelé a stažené sady za 24 h, selhání automatických úloh) jen v denním souhrnu;
+        # /stav ukazuje stejný přehled a problémy (data i provoz Reels) bez nich
         lines = queue.summary_lines(self.conn, self.now())
         # selhání a vypršení automatických úloh (události urgency 2) jdou jen sem
         pending = events.unsent(self.conn, events.SUMMARY)
         lines += self._summary_event_lines(pending)
         if lines:
             text += "\n\nFronta Reels:\n" + "\n".join(f"- {line}" for line in lines)
-        # souhrn ani události se nezapíšou jako odeslané, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL)
-        if self._say(self._clip(text)):
+        # souhrn ani události se nezapíšou jako odeslané, když zpráva neodejde (další pokus za SUMMARY_CHECK_INTERVAL);
+        # celý text bez tokenů (pauza PC nese text chyby prostředí z workeru)
+        if self._say(self._clip(self._scrub(text))):
             hlidani.mark_summary(self.conn, day)
             self._mark_events(pending)
 
@@ -1709,6 +1802,8 @@ class Bot:
                 self.maybe_refresh_threads_token()
                 self.maybe_watch()
                 self.poll_once()
+                # známka života jen po průchodu bez výjimky: bot, kterému průchod padá pořád, „nežije“
+                self.maybe_alive()
             except Exception as e:  # noqa: BLE001
                 if self._db_lost(e):
                     log.error("spojení s databází ztraceno, končím: %s", self._safe(e))

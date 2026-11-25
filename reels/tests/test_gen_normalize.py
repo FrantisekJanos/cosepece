@@ -160,6 +160,50 @@ def test_top_prepise_klub():
     assert card["pn"]["top"][0]["klub"] == "ODS"
 
 
+def test_autori_klub_ze_serveru():
+    # pruhy autorů nesou klub od modelu z najdi_osobu (poslední klub); u autorů zadaných PN platí klub ke dni podání
+    card = _pn_card()
+    other = {"jmeno": "Marian Jurečka", "klub": "KDU-ČSL", "count": 9}
+    card["pn"]["autori"] = [{"jmeno": " Test Poslanec ", "klub": "Piráti", "count": 3},
+                            {"jmeno": "Test Ministr", "klub": "SPD", "count": 2}, copy.deepcopy(other)]
+    new, _, notes = _pn(card, CAPTION)
+    autori = new["pn"]["autori"]
+    assert autori[0] == {"jmeno": " Test Poslanec ", "klub": "ANO", "count": 3}
+    # člen vlády bez klubu ze serveru: klub zmizí, nic se neodhaduje
+    assert autori[1] == {"jmeno": "Test Ministr", "count": 2}
+    assert autori[2] == other
+    assert [n for n in notes if n.startswith("pn.autori")] == [
+        "pn.autori Test Poslanec: klub „Piráti“ → „ANO“ (server)",
+        "pn.autori Test Ministr: klub „SPD“ odstraněn (server klub neuvádí)"]
+    # vstupní karta zůstane beze změny; druhá normalizace nic nezmění
+    assert card["pn"]["autori"][0]["klub"] == "Piráti"
+    again, _, notes2 = _pn(new, CAPTION)
+    assert again == new and not any(n.startswith("pn.autori") for n in notes2)
+    # chybějící klub u autora zadaného PN se doplní
+    card["pn"]["autori"] = [{"jmeno": "Test Poslanec", "count": 3}]
+    new, _, notes = _pn(card, CAPTION)
+    assert new["pn"]["autori"] == [{"jmeno": "Test Poslanec", "klub": "ANO", "count": 3}]
+    assert "pn.autori Test Poslanec: klub (žádný) → „ANO“ (server)" in notes
+
+
+def test_autori_ruzne_kluby_tehoz_jmena():
+    # dva zadané PN téhož poslance s různým klubem ke dni podání: jeden pruh nemůže nést oba, klub zmizí
+    info = _info() + [dict(_info()[0], cislo=9805, klub="Piráti")]
+    card = _pn_card()
+    card["pn"]["autori"] = [{"jmeno": "Test Poslanec", "klub": "ANO", "count": 4}]
+    new, _, notes = _pn(card, CAPTION, info)
+    assert new["pn"]["autori"] == [{"jmeno": "Test Poslanec", "count": 4}]
+    assert "pn.autori Test Poslanec: klub „ANO“ odstraněn (kluby zadaných PN se liší)" in notes
+    # klub ze serveru jen u jednoho z PN téhož jména: také se neodhaduje
+    info = _info() + [dict(_info()[0], cislo=9805, klub=None)]
+    new, _, _ = _pn(card, CAPTION, info)
+    assert new["pn"]["autori"] == [{"jmeno": "Test Poslanec", "count": 4}]
+    # bez zadaných PN se pruhy nemění
+    new, _, notes = _pn(card, CAPTION, info=[])
+    assert new["pn"]["autori"] == card["pn"]["autori"]
+    assert not any(n.startswith("pn.autori") for n in notes)
+
+
 def test_top_prepise_autora():
     card = _pn_card()
     card["pn"]["top"] = [_top(9801, "T. Poslanec", "ANO")]

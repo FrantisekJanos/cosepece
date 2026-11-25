@@ -185,12 +185,14 @@ def test_navody_klub_jen_ze_zadani():
     from hlidac_reels.generator import claude
     for name in ("v2.md", "v3.md"):
         text = (claude.HERE / "prompts" / name).read_text(encoding="utf-8")
-        # pravidlo platí jen pro autora zadaného PN; kluby v pn.autori (formát pn) jsou dál z najdi_osobu
+        # pravidlo platí pro autora zadaného PN; kluby ostatních autorů v pn.autori (formát pn) jsou dál z najdi_osobu
         assert "Klub autora zadaného PN ber jen ze zadání" in text, name
         assert "klub v závorce, když ho zadání uvádí" in text, name
     v3 = (claude.HERE / "prompts" / "v3.md").read_text(encoding="utf-8")
     assert "hook.sub" in v3
     assert "ne z `najdi_osobu` (ta vrací poslední klub)" in v3
+    # i v pruzích autorů platí u autora zadaného PN klub ze zadání (normalizace ho přepíše)
+    assert "u autora zadaného PN i tam platí klub ze zadání" in v3
 
 
 def test_navody_ctou_zadani():

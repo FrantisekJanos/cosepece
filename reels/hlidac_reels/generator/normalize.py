@@ -119,6 +119,38 @@ def _fix_top(card: dict, server: dict[int, dict], notes: list[str]) -> None:
             item["klub"] = klub
 
 
+def _fix_autori(card: dict, server: dict[int, dict], notes: list[str]) -> None:
+    """V pruzích `pn.autori` platí u autora zadaných PN klub ze serveru (ke dni podání), aby video neuvádělo
+    v háčku jiný klub než v pruzích (model ho bere z MCP, které vrací poslední klub).
+
+    Mají-li všechny zadané PN téhož jména stejný klub ze serveru, platí ten. Když ho server neuvádí, nebo se kluby
+    téhož jména mezi zadanými PN liší, klub z pruhu zmizí (nic se neodhaduje). Ostatní autoři zůstanou, jak je
+    model napsal.
+    """
+    block = card.get("pn")
+    rows = block.get("autori") if isinstance(block, dict) else None
+    if not isinstance(rows, list):
+        return
+    clubs: dict[str, set] = {}
+    for pn in server.values():
+        if pn["jmeno"]:
+            clubs.setdefault(pn["jmeno"], set()).add(pn["klub"])
+    for row in rows:
+        jmeno = row["jmeno"].strip() if isinstance(row, dict) and isinstance(row.get("jmeno"), str) else ""
+        if jmeno not in clubs:
+            continue
+        kluby = clubs[jmeno]
+        klub = next(iter(kluby)) if len(kluby) == 1 else None
+        if klub is None:
+            if "klub" in row:
+                why = "server klub neuvádí" if kluby == {None} else "kluby zadaných PN se liší"
+                notes.append(f"pn.autori {jmeno}: klub {_quoted(row['klub'])} odstraněn ({why})")
+                del row["klub"]
+        elif row.get("klub") != klub:
+            notes.append(f"pn.autori {jmeno}: klub {_quoted(row.get('klub'))} → „{klub}“ (server)")
+            row["klub"] = klub
+
+
 def _caption_clubs(card: dict, caption: str, notes: list[str]) -> str:
     """Za první výskyt celého jména autora bez závorky za ním doplní klub, když ho popisek ještě nemá.
 
@@ -143,7 +175,7 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     """Vrací novou kartu, nový popisek a seznam zásahů; vstupní karta zůstane beze změny.
 
     focus_info = údaje o zadaných PN z claimu serveru (/pn): autor a klub ke dni podání jdou do
-    `pn_autor` (každá varianta, v2 i v3), do `pn.top` a do popisku.
+    `pn_autor` (každá varianta, v2 i v3), do `pn.top`, do pruhů `pn.autori` a do popisku.
     """
     card = copy.deepcopy(card)
     notes: list[str] = []
@@ -156,5 +188,6 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     server = _server_pn(focus_info)
     _set_authors(card, [pn for pn in server.values() if pn["jmeno"]], notes)
     _fix_top(card, server, notes)
+    _fix_autori(card, server, notes)
     caption = _caption_clubs(card, caption, notes)
     return card, caption, notes

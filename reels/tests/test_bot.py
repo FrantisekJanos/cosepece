@@ -5157,6 +5157,136 @@ def test_texty_sady_s_vynechanymi():
     assert set_text(items, skipped=[]) == set_text(items)
 
 
+# --- F5: vadné video na šířku ve zprávě sady -----------------------------------
+
+def _inbox_set(tmp_path, jid: int, land: dict[int, str]) -> None:
+    """Složka sady v mezisložce: varianty 1 a 2 na výšku; land = n -> obsah videa na šířku (wide = 16:9)."""
+    folder = tmp_path / "inbox" / str(jid)
+    folder.mkdir(parents=True)
+    variants = []
+    for n in (1, 2):
+        (folder / f"variant-{n}.mp4").write_bytes(f"ok-{n}".encode())
+        v = {"n": n, "template": "template_v3", "format": "pn", "caption": f"Popisek {n}", "card": {}}
+        if n in land:
+            v["landscape"] = True
+            (folder / f"variant-{n}-sirka.mp4").write_bytes(f"{land[n]}-{n}".encode())
+        variants.append(v)
+    (folder / "manifest.json").write_text(
+        json.dumps({"job_id": jid, "ct": 311, "source": "manual", "variants": variants}), encoding="utf-8")
+
+
+@pg
+def test_zprava_sady_uvadi_vadnou_sirku(bot, conn, api, tmp_path, monkeypatch):
+    from hlidac_reels import jobs, media, queue
+    from hlidac_reels.media import VideoInfo
+    assert queue.SET_WARNINGS_KEY == "set_warnings:"
+
+    def probe(path):
+        # obsah „wide“ = 16:9, jinak 9:16 (šířka s poměrem 9:16 je vadná)
+        wide = Path(path).read_bytes().startswith(b"wide")
+        return VideoInfo("h264", "aac", 1920 if wide else 1080, 1080 if wide else 1920, 30.0, 10)
+    monkeypatch.setattr(media, "probe", probe)
+    jid = jobs.add(conn, source="manual", ct=311)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id=%s", (jid,))
+    conn.commit()
+    _inbox_set(tmp_path, jid, {1: "wide", 2: "ok"})
+    bot.inbox_dir = str(tmp_path / "inbox")
+    bot._ingest()
+    assert json.loads(queue.get_state(conn, f"set_warnings:{jid}")) == {
+        "2": ["poměr stran musí být 16:9, je 1080×1920"]}
+    bot.send_next()
+    text = _set_msg(api)["text"]
+    assert text.endswith("\n\nVarianta 2: video na šířku vynecháno: poměr stran musí být 16:9, je 1080×1920")
+    assert "Varianta 1: video na šířku" not in text
+
+
+@pg
+def test_ingest_varovani_jen_u_sady_ke_schvaleni(bot, conn, media_dir, monkeypatch):
+    from hlidac_reels import inbox, queue
+    from hlidac_reels.inbox import IngestResult
+    warns = {1: ["soubor videa na šířku chybí"]}
+    monkeypatch.setattr(inbox, "ingest_all", lambda c, i, m, autopilot_on: [
+        IngestResult(5, [1], ok=True, warnings=warns),
+        IngestResult(6, [2], ok=True, autopilot=True, warnings=warns),  # autopilot: zpráva sady není
+        IngestResult(7, [], ok=False, warnings=warns),  # nepřevzatá sada
+        IngestResult(8, [3], ok=True)])
+    bot.inbox_dir = str(media_dir / "inbox")
+    bot._ingest()
+    assert json.loads(queue.get_state(conn, "set_warnings:5")) == {"1": ["soubor videa na šířku chybí"]}
+    assert [queue.get_state(conn, f"set_warnings:{j}") for j in (6, 7, 8)] == [None] * 3
+
+
+@pg
+def test_zbyva_varianta_bez_varovani(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 8, n=2, source="manual")
+    queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}8", json.dumps({"2": ["poměr stran musí být 16:9"]}))
+    bot.send_next()
+    line = "\n\nVarianta 2: video na šířku vynecháno: poměr stran musí být 16:9"
+    assert _set_msg(api)["text"].endswith(line)
+    # Poslat tlačítka znovu je první zpráva sady: varování znovu
+    _fronta_resend(bot, api)
+    assert _set_msg(api)["text"].endswith(line)
+    # připomínka varování neopakuje
+    api.calls.clear()
+    assert bot._offer_set(8, reminder=True)
+    assert "vynecháno" not in _set_msg(api)["text"]
+    # zpráva „zbývá varianta“ po rozhodnutí o vybrané variantě taky ne
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=_set_msg_id(conn, ids[0])))
+    api.calls.clear()
+    bot.handle(_cb(f"no:{ids[1]}"))
+    (rem,) = _remaining(api)
+    assert "Sada #8: zbývá varianta 1." in rem["text"] and "vynecháno" not in rem["text"]
+
+
+@pg
+def test_nectitelna_varovani_bez_radku(bot, conn, api, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.messages import REASON_LIMIT, landscape_warnings_lines
+    for bad in (None, "x", [1], {}, {"x": ["a"]}, {"²": ["a"]}, {"2": "a"}, {"2": []}, {"2": None}):
+        assert landscape_warnings_lines(bad) == [], bad
+    # vadné položky se vynechají, platné zůstanou seřazené podle varianty
+    assert landscape_warnings_lines({"3": ["a", "b"], "x": ["c"], "1": ["e" * 400]}) == [
+        "Varianta 1: video na šířku vynecháno: " + "e" * REASON_LIMIT,
+        "Varianta 3: video na šířku vynecháno: a; b"]
+    # nečitelný klíč v reel_state: zpráva sady odejde bez řádků varování
+    for n, raw in enumerate(("{", '["a"]', '{"2": "a"}'), start=1):
+        set_id = 20 + n
+        _add_set(conn, media_dir, set_id, n=2, source="manual")
+        queue.set_state(conn, f"{queue.SET_WARNINGS_KEY}{set_id}", raw)
+        bot.send_next()
+        body = _set_msg(api)
+        assert body["text"].startswith(f"Sada #{set_id}") and "vynecháno" not in body["text"]
+
+
+def test_texty_sady_s_varovanim():
+    from datetime import datetime, timezone
+    from hlidac_reels.messages import TEXT_LIMIT, set_text
+    from hlidac_reels.queue import Reel
+    now = datetime.now(timezone.utc)
+    items = [Reel(id=11 + v, source="manual", ct=221, format="v2", video_path="x", video_sha256=str(v),
+                  caption="x" * 5000, status="pending", telegram_video_msg_id=None, telegram_msg_id=None,
+                  ig_container_id=None, ig_media_id=None, ig_permalink=None, fb_video_id=None,
+                  fb_permalink=None, public_token=None, error=None, attempts=0, created_at=now,
+                  sent_at=None, decided_at=None, published_at=None, threads_container_id=None,
+                  threads_media_id=None, threads_permalink=None, video_landscape_path=None,
+                  video_landscape_sha256=None, telegram_landscape_msg_id=None,
+                  telegram_landscape_sha256=None, set_id=5, variant=v, template="template_v2") for v in (1, 2)]
+    warnings = {"1": ["w" * 400], "2": ["kontrola videa na šířku selhala"]}
+    skipped = [{"n": 3, "format": "zmena", "errors": ["e" * 400]}]
+    # dlouhé popisky se zkrátí, varování i nevzniklá varianta zůstanou celé na konci
+    text = set_text(items, skipped=skipped, warnings=warnings)
+    assert len(text) <= TEXT_LIMIT
+    assert text.endswith("\n\nVarianta 1: video na šířku vynecháno: " + "w" * 300
+                         + "\nVarianta 2: video na šířku vynecháno: kontrola videa na šířku selhala"
+                         + "\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
+    assert set_text(items, warnings={}) == set_text(items) == set_text(items, warnings={"2": []})
+    # zbývá varianta ani připomínka varování neukazují
+    assert "vynecháno" not in set_text(items, remaining=True, warnings=warnings)
+    assert "vynecháno" not in set_text(items, reminder=True, warnings=warnings)
+
+
 # --- F5: živost bota (bot_seen_at) ---------------------------------------------
 
 @pg

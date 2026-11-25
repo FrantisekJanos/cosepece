@@ -17,6 +17,9 @@ HELD_MSG_KEY = "held_msg:"
 # reel_state preview_sent:<reel_id> = JSON {"sha": otisk textu všech částí náhledu, "sent": [id odeslaných
 # nekoncových částí]}; rozeslaný vícedílný náhled, jehož poslední část (s tlačítky) ještě neodešla
 PREVIEW_SENT_KEY = "preview_sent:"
+# reel_state set_warnings:<set_id> = JSON {"<varianta>": [důvody]} variant převzaté sady, kterým chybí video
+# na šířku (inbox.IngestResult.warnings); řádky na konci první zprávy sady (Bot._offer_set)
+SET_WARNINGS_KEY = "set_warnings:"
 
 # Vyžádaná jednotka (uživatel si o ni řekl: /video, /pn, /vyber, ukázka) se posílá hned (R1);
 # automatická (source 'fresh') brzdí denní limit a jiná nedotčená automatická sada (R2)

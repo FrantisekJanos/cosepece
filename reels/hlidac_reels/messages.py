@@ -51,14 +51,33 @@ def remaining_text(set_id: int, variants: list[int]) -> str:
     return f"Sada #{set_id}: zbývají varianty {', '.join(str(v) for v in variants)}. Vybrat, nebo Hotovo."
 
 
+def landscape_warnings_lines(warnings: dict | None) -> list[str]:
+    """Řádky „Varianta 2: video na šířku vynecháno: …“ z {varianta: [důvody]} (klíč reel_state set_warnings:).
+
+    Seřazené podle varianty, důvody nejvýš REASON_LIMIT znaků. Nečitelný obsah (není slovník, klíč není číslo
+    varianty, důvody nejsou neprázdný seznam) se vynechá; nic čitelného = [].
+    """
+    if not isinstance(warnings, dict):
+        return []
+    found = []
+    for key, reasons in warnings.items():
+        # isdecimal, ne isdigit: „²“ je číslice, ale int() ho nepřečte
+        if not str(key).isdecimal() or not isinstance(reasons, list) or not reasons:
+            continue
+        found.append((int(key), "; ".join(str(r) for r in reasons)[:REASON_LIMIT]))
+    return [f"Varianta {n}: video na šířku vynecháno: {reason}" for n, reason in sorted(found)]
+
+
 def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None,
-             reminder: bool = False) -> str:
+             reminder: bool = False, warnings: dict | None = None) -> str:
     """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku.
 
     remaining=True: úvod „zbývá varianta N“ (po rozhodnutí o vybraných variantách).
     reminder=True: úvod „Sada #N čeká 12 h“ (připomínka nedotčené automatické sady), varianty stejně jako
     v první zprávě sady.
     skipped = nevzniklé varianty sady (jobs.skipped): na konci řádky „Varianta 3 (zmena) nevznikla: …“.
+    warnings = varianty bez videa na šířku (reel_state set_warnings:): na konci řádky „Varianta 2: video
+    na šířku vynecháno: …“, jen v první zprávě sady (ne u remaining ani reminder).
     """
     first = items[0]
     if remaining or reminder:
@@ -73,8 +92,10 @@ def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | N
     for r in items:
         lines = "\n".join(r.caption.strip().splitlines()[:2])
         blocks.append(f"{r.variant} ({_variant_label(r)}):\n{lines}")
-    tail = [autopilot_skipped(skipped)] if skipped else []
-    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i nevzniklé varianty na konci
+    warning_lines = [] if remaining or reminder else landscape_warnings_lines(warnings)
+    tail = (["\n".join(warning_lines)] if warning_lines else []) + ([autopilot_skipped(skipped)] if skipped else [])
+    # dlouhé řádky se zkrátí rovnoměrně, aby se do zprávy vešly všechny varianty i řádky na konci (varování
+    # a nevzniklé varianty)
     room = (TEXT_LIMIT - len(head) - sum(len(t) for t in tail) - 2 * (len(blocks) + len(tail))) // max(len(blocks), 1)
     blocks = [b if len(b) <= room else b[:max(room - 1, 0)] + "…" for b in blocks]
     return "\n\n".join([head, *blocks, *tail])[:TEXT_LIMIT]

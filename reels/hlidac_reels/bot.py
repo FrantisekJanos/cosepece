@@ -539,15 +539,19 @@ class Bot:
         """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, zkusí to opravná smyčka a /fronta).
-        Nevzniklé varianty (jobs.skipped) jsou jen v první zprávě sady (i když ji znovu posílá opravná smyčka
-        nebo Poslat tlačítka znovu), zpráva „zbývá varianta“ ani připomínka (reminder) je neopakují.
+        Nevzniklé varianty (jobs.skipped) a varianty bez videa na šířku (reel_state set_warnings:) jsou jen
+        v první zprávě sady (i když ji znovu posílá opravná smyčka nebo Poslat tlačítka znovu), zpráva „zbývá
+        varianta“ ani připomínka (reminder) je neopakují.
         """
         pending = self._unpicked_items(set_id)
         if not pending:
             return False
-        skipped = None if remaining or reminder else jobs.skipped(self.conn, set_id)
-        # chyby nevzniklých variant píše generátor: bez tokenů jako ostatní hlášení
-        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped, reminder=reminder))
+        first = not (remaining or reminder)
+        skipped = jobs.skipped(self.conn, set_id) if first else None
+        warnings = self._set_warnings(set_id) if first else None
+        # chyby nevzniklých variant a vadné šířky píše generátor: bez tokenů jako ostatní hlášení
+        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped, reminder=reminder,
+                                    warnings=warnings))
         msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, text, set_buttons(pending))
         if not msg_id:
             return False
@@ -556,6 +560,17 @@ class Bot:
         for old in {r.telegram_msg_id for r in pending if r.telegram_msg_id and r.telegram_msg_id != msg_id}:
             self._drop_buttons(old)
         return True
+
+    def _set_warnings(self, set_id: int) -> dict | None:
+        """Varianty sady bez videa na šířku z reel_state set_warnings:; chybějící nebo nečitelný JSON = None."""
+        raw = queue.get_state(self.conn, f"{queue.SET_WARNINGS_KEY}{set_id}")
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            log.warning("nečitelný klíč %s%s", queue.SET_WARNINGS_KEY, set_id)
+            return None
 
     def _send_set(self, set_id: int) -> bool:
         """Pošle videa sady a zprávu s tlačítky; False = žádné video sady nešlo poslat (sada vyřazena).
@@ -1487,6 +1502,11 @@ class Bot:
                 # nevzniklé varianty se ohlásí až po zveřejnění poslední položky sady (_announce_skipped)
                 queue.set_state(self.conn, f"{AUTOPILOT_SKIPPED_KEY}{r.job_id}",
                                 json.dumps(r.skipped, ensure_ascii=False))
+            if r.ok and not r.autopilot and r.warnings:
+                # vadná šířka: řádek v první zprávě sady (_offer_set); sada autopilota zprávu sady nemá,
+                # zůstane jen log z inbox
+                queue.set_state(self.conn, f"{queue.SET_WARNINGS_KEY}{r.job_id}",
+                                json.dumps(r.warnings, ensure_ascii=False))
         # převzaté sady odešle smyčka (maybe_send_next, nejvýš jedna jednotka za SEND_INTERVAL, R3)
 
     def maybe_autopublish(self) -> None:

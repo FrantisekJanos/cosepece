@@ -11,6 +11,8 @@
 // Hlasy jednotlivých poslanců (hl{rok}h1.unl, h2…: id_poslanec | id_hlasovani | kód) jdou do hlasovani_poslanci
 // (id_osoba, klub ke dni hlasování, kód hlasu). Hlas se po hlasování nemění, proto se ukládají jen hlasování,
 // která v tabulce ještě nejsou (první běh ~540 tisíc řádků, další jen nová), po dávkách bez načtení celého souboru.
+// Výjimka: u už uložených hlasů z dne, kdy poslanec měnil klub (Clubs::ambiguous), se klub při každém běhu
+// přepíše podle Clubs::at, aby seděl se souhrnem klubů (ten se počítá pokaždé znovu).
 
 declare(strict_types=1);
 
@@ -109,6 +111,9 @@ final class Votes
             $this->db->all('SELECT DISTINCT id_hlasovani FROM hlasovani_poslanci'), 'id_hlasovani')), true);
         $mpRows = [];
         $mpCount = 0;
+        // uložené hlasy z nejednoznačného dne (přestup): klub se přepíše podle Clubs::at, aby odpovídal
+        // souhrnu klubů, který se počítá pokaždé znovu; jde o pár řádků, proto při každém běhu
+        $mpFix = [];
         $this->db->pdo->beginTransaction();
         try {
             foreach ($this->voteFiles($package, $prefix) as $file) {
@@ -118,29 +123,40 @@ final class Votes
                         continue;
                     }
                     $osoba = $poslanci[(int)$c[0]] ?? null;
-                    $club = $osoba !== null ? $clubs->at($osoba, substr($votes[$id]['datum'], 0, 10)) : null;
+                    $day = substr($votes[$id]['datum'], 0, 10);
+                    $club = $osoba !== null ? $clubs->at($osoba, $day) : null;
                     $code = substr((string)($c[2] ?? ''), 0, 1);
                     $col = self::VOTE[$code] ?? 'nepritomen';
                     $perClub[$id][$club ?? 'Nezařazení'][$col] = ($perClub[$id][$club ?? 'Nezařazení'][$col] ?? 0) + 1;
-                    if ($osoba !== null && $code !== '' && !isset($stored[$id])) {
-                        $mpRows[] = ['id_hlasovani' => $id, 'id_osoba' => $osoba,
-                            'klub' => $club !== null ? mb_substr($club, 0, 40) : null, 'hlas' => $code];
-                        if (count($mpRows) >= self::MP_BATCH) {
-                            $this->db->insertMany('hlasovani_poslanci', ['id_hlasovani', 'id_osoba', 'klub', 'hlas'], $mpRows);
-                            $mpCount += count($mpRows);
-                            $mpRows = [];
+                    if ($osoba === null || $code === '') {
+                        continue;
+                    }
+                    if (isset($stored[$id])) {
+                        if ($clubs->ambiguous($osoba, $day)) {
+                            $mpFix[] = [$club !== null ? mb_substr($club, 0, 40) : null, $id, $osoba];
                         }
+                        continue;
+                    }
+                    $mpRows[] = ['id_hlasovani' => $id, 'id_osoba' => $osoba,
+                        'klub' => $club !== null ? mb_substr($club, 0, 40) : null, 'hlas' => $code];
+                    if (count($mpRows) >= self::MP_BATCH) {
+                        $this->db->insertMany('hlasovani_poslanci', ['id_hlasovani', 'id_osoba', 'klub', 'hlas'], $mpRows);
+                        $mpCount += count($mpRows);
+                        $mpRows = [];
                     }
                 }
             }
             $this->db->insertMany('hlasovani_poslanci', ['id_hlasovani', 'id_osoba', 'klub', 'hlas'], $mpRows);
             $mpCount += count($mpRows);
+            foreach ($mpFix as $fix) {
+                $this->db->run('UPDATE hlasovani_poslanci SET klub = ? WHERE id_hlasovani = ? AND id_osoba = ?', $fix);
+            }
             $this->db->pdo->commit();
         } catch (\Throwable $ex) {
             $this->db->pdo->rollBack();
             throw $ex;
         }
-        unset($mpRows, $stored);
+        unset($mpRows, $stored, $mpFix);
 
         $clubRows = [];
         foreach ($perClub as $id => $list) {

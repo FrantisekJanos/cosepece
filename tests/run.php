@@ -2003,6 +2003,17 @@ $f4Clubs = new Hlidac\Clubs(new Hlidac\Source('', $tmp . '/cache-clubs-f4', $tmp
 check('klub v den změny: platí novější členství', [$f4Clubs->at(90001, '2026-03-14'), $f4Clubs->at(90001, '2026-03-15'), $f4Clubs->at(90001, '2026-03-16')],
     ['ODS', 'Piráti', 'Piráti']);
 check('klub neznámé osoby v den změny', $f4Clubs->at(999999, '2026-03-15'), null);
+check('nejednoznačný den: v den přestupu platí víc členství', [$f4Clubs->ambiguous(90001, '2026-03-15'), $f4Clubs->ambiguous(90001, '2026-03-14'),
+    $f4Clubs->ambiguous(90001, '2026-03-16'), $f4Clubs->ambiguous(999999, '2026-03-15')], [true, false, false, false]);
+// hlas uložený před pravidlem „v den změny novější klub“ má starý klub; uložené hlasy se jinak nepřepočítávají.
+// Osoba 4 přešla 14. 4. 2026 z ODS k Pirátům a ten den hlasovala (87152); 87173 (15. 4.) je už jednoznačně Piráti.
+db()->run("UPDATE hlasovani_poslanci SET klub = 'ODS' WHERE id_hlasovani IN (87152, 87173) AND id_osoba = 4");
+$f4Votes = (new Hlidac\Votes(db(), $votesSource))->run();
+$f4MpClub = fn(int $id): ?string => db()->value('SELECT klub FROM hlasovani_poslanci WHERE id_hlasovani = ? AND id_osoba = 4', [$id]);
+check('uložený hlas v den přestupu dostane nový klub, ostatní uložené hlasy zůstanou', [$f4Votes['hlasy_poslancu'], $f4MpClub(87152), $f4MpClub(87173),
+    (int)db()->value('SELECT COUNT(*) FROM hlasovani_poslanci'), (int)db()->value("SELECT nepritomen FROM hlasovani_kluby WHERE id_hlasovani = 87152 AND klub = 'Piráti'")],
+    [0, 'Piráti', 'ODS', 15, 2]);
+db()->run("UPDATE hlasovani_poslanci SET klub = 'Piráti' WHERE id_hlasovani = 87173 AND id_osoba = 4");
 // přehled změn (vyrenderovaný v části Stránky): záznam bez čísla PR nemá odkaz na neexistující PR 0
 $f4Changes = (string)@file_get_contents($tmp . '/zmeny.html');
 check('zmeny.php: bez odkazu na PR 0', [$f4Changes !== '', str_contains($f4Changes, '/pull/0"')], [true, false]);

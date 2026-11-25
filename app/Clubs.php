@@ -49,6 +49,21 @@ final class Clubs
         return $found;
     }
 
+    /**
+     * Platí v daný den (YYYY-MM-DD) víc členství, typicky v den přestupu? Pak `at()` vybírá novější klub
+     * a údaje uložené dřív (hlasy poslanců z doby, kdy rozhodovalo pořadí řádků) mohou mít starý klub.
+     */
+    public function ambiguous(int $idOsoba, string $day): bool
+    {
+        $count = 0;
+        foreach ($this->member[$idOsoba] ?? [] as [, $from, $to]) {
+            if (($from === '' || $from <= $day) && ($to === '' || $to >= $day) && ++$count > 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Zkratka klubu z dat Sněmovny v podobě, jak se běžně píše (ANO2011 → ANO, TOP09 → TOP 09). */
     public static function label(?string $club): string
     {

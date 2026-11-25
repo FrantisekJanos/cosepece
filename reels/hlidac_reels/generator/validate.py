@@ -112,6 +112,20 @@ def find_name(text: str, jmeno: str) -> tuple[int, int, str | None] | None:
     return m.start(), m.end(), paren.group(1) if paren else None
 
 
+def name_in_paren(text: str, start: int, end: int) -> str | None:
+    """Stojí jméno (`start`–`end`) uvnitř otevřené závorky („PN 2376 (Jan Novák) mění …“)? Vrací text od konce
+    jména po nejbližší `)` (`""`, `", ANO"`); `None`, když poslední `(` před jménem má před ním svou `)`, když
+    před jménem žádná `(` není, nebo když za jménem `)` chybí.
+
+    Klub pak patří do téže závorky za čárku („(Jan Novák, ANO)“), ne do vnořené závorky.
+    """
+    opened = text.rfind("(", 0, start)
+    if opened < 0 or text.find(")", opened, start) >= 0:
+        return None
+    closed = text.find(")", end)
+    return text[end:closed] if closed >= 0 else None
+
+
 def club_before(text: str, start: int, klub: str) -> bool:
     """Stojí klub v `CLUB_BEFORE` znacích před pozicí `start` (před jménem)? Klub v závorce, která v tom úseku
     končí nebo začíná (klub jiného autora, „Jan Novák (ANO), Jana Malá“), se nepočítá."""
@@ -173,17 +187,24 @@ def _names_author(caption: str, jmeno: str) -> bool:
 
 
 def _club_error(caption: str, jmeno: str, klub: str, which: str) -> str | None:
-    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, nebo v `CLUB_BEFORE` znacích před ním
-    („za ANO Jan Novák“). Bez celého jména (skloňovaný tvar) stačí klub kdekoli v popisku."""
+    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, za jménem v téže závorce, ve které
+    jméno stojí („(Jan Novák, ANO)“), nebo v `CLUB_BEFORE` znacích před ním („za ANO Jan Novák“). Bez celého
+    jména (skloňovaný tvar) stačí klub kdekoli v popisku."""
     missing = f"popisek neuvádí klub autora {which}: „{jmeno} ({klub})“"
     found = find_name(caption, jmeno)
     if found is None:
         return None if club_matches(caption, klub) else missing
-    start, _, paren = found
+    start, end, paren = found
     if paren is not None:
         return None if club_matches(paren, klub) else (
             f"popisek uvádí u autora {which} jiný klub: „{jmeno} ({paren})“, ze serveru ({klub})")
-    return None if club_before(caption, start, klub) else missing
+    inner = name_in_paren(caption, start, end)
+    if inner is not None and club_matches(inner, klub):
+        return None
+    if club_before(caption, start, klub):
+        return None
+    # jméno v závorce: chyba radí tvar bez vnořené závorky
+    return missing if inner is None else f"popisek neuvádí klub autora {which}: „{jmeno}, {klub}“"
 
 
 def _author_errors(card: dict, caption: str) -> list[str]:

@@ -43,10 +43,50 @@ def test_jednotka_uz_v_unit_se_nezdvoji():
 
 
 def test_cislo_bez_jednotky_nemeni():
-    for big in (30, "30", "2 000", "10 → 4", "1,5", "10 z 12", "4 roky místo 10"):
+    for big in (30, "30", "2 000", "10 → 4", "1,5"):
         card = {"hook": {"big": big, "unit": "dní", "sub": ""}}
         new, cap, notes = _norm(card, fmt="cesta")
         assert new["hook"] == {"big": big, "unit": "dní", "sub": ""} and notes == [] and cap == CAPTION
+    # číslo za číslem ani slovo za číslem se nerozdělí; mezery za číslem a za „z“ se jen nezalomí
+    for big, nbsp in (("10 z 12", "10\u00a0z\u00a012"), ("4 roky místo 10", "4\u00a0roky místo 10")):
+        card = {"hook": {"big": big, "unit": "dní", "sub": ""}}
+        new, cap, notes = _norm(card, fmt="cesta")
+        assert new["hook"] == {"big": nbsp, "unit": "dní", "sub": ""} and cap == CAPTION
+        assert notes == ["hook.big: nezalomitelné mezery"]
+
+
+def test_hook_10_z_dvanacti_zustane_cele():
+    # „10 z dvanácti“ je jeden údaj: v3 háček (#hk-row) by číslo a „Z DVANÁCTI“ v jednotce zalomil od sebe
+    card = {"hook": {"big": "10 z dvanácti"}}
+    new, cap, notes = _norm(card, fmt="cesta")
+    assert new["hook"] == {"big": "10\u00a0z\u00a0dvanácti"}
+    assert notes == ["hook.big: nezalomitelné mezery"] and cap == CAPTION
+    # druhá normalizace (cílený běh opravy) nic nezmění
+    again, _, notes2 = _norm(new, fmt="cesta")
+    assert again == new and notes2 == []
+    # jednotka od modelu zůstane; nedělí se ani další přípony začínající předložkou nebo spojkou
+    for big, nbsp in (("10 z dvanácti", "10\u00a0z\u00a0dvanácti"), ("8 ze sedmnácti", "8\u00a0ze sedmnácti"),
+                      ("3 na den", "3\u00a0na den"), ("2 a více", "2\u00a0a\u00a0více")):
+        card = {"hook": {"big": big, "unit": "návrhů", "sub": ""}}
+        new, _, notes = _norm(card, fmt="cesta")
+        assert new["hook"] == {"big": nbsp, "unit": "návrhů", "sub": ""}, big
+        assert notes == ["hook.big: nezalomitelné mezery"], notes
+
+
+def test_hook_unit_s_predlozkou_nezalomi():
+    card = {"hook": {"big": "10", "unit": "z dvanácti", "sub": ""}}
+    new, _, notes = _norm(card, fmt="cesta")
+    assert new["hook"] == {"big": "10", "unit": "z\u00a0dvanácti", "sub": ""}
+    assert notes == ["hook.unit: nezalomitelné mezery"]
+    # velké jednopísmenné slovo i předložka uprostřed jednotky
+    card = {"hook": {"big": "600", "unit": "mil. Kč V rozpočtu a k dávkám", "sub": ""}}
+    new, _, _ = _norm(card, fmt="cesta")
+    assert new["hook"]["unit"] == "mil. Kč V\u00a0rozpočtu a\u00a0k\u00a0dávkám"
+    # po rozdělení „600 mil. Kč“ se jednotka od modelu s předložkou také nezalomí
+    card = {"hook": {"big": "600 mil. Kč", "unit": "z dávek na rekvalifikace", "sub": ""}}
+    new, _, notes = _norm(card, fmt="cesta")
+    assert new["hook"] == {"big": "600", "unit": "mil. Kč z\u00a0dávek na rekvalifikace", "sub": ""}
+    assert len(notes) == 2 and notes[1] == "hook.unit: nezalomitelné mezery"
 
 
 def test_zmena_bod_bez_citace_vynecha():
@@ -122,7 +162,8 @@ def test_pn_autor_ze_serveru():
     new, cap, notes = _pn(card, caption)
     assert new["pn_autor"] == AUTHORS
     assert cap == caption and "pn_autor" not in card
-    assert len(notes) == 1 and "pn_autor" in notes[0]
+    # „z 30“ v jednotce háčku vzorové karty dostane nezalomitelnou mezeru (F5)
+    assert len(notes) == 2 and notes[0] == "hook.unit: nezalomitelné mezery" and "pn_autor" in notes[1]
     # druhá normalizace (cílený běh opravy) kartu už nemění a nic nezapíše
     again, cap2, notes2 = _pn(new, cap)
     assert again == new and cap2 == cap and notes2 == []

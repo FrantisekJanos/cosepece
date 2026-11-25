@@ -330,6 +330,19 @@ def test_regresni_karty_bez_preteceni(raw, orientation):
         _assert_safe(measure_blocks(Card.from_json(raw), V3, "landscape"), SAFE_LAND)
 
 
+@pytest.mark.render
+def test_hacek_10_z_dvanacti_bez_preteceni():
+    # F5: „10 z dvanácti“ zůstane po normalizaci celé ve velkém čísle (nezalomitelné mezery) a po fit() nepřeteče
+    from hlidac_reels.generator.normalize import normalize
+    from hlidac_reels.generator.validate import CLOSING, check_layout
+
+    raw = copy.deepcopy(load_fixture("v3-pn-311.json"))
+    raw["hook"] = {"big": "10 z dvanácti", "sub": "návrhů přišlo v den konce podrobné rozpravy"}
+    card, _, _ = normalize(raw, CLOSING, fmt="pn", focus_info=[])
+    assert card["hook"] == {"big": "10\u00a0z\u00a0dvanácti", "sub": "návrhů přišlo v den konce podrobné rozpravy"}
+    assert check_layout(card, V3) == []
+
+
 # ---------- F4: autor zadaného PN se štítkem klubu v háčku (karta.pn_autor ze serveru) ----------
 
 HK_PN_JS = """() => {

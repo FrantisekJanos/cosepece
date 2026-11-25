@@ -118,7 +118,7 @@ def conn():
     db.migrate(c)
     with c.cursor() as cur:
         cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; "
-                    "TRUNCATE reel_jobs RESTART IDENTITY")
+                    "TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_events RESTART IDENTITY")
         created = []
         for name, ddl in _PHP_TABLES.items():
             cur.execute("SELECT to_regclass(%s) IS NOT NULL", (name,))
@@ -531,6 +531,19 @@ def test_telegram_api_chyba_je_telegram_error(api):
     with pytest.raises(TelegramError) as ei:
         tg.send_text(CHAT, "x")
     assert "chat not found" in str(ei.value) and "SECRET" not in str(ei.value)
+
+
+def test_edit_text_payload(api):
+    from hlidac_reels.telegram import Telegram
+    tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(api)))
+    tg.edit_text(CHAT, 77, "Zadání č. 5: model")
+    tg.edit_text(CHAT, 77, "Zadání č. 5: render", [("Zrušit", "jobcancel:5")])
+    assert api.methods() == ["editMessageText", "editMessageText"]
+    bare, with_buttons = api.sent("editMessageText")
+    assert bare == {"chat_id": CHAT, "message_id": 77, "text": "Zadání č. 5: model",
+                    "link_preview_options": {"is_disabled": True}, "reply_markup": {"inline_keyboard": []}}
+    assert with_buttons["text"] == "Zadání č. 5: render"
+    assert with_buttons["reply_markup"] == {"inline_keyboard": [[{"text": "Zrušit", "callback_data": "jobcancel:5"}]]}
 
 
 @pytest.mark.parametrize("missing", ["META_SYSTEM_TOKEN", "REELS_TELEGRAM_TOKEN", "REELS_TELEGRAM_CHAT_ID",

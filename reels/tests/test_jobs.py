@@ -11,12 +11,13 @@ pytestmark = pytest.mark.pg
 @pytest.fixture
 def conn():
     if os.environ.get("REELS_TEST_DB") != "1":
-        pytest.skip("chybí REELS_TEST_DB=1 (testy mažou tabulky reel_jobs a reel_queue)")
+        pytest.skip("chybí REELS_TEST_DB=1 (testy mažou tabulky reel_jobs, reel_queue a reel_events)")
     from hlidac_reels import db
     c = db.connect()
     db.migrate(c)
     with c.cursor() as cur:
-        cur.execute("TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_queue RESTART IDENTITY")
+        cur.execute("TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_queue RESTART IDENTITY; "
+                    "TRUNCATE reel_events RESTART IDENTITY")
     c.commit()
     yield c
     c.close()

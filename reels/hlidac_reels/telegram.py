@@ -107,3 +107,11 @@ class Telegram:
             "chat_id": chat_id, "message_id": msg_id, "reply_markup": _markup(buttons),
         })
 
+    def edit_text(self, chat_id: int, msg_id: int, text: str,
+                  buttons: list[tuple[str, str]] | None = None) -> None:
+        """Přepíše text zprávy (stavová zpráva úlohy); tlačítka se posílají vždy, None = tlačítka odebrat."""
+        self._call("editMessageText", payload={
+            "chat_id": chat_id, "message_id": msg_id, "text": text,
+            "link_preview_options": {"is_disabled": True}, "reply_markup": _markup(buttons),
+        })
+

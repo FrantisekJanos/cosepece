@@ -898,7 +898,12 @@ class Bot:
 
     def _worker_line(self) -> str:
         """Řádek stavu PC (/fronta, stavová zpráva zadání): kdy bylo PC naposledy vidět a stav generátoru
-        z reel_state.worker_state (zapisuje server při heartbeat); nečitelný stav = jen kdy bylo PC vidět."""
+        z reel_state.worker_state (zapisuje server při heartbeat); nečitelný stav = jen kdy bylo PC vidět.
+
+        Heartbeat starší než jobs.WORKER_STALE = „PC neodpovídá od …“ bez stavu generátoru. Výjimka stejná jako
+        hlidani._reels_pc: pozastavený worker pošle heartbeat se stavem paused a `until` jednou a spí až do `until`,
+        do `until` + WORKER_STALE proto zůstává „pozastaveno (do H:MM)“."""
+        now = self.now()
         seen = _parse_time(queue.get_state(self.conn, WORKER_SEEN_KEY))
         seen_text = None
         if seen is not None:
@@ -913,10 +918,13 @@ class Bot:
         except ValueError:
             state = None
         if not isinstance(state, dict):
-            return messages.worker_line(seen_text)
-        until = state.get("until")
-        until = _parse_time(until) if state.get("state") == "paused" and isinstance(until, str) else None
-        return messages.worker_line(seen_text, state, jobs.hm(self.conn, until) if until is not None else None)
+            state = None
+        until = state.get("until") if state is not None and state.get("state") == "paused" else None
+        until = _parse_time(until) if isinstance(until, str) else None
+        stale = (seen is not None and now - seen > jobs.WORKER_STALE
+                 and not (until is not None and now <= until + jobs.WORKER_STALE))
+        return messages.worker_line(seen_text, state, jobs.hm(self.conn, until) if until is not None else None,
+                                    stale)
 
     # --- události úloh a workeru (reel_events) ---------------------------
 

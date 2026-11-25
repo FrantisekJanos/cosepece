@@ -2551,7 +2551,8 @@ def test_fronta_ukaze_ulohy_a_pc(bot, conn, api):
     bot.handle(_msg("/fronta"))
     text = api.texts()[-1]
     assert f"Ve frontě zadání (1)\n#{a} tisk 221 · 1. v pořadí" in text
-    assert "PC naposledy: 20. 11. 14:05" in text
+    # heartbeat starý víc než 30 min (F5): PC neodpovídá
+    assert text.splitlines()[-1] == "PC neodpovídá od 20. 11. 14:05"
 
 
 @pg
@@ -4828,18 +4829,120 @@ def test_fronta_ulohy_a_pc(bot, conn, api):
     _tisk(conn, 400)
     bot.handle(_msg("/video 400"))
     assert api.texts()[-1].splitlines()[-1] == text.splitlines()[-1]
+    # běžící worker posílá heartbeat průběžně (35 min starý by už byl „PC neodpovídá“)
+    queue.set_state(conn, "worker_seen_at", "2026-11-25T14:35:00+01:00")
     queue.set_state(conn, "worker_state", json.dumps({"state": "running", "reason": None, "detail": None,
-                                                      "until": None, "at": "2026-11-25T14:05:00+01:00"}))
+                                                      "until": None, "at": "2026-11-25T14:35:00+01:00"}))
     bot.handle(_msg("/fronta"))
-    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05 · generátor běží"
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:35 · generátor běží"
     # nečitelný worker_state: jen kdy bylo PC vidět; nečitelné until se vynechá
     queue.set_state(conn, "worker_state", "{")
     bot.handle(_msg("/fronta"))
-    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:05"
+    assert api.texts()[-1].splitlines()[-1] == "PC naposledy: 25. 11. 14:35"
     queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit", "until": 5}))
     bot.handle(_msg("/fronta"))
     assert api.texts()[-1].splitlines()[-1] == (
-        "PC naposledy: 25. 11. 14:05 · pozastaveno: vyčerpaný limit předplatného")
+        "PC naposledy: 25. 11. 14:35 · pozastaveno: vyčerpaný limit předplatného")
+
+
+# --- F5: /fronta s neviděným PC a dlouhý přehled (Task 4) ---
+
+def test_worker_line_dlouho_nevideno():
+    from hlidac_reels import messages as m
+    assert m.worker_line("21. 11. 13:05", {"state": "running"}, stale=True) == "PC neodpovídá od 21. 11. 13:05"
+    # stav generátoru se u neviděného PC nevypisuje (heartbeat je starý, stav nemusí platit)
+    assert m.worker_line("21. 11. 13:05", {"state": "paused", "reason": "limit"}, "15:30", stale=True) == (
+        "PC neodpovídá od 21. 11. 13:05")
+    assert m.worker_line("21. 11. 13:05", stale=True) == "PC neodpovídá od 21. 11. 13:05"
+    # bez času heartbeat beze změny
+    assert m.worker_line(None, stale=True) == "PC zatím nebylo vidět"
+
+
+@pg
+def test_fronta_pc_neodpovida_po_30_min(bot, conn, api):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import queue
+    now = datetime(2026, 11, 25, 13, 40, tzinfo=timezone.utc)  # 14:40 v Praze
+    bot.now = lambda: now
+
+    def pc_line(seen_ago: timedelta, state: dict) -> str:
+        queue.set_state(conn, "worker_seen_at", (now - seen_ago).isoformat())
+        queue.set_state(conn, "worker_state", json.dumps(state))
+        bot.handle(_msg("/fronta"))
+        return api.texts()[-1].splitlines()[-1]
+
+    running = {"state": "running", "reason": None, "detail": None, "until": None}
+    line = pc_line(timedelta(minutes=40), running)
+    assert line.startswith("PC neodpovídá od") and "generátor běží" not in line
+    assert line == "PC neodpovídá od 25. 11. 14:00"
+    assert pc_line(timedelta(minutes=10), running) == "PC naposledy: 25. 11. 14:30 · generátor běží"
+    # pozastavené PC posílá heartbeat jen jednou a spí do until: starý heartbeat do until + 30 min není výpadek
+    paused = {"state": "paused", "reason": "limit", "detail": None, "until": (now + timedelta(hours=1)).isoformat()}
+    line = pc_line(timedelta(minutes=40), paused)
+    assert "pozastaveno" in line and "neodpovídá" not in line
+    assert line == "PC naposledy: 25. 11. 14:00 · pozastaveno: vyčerpaný limit předplatného (do 15:40)"
+    # pauza skončila před víc než 30 min a heartbeat pořád nepřišel: PC neodpovídá
+    paused["until"] = (now - timedelta(minutes=40)).isoformat()
+    assert pc_line(timedelta(hours=3), paused) == "PC neodpovídá od 25. 11. 11:40"
+    # pauza bez until (chybí nástroje) posílá heartbeat dál, starý heartbeat = PC neodpovídá
+    assert pc_line(timedelta(minutes=40), {"state": "paused", "reason": "nastroje", "detail": "ffmpeg"}) == (
+        "PC neodpovídá od 25. 11. 14:00")
+
+
+def _overview_units(state: str, ids, ct: int = 221, **kw):
+    from datetime import datetime, timezone
+    from hlidac_reels.queue import Unit
+    since = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    return [Unit(None, [i], "manual", ct, state, since, **kw) for i in ids]
+
+
+def test_prehled_dlouhy_necha_problemy():
+    import re
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    pc = "PC naposledy: 25. 11. 14:05 · generátor běží"
+    ready = _overview_units("next", range(1, 201))
+    held = _overview_units("held", (301, 302), note="Telegram timeout", attempts=5)
+    mine = _overview_units("approval", (401, 402, 403))
+    text = m.queue_overview(mine + ready + held, [], pc, now)
+    assert len(text) <= 4096
+    assert text.splitlines()[-1] == pc
+    # Problémy celé, těsně před stavem PC
+    assert text.endswith("Problémy (2)\n"
+                         "#301 tisk 221 · nejde doručit (Telegram timeout, 5×) · Zkusit znovu / Zahodit\n"
+                         "#302 tisk 221 · nejde doručit (Telegram timeout, 5×) · Zkusit znovu / Zahodit\n\n" + pc)
+    # ubírá se nejdřív z Hotové: Čeká na tebe zůstane celé
+    assert text.startswith("Čeká na tebe (3)\n#401 tisk 221 · čeká na schválení · 0 min\n"
+                           "#402 tisk 221 · čeká na schválení · 0 min\n#403 tisk 221 · čeká na schválení · 0 min\n\n"
+                           "Hotové, čekají na odeslání (200)\n#1 tisk 221 · na řadě\n")
+    (more,) = re.findall(r"\n… a další (\d+)\n\nProblémy", text)
+    shown = re.findall(r"^#\d+ tisk 221 · na řadě$", text, re.M)
+    assert len(shown) + int(more) == 200 and shown[-1] == f"#{len(shown)} tisk 221 · na řadě"
+    # když nestačí ani prázdné Hotové, ubírá se z Čeká na tebe; Problémy pořád celé
+    mine = _overview_units("approval", range(401, 551))
+    text = m.queue_overview(mine + ready + held, [], pc, now)
+    assert len(text) <= 4096 and text.splitlines()[-1] == pc
+    assert "\n\nHotové, čekají na odeslání (200)\n… a další 200\n\nProblémy (2)\n#301 " in text
+    (more,) = re.findall(r"\n… a další (\d+)\n\nHotové", text)
+    assert len(re.findall("čeká na schválení", text)) + int(more) == 150
+
+
+def test_prehled_jen_problemy_pres_limit():
+    """Review Focus 5: nevejdou se ani samotné Problémy, ořízne se jejich konec a stav PC zůstane poslední."""
+    import re
+    from datetime import datetime, timezone
+    from hlidac_reels import messages as m
+    now = datetime(2026, 11, 25, 13, 0, tzinfo=timezone.utc)
+    pc = "PC naposledy: 25. 11. 14:05 · generátor běží"
+    held = _overview_units("held", range(1, 301), note="Telegram timeout", attempts=5)
+    text = m.queue_overview(held, [], pc, now)
+    assert len(text) <= 4096
+    assert text.splitlines()[-1] == pc
+    assert text.startswith("Problémy (300)\n#1 tisk 221 · nejde doručit")
+    (more,) = re.findall(r"\n… a další (\d+)\n\n" + re.escape(pc) + "$", text)
+    assert len(re.findall("nejde doručit", text)) + int(more) == 300
 
 
 @pg

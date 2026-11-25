@@ -45,9 +45,9 @@ def _novak_card() -> dict:
     return card
 
 
-def _errs(card: dict, caption: str) -> list[str]:
+def _errs(card: dict, caption: str, focus_pn: tuple[int, ...] = (2376,)) -> list[str]:
     return validate_variant(card, caption, template="template_v3", ct=311,
-                            reason_keys=[r["key"] for r in card["reasons"]], fmt="pn", focus_pn=[2376])
+                            reason_keys=[r["key"] for r in card["reasons"]], fmt="pn", focus_pn=list(focus_pn))
 
 
 def _name_in_paren(text: str, jmeno: str = "Jan Novák") -> str | None:
@@ -63,6 +63,9 @@ def test_name_in_paren():
     assert _name_in_paren("PN 2376 podal Jan Novák.") is None
     # otevřená závorka bez své „)“ za jménem
     assert _name_in_paren("PN 2376 (podal Jan Novák.") is None
+    # text za jménem končí i na konci řádku a před další „(“ (neuzavřená závorka, vnořená závorka jiného autora)
+    assert _name_in_paren("PN 2376 (podal Jan Novák, ODS.\nPN 2377 Jana Malá (ANO)") == ", ODS."
+    assert _name_in_paren("PN 2376 (Jan Novák a Jana Malá (ANO))") == " a Jana Malá "
 
 
 def test_klub_do_jmena_v_zavorce():
@@ -89,10 +92,43 @@ def test_klub_do_jmena_v_zavorce():
     assert _errs(new, cap) == ["popisek neuvádí klub autora PN 2376: „Jan Novák, ANO“"]
 
 
+def _other_club(which: str, shown: str, klub: str) -> str:
+    return f"popisek uvádí u autora {which} jiný klub nebo text za jménem: „{shown}“, ze serveru ({klub})"
+
+
 def test_jmeno_v_zavorce_s_jinym_klubem_je_chyba():
     card = _novak_card()
     caption = _caption("Pozměňovací návrh 2376 (Jan Novák, ODS) mění lhůtu pro vrácení dotace.")
     # normalizace jiný text v závorce nepřepisuje ani nedoplňuje (vzniklo by „Jan Novák, ANO, ODS“)
     new, cap, notes = normalize(card, caption, fmt="pn", focus_info=NOVAK)
     assert cap == caption and not any(n.startswith("popisek") for n in notes)
-    assert _errs(new, cap) == ["popisek neuvádí klub autora PN 2376: „Jan Novák, ANO“"]
+    assert _errs(new, cap) == [_other_club("PN 2376", "Jan Novák, ODS", "ANO")]
+    # klub platí jen jako první údaj za jménem: připsaný na konec závorky nestačí
+    new, cap, _ = normalize(card, _caption("Pozměňovací návrh 2376 (Jan Novák, ODS, ANO) mění lhůtu."),
+                            fmt="pn", focus_info=NOVAK)
+    assert _errs(new, cap) == [_other_club("PN 2376", "Jan Novák, ODS, ANO", "ANO")]
+    # neuzavřená závorka: klub jiného autora na dalším řádku se nepočítá
+    new, cap, _ = normalize(card, _caption("Pozměňovací návrh 2376 (podal Jan Novák, ODS.\nPN 2377 Jana Malá (ANO)."),
+                            fmt="pn", focus_info=NOVAK)
+    assert _errs(new, cap) == [_other_club("PN 2376", "Jan Novák, ODS.", "ANO")]
+    # správný klub hned za jménem projde, i s dalším údajem za ním
+    for text in ("Pozměňovací návrh 2376 (Jan Novák, ANO) mění lhůtu.",
+                 "Pozměňovací návrh 2376 (Jan Novák, ANO, předkladatel) mění lhůtu.",
+                 "Pozměňovací návrh 2376 (Jan Novák , ANO) mění lhůtu."):
+        new, cap, _ = normalize(card, _caption(text), fmt="pn", focus_info=NOVAK)
+        assert cap == _caption(text) and _errs(new, cap) == [], text
+
+
+def test_dva_autori_v_zavorce_s_prohozenymi_kluby():
+    # kluby dvou autorů v jedné závorce prohozené: chyba u obou, klub druhého autora neomluví prvního
+    info = NOVAK + [{"cislo": 2377, "osoba": "Jana Malá", "klub": "ODS"}]
+    caption = _caption("PN 2376 a 2377 (Jan Novák, ODS a Jana Malá, ANO) mění lhůtu.")
+    new, cap, notes = normalize(_novak_card(), caption, fmt="pn", focus_info=info)
+    assert cap == caption and not any(n.startswith("popisek") for n in notes)
+    assert _errs(new, cap, (2376, 2377)) == [
+        _other_club("PN 2376", "Jan Novák, ODS a Jana Malá, ANO", "ANO"),
+        _other_club("PN 2377", "Jana Malá, ANO", "ODS")]
+    # se správnými kluby projdou oba
+    caption = _caption("PN 2376 a 2377 (Jan Novák, ANO a Jana Malá, ODS) mění lhůtu.")
+    new, cap, _ = normalize(_novak_card(), caption, fmt="pn", focus_info=info)
+    assert cap == caption and _errs(new, cap, (2376, 2377)) == []

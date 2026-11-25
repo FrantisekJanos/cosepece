@@ -82,6 +82,9 @@ def has_word(text: str, word: str) -> bool:
 # kolik znaků před jménem autora smí stát klub („za ANO Jan Novák“)
 CLUB_BEFORE = 40
 NAME_FOLLOWING = r"[^\S\n]*\(([^()\n]*)\)?"
+# jméno uvnitř závorky: text za ním končí na `)`, `(` nebo na konci řádku; klub je první údaj za čárkou
+PAREN_STOP = re.compile(r"[()\n]")
+NAME_COMMA = r"[^\S\n]*,[^\S\n]*"
 
 
 def _club_pattern(klub: str) -> str:
@@ -114,16 +117,23 @@ def find_name(text: str, jmeno: str) -> tuple[int, int, str | None] | None:
 
 def name_in_paren(text: str, start: int, end: int) -> str | None:
     """Stojí jméno (`start`–`end`) uvnitř otevřené závorky („PN 2376 (Jan Novák) mění …“)? Vrací text od konce
-    jména po nejbližší `)` (`""`, `", ANO"`); `None`, když poslední `(` před jménem má před ním svou `)`, když
-    před jménem žádná `(` není, nebo když za jménem `)` chybí.
+    jména po nejbližší `)`, `(` nebo konec řádku (`""`, `", ANO"`); `None`, když poslední `(` před jménem má před
+    ním svou `)`, když před jménem žádná `(` není, nebo když za jménem nic z toho nenásleduje.
 
-    Klub pak patří do téže závorky za čárku („(Jan Novák, ANO)“), ne do vnořené závorky.
+    Klub pak patří do téže závorky za čárku („(Jan Novák, ANO)“), ne do vnořené závorky. Konec na `(` a na konci
+    řádku: klub jiného autora ve vnořené závorce nebo za neuzavřenou závorkou na dalším řádku se nepočítá.
     """
     opened = text.rfind("(", 0, start)
     if opened < 0 or text.find(")", opened, start) >= 0:
         return None
-    closed = text.find(")", end)
-    return text[end:closed] if closed >= 0 else None
+    stop = PAREN_STOP.search(text, end)
+    return text[end:stop.start()] if stop else None
+
+
+def club_after_name(inner: str, klub: str) -> bool:
+    """Je klub prvním údajem za jménem v závorce („, ANO“ i „, ANO, předkladatel“)? Klub dál v závorce
+    („, ODS, ANO“, „, ODS a Jana Malá, ANO“) se nepočítá."""
+    return re.match(rf"{NAME_COMMA}(?:{_club_pattern(klub)})", inner) is not None
 
 
 def club_before(text: str, start: int, klub: str) -> bool:
@@ -187,9 +197,12 @@ def _names_author(caption: str, jmeno: str) -> bool:
 
 
 def _club_error(caption: str, jmeno: str, klub: str, which: str) -> str | None:
-    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, za jménem v téže závorce, ve které
-    jméno stojí („(Jan Novák, ANO)“), nebo v `CLUB_BEFORE` znacích před ním („za ANO Jan Novák“). Bez celého
-    jména (skloňovaný tvar) stačí klub kdekoli v popisku."""
+    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, jako první údaj za jménem v téže
+    závorce, ve které jméno stojí („(Jan Novák, ANO)“, „(Jan Novák, ANO, předkladatel)“), nebo v `CLUB_BEFORE`
+    znacích před ním („za ANO Jan Novák“). Bez celého jména (skloňovaný tvar) stačí klub kdekoli v popisku.
+
+    Jméno v závorce, za kterým následuje jiný text než klub („(Jan Novák, ODS)“, „(Jan Novák, ODS a Jana Malá,
+    ANO)“), je chyba i se správným klubem dál v závorce nebo před jménem: klub patří k nejbližšímu jménu."""
     missing = f"popisek neuvádí klub autora {which}: „{jmeno} ({klub})“"
     found = find_name(caption, jmeno)
     if found is None:
@@ -199,8 +212,10 @@ def _club_error(caption: str, jmeno: str, klub: str, which: str) -> str | None:
         return None if club_matches(paren, klub) else (
             f"popisek uvádí u autora {which} jiný klub: „{jmeno} ({paren})“, ze serveru ({klub})")
     inner = name_in_paren(caption, start, end)
-    if inner is not None and club_matches(inner, klub):
-        return None
+    if inner is not None and inner.strip():
+        return None if club_after_name(inner, klub) else (
+            f"popisek uvádí u autora {which} jiný klub nebo text za jménem: „{jmeno}{inner.rstrip()}“, "
+            f"ze serveru ({klub})")
     if club_before(caption, start, klub):
         return None
     # jméno v závorce: chyba radí tvar bez vnořené závorky

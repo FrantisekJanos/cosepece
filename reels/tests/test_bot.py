@@ -4638,15 +4638,41 @@ def test_zkusit_znovu(bot, conn, api):
     assert queue.get_state(conn, f"job_status:{new.id}") is not None
     assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": 50,
                                                        "reply_markup": {"inline_keyboard": []}}
-    # stejné zadání už ve frontě je
+    # druhý stisk téhož Zkusit znovu (tlačítko se nepodařilo odebrat): jen odpověď tlačítkem, nic nového
+    sent = len(api.sent())
     bot.handle(_cb(f"jobretry:{old.id}", msg_id=51))
-    assert api.texts()[-1] == "PN 2376 (tisk 300) už ve frontě je."
-    assert len(jobs.pending(conn)) == 1
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání už se opakuje (#{new.id})."
+    assert len(api.sent()) == sent and [j.id for j in jobs.pending(conn)] == [new.id]
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == 51
+    # stejné zadání už ve frontě je (jiná úloha se stejným PN): odpověď tlačítkem, bez zprávy v chatu
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO reel_jobs (source, ct, focus_pn, status, finished_at) "
+                    "VALUES ('manual', 300, '{2376}', 'failed', now()) RETURNING id")
+        other = cur.fetchone()[0]
+    conn.commit()
+    bot.handle(_cb(f"jobretry:{other}", msg_id=53))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "PN 2376 (tisk 300) už ve frontě je."
+    assert len(api.sent()) == sent and [j.id for j in jobs.pending(conn)] == [new.id]
+    assert queue.get_state(conn, f"job_retried:{other}") is None  # opakovat půjde, až fronta zadání pustí
     # hotová úloha: není co opakovat
     _finish(conn, new.id)
     bot.handle(_cb(f"jobretry:{new.id}", msg_id=52))
     assert api.sent("answerCallbackQuery")[-1]["text"] == "Není co opakovat."
     assert jobs.pending(conn) == []
+
+
+@pg
+def test_zkusit_znovu_auto_pick_jednou(bot, conn, api):
+    # auto_pick bez tisku unikátní index nehlídá: dvojí stisk založí jen jedno zadání
+    from hlidac_reels import jobs
+    a = jobs.add(conn, source="auto_pick")
+    _finish(conn, a, "failed")
+    bot.handle(_cb(f"jobretry:{a}", msg_id=60))
+    bot.handle(_cb(f"jobretry:{a}", msg_id=60))
+    (new,) = jobs.pending(conn)
+    assert (new.source, new.ct) == ("auto_pick", None)
+    assert api.sent("answerCallbackQuery")[-1]["text"] == f"Zadání už se opakuje (#{new.id})."
+    assert api.texts() == [_accepted_text(conn, new.id, "automatický výběr")]  # jen stavová zpráva nového
 
 
 @pg

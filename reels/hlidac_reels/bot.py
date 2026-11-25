@@ -34,7 +34,8 @@ Vyžádané zadání (/video, /vyber, /pn, Zkusit znovu) dostane jednu stavovou 
 a tlačítko Zrušit. U zadání bez autopilota ji maybe_events podle událostí úlohy přepisuje (editMessageText, žádné nové
 zprávy; job_status:<id> = poslední vykreslená událost), konečný stav bez tlačítek. Zrušit a /zrus <číslo> zruší
 aktivní zadání (jediný zápis stavu úlohy z bota, jobs.cancel); Zahodit u zprávy o selhání jen odebere tlačítka.
-Zkusit znovu založí nové zadání (nové id, vždy bez autopilota) a pošle mu novou stavovou zprávu.
+Zkusit znovu založí nové zadání (nové id, vždy bez autopilota) a pošle mu novou stavovou zprávu; každé zadání
+jde opakovat jen jednou (reel_state job_retried:<id>).
 """
 from __future__ import annotations
 
@@ -748,16 +749,21 @@ class Bot:
 
     def _job_retry(self, job_id: int, cb_id, msg_id) -> None:
         """Zkusit znovu (zpráva o selhání, zpráva po výpadku): nové zadání se stavovou zprávou, stará zpráva
-        přijde o tlačítka. Aktivní zadání se neopakuje, stejné aktivní zadání = „už ve frontě je“."""
+        přijde o tlačítka zadání. Aktivní zadání se neopakuje. Každé zadání jen jednou: další stisk (tlačítko, které
+        se nepodařilo odebrat) jen odpoví „už se opakuje (#N)“ a tlačítka zadání odebere; stejné aktivní zadání =
+        odpověď „už ve frontě je“. Obojí jen odpovědí na tlačítko, bez nové zprávy v chatu."""
         job = jobs.get(self.conn, job_id)
         if job is not None and job.status in jobs.ACTIVE:
             self._answer(cb_id, "Zadání ještě běží.")
             return
         try:
             new_id = jobs.retry(self.conn, job_id)
+        except jobs.AlreadyRetried as e:
+            self._answer(cb_id, f"Zadání už se opakuje (#{e.new_id})." if e.new_id else "Zadání už se opakuje.")
+            self._drop_job_buttons(msg_id, job_id)
+            return
         except jobs.ActiveJobExists:
-            self._answer(cb_id)
-            self._say(self._duplicate_text(job.ct, job.focus_pn))
+            self._answer(cb_id, self._duplicate_text(job.ct, job.focus_pn))
             return
         except ValueError:  # hotové nebo neexistující zadání
             self._answer(cb_id, "Není co opakovat.")

@@ -11,13 +11,14 @@ pytestmark = pytest.mark.pg
 @pytest.fixture
 def conn():
     if os.environ.get("REELS_TEST_DB") != "1":
-        pytest.skip("chybí REELS_TEST_DB=1 (testy mažou tabulky reel_jobs, reel_queue a reel_events)")
+        pytest.skip("chybí REELS_TEST_DB=1 (testy mažou tabulky reel_jobs, reel_queue, reel_events a reel_state)")
     from hlidac_reels import db
     c = db.connect()
     db.migrate(c)
     with c.cursor() as cur:
+        # reel_state kvůli klíčům job_retried:<id> (čísla úloh začínají po RESTART IDENTITY znovu od 1)
         cur.execute("TRUNCATE reel_jobs RESTART IDENTITY; TRUNCATE reel_queue RESTART IDENTITY; "
-                    "TRUNCATE reel_events RESTART IDENTITY")
+                    "TRUNCATE reel_events RESTART IDENTITY; TRUNCATE reel_state")
     c.commit()
     yield c
     c.close()
@@ -244,9 +245,20 @@ def test_retry_a_cancel(conn):
     assert n != f
     assert (new.source, new.ct, new.format_hint, new.focus_pn, new.autopilot, new.status) == (
         "manual", 14, "pn", [2376, 2377], False, "queued")
-    # stejné zadání už ve frontě je
-    with pytest.raises(jobs.ActiveJobExists):
+    # druhé opakování téže úlohy (dvojí stisk, tlačítko se nepodařilo odebrat): nic nového, id prvního opakování
+    with pytest.raises(jobs.AlreadyRetried) as ei:
         jobs.retry(conn, f)
+    assert ei.value.new_id == n and [j.id for j in jobs.pending(conn) if j.ct == 14] == [n]
+    # stejné zadání už ve frontě je (jiná úloha se stejným tiskem a PN): nic se nezaloží ani nezapamatuje
+    _set(conn, n, "status='done', finished_at=now()")
+    g = jobs.add(conn, source="manual", ct=14, focus_pn=[2376, 2377])
+    _set(conn, g, "status='failed', finished_at=now()")
+    dup = jobs.add(conn, source="manual", ct=14, focus_pn=[2376, 2377])  # aktivní stejné zadání
+    with pytest.raises(jobs.ActiveJobExists):
+        jobs.retry(conn, g)
+    assert [j.id for j in jobs.pending(conn) if j.ct == 14] == [dup]
+    _set(conn, dup, "status='done', finished_at=now()")
+    assert jobs.get(conn, jobs.retry(conn, g)).ct == 14  # po skončení aktivního zadání jde opakovat
     # zrušená i vypršelá; auto_pick bez tisku zůstane auto_pick, s tiskem (vybral server) a fresh = manual
     assert jobs.get(conn, jobs.retry(conn, a)).source == "manual"
     p = jobs.add(conn, source="auto_pick")
@@ -258,6 +270,19 @@ def test_retry_a_cancel(conn):
     r = jobs.add(conn, source="fresh", ct=16, reason_keys=["k"])
     _set(conn, r, "status='failed', finished_at=now()")
     assert (lambda j: (j.source, j.ct))(jobs.get(conn, jobs.retry(conn, r))) == ("manual", 16)
+
+
+def test_retry_auto_pick_jednou(conn):
+    # auto_pick bez tisku unikátní index nehlídá (kryje jen ct IS NOT NULL): opakování hlídá klíč job_retried:<id>
+    from hlidac_reels import jobs, queue
+    a = jobs.add(conn, source="auto_pick")
+    _set(conn, a, "status='failed', finished_at=now()")
+    n = jobs.retry(conn, a)
+    with pytest.raises(jobs.AlreadyRetried) as ei:
+        jobs.retry(conn, a)
+    assert ei.value.new_id == n
+    assert [(j.id, j.source, j.ct) for j in jobs.pending(conn)] == [(n, "auto_pick", None)]
+    assert queue.get_state(conn, f"job_retried:{a}") == str(n)
 
 
 def test_status_msg(conn):

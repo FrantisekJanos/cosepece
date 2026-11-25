@@ -17,8 +17,20 @@ ACTIVE = ("queued", "claimed")  # úloha ve frontě nebo u workeru; ostatní sta
 RETRYABLE = ("failed", "cancelled", "expired")  # konečné stavy, ze kterých jde Zkusit znovu
 
 
+# reel_state job_retried:<id> = id úlohy, která úlohu <id> opakuje (Zkusit znovu jde u úlohy jen jednou)
+RETRIED_KEY = "job_retried:"
+
+
 class ActiveJobExists(Exception):
     """Pro tento tisk (a stejnou množinu PN) už existuje aktivní úloha (queued nebo claimed)."""
+
+
+class AlreadyRetried(Exception):
+    """Úloha už jednou opakovaná (Zkusit znovu); new_id = úloha, která ji opakuje (None = nečitelná hodnota)."""
+
+    def __init__(self, new_id: int | None):
+        super().__init__(new_id)
+        self.new_id = new_id
 
 
 @dataclass
@@ -57,22 +69,29 @@ _COLS = ", ".join(f.name for f in dc_fields(Job))
 def add(conn, *, source: str, ct: int | None = None, format_hint: str | None = None,
         reason_keys: list[str] | None = None, focus_pn: list[int] | None = None,
         autopilot: bool = False) -> int:
-    keys = json.dumps(reason_keys, ensure_ascii=False) if reason_keys is not None else None
-    # seřazená množina, aby unikátní index poznal stejné zadání v jiném pořadí; prázdná = celý tisk
-    pns = sorted({int(n) for n in focus_pn}) if focus_pn else None
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO reel_jobs (source, ct, format_hint, reason_keys, focus_pn, autopilot) "
-                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                (source, ct, format_hint, keys, pns, bool(autopilot)),
-            )
-            new_id = cur.fetchone()[0]
+            new_id = _insert(cur, source=source, ct=ct, format_hint=format_hint, reason_keys=reason_keys,
+                             focus_pn=focus_pn, autopilot=autopilot)
         conn.commit()
         return new_id
     except psycopg.errors.UniqueViolation as e:
         conn.rollback()
         raise ActiveJobExists(ct) from e
+
+
+def _insert(cur, *, source: str, ct: int | None, format_hint: str | None, reason_keys: list[str] | None,
+            focus_pn: list[int] | None, autopilot: bool) -> int:
+    """INSERT úlohy bez commitu (add, retry); vrací její id."""
+    keys = json.dumps(reason_keys, ensure_ascii=False) if reason_keys is not None else None
+    # seřazená množina, aby unikátní index poznal stejné zadání v jiném pořadí; prázdná = celý tisk
+    pns = sorted({int(n) for n in focus_pn}) if focus_pn else None
+    cur.execute(
+        "INSERT INTO reel_jobs (source, ct, format_hint, reason_keys, focus_pn, autopilot) "
+        "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+        (source, ct, format_hint, keys, pns, bool(autopilot)),
+    )
+    return cur.fetchone()[0]
 
 
 def autopilot_off(conn) -> int:
@@ -106,14 +125,37 @@ def retry(conn, job_id: int) -> int:
 
     Jen z konečného stavu failed, cancelled, expired, jinak ValueError (i když úloha neexistuje). Nová úloha je
     ruční (auto_pick bez tisku zůstane auto_pick) a vždy bez autopilota: opakované zadání jde ke schválení.
-    Stejné zadání, které už je aktivní, = ActiveJobExists.
+    Každá úloha jde opakovat jen jednou: klíč reel_state job_retried:<id> (= id nové úlohy) se vloží v téže
+    transakci jako nová úloha; když už je, AlreadyRetried a nic se nezaloží (dvojí stisk, tlačítko, které se
+    nepodařilo odebrat, auto_pick bez tisku, který unikátní index nehlídá). Stejné zadání, které už je aktivní,
+    = ActiveJobExists; transakce se vrátí i s klíčem, takže po skončení aktivního zadání opakovat jde.
     """
     job = get(conn, job_id)
     if job is None or job.status not in RETRYABLE:
         raise ValueError(f"úlohu #{job_id} nejde opakovat ({job.status if job else 'neexistuje'})")
     source = "auto_pick" if job.source == "auto_pick" and job.ct is None else "manual"
-    return add(conn, source=source, ct=job.ct, format_hint=job.format_hint, focus_pn=job.focus_pn,
-               autopilot=False)
+    key = f"{RETRIED_KEY}{job_id}"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO reel_state (key, value) VALUES (%s, '') ON CONFLICT (key) DO NOTHING "
+                        "RETURNING key", (key,))
+            if cur.fetchone() is None:
+                cur.execute("SELECT value FROM reel_state WHERE key = %s", (key,))
+                row = cur.fetchone()
+                conn.rollback()
+                value = row[0] if row else None
+                raise AlreadyRetried(int(value) if value and value.isdigit() else None)
+            new_id = _insert(cur, source=source, ct=job.ct, format_hint=job.format_hint, reason_keys=None,
+                             focus_pn=job.focus_pn, autopilot=False)
+            cur.execute("UPDATE reel_state SET value = %s WHERE key = %s", (str(new_id), key))
+        conn.commit()
+        return new_id
+    except psycopg.errors.UniqueViolation as e:
+        conn.rollback()
+        raise ActiveJobExists(job.ct) from e
+    except psycopg.Error:
+        conn.rollback()
+        raise
 
 
 def set_status_msg(conn, job_id: int, msg_id: int | None) -> None:

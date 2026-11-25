@@ -729,9 +729,15 @@ class Bot:
 
     def _job_cancel(self, job_id: int, cb_id, msg_id) -> None:
         """Zrušit (stavová zpráva, odpověď na zadání) a Zahodit (zpráva o selhání, úloha je už v konečném stavu:
-        jen zmizí tlačítka, úloha se nemění)."""
+        jen zmizí tlačítka, úloha se nemění).
+
+        Zadání, které už neběží: zpráva o selhání (má i Zkusit znovu, jobretry:<id>) odpoví „Zahozeno.“, jiná
+        zpráva (Zrušit u odpovědi na zadání s autopilotem po jeho skončení) „Zadání už neběží.“; obě přijdou
+        o tlačítka.
+        """
         if not self._cancel_job(job_id):
-            self._answer(cb_id, "Zahozeno.")
+            failure = f"jobretry:{job_id}" in {data for _, data in self._cb_buttons()}
+            self._answer(cb_id, "Zahozeno." if failure else "Zadání už neběží.")
             self._drop_buttons(msg_id)
             return
         self._answer(cb_id, "Zrušeno.")
@@ -769,17 +775,20 @@ class Bot:
         zmizí všechna jako dřív.
         """
         own = {f"jobretry:{job_id}", f"jobcancel:{job_id}"}
-        rows = (self._cb_markup or {}).get("inline_keyboard")
-        rest = [(str(b.get("text") or ""), b["callback_data"])
-                for row in (rows if isinstance(rows, list) else []) if isinstance(row, list)
-                for b in row if isinstance(b, dict) and isinstance(b.get("callback_data"), str)
-                and b["callback_data"] not in own]
+        rest = [(text, data) for text, data in self._cb_buttons() if data not in own]
         if not msg_id:
             return
         if not rest:
             self._drop_buttons(msg_id)
             return
         self._try("editMessageReplyMarkup", self.tg.edit_buttons, self.chat_id, msg_id, rest)
+
+    def _cb_buttons(self) -> list[tuple[str, str]]:
+        """Tlačítka (text, callback_data) zprávy právě stisknutého tlačítka z jejího reply_markup; bez něj []."""
+        rows = (self._cb_markup or {}).get("inline_keyboard")
+        return [(str(b.get("text") or ""), b["callback_data"])
+                for row in (rows if isinstance(rows, list) else []) if isinstance(row, list)
+                for b in row if isinstance(b, dict) and isinstance(b.get("callback_data"), str)]
 
     def _cmd_zrus(self, arg: str) -> None:
         """/zrus <číslo zadání>: zruší zadání ve frontě nebo rozpracované („#12“ i „12“)."""

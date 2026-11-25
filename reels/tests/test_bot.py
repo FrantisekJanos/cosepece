@@ -4542,8 +4542,10 @@ def test_zrusit_tlacitkem_a_prikazem(bot, conn, api):
     bot.maybe_events()
     assert len(api.sent("editMessageText")) == 1
     # Zahodit u zprávy o selhání: úloha se nemění, zpráva jen přijde o tlačítka
+    from hlidac_reels import messages
+    from hlidac_reels.telegram import _markup
     j = _failed_job(conn, ct=222)
-    bot.handle(_cb(f"jobcancel:{j}", msg_id=77))
+    bot.handle(_cb(f"jobcancel:{j}", msg_id=77, markup=_markup(messages.failed_buttons(j))))
     assert api.sent("answerCallbackQuery")[-1]["text"] == "Zahozeno."
     assert jobs.get(conn, j).status == "failed" and events.for_job(conn, j)[-1].kind == "failed"
     assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": 77,
@@ -4579,6 +4581,36 @@ def test_zrusit_tlacitkem_a_prikazem(bot, conn, api):
     assert api.texts()[-1] == "Zadání #999 neznám."
     bot.handle(_msg("/neco"))
     assert "/zrus <číslo zadání>" in api.texts()[-1]
+
+
+@pg
+def test_zrusit_u_skonceneho_zadani(bot, conn, api):
+    # Zrušit u odpovědi na zadání s autopilotem (stavová zpráva u něj není) po skončení úlohy: „už neběží“
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    bot.handle(_msg("/autopilot on"))
+    bot.handle(_msg("/pn 2376"))
+    (auto,) = jobs.pending(conn)
+    reply = api.sent()[-1]
+    assert _buttons(reply) == [f"jobcancel:{auto.id}"]
+    reply_id = api.next_id
+    _finish(conn, auto.id)
+    sent = len(api.sent())
+    bot.handle(_cb(f"jobcancel:{auto.id}", msg_id=reply_id, markup=reply["reply_markup"]))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zadání už neběží."
+    assert jobs.get(conn, auto.id).status == "done" and len(api.sent()) == sent
+    assert api.sent("editMessageReplyMarkup")[-1] == {"chat_id": CHAT, "message_id": reply_id,
+                                                       "reply_markup": {"inline_keyboard": []}}
+    # zpráva o selhání (Zkusit znovu + Zahodit): Zahodit dál „Zahozeno.“
+    j = _failed_job(conn, ct=222)
+    bot.maybe_events()
+    fail = api.sent()[-1]
+    assert _buttons(fail) == [f"jobretry:{j}", f"jobcancel:{j}"]
+    fail_id = api.next_id
+    bot.handle(_cb(f"jobcancel:{j}", msg_id=fail_id, markup=fail["reply_markup"]))
+    assert api.sent("answerCallbackQuery")[-1]["text"] == "Zahozeno."
+    assert jobs.get(conn, j).status == "failed"
+    assert api.sent("editMessageReplyMarkup")[-1]["message_id"] == fail_id
 
 
 @pg

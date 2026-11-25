@@ -53,7 +53,7 @@ def fake(monkeypatch):
     monkeypatch.setattr(gen, "run_claude", run_claude)
     monkeypatch.setattr(gen, "render_reel", render_reel)
     state["render_reel"] = render_reel  # test si render podvrhne jinak a pak vrátí tento
-    monkeypatch.setattr(gen, "check_layout", lambda card, template: [])
+    monkeypatch.setattr(gen, "check_layout", lambda card, template, orientation="portrait": [])
     def probe(p):
         # video na šířku má rozměry 16:9; land_fail="ratio" u varianty 2 podvrhne šířku s poměrem 9:16
         if Path(p).name.endswith("-sirka.mp4") and not (state["land_fail"] == "ratio" and "variant-2" in str(p)):
@@ -238,6 +238,36 @@ def test_pad_renderu_sirky_nevyradi_variantu(tmp_path, fake):
     r = _run(tmp_path)
     assert r.ok and all(v.ok and v.video and v.video_landscape is None for v in r.variants)
     assert all(any("Chromium spadl" in w for w in v.warnings) for v in r.variants)
+
+
+def test_sirka_s_chybou_rozvrzeni_se_nerenderuje(tmp_path, fake, monkeypatch):
+    # rozvržení na šířku se kontroluje před renderem šířky; chyba vyřadí jen šířku, varianta zůstane platná na výšku
+    calls: list[str] = []
+
+    def layout(card, template, orientation="portrait"):
+        calls.append(orientation)
+        return ["scene:s-hook: mimo bezpečnou zónu"] if orientation == "landscape" else []
+    monkeypatch.setattr(gen, "check_layout", layout)
+    r = _run(tmp_path)
+    assert fake["landscape"] == []  # render_reel s orientation="landscape" se nezavolal
+    assert calls.count("landscape") == 3
+    assert r.ok and all(v.ok and v.video and v.video_landscape is None and not v.errors for v in r.variants)
+    for v in r.variants:
+        assert v.warnings == ["video na šířku vynecháno: rozvržení: scene:s-hook: mimo bezpečnou zónu"]
+    assert not list((tmp_path / "out").glob("variant-*/*-sirka.mp4"))
+
+
+def test_pad_kontroly_rozvrzeni_sirky_nevyradi_variantu(tmp_path, fake, monkeypatch):
+    def layout(card, template, orientation="portrait"):
+        if orientation == "landscape":
+            raise RuntimeError("Chromium spadl")
+        return []
+    monkeypatch.setattr(gen, "check_layout", layout)
+    r = _run(tmp_path)
+    assert fake["landscape"] == []
+    assert r.ok and all(v.ok and v.video and v.video_landscape is None for v in r.variants)
+    assert all(any("rozvržení" in w and "kontrola rozvržení selhala" in w and "Chromium spadl" in w
+                   for w in v.warnings) for v in r.variants)
 
 
 def test_sablona_bez_sirky(tmp_path, fake, monkeypatch):
@@ -491,8 +521,8 @@ def test_oprava_jen_vadnych_s_chybou(tmp_path, fake, monkeypatch):
     err = "scene:s-hook: přetéká o 3 px (hook.unit 7 znaků, title 41 znaků)"
     seen = {"n": 0}
 
-    def layout(card, template):
-        if card.get("format") == "pn":
+    def layout(card, template, orientation="portrait"):
+        if card.get("format") == "pn" and orientation == "portrait":
             seen["n"] += 1
             if seen["n"] == 1:
                 return [err]
@@ -567,9 +597,10 @@ def test_platna_bez_renderu_se_pri_renderu_zkontroluje(tmp_path, fake, monkeypat
     _run(tmp_path, render=False)
     assert _state(tmp_path)["variants"]["2"]["state"] == "platna"
     checked = []
-    monkeypatch.setattr(gen, "check_layout", lambda card, template: checked.append(template) or [])
+    monkeypatch.setattr(gen, "check_layout",
+                        lambda card, template, orientation="portrait": checked.append(orientation) or [])
     r = _run(tmp_path)
-    assert len(fake["calls"]) == 1 and len(checked) == 3 and r.ok and all(v.video for v in r.variants)
+    assert len(fake["calls"]) == 1 and checked.count("portrait") == 3 and r.ok and all(v.video for v in r.variants)
 
 
 # --- F3: fáze práce (on_stage) a zrušení (should_stop) ---

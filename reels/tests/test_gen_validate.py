@@ -119,9 +119,31 @@ def test_layout_preteceni_neprojde(monkeypatch):
     # šablony samy zkracují na celé slovo (ani 3000 znaků nepřeteče), proto se pojistka zkouší podvrženým měřením
     import hlidac_reels.render as render
     boxes = {"scene:s-hook": {"top": 100, "bottom": 900, "left": 60, "right": 1020, "overflow": True, "cut_mid_word": False}}
-    monkeypatch.setattr(render, "measure_blocks", lambda card, template: boxes)
+    monkeypatch.setattr(render, "measure_blocks", lambda card, template, orientation="portrait": boxes)
     errs = check_layout(load_fixture("card-1-v2.json"), "template_v2")
     assert any("přetéká" in e for e in errs) and any("zón" in e for e in errs)
+
+
+def test_check_layout_na_sirku_ma_vlastni_zonu(monkeypatch):
+    # na šířku (1920 × 1080) platí render.LANDSCAPE_SAFE px dokola, na výšku zóny Instagramu; texty chyb stejné
+    import hlidac_reels.render as render
+    seen: list[str] = []
+    boxes = {"scene:s-hook": {"top": 200, "bottom": 900, "left": 60, "right": 1500, "overflow": False,
+                              "cut_mid_word": False}}
+
+    def measure(card, template, orientation="portrait"):
+        seen.append(orientation)
+        return boxes
+    monkeypatch.setattr(render, "measure_blocks", measure)
+    card = load_fixture("v3-cesta-311.json")
+    assert check_layout(card, "template_v3", orientation="landscape") == []
+    assert seen == ["landscape"]
+    assert check_layout(card, "template_v3") == ["scene:s-hook: mimo bezpečnou zónu"]
+    assert seen == ["landscape", "portrait"]
+    # scéna, která na výšku projde, na šířku přesahuje spodní okraj (1080 - 60)
+    boxes["scene:s-hook"] = dict(boxes["scene:s-hook"], bottom=1040, right=900)
+    assert check_layout(card, "template_v3") == []
+    assert check_layout(card, "template_v3", orientation="landscape") == ["scene:s-hook: mimo bezpečnou zónu"]
 
 
 @pytest.mark.parametrize("key", ["verified", "quote", "quote_source"])

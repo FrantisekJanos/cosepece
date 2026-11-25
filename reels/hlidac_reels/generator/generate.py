@@ -131,10 +131,21 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
 
 
 def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
-    """Video na šířku k platné variantě; chyba jde do v.warnings, varianta zůstane platná na výšku."""
+    """Video na šířku k platné variantě; chyba jde do v.warnings, varianta zůstane platná na výšku.
+
+    Před renderem se zkontroluje rozvržení na šířku (bezpečná zóna, přetečení); chyba vyřadí jen šířku.
+    """
     if not has_landscape(v.template):
         return
     video = portrait.with_name(portrait.stem + "-sirka.mp4")
+    try:
+        layout_errs = check_layout(card, v.template, orientation="landscape")
+    except Exception as e:  # noqa: BLE001 — pád kontroly šířky variantu nevyřadí
+        layout_errs = [f"kontrola rozvržení selhala: {type(e).__name__}: {e}"]
+    if layout_errs:
+        v.warnings.append("video na šířku vynecháno: rozvržení: " + "; ".join(layout_errs))
+        video.unlink(missing_ok=True)  # šířka z dřívějšího renderu by ke kartě už nepatřila
+        return
     try:
         render_reel(Card.from_json(card), video, template=v.template, orientation="landscape")
         errs = media_validate(probe(video), orientation="landscape")

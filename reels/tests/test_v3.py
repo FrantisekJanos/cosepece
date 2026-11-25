@@ -4,9 +4,11 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
+import hlidac_reels
 from conftest import FIXTURES, load_fixture
 from hlidac_reels.card import Card
 from hlidac_reels.render import LANDSCAPE_SAFE, _page, audio_cues, measure_blocks, render_reel, scene_ids, stamps_for
@@ -16,6 +18,9 @@ SAFE = {"top": 150, "bottom": 1920 - 340, "left": 60, "right": 1020}
 # na šířku (1920 × 1080, X.com): stejný okraj dokola
 SAFE_LAND = {"top": LANDSCAPE_SAFE, "bottom": 1080 - LANDSCAPE_SAFE, "left": LANDSCAPE_SAFE, "right": 1920 - LANDSCAPE_SAFE}
 ALL = sorted(p.name for p in FIXTURES.glob("v3-*.json"))
+# vzorové karty, které generátor dává modelu (gen/examples)
+EXAMPLES = Path(hlidac_reels.__file__).parent / "generator" / "examples"
+EXAMPLE_CARDS = sorted(p.name for p in EXAMPLES.glob("v3-*.json"))
 COMMON = {"s-hook", "s-ctx", "s-end"}
 PREFIX = {"cesta": ("s-c-",), "zmena": ("s-z-",), "rozprava": ("s-r-",), "pn": ("s-p-",)}
 LONG = "Velmi dlouhý text, který má prověřit vměstnání do bezpečné zóny a zkrácení na celé slovo bez přetečení. " * 6
@@ -211,6 +216,16 @@ def test_long_texts_stay_in_safe_zone(name):
 @pytest.mark.parametrize("name", ALL)
 def test_landscape_fixture_blocks_in_safe_zone(name):
     _assert_safe(measure_blocks(_card(name), V3, "landscape"), SAFE_LAND)
+
+
+@pytest.mark.render
+@pytest.mark.parametrize("name", EXAMPLE_CARDS)
+def test_vzorove_karty_projdou_kontrolou_na_sirku(name):
+    # generátor kontroluje rozvržení na šířku před renderem šířky (zóna SAFE_LAND); vzorové karty modelu musí projít
+    from hlidac_reels.generator.validate import check_layout
+
+    raw = json.loads((EXAMPLES / name).read_text(encoding="utf-8"))
+    assert check_layout(raw, V3, orientation="landscape") == []
 
 
 @pytest.mark.render

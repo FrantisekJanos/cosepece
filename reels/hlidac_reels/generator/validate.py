@@ -242,11 +242,20 @@ def _overflow_text(box: dict) -> str:
     return f"{text} ({', '.join(fields)})" if fields else text
 
 
-def check_layout(card: dict, template: str) -> list[str]:
-    """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium)."""
-    from ..render import measure_blocks
+def check_layout(card: dict, template: str, orientation: str = "portrait") -> list[str]:
+    """Bezpečná zóna a přetečení textu po vměstnání (potřebuje Chromium).
 
-    boxes = measure_blocks(Card.from_json(card), template)
+    Na výšku platí zóny Instagramu (SAFE), na šířku (1920 × 1080) render.LANDSCAPE_SAFE px dokola; texty chyb stejné.
+    """
+    from ..render import LANDSCAPE_SAFE, SIZES, measure_blocks
+
+    if orientation == "landscape":
+        width, height = SIZES["landscape"]
+        safe = {"top": LANDSCAPE_SAFE, "bottom": height - LANDSCAPE_SAFE,
+                "left": LANDSCAPE_SAFE, "right": width - LANDSCAPE_SAFE}
+    else:
+        safe = SAFE
+    boxes = measure_blocks(Card.from_json(card), template, orientation=orientation)
     errs: list[str] = []
     for name, b in boxes.items():
         if not name.startswith("scene:"):
@@ -255,6 +264,6 @@ def check_layout(card: dict, template: str) -> list[str]:
             errs.append(f"{name}: {_overflow_text(b)}")
         if b.get("cut_mid_word"):
             errs.append(f"{name}: text useknutý uprostřed slova")
-        if b["top"] < SAFE["top"] or b["bottom"] > SAFE["bottom"] or b["left"] < SAFE["left"] or b["right"] > SAFE["right"]:
+        if b["top"] < safe["top"] or b["bottom"] > safe["bottom"] or b["left"] < safe["left"] or b["right"] > safe["right"]:
             errs.append(f"{name}: mimo bezpečnou zónu")
     return errs

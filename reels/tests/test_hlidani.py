@@ -52,7 +52,8 @@ def conn(monkeypatch):
     c = db.connect()
     db.migrate(c)
     with c.cursor() as cur:
-        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; TRUNCATE reel_jobs RESTART IDENTITY")
+        cur.execute("TRUNCATE reel_queue RESTART IDENTITY; TRUNCATE reel_state; TRUNCATE reel_jobs RESTART IDENTITY; "
+                    "TRUNCATE reel_events RESTART IDENTITY")
         cur.execute(TABULKY)
         cur.execute(f"SET search_path TO {SCHEMA}, public")
     c.commit()
@@ -222,6 +223,163 @@ def test_souhrn_v_8_rano_jednou_denne(conn):
     hlidani.mark_summary(conn, day)
     assert hlidani.summary_due(conn, NOW) is None
     assert hlidani.summary_due(conn, NOW + timedelta(days=1)) == "2026-11-22"
+
+
+# --- Reels (F5) ----------------------------------------------------------------
+
+def _reel(conn, n: int, **kw) -> int:
+    from hlidac_reels import queue
+    return queue.add(conn, video_path=f"v{n}.mp4", video_sha256=f"sha{n}", caption=f"c{n}", **kw)
+
+
+def _sent_set(conn, set_id: int, sent_at: datetime, n: int = 2) -> list[int]:
+    """Sada n variant odeslaná ke schválení v sent_at (stav pending, nedotčená)."""
+    from hlidac_reels import queue
+    ids = [_reel(conn, set_id * 10 + v, source="manual", ct=221, set_id=set_id, variant=v) for v in range(1, n + 1)]
+    for i in ids:
+        assert queue.transition(conn, i, "queued", "pending", sent_at=sent_at)
+    return ids
+
+
+def _job(conn, source: str = "manual", ct: int | None = 221, **cols) -> int:
+    """Úloha generátoru; cols = sloupce reel_jobs nastavené po založení (status, claimed_at, lease_until…)."""
+    from hlidac_reels import jobs
+    job_id = jobs.add(conn, source=source, ct=ct)
+    if cols:
+        sets = ", ".join(f"{k} = %s" for k in cols)
+        sql(conn, f"UPDATE reel_jobs SET {sets} WHERE id = %s", (*cols.values(), job_id))
+    return job_id
+
+
+def _findings(conn, now=NOW) -> dict:
+    from hlidac_reels import hlidani
+    return {f.key: f for f in hlidani.status(conn, now).findings}
+
+
+def _reels_line(conn, now=NOW) -> str:
+    from hlidac_reels import hlidani
+    return next(line for line in hlidani.status(conn, now).lines if line.startswith("Reels ke schválení"))
+
+
+def test_reels_nerozhodnuta_jednotka_po_24_h(conn):
+    from hlidac_reels import hlidani, queue
+    assert _reels_line(conn) == "Reels ke schválení: nic nečeká"
+    # 20. 11. 8:05 UTC = 9:05 v Praze (přes 27 h), druhá sada před 2 h
+    old = _sent_set(conn, 6, datetime(2026, 11, 20, 8, 5, tzinfo=timezone.utc))
+    _sent_set(conn, 7, NOW - timedelta(hours=2))
+    assert _reels_line(conn) == "Reels ke schválení: 2 (nejstarší sada #6 od 20. 11. 9:05)"
+    f = _findings(conn)
+    assert list(f) == ["reels_ceka"] and f["reels_ceka"].alert is False
+    assert "sada #6" in f["reels_ceka"].text and "sada #7" not in f["reels_ceka"].text
+    # jen souhrn a /stav, žádná výstraha
+    assert hlidani.check(conn, NOW) == ([], [])
+    assert f["reels_ceka"].text in hlidani.summary_text(conn, NOW)
+    # vlastník starou sadu zamítl: zbývá sada před 2 h, bez nálezu
+    for i in old:
+        assert queue.transition(conn, i, "pending", "rejected", decided_at=NOW)
+    assert _findings(conn) == {}
+    assert _reels_line(conn) == "Reels ke schválení: 1 (nejstarší sada #7 od 21. 11. 11:00)"
+    assert "Vše v pořádku." in hlidani.summary_text(conn, NOW)
+
+
+def test_reels_held_jen_v_souhrnu(conn):
+    from hlidac_reels import hlidani, queue
+    rid = _reel(conn, 1, source="manual", ct=221)
+    assert queue.transition(conn, rid, "queued", "held", send_attempts=5, send_error="Telegram timeout")
+    f = _findings(conn)
+    assert list(f) == ["reels_held"] and f["reels_held"].alert is False and "video #1" in f["reels_held"].text
+    assert hlidani.check(conn, NOW) == ([], [])
+    assert queue.transition(conn, rid, "held", "rejected", decided_at=NOW)
+    assert _findings(conn) == {}
+
+
+def test_reels_pozastaveny_worker(conn):
+    from hlidac_reels import hlidani, queue
+    queue.set_state(conn, "worker_state", json.dumps({
+        "state": "paused", "reason": "limit", "detail": None,
+        "until": datetime(2026, 11, 21, 13, 5, tzinfo=timezone.utc).isoformat(), "at": NOW.isoformat()}))
+    f = _findings(conn)
+    assert list(f) == ["reels_pauza"] and f["reels_pauza"].alert is False
+    assert f["reels_pauza"].text == ("PC s generátorem je pozastavené: vyčerpaný limit předplatného (do 14:05). "
+                                     "Zadání ve frontě počkají.")
+    assert hlidani.check(conn, NOW) == ([], [])
+    queue.set_state(conn, "worker_state", json.dumps({"state": "running", "reason": None, "detail": None}))
+    assert _findings(conn) == {}
+    # nečitelný stav = bez nálezu
+    queue.set_state(conn, "worker_state", "{")
+    assert _findings(conn) == {}
+
+
+def test_reels_vydani_bez_znamky_zivota(conn):
+    from hlidac_reels import hlidani
+    # PC bylo vidět před 10 min (12:50 v Praze), vydání propadlo před 10 min
+    job = _job(conn, status="claimed", claimed_at=NOW - timedelta(minutes=40),
+               lease_until=NOW - timedelta(minutes=10))
+    _job(conn, ct=None, source="auto_pick", status="claimed", claimed_at=NOW - timedelta(minutes=90))
+    f = _findings(conn)
+    assert list(f) == ["reels_ticho"] and f["reels_ticho"].alert is False
+    assert f["reels_ticho"].text == (f"Zadání #{job} (tisk 221) bez známky života od 12:50. "
+                                     f"Zadání #{job + 1} (automatický výběr) bez známky života od 12:50.")
+    assert hlidani.check(conn, NOW) == ([], [])
+    sql(conn, "UPDATE reel_jobs SET lease_until = %s", (NOW + timedelta(minutes=10),))
+    assert _findings(conn) == {}
+
+
+def test_reels_neodeslane_udalosti_vystraha_a_obnoveni(conn):
+    from hlidac_reels import events, hlidani
+    urgent = events.add(conn, "failed", job_id=1, urgency=events.URGENT)
+    # 11:05 UTC = 12:05 v Praze (55 min): ještě ne
+    sql(conn, "UPDATE reel_events SET at = %s WHERE id = %s", (NOW - timedelta(minutes=55), urgent))
+    assert _findings(conn) == {}
+    sql(conn, "UPDATE reel_events SET at = %s WHERE id = %s", (NOW - timedelta(hours=2), urgent))
+    new, rec = hlidani.check(conn, NOW)
+    assert [f.key for f in new] == ["reels_udalosti"] and rec == []
+    assert new[0].text == "1 zpráva generátoru Reels čeká na odeslání déle než 1 h (nejstarší od 21. 11. 11:00)."
+    assert hlidani.check(conn, NOW) == ([], [])
+    events.mark_sent(conn, [urgent])
+    assert hlidani.check(conn, NOW) == ([], ["Zprávy generátoru Reels zase odcházejí do Telegramu."])
+    assert hlidani.check(conn, NOW) == ([], [])
+    # do denního souhrnu (urgency 2) a jen historie (0): bez nálezu
+    for urgency in (events.SUMMARY, events.HISTORY):
+        e = events.add(conn, "failed", job_id=2, urgency=urgency, dedupe=f"x:{urgency}")
+        sql(conn, "UPDATE reel_events SET at = %s WHERE id = %s", (NOW - timedelta(hours=2), e))
+    assert _findings(conn) == {}
+    # víc zpráv: množné číslo
+    for n in (3, 4):
+        e = events.add(conn, "silent", job_id=n, urgency=events.URGENT, dedupe=f"silent:{n}")
+        sql(conn, "UPDATE reel_events SET at = %s WHERE id = %s", (NOW - timedelta(hours=n), e))
+    assert _findings(conn)["reels_udalosti"].text == ("2 zprávy generátoru Reels čekají na odeslání déle než 1 h "
+                                                      "(nejstarší od 21. 11. 9:00).")
+
+
+def test_reels_pc_offline_jen_s_vyzadanou_ulohou(conn):
+    from hlidac_reels import hlidani, jobs, queue
+    # pozastavené PC (limit předplatného) dál posílá heartbeat: vyžádané zadání čeká, výstraha nepřijde
+    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(minutes=5)).isoformat())
+    queue.set_state(conn, "worker_state", json.dumps({"state": "paused", "reason": "limit"}))
+    manual = _job(conn)
+    assert "reels_pc" not in _findings(conn)
+    assert hlidani.check(conn, NOW) == ([], [])
+    # heartbeat ustal před 40 min (12:20 v Praze): výstraha jednou
+    queue.set_state(conn, "worker_seen_at", (NOW - timedelta(minutes=40)).isoformat())
+    auto = _job(conn, source="auto_pick", ct=None)
+    new, rec = hlidani.check(conn, NOW)
+    assert [f.key for f in new] == ["reels_pc"] and rec == []
+    assert new[0].text == (f"PC s generátorem neodpovídá od 21. 11. 12:20 a čekají vyžádaná zadání: "
+                           f"#{manual}, #{auto}.")
+    assert hlidani.check(conn, NOW) == ([], [])
+    # vlastník vyžádaná zadání zrušil: jedna zpráva o obnovení
+    assert jobs.cancel(conn, manual) and jobs.cancel(conn, auto)
+    assert hlidani.check(conn, NOW) == ([], ["PC s generátorem se ozvalo, nebo už nečeká žádné vyžádané zadání."])
+    assert hlidani.check(conn, NOW) == ([], [])
+    # automatické zadání (fresh) výstrahu nespustí
+    _job(conn, source="fresh", ct=300)
+    assert "reels_pc" not in _findings(conn)
+    # PC zatím nebylo vidět a čeká vyžádané zadání
+    sql(conn, "DELETE FROM reel_state WHERE key = 'worker_seen_at'")
+    queued = _job(conn, ct=400)
+    assert _findings(conn)["reels_pc"].text == (f"PC s generátorem zatím nebylo vidět a čeká vyžádané zadání: "
+                                                f"#{queued}.")
 
 
 # --- bot ---------------------------------------------------------------------

@@ -13,6 +13,8 @@ from .queue import _tx
 _ORDER = "ORDER BY CASE source WHEN 'manual' THEN 0 WHEN 'auto_pick' THEN 1 ELSE 2 END, created_at, id"
 # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min (ReelJobs::CLAIM_TIMEOUT_MIN)
 CLAIM_TIMEOUT = timedelta(minutes=60)
+# PC bez heartbeatu (reel_state worker_seen_at) déle než tohle neodpovídá (hlídání, stav PC v /fronta)
+WORKER_STALE = timedelta(minutes=30)
 ACTIVE = ("queued", "claimed")  # úloha ve frontě nebo u workeru; ostatní stavy jsou konečné
 RETRYABLE = ("failed", "cancelled", "expired")  # konečné stavy, ze kterých jde Zkusit znovu
 

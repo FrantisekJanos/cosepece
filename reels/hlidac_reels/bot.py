@@ -115,7 +115,8 @@ HELP = ("Příkazy: /fronta (přehled: na co která položka čeká), /dalsi (po
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
         "/zrus <číslo zadání> (zrušit zadání ve frontě nebo rozpracované),\n"
-        "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
+        "/stav (čerstvost dat a Reels: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem,\n"
+        "videa ke schválení, zprávy, které neodešly),\n"
         "/autopilot on|off (PN z /pn zveřejnit bez schválení; bez argumentu stav).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
         "Ze sady variant vyber jednu nebo víc tlačítky Vybrat, Hotovo zamítne zbylé.")

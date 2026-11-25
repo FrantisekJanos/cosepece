@@ -40,6 +40,7 @@ jde opakovat jen jednou (reel_state job_retried:<id>).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import html
 import json
 import logging
@@ -534,19 +535,19 @@ class Bot:
         except Exception as e:  # noqa: BLE001 - rozhodnutí je hotové, připomínka nesmí shodit handler
             log.warning("připomínka zbylých variant sady #%s selhala: %s", set_id, self._safe(e))
 
-    def _offer_set(self, set_id: int, remaining: bool = False) -> bool:
+    def _offer_set(self, set_id: int, remaining: bool = False, reminder: bool = False) -> bool:
         """Zpráva sady s tlačítky Vybrat pro nevybrané varianty; stará zpráva sady přijde o tlačítka.
 
         Když se zpráva nepošle, nic se nemění (položky zůstanou pending, zkusí to opravná smyčka a /fronta).
         Nevzniklé varianty (jobs.skipped) jsou jen v první zprávě sady (i když ji znovu posílá opravná smyčka
-        nebo Poslat tlačítka znovu), zpráva „zbývá varianta“ je neopakuje.
+        nebo Poslat tlačítka znovu), zpráva „zbývá varianta“ ani připomínka (reminder) je neopakují.
         """
         pending = self._unpicked_items(set_id)
         if not pending:
             return False
-        skipped = None if remaining else jobs.skipped(self.conn, set_id)
+        skipped = None if remaining or reminder else jobs.skipped(self.conn, set_id)
         # chyby nevzniklých variant píše generátor: bez tokenů jako ostatní hlášení
-        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped))
+        text = self._scrub(set_text(pending, remaining=remaining, skipped=skipped, reminder=reminder))
         msg_id = self._try("zpráva sady", self.tg.send_text, self.chat_id, text, set_buttons(pending))
         if not msg_id:
             return False
@@ -1220,16 +1221,42 @@ class Bot:
     # --- odeslání ke schválení -------------------------------------------
 
     def _send_preview(self, reel: Reel) -> int:
-        """Pošle náhled popisku, tlačítka u poslední zprávy; vrací id zprávy s tlačítky."""
+        """Pošle náhled popisku, tlačítka u poslední zprávy; vrací id zprávy s tlačítky.
+
+        Vícedílný náhled si odeslané nekoncové části pamatuje (reel_state preview_sent:<id>): když další část
+        neodejde, nový pokus se stejným textem pošle jen chybějící části (jiný text = celý náhled od první
+        části). Po odeslání poslední části se záznam smaže.
+        """
         parts = preview_parts(reel, threads=self.threads is not None)
+        key = f"{queue.PREVIEW_SENT_KEY}{reel.id}"
+        sha = hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+        sent = self._preview_sent(key, sha) if len(parts) > 1 else []
         msg_id = 0
         for i, part in enumerate(parts):
             last = i == len(parts) - 1
+            if not last and i < len(sent):
+                continue  # tahle část náhledu už v chatu je
             msg_id = self.tg.send_text(self.chat_id, part, approval_buttons(reel.id) if last else None)
             if not last:
                 # i na první část náhledu jde odpovědět novým popiskem
                 queue.set_state(self.conn, f"edit_msg:{msg_id}", str(reel.id))
+                sent.append(msg_id)
+                queue.set_state(self.conn, key, json.dumps({"sha": sha, "sent": sent}))
+        queue.delete_state(self.conn, key)
         return msg_id
+
+    def _preview_sent(self, key: str, sha: str) -> list[int]:
+        """Id už odeslaných nekoncových částí náhledu se stejným textem; jiný text nebo vadný záznam = []."""
+        try:
+            data = json.loads(queue.get_state(self.conn, key) or "null")
+        except ValueError:
+            return []
+        if not isinstance(data, dict) or data.get("sha") != sha:
+            return []
+        sent = data.get("sent")
+        if not isinstance(sent, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in sent):
+            return []
+        return sent
 
     def send_next(self, force: bool = False) -> None:
         """Pošle ke schválení nejvýš jednu jednotku (sadu nebo samostatné video) podle pravidel R1–R4.
@@ -1540,9 +1567,13 @@ class Bot:
                 log.warning("zpráva o vypršení (%s, sada %s, položky %s) neodešla", e.kind, e.set_id, e.reel_ids)
 
     def _remind(self) -> None:
-        """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště."""
+        """Jedna připomínka nedotčené automatické sady po AUTO_HOLD h; neodeslaná se zkusí příště.
+
+        Připomínka je nová zpráva sady s tlačítky Vybrat a Hotovo (stará zpráva o tlačítka přijde),
+        takže se dá vybrat rovnou z ní a nemusí se hledat původní zpráva nad videi.
+        """
         for set_id in queue.auto_reminders(self.conn, self.now()):
-            if self._say(messages.reminder_text(set_id)):
+            if self._offer_set(set_id, reminder=True):
                 queue.mark_reminded(self.conn, set_id)
 
     # --- hlídání čerstvosti dat ----------------------------------------------

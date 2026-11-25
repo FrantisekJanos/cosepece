@@ -51,15 +51,19 @@ def remaining_text(set_id: int, variants: list[int]) -> str:
     return f"Sada #{set_id}: zbývají varianty {', '.join(str(v) for v in variants)}. Vybrat, nebo Hotovo."
 
 
-def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None) -> str:
+def set_text(items: list[Reel], remaining: bool = False, skipped: list[dict] | None = None,
+             reminder: bool = False) -> str:
     """Zpráva sady nad tlačítky Vybrat: tisk a z každé nevybrané varianty první 2 řádky popisku.
 
     remaining=True: úvod „zbývá varianta N“ (po rozhodnutí o vybraných variantách).
+    reminder=True: úvod „Sada #N čeká 12 h“ (připomínka nedotčené automatické sady), varianty stejně jako
+    v první zprávě sady.
     skipped = nevzniklé varianty sady (jobs.skipped): na konci řádky „Varianta 3 (zmena) nevznikla: …“.
     """
     first = items[0]
-    if remaining:
-        head = remaining_text(first.set_id, [r.variant for r in items])
+    if remaining or reminder:
+        head = (reminder_text(first.set_id) if reminder
+                else remaining_text(first.set_id, [r.variant for r in items]))
         if first.ct is not None:
             head += f"\nTisk {first.ct}"
     else:

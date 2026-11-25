@@ -2043,6 +2043,100 @@ def test_ztraceny_nahled_se_doplni(bot, conn, api, media_dir):
     assert len(api.sent("sendVideo")) == 1
 
 
+def _message_handler(api, decide):
+    """Telegram, kde decide(n) vrátí odpověď pro n-té sendMessage (None = normální odpověď)."""
+    count = [0]
+
+    def handler(request):
+        if request.url.path.endswith("/sendMessage"):
+            count[0] += 1
+            resp = decide(count[0])
+            if resp is not None:
+                return resp
+        return api(request)
+    return handler
+
+
+# popisek delší než zpráva Telegramu: náhled má víc částí (preview_parts)
+LONG_CAPTION = "Dlouhý popisek. " + "x" * 5000
+
+
+def _pending_long(conn, media_dir) -> int:
+    from datetime import datetime, timezone
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir, caption=LONG_CAPTION)
+    assert queue.transition(conn, rid, "queued", "pending", sent_at=datetime.now(timezone.utc),
+                            telegram_video_msg_id=1)
+    return rid
+
+
+@pg
+def test_vicedilny_nahled_neopakuje_prvni_cast(conn, api, meta, media_dir):
+    """Druhá část náhledu neodešla (5xx): opravná smyčka pošle jen chybějící části, první už ne."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import approval_buttons, preview_parts
+    bad = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot = _make_bot(conn, _message_handler(api, lambda n: bad if n == 2 else None), meta, media_dir)
+    rid = _add(conn, media_dir, caption=LONG_CAPTION)
+    bot.send_next()
+    parts = preview_parts(_get(conn, rid))
+    assert len(parts) >= 3
+    r = _get(conn, rid)
+    assert r.status == "pending" and r.telegram_msg_id is None
+    first_id = api.next_id  # poslední přidělené id = první část náhledu (druhá neodešla)
+    assert api.texts() == [parts[0]]
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    saved = json.loads(queue.get_state(conn, key))
+    assert saved["sent"] == [first_id] and len(saved["sha"]) == 64
+    bot._repair_messages()
+    assert api.texts() == parts
+    assert api.texts().count(parts[0]) == 1
+    last = api.sent()[-1]
+    assert _buttons(last) == [d for _, d in approval_buttons(rid)]
+    assert not any(_buttons(b) for b in api.sent()[:-1])
+    assert _get(conn, rid).telegram_msg_id == api.next_id
+    assert queue.get_state(conn, key) is None
+    # na každou nekoncovou část jde odpovědět novým popiskem
+    assert queue.get_state(conn, f"edit_msg:{first_id}") == str(rid)
+    # další cyklus už nic neposílá
+    bot._repair_messages()
+    assert len(api.sent()) == len(parts)
+
+
+@pg
+def test_vicedilny_nahled_po_zmene_textu_posle_vse(bot, conn, api, media_dir):
+    """Uložené části patří jinému textu (jiný sha): náhled se pošle celý od první části."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import preview_parts
+    rid = _pending_long(conn, media_dir)
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    queue.set_state(conn, key, json.dumps({"sha": "0" * 64, "sent": [55, 56]}))
+    bot._repair_messages()
+    assert api.texts() == preview_parts(_get(conn, rid))
+    assert queue.get_state(conn, key) is None
+
+
+@pg
+def test_vicedilny_nahled_vadny_zaznam_posle_vse(conn, api, meta, media_dir):
+    """Nečitelný záznam preview_sent se bere jako žádný: odejdou všechny části."""
+    from hlidac_reels import queue
+    from hlidac_reels.messages import preview_parts
+    bad = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot = _make_bot(conn, _message_handler(api, lambda n: bad if n == 2 else None), meta, media_dir)
+    rid = _pending_long(conn, media_dir)
+    bot._repair_messages()
+    key = f"{queue.PREVIEW_SENT_KEY}{rid}"
+    sha = json.loads(queue.get_state(conn, key))["sha"]
+    parts = preview_parts(_get(conn, rid))
+    for raw in ("{", "[1]", json.dumps({"sha": sha, "sent": "x"}), json.dumps({"sha": sha, "sent": [1, "a"]})):
+        api.calls.clear()
+        queue.set_fields(conn, rid, telegram_msg_id=None)
+        queue.set_state(conn, key, raw)
+        bot._repair_messages()
+        assert api.texts() == parts, raw
+        assert queue.get_state(conn, key) is None
+
+
 @pg
 def test_sendretry_a_drop(bot, conn, api, media_dir):
     """Zkusit znovu vrátí celou held sadu do fronty s nulovými pokusy, Zahodit ji zamítne; jinde „už nečeká“."""
@@ -2334,8 +2428,64 @@ def test_pripominka_automaticke_sady_jednou(bot, conn, api, media_dir):
     bot.maybe_fresh()
     _later(bot, hours=13)
     bot.maybe_fresh()
-    assert api.texts().count("Sada #3 čeká 12 h. Vybrat, nebo Hotovo.") == 1
+    assert sum(t.startswith("Sada #3 čeká 12 h. Vybrat, nebo Hotovo.") for t in api.texts()) == 1
     assert {_get(conn, i).status for i in ids} == {"pending"}
+
+
+@pg
+def test_pripominka_12h_s_tlacitky(bot, conn, api, media_dir):
+    """Připomínka nedotčené automatické sady je nová zpráva sady s tlačítky; stará zpráva o ně přijde."""
+    from hlidac_reels import jobs
+    j = jobs.add(conn, source="manual", ct=221)
+    detail = {"variants": [1, 2, 3], "skipped": [{"n": 4, "format": "zmena", "errors": ["chybí text"]}]}
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done', finished_at=now(), detail=%s WHERE id=%s",
+                    (json.dumps(detail, ensure_ascii=False), j))
+    conn.commit()
+    ids = _add_set(conn, media_dir, j)
+    bot.send_next()
+    old_msg = _set_msg_id(conn, ids[0])
+    api.calls.clear()
+    _later(bot, hours=13)
+    bot._remind()
+    (body,) = api.sent()
+    text = body["text"]
+    assert text.startswith(f"Sada #{j} čeká 12 h. Vybrat, nebo Hotovo.\nTisk 221\n\n")
+    assert "Varianta 2 řádek 1\nřádek 2 varianty 2" in text and "řádek 3 se nevypíše" not in text
+    # nevzniklé varianty patří jen do první zprávy sady
+    assert "nevznikla" not in text
+    assert _buttons(body) == [f"pick:{i}" for i in ids] + [f"doneset:{j}"]
+    new_msg = _set_msg_id(conn, ids[0])
+    assert new_msg != old_msg and {_set_msg_id(conn, i) for i in ids} == {new_msg}
+    assert _edits(api) == [(old_msg, [])]
+    # druhá připomínka se neposílá
+    api.calls.clear()
+    bot._remind()
+    assert api.calls == []
+    # Vybrat z připomínky funguje, staré tlačítko ne
+    bot.handle(_cb(f"pick:{ids[0]}", msg_id=old_msg))
+    assert _previews(api) == []
+    bot.handle(_cb(f"pick:{ids[1]}", msg_id=new_msg))
+    assert [_buttons(b)[0] for b in _previews(api)] == [f"ok:{ids[1]}"]
+    assert _edits(api) == [(new_msg, [f"pick:{ids[0]}", f"pick:{ids[2]}", f"doneset:{j}"])]
+
+
+@pg
+def test_pripominka_neodeslana_zkusi_se_znovu(bot, conn, api, media_dir):
+    """Připomínka, která neodešla, se nezapíše jako odeslaná a stará zpráva sady si tlačítka nechá."""
+    from hlidac_reels import queue
+    ids = _add_set(conn, media_dir, 3)
+    bot.send_next()
+    old_msg = _set_msg_id(conn, ids[0])
+    api.calls.clear()
+    _later(bot, hours=13)
+    api.fail["sendMessage"] = httpx.Response(502, json={"ok": False, "description": "Bad Gateway"})
+    bot._remind()
+    assert queue.get_state(conn, f"{queue.REMINDED_KEY}3") is None
+    assert _edits(api) == [] and _set_msg_id(conn, ids[0]) == old_msg
+    del api.fail["sendMessage"]
+    bot._remind()
+    assert len(_set_offers(api)) == 1 and queue.get_state(conn, f"{queue.REMINDED_KEY}3") == "1"
 
 
 @pg

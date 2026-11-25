@@ -14,6 +14,9 @@ PICKED_KEY = "set_picked:"
 REMINDED_KEY = "reminded:"
 # reel_state held_msg:<reel_id> = id zprávy s tlačítky Zkusit znovu / Zahodit u jednotky v held
 HELD_MSG_KEY = "held_msg:"
+# reel_state preview_sent:<reel_id> = JSON {"sha": otisk textu všech částí náhledu, "sent": [id odeslaných
+# nekoncových částí]}; rozeslaný vícedílný náhled, jehož poslední část (s tlačítky) ještě neodešla
+PREVIEW_SENT_KEY = "preview_sent:"
 
 # Vyžádaná jednotka (uživatel si o ni řekl: /video, /pn, /vyber, ukázka) se posílá hned (R1);
 # automatická (source 'fresh') brzdí denní limit a jiná nedotčená automatická sada (R2)

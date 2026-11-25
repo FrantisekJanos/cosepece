@@ -2951,6 +2951,44 @@ def test_pn_tlacitko(bot, conn, api):
 
 
 @pg
+def test_pnnew_jen_pn_bez_videa(bot, conn, api):
+    # /pnnew: jen PN, ke kterým video není ani se nedělá; /pn dál ukazuje všechna
+    from hlidac_reels import jobs
+    _pn_bot(bot)
+    for k, cislo in enumerate((2401, 2402, 2403, 2404, 2405, 2406, 2407)):
+        _pn(conn, cislo, 300, cas=f"2026-11-24 0{k}:00:00")
+    active = jobs.add(conn, source="manual", ct=300, focus_pn=[2401])          # generuje se
+    published = jobs.add(conn, source="manual", ct=300, focus_pn=[2402, 2403])  # společné video, zveřejněné
+    rejected = jobs.add(conn, source="manual", ct=300, focus_pn=[2404])         # všechny varianty zamítnuté
+    failed = jobs.add(conn, source="manual", ct=300, focus_pn=[2405])           # selhalo
+    ingest = jobs.add(conn, source="manual", ct=300, focus_pn=[2406])           # hotové, sada ještě není ve frontě
+    with conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status='done' WHERE id = ANY(%s)", ([published, rejected, ingest],))
+        cur.execute("UPDATE reel_jobs SET status='failed' WHERE id = %s", (failed,))
+        for set_id, status in ((published, "published"), (published, "rejected"), (rejected, "rejected"), (rejected, "expired")):
+            cur.execute("INSERT INTO reel_queue (source, ct, format, video_path, video_sha256, caption, status, set_id) "
+                        "VALUES ('manual', 300, 'pn', '/x.mp4', md5(random()::text), 'x', %s, %s)", (status, set_id))
+    conn.commit()
+    assert active
+    bot.handle(_msg("/pnnew"))
+    body = api.sent()[-1]
+    assert body["text"].startswith("PN bez videa za posledních 48 h:")
+    assert _buttons(body) == ["pn:2407", "pn:2405", "pn:2404", "pnall:2407,2405,2404"]
+    bot.handle(_msg("/pn"))
+    assert len([b for b in _buttons(api.sent()[-1]) if b.startswith("pn:")]) == 7
+
+
+@pg
+def test_pnnew_nic_noveho(bot, conn, api):
+    from hlidac_reels import jobs
+    _pn_bot(bot)
+    _pn(conn, 2401, 300, cas="2026-11-24 01:00:00")
+    jobs.add(conn, source="manual", ct=300, focus_pn=[2401])
+    bot.handle(_msg("/pnnew"))
+    assert api.texts()[-1] == "Za posledních 48 h žádný PN bez videa."
+
+
+@pg
 def test_pn_tlacitko_vsechny_zvlast(bot, conn, api):
     # pnall: každé PN vlastní úloha (vlastní video), i PN k různým tiskům; neznámé PN a nesmysl se přeskočí
     from hlidac_reels import jobs

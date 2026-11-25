@@ -10,6 +10,7 @@ import hashlib
 import json
 import shutil
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -29,6 +30,14 @@ STATE_FILE = "state.json"
 PROMPTS = ("v2.md", "v3.md", "orchestrator.md")  # návody, jejichž verze patří do otisku vstupu
 # stavy variant ve state.json
 MISSING, BROKEN, VALID, RENDERED = "chybi", "vadna", "platna", "vyrenderovana"
+
+
+class Cancelled(Exception):
+    """Úloha už workeru nepatří (zrušená nebo propadlé vydání, 409 na progress): generování skončí na kontrole.
+
+    Kontrola je před každým během modelu a renderem; běžící claude -p se nepřerušuje. Stav v state.json zůstane,
+    další vydání téže úlohy pokračuje.
+    """
 
 
 @dataclass
@@ -52,6 +61,8 @@ class GenResult:
     ok: bool
     runs: list[dict] = field(default_factory=list)  # běhy claude -p tohoto vydání (timeout, návratový kód)
     model_runs: int = 0  # běhy modelu úlohy přes všechna vydání (rozpočet BUDGET_RUNS)
+    # platné varianty bez videa (render selhal): další vydání je jen vyrenderuje, bez běhu modelu
+    unrendered: list[int] = field(default_factory=list)
 
 
 def _append_notes(path: Path, notes: list[str]) -> None:
@@ -210,6 +221,12 @@ def _resume(v: Variant, entry: dict, out: Path, layout: bool) -> dict | bool | N
     return card if isinstance(card, dict) else False
 
 
+def _variants_note(numbers: list[int]) -> str:
+    """Poznámka k fázi: „varianta 3“, „varianty 2, 3“."""
+    nums = ", ".join(str(n) for n in numbers)
+    return f"varianta {nums}" if len(numbers) == 1 else f"varianty {nums}"
+
+
 def _render_variant(v: Variant, card: dict, out: Path, ct: int, landscape: bool) -> None:
     """Vyrenderuje platnou variantu na výšku (a na šířku); chyba na výšku jde do v.errors."""
     name = "v2" if v.format is None else v.format
@@ -231,7 +248,9 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
              model: str = DEFAULT_MODEL, hint: str | None = None, render: bool = True,
              timeout_s: int = 1200, landscape: bool = True,
              published: list[dict] | None = None, focus_pn: list[int] | None = None,
-             focus_info: list[dict] | None = None, autopilot: bool = False) -> GenResult:
+             focus_info: list[dict] | None = None, autopilot: bool = False,
+             on_stage: Callable[[str, str | None], None] | None = None,
+             should_stop: Callable[[], bool] | None = None) -> GenResult:
     """Sada variant k tisku: 1 = v2, další = v3 podle `formats` (obvykle 3, u /pn bez textu PN a u autopilota 2).
 
     focus_pn = video jen o těchto PN (/pn), focus_info = jejich údaje z claimu.
@@ -240,6 +259,9 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     Rozpočet BUDGET_RUNS běhů modelu platí přes všechna vydání. Jiný vstup = složka se vyčistí.
     Chyba prostředí claude -p (limit, přihlášení) bez zapsaných souborů vyhodí EnvError; rozpočet nespálí
     a hotová práce zůstane ve stavu pro další vydání.
+    on_stage(fáze, poznámka) hlásí fázi práce: ("model", None) před prvním během modelu, ("kontrola", None)
+    po každém běhu, ("oprava", "varianty 2, 3") před cíleným během, ("render", "varianta N") před renderem.
+    should_stop() se ptá před každým během modelu a renderem; True = výjimka Cancelled, stav zůstane.
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -279,12 +301,24 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
                              "video_landscape": _rel(v.video_landscape, out), "warnings": list(v.warnings)}
         _save_state(out, st)
 
-    def model_run(prompt: str, numbers: list[int]) -> set[int]:
-        """Jeden běh claude -p; vrací čísla variant, jejichž card.json ani caption.txt se nezměnily.
+    def stage(name: str, note: str | None = None) -> None:
+        if on_stage is not None:
+            on_stage(name, note)
+
+    def checkpoint() -> None:
+        """Před během modelu a renderem: úloha zrušená (nebo propadlé vydání) skončí, stav zůstane uložený."""
+        if should_stop is not None and should_stop():
+            raise Cancelled()
+
+    def model_run(prompt: str, numbers: list[int], name: str, note: str | None = None) -> set[int]:
+        """Jeden běh claude -p (fáze name); vrací čísla variant, jejichž card.json ani caption.txt se nezměnily.
 
         Chyba prostředí (limit, přihlášení) bez jediného zapsaného souboru ukončí generování výjimkou
         EnvError: oprava by skončila stejně a spálila by pokus. Takový běh se do rozpočtu nepočítá.
+        Po běhu ohlásí fázi „kontrola“ (kontrola variant následuje vždy).
         """
+        checkpoint()
+        stage(name, note)
         before = _fingerprints(out, numbers)
         r = run_claude(prompt, workdir=out, mcp_config=mcp_config, model=model, timeout_s=timeout_s)
         runs.append({"ok": r.ok, "returncode": r.returncode, "timed_out": r.timed_out,
@@ -295,6 +329,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
             raise EnvError(r.result or f"claude -p skončil s kódem {r.returncode}")
         st["model_runs"] += 1
         _save_state(out, st)
+        stage("kontrola")
         return unchanged
 
     def check(v: Variant, unchanged: set[int] | None = None) -> None:
@@ -318,6 +353,8 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
             card = cards.get(v.n)
             if card is None or not render or v.n in tried:
                 continue
+            checkpoint()
+            stage("render", f"varianta {v.n}")
             tried.add(v.n)
             _render_variant(v, card, out, ct, landscape)
             if not v.errors:
@@ -331,7 +368,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
                 if entries[str(v.n)]["state"] in (MISSING, BROKEN)}
 
     if st["model_runs"] == 0:  # první generování celé sady
-        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out), [v.n for v in variants])
+        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out), [v.n for v in variants], "model")
         for v in variants:
             check(v, unchanged)
     else:  # pokračování: obnovit, co minulá vydání udělala
@@ -346,7 +383,8 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     render_pending()
 
     while (bad := broken()) and st["model_runs"] < BUDGET_RUNS:  # cílené běhy jen nad stále vadnými
-        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out, repair=bad), sorted(bad))
+        unchanged = model_run(build_prompt(ct=ct, formats=formats, workdir=out, repair=bad), sorted(bad),
+                              "oprava", _variants_note(sorted(bad)))
         for v in variants:
             if v.n in bad:
                 check(v, unchanged)
@@ -355,8 +393,10 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     for v in variants:
         state = entries[str(v.n)]["state"]
         v.ok = state == RENDERED or (state == VALID and not render)
+    unrendered = [v.n for v in variants if render and entries[str(v.n)]["state"] == VALID]
     result = GenResult(ct=ct, formats=formats, variants=variants,
-                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs, model_runs=st["model_runs"])
+                       ok=sum(v.ok for v in variants) >= MIN_OK, runs=runs, model_runs=st["model_runs"],
+                       unrendered=unrendered)
     data = asdict(result)
     for item in data["variants"]:
         item["video"] = str(item["video"]) if item["video"] else None

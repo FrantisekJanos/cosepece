@@ -4,11 +4,19 @@
 //   GET  ?action=claim                      → {"job": {...}} nebo {"job": null}
 //   PUT  ?action=video&job_id=N&n=1..3      tělo = MP4 (≤ 30 MB) → <inbox>/<job_id>/variant-<n>.mp4
 //        &orientation=landscape             video na šířku 16:9 (volitelné) → variant-<n>-sirka.mp4
+//   POST ?action=progress {"job_id","stage"?,"note"?}  → {"ok": true, "lease_s": 900}: vydání platí 15 min od hlášení,
+//        stage = model|kontrola|oprava|render|upload (jiná nebo chybějící = jen prodloužení)
 //   POST ?action=result  {"job_id","variants":[{"n","template","format","caption","card"}],"skipped":[{"n","format","errors"}]}
-//        → manifest.json, úloha done (1–3 varianty; skipped = nevzniklé varianty, poznámka do reel_jobs.error)
-//        (manifest u varianty doplní "landscape": true/false podle nahraného videa na šířku)
-//   POST ?action=fail    {"job_id","error"}  → {"status": "queued"|"failed"}, složka úlohy se smaže
-//   POST ?action=heartbeat                  → {"ok": true}
+//        → manifest.json, úloha done (1–3 varianty; skipped = nevzniklé varianty, poznámka do reel_jobs.error,
+//        reel_jobs.detail = {"variants": [n…], "skipped": [...]}); manifest u varianty doplní "landscape": true/false
+//        podle nahraného videa na šířku
+//   POST ?action=fail    {"job_id","error","kind"?,"retry_after_s"?,"reason"?}  → {"status": "queued"|"failed"},
+//        složka úlohy se smaže; kind content|timeout = konečné, env|infra = zpět do fronty s odkladem retry_after_s
+//        (bez kind = 3 pokusy jako u staršího workeru); reason "limit" u env = čeká se na limit předplatného
+//   POST ?action=heartbeat  tělo prázdné (starší worker) nebo {"state": "running"|"paused","reason"?,"detail"?,"until"?}
+//        → {"ok": true}; stav workeru do reel_state.worker_state
+// Neplatný claim token → 409; když uživatel úlohu zrušil, 409 {"error", "status": "cancelled"} a složka úlohy
+// v mezisložce se smaže (video, result, progress i fail).
 // Mezisložku čte služba reels (bot): přebírá jen složky s manifest.json, který se proto zapisuje jako poslední
 // a atomicky (.part + rename). Soubory i složky jsou zapisovatelné pro všechny, protože bot běží pod jiným
 // uživatelem než web a po převzetí je maže (mezisložka je mimo kořen webu, jen ve volume obou kontejnerů).
@@ -61,12 +69,14 @@ final class ReelsApi
             return [403, ['error' => 'Neplatný token']];
         }
 
-        $methods = ['claim' => 'GET', 'video' => 'PUT', 'result' => 'POST', 'fail' => 'POST', 'heartbeat' => 'POST'];
+        $methods = ['claim' => 'GET', 'video' => 'PUT', 'result' => 'POST', 'fail' => 'POST', 'heartbeat' => 'POST', 'progress' => 'POST'];
         if (!isset($methods[$action]) || $methods[$action] !== $method) {
             return [400, ['error' => 'Neznámá akce']];
         }
         if ($action === 'heartbeat') {
-            $this->jobs->heartbeat();
+            // starší worker posílá prázdné tělo: stav workeru se pak nemění
+            $state = $body !== '' && strlen($body) <= self::MAX_JSON_BYTES ? json_decode($body, true) : null;
+            $this->jobs->heartbeat(is_array($state) ? $state : null);
             return [200, ['ok' => true]];
         }
 
@@ -84,8 +94,9 @@ final class ReelsApi
             }
             return [200, ['job' => $job]];
         }
-        // fail musí projít i bez mezisložky (úloha se vrátí do fronty), video a result ji potřebují
-        if ($inbox === null && $action !== 'fail') {
+        // fail a progress musí projít i bez mezisložky (úloha se vrátí do fronty, vydání se prodlouží),
+        // video a result ji potřebují
+        if ($inbox === null && $action !== 'fail' && $action !== 'progress') {
             return $noInbox;
         }
         $claim = (string)($headers['x-claim-token'] ?? '');
@@ -105,7 +116,7 @@ final class ReelsApi
                 return [413, ['error' => 'Video je větší než 30 MB']];
             }
             if (!$this->jobs->checkClaim($jobId, $claim)) {
-                return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
+                return $this->claimLost($jobId, $inbox);
             }
             if ($input === null) {
                 $input = fopen('php://memory', 'w+b');
@@ -125,13 +136,23 @@ final class ReelsApi
         }
         // ověření claimu před čímkoli dalším: výsledek pro vypršelou úlohu nesmí nic zapsat
         if (!$this->jobs->checkClaim($jobId, $claim)) {
-            return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
+            return $this->claimLost($jobId, $inbox);
+        }
+        if ($action === 'progress') {
+            $stage = is_string($data['stage'] ?? null) ? $data['stage'] : null;
+            $note = is_string($data['note'] ?? null) ? $data['note'] : null;
+            if ($this->jobs->progress($jobId, $claim, $stage, $note) !== 'ok') {
+                return $this->claimLost($jobId, $inbox);
+            }
+            return [200, ['ok' => true, 'lease_s' => ReelJobs::PROGRESS_LEASE_MIN * 60]];
         }
         if ($action === 'fail') {
             $error = is_string($data['error'] ?? null) && $data['error'] !== '' ? $data['error'] : 'Neznámá chyba';
-            $status = $this->jobs->fail($jobId, $claim, $error);
+            $kind = is_string($data['kind'] ?? null) ? $data['kind'] : null;
+            $reason = is_string($data['reason'] ?? null) ? $data['reason'] : null;
+            $status = $this->jobs->fail($jobId, $claim, $error, $kind, self::positiveInt($data['retry_after_s'] ?? null), $reason);
             if ($status === 'conflict') {
-                return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
+                return $this->claimLost($jobId, $inbox);
             }
             if ($inbox !== null) {
                 self::removeDir($inbox . '/' . $jobId);
@@ -159,12 +180,30 @@ final class ReelsApi
         if ($json === false || !self::writeAtomic($jobDir . '/manifest.json', $json)) {
             return [500, ['error' => 'manifest.json nejde zapsat']];
         }
-        if (!$this->jobs->finish($jobId, $claim, self::skippedNote($skipped))) {
-            // souběh: claim vypršel mezi kontrolou a dokončením → bot nesmí sadu převzít
+        $detail = ['variants' => array_column($variants, 'n'), 'skipped' => $skipped];
+        if (!$this->jobs->finish($jobId, $claim, self::skippedNote($skipped), $detail)) {
+            // souběh: claim vypršel nebo uživatel úlohu zrušil mezi kontrolou a dokončením → bot nesmí sadu převzít
             self::removeDir($jobDir);
-            return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
+            return $this->claimLost($jobId, $inbox);
         }
         return [200, ['ok' => true, 'variants' => count($variants)]];
+    }
+
+    /**
+     * Odpověď 409 na neplatný claim token. Když uživatel úlohu zrušil, smaže složku úlohy v mezisložce (bot
+     * ze zrušené úlohy nic nepřevezme) a vrátí "status": "cancelled", podle kterého worker běh ukončí.
+     *
+     * @return array{0:int,1:array}
+     */
+    private function claimLost(int $jobId, ?string $inbox): array
+    {
+        if ($this->jobs->status($jobId) === 'cancelled') {
+            if ($inbox !== null) {
+                self::removeDir($inbox . '/' . $jobId);
+            }
+            return [409, ['error' => 'Úloha byla zrušena', 'status' => 'cancelled']];
+        }
+        return [409, ['error' => 'Úloha už workeru nepatří (claim vypršel nebo skončila)']];
     }
 
     /**

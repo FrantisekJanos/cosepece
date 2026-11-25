@@ -90,3 +90,31 @@ ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_status_check;
 ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_status_check
     CHECK (status IN ('queued','pending','approved','publishing','published','rejected','failed','unknown',
                       'expired','withdrawn','held'));
+
+-- Protokol úloh (F3, 2026-11-24): odklad, vydání s prodloužením, fáze, druh chyby, stavová zpráva.
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS not_before    timestamptz;  -- úloha se nevydá dřív
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS wait_reason   text;         -- proč čeká (např. titulek AI)
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS lease_until   timestamptz;  -- vydání platí do (claim, progress)
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS stage         text;         -- fáze: model, kontrola, oprava, render, upload
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS stage_at      timestamptz;
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS fail_kind     text;         -- content, timeout, env, infra, data, lease
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS env_retries   integer NOT NULL DEFAULT 0;  -- návraty do fronty (env, infra)
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS detail        text;         -- JSON výsledku po variantách: {"variants": [n…], "skipped": [{n, format, errors}]}
+ALTER TABLE reel_jobs ADD COLUMN IF NOT EXISTS status_msg_id bigint;       -- stavová zpráva v Telegramu
+
+-- Události úloh a workeru: historie a fronta zpráv do Telegramu.
+-- urgency: 0 = jen historie, 1 = poslat hned, 2 = denní souhrn; dedupe brání dvojí události.
+CREATE TABLE IF NOT EXISTS reel_events (
+    id          bigserial PRIMARY KEY,
+    at          timestamptz NOT NULL DEFAULT now(),
+    kind        text NOT NULL,
+    job_id      bigint,
+    set_id      bigint,
+    reel_id     bigint,
+    detail      text,
+    dedupe      text UNIQUE,
+    urgency     smallint NOT NULL DEFAULT 0,
+    notified_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS reel_events_unsent_idx ON reel_events (urgency, id) WHERE notified_at IS NULL;
+CREATE INDEX IF NOT EXISTS reel_events_job_idx ON reel_events (job_id, id);

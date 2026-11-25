@@ -60,14 +60,143 @@ def _mentions(value, nums: set[int]) -> bool:
 
 
 def _focus_errors(card: dict, caption: str, focus_pn: list[int]) -> list[str]:
-    """Video k vybraným PN: karta i popisek musí zmínit číslo aspoň jednoho z nich."""
+    """Video k vybraným PN: karta i popisek musí zmínit číslo aspoň jednoho z nich.
+
+    `pn_autor` doplňuje normalizace ze zadání, a tak se nepočítá: o PN má mluvit obsah karty od modelu.
+    """
     nums = set(focus_pn)
     which = ", ".join(str(n) for n in sorted(nums))
     errs = []
-    if not _mentions(card, nums):
+    if not _mentions({k: v for k, v in card.items() if k != "pn_autor"}, nums):
         errs.append(f"karta nezmiňuje zadaný PN ({which}): video má být o něm")
     if not _mentions(caption, nums):
         errs.append(f"popisek nezmiňuje číslo zadaného PN ({which})")
+    return errs
+
+
+def has_word(text: str, word: str) -> bool:
+    """Je `word` v textu samostatným výrazem? „ANO“ v „(ANO)“ ano, v „ANO2011“ ne; i víceslovné „TOP 09“."""
+    return bool(word) and re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text) is not None
+
+
+# kolik znaků před jménem autora smí stát klub („za ANO Jan Novák“)
+CLUB_BEFORE = 40
+NAME_FOLLOWING = r"[^\S\n]*\(([^()\n]*)\)?"
+
+
+def _club_pattern(klub: str) -> str:
+    """Klub jako samostatný výraz; popisek „nezařazení“ splní i „nezařazená“ a „nezařazený“."""
+    if klub == "nezařazení":
+        return r"(?<!\w)[nN]ezařazen[áíý](?!\w)"
+    return rf"(?<!\w){re.escape(klub)}(?!\w)"
+
+
+def club_matches(text: str, klub: str) -> bool:
+    """Stojí klub v textu jako samostatný výraz (jako `has_word`, jen s tvary „nezařazený“, „nezařazená“)?"""
+    return bool(klub) and re.search(_club_pattern(klub), text) is not None
+
+
+def find_name(text: str, jmeno: str) -> tuple[int, int, str | None] | None:
+    """První výskyt celého jména v textu: `(začátek, konec, obsah závorky hned za jménem)`; bez závorky
+    je obsah `None`, bez jména vrací `None`.
+
+    Celé jméno: části oddělené libovolnými mezerami, ne část delšího slova ani dvojitého příjmení
+    („Novák-Dlouhý“). Skloňovaný tvar („Jana Nováka“) se nenajde. Normalizace podle toho klub vkládá,
+    kontrola ho podle toho hledá.
+    """
+    name = r"\s+".join(re.escape(part) for part in jmeno.split())
+    m = re.search(rf"(?<![\w-]){name}(?![\w-])", text) if name else None
+    if not m:
+        return None
+    paren = re.match(NAME_FOLLOWING, text[m.end():])
+    return m.start(), m.end(), paren.group(1) if paren else None
+
+
+def club_before(text: str, start: int, klub: str) -> bool:
+    """Stojí klub v `CLUB_BEFORE` znacích před pozicí `start` (před jménem)? Klub v závorce, která v tom úseku
+    končí nebo začíná (klub jiného autora, „Jan Novák (ANO), Jana Malá“), se nepočítá."""
+    lo = max(0, start - CLUB_BEFORE)
+    cut = max(text.rfind("(", lo, start), text.rfind(")", lo, start))
+    lo = cut + 1 if cut >= 0 else lo
+    return any(m.start() >= lo for m in re.finditer(_club_pattern(klub), text[:start]))
+
+
+def caption_authors(card: dict) -> list[dict]:
+    """Autoři zadaných PN z `card["pn_autor"]`, které má jmenovat popisek.
+
+    Nejvýš dva různí autoři (dvojice jméno + klub) v pořadí karty, každý se všemi svými čísly PN:
+    `{"jmeno", "klub", "cisla"}`. Klub chybí (`None`), když ho server neuvádí.
+    """
+    rows = card.get("pn_autor")
+    authors: list[dict] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("jmeno"), str) or not row["jmeno"].strip():
+            continue
+        jmeno = row["jmeno"].strip()
+        klub = row["klub"].strip() if isinstance(row.get("klub"), str) and row["klub"].strip() else None
+        author = next((a for a in authors if (a["jmeno"], a["klub"]) == (jmeno, klub)), None)
+        if author is None:
+            if len(authors) == 2:
+                continue
+            author = {"jmeno": jmeno, "klub": klub, "cisla": []}
+            authors.append(author)
+        cislo = row.get("cislo")
+        if isinstance(cislo, int) and not isinstance(cislo, bool) and cislo not in author["cisla"]:
+            author["cisla"].append(cislo)
+    return authors
+
+
+VOWELS = "aeiouyáéíóúůýě"
+
+
+def _surname_stem(jmeno: str) -> str:
+    """Kmen příjmení, který zůstane i ve skloňovaném tvaru; poslední slovo jména, u spojovníku první část.
+
+    Pohyblivé e na konci (e + souhláska) zmizí s poslední souhláskou („Pavel“ → „Pav“, „Zedníček“ → „Zedníč“,
+    „Poslanec“ → „Poslan“), koncová samohláska zmizí („Jurečka“ → „Jurečk“, „Malá“ → „Mal“), jinak zůstane celé
+    příjmení („Novák“, aby „Novela“ autora nesplnila). Nejméně tři znaky.
+    """
+    surname = jmeno.split()[-1].split("-")[0]
+    low = surname.lower()
+    if len(low) >= 2 and low[-2] == "e" and low[-1].isalpha() and low[-1] not in VOWELS:
+        stem = surname[:-2]
+    elif low and low[-1] in VOWELS:
+        stem = surname[:-1]
+    else:
+        stem = surname
+    return stem if len(stem) >= 3 else surname[:3]
+
+
+def _names_author(caption: str, jmeno: str) -> bool:
+    """Jmenuje popisek autora? Slovo, které začíná kmenem příjmení (rozlišuje velikost písmen)."""
+    return re.search(rf"(?<!\w){re.escape(_surname_stem(jmeno))}", caption) is not None
+
+
+def _club_error(caption: str, jmeno: str, klub: str, which: str) -> str | None:
+    """Klub autora u jeho jména: v závorce za prvním výskytem celého jména, nebo v `CLUB_BEFORE` znacích před ním
+    („za ANO Jan Novák“). Bez celého jména (skloňovaný tvar) stačí klub kdekoli v popisku."""
+    missing = f"popisek neuvádí klub autora {which}: „{jmeno} ({klub})“"
+    found = find_name(caption, jmeno)
+    if found is None:
+        return None if club_matches(caption, klub) else missing
+    start, _, paren = found
+    if paren is not None:
+        return None if club_matches(paren, klub) else (
+            f"popisek uvádí u autora {which} jiný klub: „{jmeno} ({paren})“, ze serveru ({klub})")
+    return None if club_before(caption, start, klub) else missing
+
+
+def _author_errors(card: dict, caption: str) -> list[str]:
+    """Video k vybraným PN: popisek jmenuje autora (stačí kmen příjmení) a u jeho jména klub, když ho server
+    uvádí."""
+    errs: list[str] = []
+    for a in caption_authors(card):
+        which = "PN " + ", ".join(str(n) for n in a["cisla"]) if a["cisla"] else "PN"
+        if not _names_author(caption, a["jmeno"]):
+            errs.append(f"popisek neuvádí autora {which} ({a['jmeno']})")
+        club_err = _club_error(caption, a["jmeno"], a["klub"], which) if a["klub"] else None
+        if club_err:
+            errs.append(club_err)
     return errs
 
 
@@ -100,6 +229,8 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
         errs.append(f"popisek nemá větu „{CLOSING}“")
     if focus_pn:
         errs += _focus_errors(card, caption, focus_pn)
+    if card.get("pn_autor"):  # doplňuje normalizace z údajů serveru o zadaných PN
+        errs += _author_errors(card, caption)
     return errs
 
 

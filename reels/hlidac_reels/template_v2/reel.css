@@ -48,7 +48,8 @@ i { font-style: normal; display: block; }
 .chip { align-self: flex-start; font: 500 34px/1.3 'IBM Plex Mono', monospace; color: var(--paper); background: var(--line);
   padding: 12px 24px; }
 .chip.dark { background: var(--ink); color: var(--paper) !important; }
-.rule { width: 260px; height: 16px; background: var(--red); transform-origin: 0 50%; }
+/* linka se ve sloupci nesmršťuje: při plné scéně by jinak měla 0 px, zmizela a fit() by přetečení neviděl */
+.rule { flex: none; width: 260px; height: 16px; background: var(--red); transform-origin: 0 50%; }
 
 /* slova: .w obal (u .mask ořezává), .wi vnitřek, který vyjíždí zdola */
 .w { display: inline-block; vertical-align: top; }
@@ -163,6 +164,12 @@ i { font-style: normal; display: block; }
 #who-sig-slips i { width: 34px; height: 46px; background: var(--paper); border-radius: 17px 17px 0 0; }
 #who-sig-kluby { display: flex; flex-wrap: wrap; gap: 14px; }
 #who-sig-kluby .klub { font-size: 34px; }
+
+/* titulek: autoři zadaných PN; řádek se zalamuje, jméno se nezkracuje, štítek klubu jede v textu hned za jménem
+   (obal .pna, písmo obalu určuje šířku mezery před štítkem), při zalomení zůstane u svého autora */
+#title-pn { flex-wrap: wrap; align-items: baseline; gap: 4px 36px; }
+#title-pn .pna { min-width: 0; font: 500 40px/1.4 'IBM Plex Mono', monospace; }
+#title-pn .klub { display: inline-block; white-space: nowrap; }
 
 /* co předkladatel řekl na plénu */
 #s-said .body { gap: 34px; }

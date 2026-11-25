@@ -104,9 +104,31 @@ class ReelsApi:
             payload["skipped"] = skipped
         self._request("POST", "result", claim_token=claim_token, payload=payload)
 
-    def fail(self, job_id: int, claim_token: str, error: str) -> str:
-        r = self._request("POST", "fail", claim_token=claim_token, payload={"job_id": job_id, "error": error})
+    def progress(self, job_id: int, claim_token: str, stage: str | None, note: str | None = None) -> dict:
+        """Průběh úlohy: prodlouží vydání (15 min) a zapíše fázi; 409 = úloha zrušena nebo vydání propadlo.
+
+        stage a note jdou jen, když nejsou None (bez stage = jen prodloužení). Starší server akci nezná: 400.
+        """
+        payload: dict = {"job_id": job_id}
+        if stage is not None:
+            payload["stage"] = stage
+        if note is not None:
+            payload["note"] = note
+        return self._request("POST", "progress", claim_token=claim_token, payload=payload)
+
+    def fail(self, job_id: int, claim_token: str, error: str, kind: str | None = None,
+             retry_after_s: int | None = None, reason: str | None = None) -> str:
+        """Chyba úlohy; kind = content|timeout (konečné), env|infra (zpět do fronty po retry_after_s).
+
+        Pole jdou jen, když nejsou None: fail bez kind je pro server dnešní chování (3 pokusy, bez odkladu).
+        """
+        payload: dict = {"job_id": job_id, "error": error}
+        for key, value in (("kind", kind), ("retry_after_s", retry_after_s), ("reason", reason)):
+            if value is not None:
+                payload[key] = value
+        r = self._request("POST", "fail", claim_token=claim_token, payload=payload)
         return str(r.get("status", ""))
 
-    def heartbeat(self) -> None:
-        self._request("POST", "heartbeat")
+    def heartbeat(self, state: dict | None = None) -> None:
+        """Worker žije; state = stav workeru {"state": "running"|"paused", ...}, None = prázdné tělo."""
+        self._request("POST", "heartbeat", payload=state)

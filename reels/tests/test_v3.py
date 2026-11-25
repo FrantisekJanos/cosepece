@@ -313,3 +313,119 @@ def test_regresni_karty_bez_preteceni(raw, orientation):
         assert check_layout(raw, V3) == []
     else:
         _assert_safe(measure_blocks(Card.from_json(raw), V3, "landscape"), SAFE_LAND)
+
+
+# ---------- F4: autor zadaného PN se štítkem klubu v háčku (karta.pn_autor ze serveru) ----------
+
+HK_PN_JS = """() => {
+  const row = document.getElementById('hk-pn');
+  const chips = [...row.querySelectorAll('.klub')].map(k => {
+    const s = getComputedStyle(k);
+    return {text: k.textContent, bg: s.backgroundColor, color: s.color, border: s.borderTopColor,
+            size: s.fontSize, height: k.getBoundingClientRect().height};
+  });
+  return {text: row.textContent, shown: row.offsetParent !== null, chips: chips};
+}"""
+# Review Focus 5: tři autoři s dlouhými jmény a nejdelším popiskem klubu, první z nich se třemi PN
+PN_AUTOR_LONG = [
+    {"cislo": 2376, "jmeno": "Jan Novák-Dlouhý", "klub": "nezařazení"},
+    {"cislo": 2377, "jmeno": "Jan Novák-Dlouhý", "klub": "nezařazení"},
+    {"cislo": 2378, "jmeno": "Jan Novák-Dlouhý", "klub": "nezařazení"},
+    {"cislo": 2379, "jmeno": "Gabriela Svárovská", "klub": "Motoristé"},
+    {"cislo": 2380, "jmeno": "Benjamin Činčila", "klub": "KDU-ČSL"},
+]
+
+
+def _hook_pn(card: Card) -> dict:
+    with _page(card, V3) as page:
+        return page.evaluate(HK_PN_JS)
+
+
+@pytest.mark.render
+def test_hook_autor_pn_se_stitkem():
+    card = _card("v3-pn-311.json", pn_autor=[{"cislo": 2315, "jmeno": "Marian Jurečka", "klub": "KDU-ČSL"}])
+    row = _hook_pn(card)
+    assert row["shown"]
+    assert "PN 2315 · Marian Jurečka" in row["text"], row["text"]
+    assert [c["text"] for c in row["chips"]] == ["KDU-ČSL"]
+
+
+@pytest.mark.render
+def test_hook_bez_klubu_bez_stitku():
+    # klub server nemá (člen vlády, chybí členství): jméno ano, štítek žádný
+    row = _hook_pn(_card("v3-pn-311.json", pn_autor=[{"cislo": 2315, "jmeno": "Marian Jurečka", "klub": None}]))
+    assert row["shown"] and "PN 2315 · Marian Jurečka" in row["text"], row["text"]
+    assert row["chips"] == []
+    # karta bez pn_autor: řádek skrytý
+    row = _hook_pn(_card("v3-pn-311.json"))
+    assert not row["shown"] and row["chips"] == []
+
+
+@pytest.mark.render
+def test_hook_dva_kluby_stejny_stitek():
+    # neutralita: jeden šedý štítek pro všechny kluby, žádné stranické barvy ani velikosti
+    card = _card("v3-pn-311.json", pn_autor=[{"cislo": 2315, "jmeno": "Jan Novák", "klub": "ANO"},
+                                             {"cislo": 2316, "jmeno": "Marian Jurečka", "klub": "KDU-ČSL"}])
+    chips = _hook_pn(card)["chips"]
+    assert [c["text"] for c in chips] == ["ANO", "KDU-ČSL"]
+    style = [{k: v for k, v in c.items() if k != "text"} for c in chips]
+    assert style[0] == style[1], style
+
+
+@pytest.mark.render
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+def test_hook_dlouha_jmena_nepretekaji(orientation):
+    from hlidac_reels.generator.validate import check_layout
+
+    raw = copy.deepcopy(json.loads(REGRESE[0].read_text(encoding="utf-8")))
+    raw["hook"] = HOOK_LONG
+    raw["pn_autor"] = PN_AUTOR_LONG
+    if orientation == "portrait":
+        assert check_layout(raw, V3) == []
+        boxes, safe = measure_blocks(Card.from_json(raw), V3), SAFE
+    else:
+        boxes, safe = measure_blocks(Card.from_json(raw), V3, "landscape"), SAFE_LAND
+        _assert_safe(boxes, safe)
+    b = boxes["pn_autor"]
+    assert b["visible"], b
+    assert b["top"] >= safe["top"] and b["bottom"] <= safe["bottom"], b
+    assert b["left"] >= safe["left"] and b["right"] <= safe["right"], b
+    # první dva autoři (u tří PN téhož autora dvě čísla a „a další“), třetí autor jen jako „a další“
+    text = " ".join(b["text"].split())
+    assert "PN 2376, 2377 a další · Jan Novák-Dlouhý" in text and "PN 2379 · Gabriela Svárovská" in text, text
+    assert "Činčila" not in text and text.endswith("a další"), text
+
+
+# ---------- F4: nejdelší popisky klubů v pruzích (rozprava s-r-kdo, autoři PN s-p-kolik) ----------
+
+KBAR_JS = """(id) => {
+  const sc = document.getElementById(id);
+  sc.style.display = 'block';
+  return {used: window.sceneIds().includes(id), chips: [...sc.querySelectorAll('.kbar .klub')].map(k => ({
+    text: k.textContent, scroll: k.scrollWidth, client: k.clientWidth, width: k.getBoundingClientRect().width,
+    size: getComputedStyle(k).fontSize, nar: k.parentNode.classList.contains('nar')}))};
+}"""
+
+
+@pytest.mark.render
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+def test_kbar_dlouhe_kluby_se_vejdou(orientation):
+    # data MCP nesou kódy psp.cz (MS, Nezařaz); popisky MOTORISTÉ a NEZAŘAZENÍ se nesmí oříznout
+    roz = copy.deepcopy(load_fixture("v3-rozprava-311.json"))
+    roz["rozprava"]["kluby"] = [{"klub": "Nezařaz", "projevu": 9}, {"klub": "MS", "projevu": 7},
+                                {"klub": "ANO2011", "projevu": 5}, {"klub": "KDU-ČSL", "projevu": 2}]
+    pn = copy.deepcopy(load_fixture("v3-pn-311.json"))
+    pn["pn"]["autori"] = [{"jmeno": "Jan Novák", "klub": "Nezařaz", "count": 9},
+                          {"jmeno": "Gabriela Svárovská", "klub": "MS", "count": 5},
+                          {"jmeno": "Marian Jurečka", "klub": "KDU-ČSL", "count": 4}]
+    for raw, scene, nar in ((roz, "s-r-kdo", False), (pn, "s-p-kolik", True)):
+        with _page(Card.from_json(raw), V3, orientation) as page:
+            res = page.evaluate(KBAR_JS, scene)
+        chips = res["chips"]
+        assert res["used"] and len(chips) >= 3, (scene, res)
+        assert {"nezařazení", "Motoristé"} <= {c["text"] for c in chips}, chips
+        for c in chips:
+            assert c["nar"] is nar, c
+            assert c["client"] > 0 and c["scroll"] <= c["client"], (scene, c)
+        # neutralita: v jednom seznamu stejná šířka i písmo štítku pro každý klub
+        assert len({c["width"] for c in chips}) == 1 and len({c["size"] for c in chips}) == 1, (scene, chips)

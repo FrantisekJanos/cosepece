@@ -6,6 +6,7 @@
 //   "zmena"    karta.zmena    = {body: [{kde, co, pred, po, citace, zdroj}], proc, pozor}
 //   "rozprava" karta.rozprava = {projevu, recniku, sub, kluby, neautorizovano, pro, namitky, odpovedi, ai_z_projevu}
 //   "pn"       karta.pn       = {count, authors, late_count, autori, jine_zakony, top} + volitelně karta.pn_dny
+// Háček všech formátů: volitelně karta.pn_autor = [{cislo, jmeno, klub}] (autoři zadaných PN a klub ke dni podání).
 // Animace a zvuk se popisují jednou (stavitel A(id)): každý krok má čas, průběh a případně zvukovou událost,
 // takže audioCues() vždy odpovídá obrazu.
 (function () {
@@ -13,7 +14,8 @@
 
   var STAMPS = { deadline_cut: 'ZKRÁTILI', pn_other_law: 'PŘÍLEPEK', p90_passed: '§ 90/2' };
   var RUBRIKA = { cesta: 'Cesta zákona', zmena: 'Co se doopravdy mění', rozprava: 'Rozprava v kostce', pn: 'Kdo co přidal' };
-  var KLUBY = { ANO2011: 'ANO', TOP09: 'TOP 09' };
+  // záloha pro zkratky psp.cz; server posílá už popisek z Clubs::label() (PHP), páry se musí shodovat
+  var KLUBY = { ANO2011: 'ANO', TOP09: 'TOP 09', MS: 'Motoristé', 'Nezařaz': 'nezařazení', 'Nezařazení': 'nezařazení' };
   var MAX_TOTAL = 40;    // strop délky videa (s); vysvětlující formáty potřebují víc času na čtení než v2
   var MIN_TOTAL = 15;
   var LEAD = 0.12;       // scéna začíná animovat až po odkrytí stěrkou
@@ -286,6 +288,37 @@
 
   // ---------- společné scény ----------
 
+  function pnAuthors(list) {
+    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub}] ze serveru, klub už jako popisek) seskupení
+    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá
+    var groups = [];
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+      if (!x || !x.jmeno || x.cislo == null || String(x.cislo) === '') return;
+      var jmeno = String(x.jmeno), klub = x.klub ? String(x.klub) : '';
+      var g = groups.filter(function (y) { return y.jmeno === jmeno && y.klub === klub; })[0];
+      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [] });
+      g.cisla.push(String(x.cislo));
+    });
+    return groups;
+  }
+
+  function fillPnAuthors(row, list) {
+    // „PN 2376 · Jan Novák“ a za ním šedý štítek klubu (jen když klub je), nejvýš dva autoři, pak „a další“;
+    // text a štítek jednoho autora drží jeden obal, aby se štítek při zalomení neoddělil od svého jména.
+    // Mezi jménem a štítkem je mezera (ne okraj): na začátku zalomeného řádku zmizí a štítek nebude odsazený
+    var groups = pnAuthors(list);
+    row.innerHTML = '';
+    groups.slice(0, 2).forEach(function (g) {
+      var nums = g.cisla.slice(0, 2).join(', ') + (g.cisla.length > 2 ? ' a další' : '');
+      var pna = add(mk('span', 'pna'), mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno));
+      if (g.klub) add(pna, document.createTextNode(' '), klubChip(g.klub, true));
+      row.appendChild(pna);
+    });
+    if (groups.length > 2) row.appendChild(mk('span', 'm', 'a další'));
+    row.style.display = groups.length ? '' : 'none';
+    return groups.length > 0;
+  }
+
   function buildHook(c) {
     var h = c.hook && c.hook.big != null && String(c.hook.big) !== '' ? c.hook : null;
     var a = A('s-hook', lim((c.title || '').length / 40, 0.8, 2));
@@ -294,6 +327,8 @@
     // podtitulek a meta se vměstnávají přes fit() jako ostatní texty (dlouhé jméno, datum a čas podání)
     fillPlain($('hk-sub'), h ? h.sub : '');
     fill($('hk-title'), c.title || c.nazev || '', function (t) { setWords($('hk-title'), t, true); });
+    // autor zadaného PN se nezkracuje: místo mu uvolní titulek přes fit()
+    var authors = fillPnAuthors($('hk-pn'), c.pn_autor);
     $('hk-faze').textContent = 'Fáze: ' + c.faze;
     var meta = [];
     if (c.typ_navrhu) meta.push(String(c.typ_navrhu));
@@ -330,6 +365,8 @@
       t = 1.15;
     }
     a.words($('hk-title'), t, 0.9);
+    // řádek autorů naběhne s titulkem, před štítkem fáze; délku scény neprodlužuje (končí dřív než meta)
+    if (authors) a.show($('hk-pn'), t + 0.8, -30, 0);
     a.pop($('hk-faze'), t + 1.0, 0.6);
     a.show($('hk-meta'), t + 1.15, -30, 0);
   }

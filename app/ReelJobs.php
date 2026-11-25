@@ -152,6 +152,12 @@ final class ReelJobs
                 }
             }
             $focus = self::parsePnArray($job['focus_pn'] ?? null);
+            // úloha k PN (/pn) čeká na rozbor AI všech zadaných PN, i když karta z titulku tisku existuje:
+            // video k PN bez rozboru nemá o čem mluvit (25. 11. vyšlo video „rozbor AI zatím není“)
+            if ($focus !== null && $focus !== [] && $this->aiPending($ct, $focus)) {
+                $this->deferOrFail($id, $ct, $focus, $now);
+                continue;
+            }
             $card = $this->cardV2($ct, $focus);
             if ($card === null) {
                 $this->deferOrFail($id, $ct, $focus, $now);

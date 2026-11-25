@@ -228,8 +228,8 @@ Mezisložka je volume `reelsinbox`: web do něj zapisuje, služba `reels` ho čt
 **Video k PN (`/pn`):**
 
 - `/pn` bez čísla: PN podané za posledních 48 h (podle `pn.cas`), nejvýš 10, nejnovější první, s autorem, časem
-  a titulkem rozboru AI. U každého tlačítko „Video k PN N“, u tisku s víc PN v seznamu navíc „Jedno video ze všech“
-  (z nejnovějších nejvýš 5 PN tisku),
+  a titulkem rozboru AI. U každého tlačítko „Video k PN N“, při dvou a víc PN navíc „Všechny zvlášť (N videí)“
+  (`pnall:`): ke každému PN seznamu samostatná úloha, jako `/pn 2376 2377`. Jedno společné video jen příkazem,
 - `/pn 2376`: úloha k jednomu PN; `/pn 2376 2377 2378`: tři samostatné úlohy (každá vlastní sada),
 - `/pn 2376+2377`: jedno video o obou PN; všechny musí patřit k jednomu tisku, nejvýš 5,
 - neznámý PN (ještě nedorazil synchronizací) i kombinaci PN z různých tisků bot odmítne s vysvětlením.

@@ -2862,9 +2862,10 @@ def test_pn_seznam_48h(bot, conn, api):
     assert "PN 2300" not in text
     assert "PN 2376 · tisk 300 · Jana Malá · 23. 11. 20:09" in text
     assert "Mění daň z nemovitostí" in text
-    assert _buttons(body) == ["pn:2380", "pn:2378", "pn:2377", "pn:2376", "pn:2376+2377+2378"]
+    # „Všechny“ = samostatné video ke každému PN seznamu, ne jedno společné video
+    assert _buttons(body) == ["pn:2380", "pn:2378", "pn:2377", "pn:2376", "pnall:2380,2378,2377,2376"]
     labels = [b["text"] for row in body["reply_markup"]["inline_keyboard"] for b in row]
-    assert labels[0] == "Video k PN 2380" and labels[-1] == "Jedno video ze všech (2376+2377+2378)"
+    assert labels[0] == "Video k PN 2380" and labels[-1] == "Všechny zvlášť (4 videa)"
 
 
 @pg
@@ -2923,7 +2924,7 @@ def test_pn_seznam_prazdny(bot, conn, api):
 
 
 @pg
-def test_pn_seznam_nejvys_10_a_skupina_nejvys_5(bot, conn, api):
+def test_pn_seznam_nejvys_10_a_vsechny_zvlast(bot, conn, api):
     _pn_bot(bot)
     for k in range(12):
         _pn(conn, 2400 + k, 300, cas=f"2026-11-24 0{k // 6}:{k % 6}0:00")  # 00:00 až 01:50
@@ -2931,8 +2932,9 @@ def test_pn_seznam_nejvys_10_a_skupina_nejvys_5(bot, conn, api):
     body = api.sent()[-1]
     buttons = _buttons(body)
     assert buttons[:10] == [f"pn:{2411 - k}" for k in range(10)]
-    # skupina z nejnovějších 5 PN tisku (limit jednoho videa)
-    assert buttons[10:] == ["pn:2407+2408+2409+2410+2411"]
+    # Všechny zvlášť = všech 10 PN ze seznamu, každé vlastní video
+    assert buttons[10:] == ["pnall:" + ",".join(str(2411 - k) for k in range(10))]
+    assert len(buttons[10].encode()) <= 64  # limit callback_data v Telegramu
 
 
 @pg
@@ -2946,6 +2948,23 @@ def test_pn_tlacitko(bot, conn, api):
     assert api.methods().count("answerCallbackQuery") == 2
     bot.handle(_cb("pn:abc"))
     assert jobs.pending(conn)[-1].focus_pn == [2376, 2377] and len(jobs.pending(conn)) == 2
+
+
+@pg
+def test_pn_tlacitko_vsechny_zvlast(bot, conn, api):
+    # pnall: každé PN vlastní úloha (vlastní video), i PN k různým tiskům; neznámé PN a nesmysl se přeskočí
+    from hlidac_reels import jobs
+    _pn(conn, 2376, 300)
+    _pn(conn, 2377, 300)
+    _pn(conn, 2380, 310)
+    bot.handle(_cb("pnall:2380,2377,2376"))
+    assert sorted((j.ct, j.focus_pn) for j in jobs.pending(conn)) == [(300, [2376]), (300, [2377]), (310, [2380])]
+    assert api.methods().count("answerCallbackQuery") == 1
+    # druhý stisk úlohy nezdvojí
+    bot.handle(_cb("pnall:2380,2377,2376"))
+    assert len(jobs.pending(conn)) == 3
+    bot.handle(_cb("pnall:abc"))
+    assert len(jobs.pending(conn)) == 3
 
 
 @pg

@@ -2076,6 +2076,18 @@ $f3R = $f3Row($f3Late);
 check('F3: úloha bez rozboru AI čeká 30 min, po 6 h selže', [$f3Waiting, [$f3C, $f3R['status'], $f3R['fail_kind'], $f3R['error']]],
     [[null, 'queued', 'ai_title', $rjClock + 1800, 0], [null, 'failed', 'data', 'rozbor AI zadaných PN nedorazil do 6 h']]);
 check('F3: čeká i úloha, kde rozbor chybí jen u některého zadaného PN', [$f3MixR['status'], $f3MixR['wait_reason']], ['queued', 'ai_title']);
+// /pn k tisku, který titulek z rozboru má (221): zadané PN bez rozboru AI nesmí jít do videa jen s kartou tisku
+// (25. 11. tak vyšlo video „rozbor AI zatím není“ k PN 2498–2502)
+db()->run("INSERT INTO pn (id_dokument, cislo, ct, osoba, cas) VALUES (99785, 9785, 221, 'Test Autor', '2026-11-24 10:02:00')");
+$rjReset();
+$f3PnBill = $rjAdd('manual', 221);
+$f3Set($f3PnBill, ['focus_pn' => '{9785}']);
+$f3Bill = $rjAdd('manual', 221);
+$f3C = $jobs->claim();
+$f3R = $f3Row($f3PnBill);
+check('Oprava 25. 11.: PN bez rozboru AI čeká i u tisku s titulkem, celý tisk se vydá',
+    [$f3R['status'], $f3R['wait_reason'], $f3C['job_id'] ?? null], ['queued', 'ai_title', $f3Bill]);
+db()->run('DELETE FROM pn WHERE cislo = 9785');
 $rjReset();
 $f3LateBill = $rjAdd('manual', 78, ['age' => 6 * 3600 + 1]);
 $jobs->claim();
@@ -2570,7 +2582,9 @@ check('zmeny.php: bez odkazu na PR 0', [$f4Changes !== '', str_contains($f4Chang
 // PN poslance s klubem a textem a PN člena vlády bez klubu a bez textu; tvar sdílí test Pythonu (tests/contract)
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99801, 9801, 311, 6150, 'Test Poslanec', '2026-03-15 10:00:00', 'ANO2011')");
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99802, 9802, 311, NULL, 'Test Ministr', '2026-03-16 09:00:00', NULL)");
-db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score) VALUES (99801, 311, 9801, 'Text PN', 7, 0)");
+// rozbor AI proběhl (bez titulku): úloha k PN se vydá až s rozborem všech zadaných PN (oprava 25. 11.)
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Text PN', 7, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
+    [json_encode(['zavaznost' => 0]), json_encode(['zavaznost' => 0])]);
 $rjReset();
 $f4Job = $rjAdd('manual', 311);
 db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9801,9802}', $f4Job]);

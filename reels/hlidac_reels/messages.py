@@ -387,7 +387,8 @@ def autopilot_text(on: bool, to_approval: int = 0, jobs_to_approval: int = 0) ->
     return text
 
 
-AUTOPILOT_QUEUED = " Autopilot: po vygenerování se rovnou zveřejní."
+# poslední řádek odpovědi na zadání s autopilotem (pod stavovou zprávou)
+AUTOPILOT_QUEUED = "Autopilot: po vygenerování se rovnou zveřejní."
 AUTOPILOT_PN_LIST_HEADER = "Autopilot zapnut: vybrané PN se zveřejní bez schválení."
 
 
@@ -486,3 +487,100 @@ def summary_event_line(kind: str, job_id: int, what: str, error: str) -> str | N
     if kind == "expired":
         return f"Zadání #{job_id} ({what}) vypršelo: {FRESH_MAX_DAYS} dní ve frontě"
     return None
+
+
+# --- stavová zpráva zadání (bot._announce_job, bot._update_status_messages) -----
+
+STATUS_ERROR_LIMIT = 200  # znaků chyby v řádku stavové zprávy
+# délka stavové zprávy: jako bot.TELEGRAM_TEXT_LIMIT (rezerva pod 4 096), jinak by bot._clip uřízl poslední řádky
+STATUS_TEXT_LIMIT = 4000
+STATUS_BEFORE_SHOWN = 3  # nejvýš zadání vypsaných v „před ním“
+_STAGE_TEXT = {"model": "model píše varianty", "kontrola": "kontrola", "upload": "nahrávání videí"}
+_STAGE_NOTE = ("oprava", "render")  # fáze, u kterých se ukazuje poznámka workeru („render: 2/3“)
+_REQUEUE_TEXT = {"env": "chyba prostředí", "infra": "chyba sítě"}  # jiný druh (content od starého workeru) = „chyba“
+ZRUS_USAGE = "Použití: /zrus <číslo zadání>"
+
+
+def _variant_count(n: int) -> str:
+    if n == 1:
+        return "1 varianta"
+    return f"{n} varianty" if 2 <= n <= 4 else f"{n} variant"
+
+
+def _next_try(detail: dict) -> str:
+    hm = str(detail.get("next_hm") or "").strip()
+    return f"další pokus {hm}" if hm else ""
+
+
+def _status_line(kind: str, d: dict) -> str | None:
+    """Text řádku stavové zprávy za událost (bez času); None = druh, který se do zprávy nepíše."""
+    if kind == "accepted":
+        pos, before = d.get("position"), d.get("before")
+        text = f"přijato, {pos}. ve frontě" if isinstance(pos, int) and pos > 0 else "přijato"
+        before = [i for i in before if isinstance(i, int)] if isinstance(before, list) else []
+        if before:
+            shown = ", ".join(f"#{i}" for i in before[:STATUS_BEFORE_SHOWN])
+            rest = len(before) - STATUS_BEFORE_SHOWN
+            text += f" (před ním {shown}{f' a {rest} další' if rest > 0 else ''})"
+        return text
+    if kind == "claimed":
+        attempt = d.get("attempt")
+        return f"generuje se ({attempt}. pokus)" if isinstance(attempt, int) and attempt >= 2 else "generuje se"
+    if kind == "stage":
+        stage, note = str(d.get("stage") or ""), str(d.get("note") or "").strip()
+        if stage in _STAGE_NOTE:
+            return f"{stage}: {note}" if note else stage
+        return _STAGE_TEXT.get(stage, stage or None)
+    if kind == "waiting":
+        nxt = _next_try(d)
+        return f"čeká na rozbor AI ({nxt})" if nxt else "čeká na rozbor AI"
+    if kind in ("requeued", "lease"):
+        what = _REQUEUE_TEXT.get(d.get("kind"), "chyba") if kind == "requeued" else "PC nedokončilo vydání"
+        nxt = _next_try(d)
+        return f"{what}, {nxt}" if nxt else what
+    if kind == "silent":
+        return "PC neodpovídá"
+    if kind == "done":
+        n = d.get("variants")
+        return f"hotovo: {_variant_count(n)}" if isinstance(n, int) and not isinstance(n, bool) and n > 0 else "hotovo"
+    if kind == "failed":
+        error = str(d.get("error") or "").strip()[:STATUS_ERROR_LIMIT]
+        return f"nepodařilo se: {error}" if error else "nepodařilo se"
+    if kind == "cancelled":
+        return "zrušeno"
+    if kind == "expired":
+        return f"vypršelo ({FRESH_MAX_DAYS} dní ve frontě)"
+    return None
+
+
+def job_status_text(job_id: int, what: str, events: list, worker_line: str | None = None) -> str:
+    """Stavová zpráva zadání (spec 4.1): hlavička, řádek „H:MM …“ za každou událost historie (events.for_job),
+    stav PC jako poslední řádek, jen když je zadaný. Dlouhá historie se zkrátí od nejstarších řádků."""
+    head = f"Zadání #{job_id} · {what}"
+    lines = []
+    for ev in events:
+        line = _status_line(ev.kind, ev.detail if isinstance(ev.detail, dict) else {})
+        if line:
+            lines.append(f"{ev.hm} {line}")
+    tail = [worker_line] if worker_line else []
+    text = "\n".join([head, *lines, *tail])
+    while len(text) > STATUS_TEXT_LIMIT and lines:
+        lines = lines[1:]
+        text = "\n".join([head, "…", *lines, *tail])
+    return text[:STATUS_TEXT_LIMIT]
+
+
+def job_cancel_buttons(job_id: int) -> list[tuple[str, str]]:
+    """Tlačítko stavové zprávy aktivního zadání (a odpovědi na zadání s autopilotem)."""
+    return [("Zrušit", f"jobcancel:{job_id}")]
+
+
+def job_cancelled_text(job_id: int) -> str:
+    return f"Zadání #{job_id} zrušeno."
+
+
+def job_not_running_text(job_id: int, status: str | None) -> str:
+    """/zrus u zadání, které nejde zrušit; status None = zadání neexistuje."""
+    if status is None:
+        return f"Zadání #{job_id} neznám."
+    return f"Zadání #{job_id} už neběží (stav {status})."

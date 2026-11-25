@@ -30,6 +30,11 @@ a naléhavé události (urgency 1: selhání vyžádané úlohy s tlačítky Zku
 workeru, PC neodpovídá) pošle po jedné v pořadí id. notified_at se zapíše až po odeslání, takže výpadek Telegramu
 zprávu neztratí a nic neodejde dvakrát; po výpadku delším než events.OUTAGE odejde jedna souhrnná zpráva.
 Selhání a vypršení automatických úloh (urgency 2) jdou jen do denního souhrnu.
+Vyžádané zadání (/video, /vyber, /pn, Zkusit znovu) dostane jednu stavovou zprávu: pořadí, zadání před ním, stav PC
+a tlačítko Zrušit. U zadání bez autopilota ji maybe_events podle událostí úlohy přepisuje (editMessageText, žádné nové
+zprávy; job_status:<id> = poslední vykreslená událost), konečný stav bez tlačítek. Zrušit a /zrus <číslo> zruší
+aktivní zadání (jediný zápis stavu úlohy z bota, jobs.cancel); Zahodit u zprávy o selhání jen odebere tlačítka.
+Zkusit znovu založí nové zadání (nové id, vždy bez autopilota) a pošle mu novou stavovou zprávu.
 """
 from __future__ import annotations
 
@@ -92,12 +97,20 @@ PN_LIST = 10  # nejvýš PN v seznamu /pn bez argumentu
 PN_USAGE = ("Použití: /pn (PN za posledních 48 h), /pn <číslo PN> [další…] (každý PN vlastní video),\n"
             f"/pn <PN>+<PN> (jedno video z nejvýš {PN_PER_VIDEO} PN téhož tisku)")
 WORKER_SEEN_KEY = "worker_seen_at"
+# reel_state job_status:<id> = id poslední události vykreslené ve stavové zprávě zadání; bez klíče se zpráva
+# nepřepisuje (smaže se po vykreslení konečného stavu)
+JOB_STATUS_KEY = "job_status:"
+FINAL_EVENTS = ("done", "failed", "cancelled", "expired")  # události konečného stavu úlohy
+# konečný stav bez konečné události (server zapisuje stav a událost dvěma příkazy) se sleduje nejvýš takhle dlouho
+STATUS_FINAL_WAIT = timedelta(minutes=10)
+MAX_JOB_ID = 999_999_999  # nejvyšší číslo zadání, které /zrus přijme
 AUTOPILOT_KEY = "autopilot"  # reel_state: "1" = PN z /pn se zveřejní bez schválení
 # reel_state autopilot_skipped:<set_id> = JSON nevzniklých variant sady autopilota; ohlásí se po její poslední položce
 AUTOPILOT_SKIPPED_KEY = "autopilot_skipped:"
 HELP = ("Příkazy: /fronta (přehled: na co která položka čeká), /dalsi (poslat další video ke schválení),\n"
         "/video <číslo tisku> [formát] (zadat video k tisku), /vyber (nechat vybrat tisk automaticky),\n"
         "/pn [číslo PN] (video k pozměňovacímu návrhu; bez čísla PN za posledních 48 h),\n"
+        "/zrus <číslo zadání> (zrušit zadání ve frontě nebo rozpracované),\n"
         "/stav (čerstvost dat: synchronizace, stenoprotokoly, AI rozbor, PC s generátorem),\n"
         "/autopilot on|off (PN z /pn zveřejnit bez schválení; bez argumentu stav).\n"
         "Popisek upravíš tlačítkem Upravit popisek nebo odpovědí na video či náhled.\n"
@@ -300,7 +313,9 @@ class Bot:
                     # noset: tlačítko zpráv sad odeslaných před výběrem více variant
                     "pick": self._pick, "doneset": self._reject_set, "noset": self._reject_set,
                     "sendretry": self._send_retry, "drop": self._drop_held,
-                    "resend": self._resend_buttons}  # resend:0 pod přehledem /fronta
+                    "resend": self._resend_buttons,  # resend:0 pod přehledem /fronta
+                    # zadání generátoru: id úlohy (reel_jobs), ne položky fronty
+                    "jobcancel": self._job_cancel, "jobretry": self._job_retry}
         handler = handlers.get(action)
         if handler is None:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
@@ -587,6 +602,8 @@ class Bot:
             self._add_job("auto_pick", None, None)
         elif command == "/pn":
             self._cmd_pn((text or "").strip().partition(" ")[2])
+        elif command == "/zrus":
+            self._cmd_zrus((text or "").strip().partition(" ")[2])
         elif command == "/stav":
             self._say(self._clip(hlidani.summary_text(self.conn, self.now())))
         elif command == "/autopilot":
@@ -653,16 +670,100 @@ class Bot:
 
     def _add_job(self, source: str, ct: int | None, hint: str | None, focus_pn: list[int] | None = None,
                  autopilot: bool = False) -> None:
-        what = _job_what(ct, focus_pn)
         try:
             job_id = jobs.add(self.conn, source=source, ct=ct, format_hint=hint, focus_pn=focus_pn,
                            autopilot=autopilot)
         except jobs.ActiveJobExists:
-            self._say(f"{_pn_label(focus_pn)} (tisk {ct}) už ve frontě je." if focus_pn
-                      else f"Tisk {ct} už ve frontě je.")
+            self._say(self._duplicate_text(ct, focus_pn))
             return
-        note = AUTOPILOT_QUEUED if autopilot else ""
-        self._say(f"Zadání #{job_id} ({what}) je {jobs.position(self.conn, job_id)}. ve frontě.{note}")
+        self._announce_job(job_id, _job_what(ct, focus_pn), autopilot)
+
+    @staticmethod
+    def _duplicate_text(ct: int | None, focus_pn) -> str:
+        return f"{_pn_label(focus_pn)} (tisk {ct}) už ve frontě je." if focus_pn else f"Tisk {ct} už ve frontě je."
+
+    def _announce_job(self, job_id: int, what: str, autopilot: bool) -> None:
+        """Odpověď na nové zadání (příkaz i Zkusit znovu): událost accepted (pořadí a zadání před ním) a stavová
+        zpráva s řádkem stavu PC a tlačítkem Zrušit.
+
+        U úlohy bez autopilota se id zprávy uloží (status_msg_id) a průběh ji pak přepisuje
+        (_update_status_messages); job_status:<id> = poslední vykreslená událost, aby se hned nepřepisovala.
+        Úloha s autopilotem průběh do chatu nehlásí, Zrušit u odpovědi ale má.
+        """
+        ids = [j.id for j in jobs.pending(self.conn)]
+        position = ids.index(job_id) + 1 if job_id in ids else 0
+        before = ids[:position - 1] if position else []
+        events.add(self.conn, "accepted", job_id=job_id, detail={"position": position, "before": before})
+        history = events.for_job(self.conn, job_id)
+        text = messages.job_status_text(job_id, what, history, self._worker_seen())
+        if autopilot:
+            text += "\n" + AUTOPILOT_QUEUED
+        msg_id = self._say(self._clip(self._scrub(text)), messages.job_cancel_buttons(job_id))
+        if msg_id and not autopilot:
+            jobs.set_status_msg(self.conn, job_id, msg_id)
+            # poslední vykreslená událost (accepted; worker mohl úlohu mezitím převzít)
+            queue.set_state(self.conn, f"{JOB_STATUS_KEY}{job_id}", str(history[-1].id))
+
+    def _cancel_job(self, job_id: int) -> bool:
+        """Zruší aktivní zadání (tlačítko i /zrus): událost cancelled a hned přepis stavové zprávy.
+
+        False = zadání neexistuje nebo už je v konečném stavu (nic se nemění).
+        """
+        if not jobs.cancel(self.conn, job_id):
+            return False
+        events.add(self.conn, "cancelled", job_id=job_id)
+        job = jobs.get(self.conn, job_id)
+        if job is not None:
+            # zrušení platí i bez přepisu; zpráva se jinak přepíše v dalším cyklu maybe_events
+            self._guard("přepis stavové zprávy", lambda: self._render_status(job))
+        return True
+
+    def _job_cancel(self, job_id: int, cb_id, msg_id) -> None:
+        """Zrušit (stavová zpráva, odpověď na zadání) a Zahodit (zpráva o selhání, úloha je už v konečném stavu:
+        jen zmizí tlačítka, úloha se nemění)."""
+        if not self._cancel_job(job_id):
+            self._answer(cb_id, "Zahozeno.")
+            self._drop_buttons(msg_id)
+            return
+        self._answer(cb_id, "Zrušeno.")
+        job = jobs.get(self.conn, job_id)
+        # stavovou zprávu přepsal _cancel_job; jiná zpráva (odpověď s autopilotem) jen přijde o tlačítko
+        if job is None or msg_id != job.status_msg_id:
+            self._drop_buttons(msg_id)
+
+    def _job_retry(self, job_id: int, cb_id, msg_id) -> None:
+        """Zkusit znovu (zpráva o selhání, zpráva po výpadku): nové zadání se stavovou zprávou, stará zpráva
+        přijde o tlačítka. Aktivní zadání se neopakuje, stejné aktivní zadání = „už ve frontě je“."""
+        job = jobs.get(self.conn, job_id)
+        if job is not None and job.status in jobs.ACTIVE:
+            self._answer(cb_id, "Zadání ještě běží.")
+            return
+        try:
+            new_id = jobs.retry(self.conn, job_id)
+        except jobs.ActiveJobExists:
+            self._answer(cb_id)
+            self._say(self._duplicate_text(job.ct, job.focus_pn))
+            return
+        except ValueError:  # hotové nebo neexistující zadání
+            self._answer(cb_id, "Není co opakovat.")
+            self._drop_buttons(msg_id)
+            return
+        self._answer(cb_id, "Zkouším znovu")
+        self._drop_buttons(msg_id)
+        self._announce_job(new_id, _job_what(job.ct, job.focus_pn), autopilot=False)
+
+    def _cmd_zrus(self, arg: str) -> None:
+        """/zrus <číslo zadání>: zruší zadání ve frontě nebo rozpracované („#12“ i „12“)."""
+        arg = arg.strip().removeprefix("#")
+        if not (arg.isascii() and arg.isdigit()) or not 1 <= int(arg) <= MAX_JOB_ID:
+            self._say(messages.ZRUS_USAGE)
+            return
+        job_id = int(arg)
+        if self._cancel_job(job_id):
+            self._say(messages.job_cancelled_text(job_id))
+            return
+        job = jobs.get(self.conn, job_id)
+        self._say(messages.job_not_running_text(job_id, job.status if job else None))
 
     def _cmd_pn(self, rest: str) -> None:
         """/pn: seznam PN za 48 h; /pn 2376 2377 = dvě úlohy; /pn 2376+2377 = jedno video z obou."""
@@ -759,7 +860,8 @@ class Bot:
 
     def maybe_events(self) -> None:
         """Události nejvýš jednou za EVENTS_INTERVAL s: převzetí selhání bez události, vydání bez známky života,
-        odeslání naléhavých událostí. Každý krok zvlášť, chyba jednoho nezastaví ostatní."""
+        odeslání naléhavých událostí, přepis stavových zpráv zadání. Každý krok zvlášť, chyba jednoho nezastaví
+        ostatní."""
         now = self.clock()
         if now < self._next_events:
             return
@@ -767,6 +869,47 @@ class Bot:
         self._guard("převzetí selhání bez události", lambda: events.adopt_failed(self.conn))
         self._guard("kontrola vydání bez známky života", self._check_silent)
         self._guard("odeslání událostí", self._send_urgent)
+        self._guard("přepis stavových zpráv", self._update_status_messages)
+
+    def _update_status_messages(self) -> None:
+        """Průběh vyžádaných zadání bez autopilota jen přepisem jejich stavové zprávy (žádné sendMessage)."""
+        for job in jobs.with_status_msg(self.conn):
+            self._render_status(job)
+
+    def _render_status(self, job: jobs.Job) -> None:
+        """Přepíše stavovou zprávu úlohy, když má událost novější než job_status:<id>.
+
+        Aktivní úloha: celá historie, stav PC a Zrušit; konečný stav bez tlačítek a bez stavu PC. Úspěch i odmítnutí
+        Telegramem (zpráva smazaná, „message is not modified“) = vyřízené, přechodná chyba = znovu v dalším cyklu.
+        Po vykreslení konečné události se klíč smaže a zpráva se dál nepřepisuje. Konečný stav, ke kterému konečná
+        událost nepřišla (server zapisuje stav a událost dvěma příkazy), se sleduje nejvýš STATUS_FINAL_WAIT.
+        """
+        key = f"{JOB_STATUS_KEY}{job.id}"
+        raw = queue.get_state(self.conn, key)
+        if raw is None or not job.status_msg_id:
+            return
+        shown = int(raw) if raw.isdigit() else 0
+        history = events.for_job(self.conn, job.id)
+        final = job.status not in jobs.ACTIVE
+        if not history or history[-1].id <= shown:
+            if final and (job.finished_at is None or job.finished_at < self.now() - STATUS_FINAL_WAIT):
+                queue.delete_state(self.conn, key)
+            return
+        last = history[-1]
+        what = _job_what(job.ct, job.focus_pn)
+        text = messages.job_status_text(job.id, what, history, None if final else self._worker_seen())
+        buttons = None if final else messages.job_cancel_buttons(job.id)
+        try:
+            self.tg.edit_text(self.chat_id, job.status_msg_id, self._clip(self._scrub(text)), buttons)
+        except TelegramError as e:
+            if not e.rejected:
+                log.warning("stavová zpráva zadání #%s se nepřepsala: %s", job.id, self._safe(e))
+                return
+            log.info("stavovou zprávu zadání #%s Telegram nepřepsal (%s), beru jako vyřízené", job.id, self._safe(e))
+        if final and last.kind in FINAL_EVENTS:
+            queue.delete_state(self.conn, key)
+        else:
+            queue.set_state(self.conn, key, str(last.id))
 
     def _job_label(self, job_id: int | None) -> tuple[str, jobs.Job | None]:
         """Popis zadání do zprávy („tisk 221“) a úloha; úloha, která v reel_jobs není, = „?“."""

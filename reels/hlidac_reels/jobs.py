@@ -13,6 +13,8 @@ from .queue import _tx
 _ORDER = "ORDER BY CASE source WHEN 'manual' THEN 0 WHEN 'auto_pick' THEN 1 ELSE 2 END, created_at, id"
 # vydání bez lease_until (starý worker) propadá po claimed_at + 60 min (ReelJobs::CLAIM_TIMEOUT_MIN)
 CLAIM_TIMEOUT = timedelta(minutes=60)
+ACTIVE = ("queued", "claimed")  # úloha ve frontě nebo u workeru; ostatní stavy jsou konečné
+RETRYABLE = ("failed", "cancelled", "expired")  # konečné stavy, ze kterých jde Zkusit znovu
 
 
 class ActiveJobExists(Exception):
@@ -84,6 +86,51 @@ def autopilot_off(conn) -> int:
         n = cur.rowcount
     conn.commit()
     return n
+
+
+def cancel(conn, job_id: int) -> bool:
+    """Zruší aktivní úlohu (queued, claimed); False = úloha neexistuje nebo už je v konečném stavu.
+
+    Jediné místo, kde bot mění stav úlohy: jeden podmíněný UPDATE. Vydání a token se smažou, takže server
+    workeru vrátí na progress, video i result 409 a výsledek zrušené úlohy nepřevezme.
+    """
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status = 'cancelled', finished_at = now(), claim_token = NULL, "
+                    "lease_until = NULL WHERE id = %s AND status IN ('queued','claimed')", (job_id,))
+        changed = cur.rowcount > 0
+    return changed
+
+
+def retry(conn, job_id: int) -> int:
+    """Zkusit znovu: nová úloha (nové id) se stejným tiskem, formátem a PN; vrací její id.
+
+    Jen z konečného stavu failed, cancelled, expired, jinak ValueError (i když úloha neexistuje). Nová úloha je
+    ruční (auto_pick bez tisku zůstane auto_pick) a vždy bez autopilota: opakované zadání jde ke schválení.
+    Stejné zadání, které už je aktivní, = ActiveJobExists.
+    """
+    job = get(conn, job_id)
+    if job is None or job.status not in RETRYABLE:
+        raise ValueError(f"úlohu #{job_id} nejde opakovat ({job.status if job else 'neexistuje'})")
+    source = "auto_pick" if job.source == "auto_pick" and job.ct is None else "manual"
+    return add(conn, source=source, ct=job.ct, format_hint=job.format_hint, focus_pn=job.focus_pn,
+               autopilot=False)
+
+
+def set_status_msg(conn, job_id: int, msg_id: int | None) -> None:
+    """Id stavové zprávy úlohy v Telegramu (bot ji přepisuje podle událostí)."""
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_jobs SET status_msg_id = %s WHERE id = %s", (msg_id, job_id))
+
+
+def with_status_msg(conn) -> list[Job]:
+    """Úlohy se stavovou zprávou k přepisu: bez autopilota, aktivní nebo skončené před méně než dnem
+    (konečná událost se vykreslí i po výpadku bota)."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_jobs WHERE status_msg_id IS NOT NULL AND NOT autopilot "
+                    "AND (status IN ('queued','claimed') OR finished_at > now() - interval '1 day') ORDER BY id")
+        out = [Job(*r) for r in cur.fetchall()]
+    conn.commit()
+    return out
 
 
 def pending(conn) -> list[Job]:

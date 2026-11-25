@@ -202,3 +202,81 @@ def test_get_silent_hm(conn):
     assert got.ct == 1 and got.status == "claimed" and jobs.get(conn, 999) is None
     assert jobs.hm(conn, datetime(2026, 11, 25, 8, 5, tzinfo=timezone.utc)) == "9:05"
     assert jobs.hm(conn, datetime(2026, 7, 1, 20, 30, tzinfo=timezone.utc)) == "22:30"
+
+
+def _set(conn, job_id: int, sql: str, *params) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE reel_jobs SET {sql} WHERE id=%s", (*params, job_id))
+    conn.commit()
+
+
+def test_retry_a_cancel(conn):
+    from hlidac_reels import jobs
+    # zrušit jde úloha ve frontě i vydaná (vydání a token se smažou), jednou
+    a = jobs.add(conn, source="manual", ct=10)
+    assert jobs.cancel(conn, a) is True
+    job = jobs.get(conn, a)
+    assert job.status == "cancelled" and job.finished_at is not None
+    assert jobs.cancel(conn, a) is False
+    b = jobs.add(conn, source="manual", ct=11)
+    _set(conn, b, "status='claimed', claim_token='t', claimed_at=now(), lease_until=now() + interval '1 hour'")
+    assert jobs.cancel(conn, b) is True
+    job = jobs.get(conn, b)
+    assert (job.status, job.claim_token, job.lease_until) == ("cancelled", None, None)
+    # hotová a neexistující ne
+    c = jobs.add(conn, source="manual", ct=12)
+    _set(conn, c, "status='done', finished_at=now()")
+    assert jobs.cancel(conn, c) is False and jobs.get(conn, c).status == "done"
+    assert jobs.cancel(conn, 999) is False
+
+    # opakovat jde jen konečný stav failed, cancelled, expired
+    with pytest.raises(ValueError):
+        jobs.retry(conn, c)
+    with pytest.raises(ValueError):
+        jobs.retry(conn, 999)
+    with pytest.raises(ValueError):
+        jobs.retry(conn, jobs.add(conn, source="manual", ct=13))
+    # nová úloha (nové id): ruční, stejný tisk, formát a PN, vždy bez autopilota
+    f = jobs.add(conn, source="manual", ct=14, format_hint="pn", focus_pn=[2377, 2376], autopilot=True)
+    _set(conn, f, "status='failed', error='x', finished_at=now()")
+    n = jobs.retry(conn, f)
+    new = jobs.get(conn, n)
+    assert n != f
+    assert (new.source, new.ct, new.format_hint, new.focus_pn, new.autopilot, new.status) == (
+        "manual", 14, "pn", [2376, 2377], False, "queued")
+    # stejné zadání už ve frontě je
+    with pytest.raises(jobs.ActiveJobExists):
+        jobs.retry(conn, f)
+    # zrušená i vypršelá; auto_pick bez tisku zůstane auto_pick, s tiskem (vybral server) a fresh = manual
+    assert jobs.get(conn, jobs.retry(conn, a)).source == "manual"
+    p = jobs.add(conn, source="auto_pick")
+    _set(conn, p, "status='expired', finished_at=now()")
+    assert (jobs.get(conn, jobs.retry(conn, p)).source, jobs.get(conn, p).status) == ("auto_pick", "expired")
+    q = jobs.add(conn, source="auto_pick")
+    _set(conn, q, "status='cancelled', ct=15, finished_at=now()")
+    assert (lambda j: (j.source, j.ct))(jobs.get(conn, jobs.retry(conn, q))) == ("manual", 15)
+    r = jobs.add(conn, source="fresh", ct=16, reason_keys=["k"])
+    _set(conn, r, "status='failed', finished_at=now()")
+    assert (lambda j: (j.source, j.ct))(jobs.get(conn, jobs.retry(conn, r))) == ("manual", 16)
+
+
+def test_status_msg(conn):
+    from hlidac_reels import jobs
+    a = jobs.add(conn, source="manual", ct=20)
+    jobs.set_status_msg(conn, a, 555)
+    assert jobs.get(conn, a).status_msg_id == 555
+    # autopilot průběh nehlásí, úloha bez zprávy se nepřepisuje
+    b = jobs.add(conn, source="manual", ct=21, autopilot=True)
+    jobs.set_status_msg(conn, b, 556)
+    jobs.add(conn, source="manual", ct=22)
+    # hotová před víc než dnem ne, před hodinou ano, vydaná ano
+    d = jobs.add(conn, source="manual", ct=23)
+    jobs.set_status_msg(conn, d, 557)
+    _set(conn, d, "status='done', finished_at=now() - interval '2 days'")
+    e = jobs.add(conn, source="manual", ct=24)
+    jobs.set_status_msg(conn, e, 558)
+    _set(conn, e, "status='failed', finished_at=now() - interval '1 hour'")
+    f = jobs.add(conn, source="manual", ct=25)
+    jobs.set_status_msg(conn, f, 559)
+    _set(conn, f, "status='claimed', claimed_at=now()")
+    assert [j.id for j in jobs.with_status_msg(conn)] == [a, e, f]

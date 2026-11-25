@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, fields as dc_fields
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import psycopg
 
@@ -11,6 +11,8 @@ from .queue import _tx
 
 # výdejní pořadí: ruční, pak automatický výběr, nakonec čerstvé nálezy; uvnitř podle stáří
 _ORDER = "ORDER BY CASE source WHEN 'manual' THEN 0 WHEN 'auto_pick' THEN 1 ELSE 2 END, created_at, id"
+# vydání bez lease_until (starý worker) propadá po claimed_at + 60 min (ReelJobs::CLAIM_TIMEOUT_MIN)
+CLAIM_TIMEOUT = timedelta(minutes=60)
 
 
 class ActiveJobExists(Exception):
@@ -99,6 +101,37 @@ def position(conn, job_id: int) -> int:
         if j.id == job_id:
             return n
     return 0
+
+
+def get(conn, job_id: int) -> Job | None:
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_jobs WHERE id=%s", (job_id,))
+        r = cur.fetchone()
+    conn.commit()
+    return Job(*r) if r else None
+
+
+def silent(conn, now: datetime) -> list[Job]:
+    """Vydané úlohy bez známky života: lease_until v minulosti, bez lease_until vydané před víc než CLAIM_TIMEOUT.
+
+    Úklid propadlých vydání dělá server až při dalším claim; když je PC vypnuté, úloha zůstane claimed.
+    """
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_jobs WHERE status='claimed' AND (lease_until < %(now)s "
+                    "OR (lease_until IS NULL AND claimed_at < %(old)s)) ORDER BY id",
+                    {"now": now, "old": now - CLAIM_TIMEOUT})
+        out = [Job(*r) for r in cur.fetchall()]
+    conn.commit()
+    return out
+
+
+def hm(conn, ts: datetime) -> str:
+    """Čas H:MM v Europe/Prague přes PostgreSQL (obraz bota nepotřebuje tzdata)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_char(%s::timestamptz AT TIME ZONE 'Europe/Prague', 'FMHH24:MI')", (ts,))
+        text = cur.fetchone()[0]
+    conn.commit()
+    return text
 
 
 def failed_unnotified(conn) -> list[Job]:

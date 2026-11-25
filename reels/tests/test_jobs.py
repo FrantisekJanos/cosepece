@@ -179,3 +179,26 @@ def test_schema_f3(conn):
     assert job.id == i and job.env_retries == 0
     assert (job.not_before, job.wait_reason, job.lease_until, job.stage, job.stage_at,
             job.fail_kind, job.detail, job.status_msg_id) == (None,) * 8
+
+
+def test_get_silent_hm(conn):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import jobs
+    now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
+    ids = [jobs.add(conn, source="manual", ct=ct) for ct in (1, 2, 3, 4, 5)]
+    # (lease_until, claimed_at): propadlé vydání, platné, bez lease_until starší 60 min, mladší 60 min
+    rows = [(now - timedelta(minutes=1), now - timedelta(hours=2)),
+            (now + timedelta(minutes=1), now - timedelta(hours=2)),
+            (None, now - timedelta(minutes=61)), (None, now - timedelta(minutes=59))]
+    with conn.cursor() as cur:
+        for job_id, (lease, claimed) in zip(ids, rows):
+            cur.execute("UPDATE reel_jobs SET status='claimed', lease_until=%s, claimed_at=%s WHERE id=%s",
+                        (lease, claimed, job_id))
+        # úloha ve frontě (queued) se nepočítá ani s propadlým lease_until
+        cur.execute("UPDATE reel_jobs SET lease_until=%s WHERE id=%s", (now - timedelta(hours=1), ids[4]))
+    conn.commit()
+    assert [j.id for j in jobs.silent(conn, now)] == [ids[0], ids[2]]
+    got = jobs.get(conn, ids[0])
+    assert got.ct == 1 and got.status == "claimed" and jobs.get(conn, 999) is None
+    assert jobs.hm(conn, datetime(2026, 11, 25, 8, 5, tzinfo=timezone.utc)) == "9:05"
+    assert jobs.hm(conn, datetime(2026, 7, 1, 20, 30, tzinfo=timezone.utc)) == "22:30"

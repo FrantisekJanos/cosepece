@@ -414,3 +414,75 @@ def autopilot_skipped(skipped: list[dict]) -> str:
         reason = "; ".join(str(e) for e in errors)[:REASON_LIMIT] or "důvod neuveden"
         lines.append(f"Varianta {s.get('n')}{fmt} nevznikla: {reason}")
     return "\n".join(lines)[:TEXT_LIMIT]
+
+
+# --- události úloh a workeru (reel_events, bot.maybe_events) ---------------
+
+FAILED_ERROR_LIMIT = 300  # znaků chyby ve zprávě o selhání
+SUMMARY_ERROR_LIMIT = 200  # znaků chyby v řádku denního souhrnu
+FRESH_MAX_DAYS = 7  # automatická úloha vyprší ve frontě po 7 dnech (ReelJobs::FRESH_MAX_DAYS)
+OUTAGE_BUTTONS = 5  # nejvýš tlačítek Zkusit znovu ve zprávě po výpadku
+PAUSE_REASONS = {"limit": "vyčerpaný limit předplatného", "login": "Claude Code není přihlášený",
+                 "mcp": "nefunguje MCP server"}
+WORKER_RESUMED = "PC s generátorem zase generuje."
+
+
+def failed_text(job_id: int, what: str, error: str) -> str:
+    """Selhání vyžádané úlohy (událost failed, urgency 1); what = popis zadání („tisk 221“)."""
+    return f"Zadání #{job_id} ({what}) se nepodařilo: {error[:FAILED_ERROR_LIMIT]}"
+
+
+def failed_buttons(job_id: int) -> list[tuple[str, str]]:
+    return [("Zkusit znovu", f"jobretry:{job_id}"), ("Zahodit", f"jobcancel:{job_id}")]
+
+
+def _pause_reason(reason: str | None, detail: str | None) -> str:
+    """Důvod pozastavení workeru česky; neznámý důvod = ""."""
+    detail = (detail or "").strip()
+    if reason == "nastroje":
+        return f"chybí nástroje ({detail})" if detail else "chybí nástroje"
+    if reason == "env":
+        return f"chyba prostředí ({detail[:200]})" if detail else "chyba prostředí"
+    return PAUSE_REASONS.get(reason or "", "")
+
+
+def worker_paused_text(reason: str | None, detail: str | None, until_hm: str | None) -> str:
+    """Worker se pozastavil (událost worker_paused): jedna zpráva pro všechny čekající úlohy."""
+    why = _pause_reason(reason, detail)
+    text = "PC s generátorem je pozastavené" + (f": {why}" if why else "")
+    if until_hm:
+        text += f" (do {until_hm})"
+    return text + ". Zadání ve frontě počkají."
+
+
+def silent_text(job_id: int, what: str, since_hm: str) -> str:
+    """Vydaná úloha bez známky života (lease_until v minulosti), PC je asi vypnuté."""
+    return f"PC neodpovídá od {since_hm}, zadání #{job_id} ({what}) počká."
+
+
+def outage_text(done: int, failed: list[int], paused: bool) -> str:
+    """Neodeslané naléhavé události po výpadku delším než events.OUTAGE v jedné zprávě; "" = není co hlásit."""
+    parts = []
+    if done:
+        parts.append(f"hotové sady: {done}")
+    if failed:
+        parts.append("nepovedená zadání: " + ", ".join(f"#{i}" for i in failed))
+    if paused:
+        parts.append("PC se pozastavilo")
+    if not parts:
+        return ""
+    return "Během výpadku: " + "; ".join(parts) + ". /fronta"
+
+
+def outage_buttons(failed: list[int]) -> list[tuple[str, str]]:
+    """Zkusit znovu u prvních OUTAGE_BUTTONS nepovedených zadání ze zprávy po výpadku."""
+    return [(f"Zkusit znovu #{i}", f"jobretry:{i}") for i in failed[:OUTAGE_BUTTONS]]
+
+
+def summary_event_line(kind: str, job_id: int, what: str, error: str) -> str | None:
+    """Řádek denního souhrnu z události urgency 2 (selhání nebo vypršení automatické úlohy); None = druh bez řádku."""
+    if kind == "failed":
+        return f"Zadání #{job_id} ({what}, automatické) se nepodařilo: {error[:SUMMARY_ERROR_LIMIT]}"
+    if kind == "expired":
+        return f"Zadání #{job_id} ({what}) vypršelo: {FRESH_MAX_DAYS} dní ve frontě"
+    return None

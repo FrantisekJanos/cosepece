@@ -2003,6 +2003,9 @@ $f4Clubs = new Hlidac\Clubs(new Hlidac\Source('', $tmp . '/cache-clubs-f4', $tmp
 check('klub v den změny: platí novější členství', [$f4Clubs->at(90001, '2026-03-14'), $f4Clubs->at(90001, '2026-03-15'), $f4Clubs->at(90001, '2026-03-16')],
     ['ODS', 'Piráti', 'Piráti']);
 check('klub neznámé osoby v den změny', $f4Clubs->at(999999, '2026-03-15'), null);
+// přehled změn (vyrenderovaný v části Stránky): záznam bez čísla PR nemá odkaz na neexistující PR 0
+$f4Changes = (string)@file_get_contents($tmp . '/zmeny.html');
+check('zmeny.php: bez odkazu na PR 0', [$f4Changes !== '', str_contains($f4Changes, '/pull/0"')], [true, false]);
 // PN poslance s klubem a textem a PN člena vlády bez klubu a bez textu; tvar sdílí test Pythonu (tests/contract)
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99801, 9801, 311, 6150, 'Test Poslanec', '2026-03-15 10:00:00', 'ANO2011')");
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99802, 9802, 311, NULL, 'Test Ministr', '2026-03-16 09:00:00', NULL)");

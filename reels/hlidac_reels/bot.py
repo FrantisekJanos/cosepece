@@ -74,6 +74,8 @@ EVENTS_INTERVAL = 60  # s, jak často smyčka pošle události (selhání, stav 
 FRESH_INTERVAL = 3600  # s, jak často smyčka hledá čerstvé nálezy a stahuje staré sady
 WATCH_INTERVAL = 3600  # s, jak často smyčka kontroluje čerstvost dat (hlidani.check)
 SUMMARY_CHECK_INTERVAL = 300  # s, jak často smyčka zjišťuje, jestli už má odejít denní souhrn (8:00)
+ALIVE_INTERVAL = 60  # s, jak často smyčka zapíše známku života (reel_state.bot_seen_at)
+BOT_SEEN_KEY = "bot_seen_at"  # reel_state: čas posledního průchodu smyčkou; PHP (Sync) hlásí stáří > 15 min do Sentry
 TELEGRAM_TEXT_LIMIT = 4000  # znaků zprávy (Telegram bere nejvýš 4096)
 SETS_PER_DAY = 2  # automatických sad ke schválení za den (Europe/Prague); ruční sady a /dalsi limit obchází
 LIMIT_NOTIFIED_KEY = "sets_limit_notified"  # reel_state: sada, u které už bot ohlásil čekání na limit
@@ -252,6 +254,7 @@ class Bot:
         self._next_events = float("-inf")
         self._next_watch = float("-inf")
         self._next_summary = float("-inf")
+        self._next_alive = float("-inf")
         # reply_markup zprávy právě obsluhovaného tlačítka (Telegram ho posílá s každým callback_query)
         self._cb_markup: dict | None = None
         # None = Threads není nastavené (bez THREADS_USER_ID)
@@ -1418,6 +1421,14 @@ class Bot:
             log.warning("%s selhalo: %s", what, self._safe(e))
             self._rollback()
 
+    def maybe_alive(self) -> None:
+        """Známka života pro synchronizaci webu (bot svůj pád sám nenahlásí), nejvýš jednou za ALIVE_INTERVAL s."""
+        now = self.clock()
+        if now < self._next_alive:
+            return
+        self._next_alive = now + ALIVE_INTERVAL
+        self._guard("zápis známky života", lambda: queue.set_state(self.conn, BOT_SEEN_KEY, self.now().isoformat()))
+
     def maybe_ingest(self) -> None:
         """Hotové sady z mezisložky do fronty, nejvýš jednou za INGEST_INTERVAL s."""
         if self.inbox_dir is None:
@@ -1701,6 +1712,7 @@ class Bot:
                 if not started:
                     self.start()
                     started = True
+                self.maybe_alive()
                 self.maybe_send_next()
                 self.maybe_ingest()
                 self.maybe_autopublish()

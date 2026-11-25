@@ -4902,3 +4902,57 @@ def test_texty_sady_s_vynechanymi():
     text = set_text(items, skipped=skipped)
     assert len(text) <= TEXT_LIMIT and text.endswith("\n\nVarianta 3 (zmena) nevznikla: " + "e" * 300)
     assert set_text(items, skipped=[]) == set_text(items)
+
+
+# --- F5: živost bota (bot_seen_at) ---------------------------------------------
+
+@pg
+def test_bot_zapisuje_bot_seen_at(bot, conn, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from hlidac_reels import bot as botmod, queue
+    assert (botmod.BOT_SEEN_KEY, botmod.ALIVE_INTERVAL) == ("bot_seen_at", 60)
+    t = [1000.0]
+    bot.clock = lambda: t[0]
+    now = [datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)]
+    bot.now = lambda: now[0]
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:00:00+00:00"
+    # za 30 s se nic nepřepíše
+    t[0] += 30
+    now[0] += timedelta(seconds=30)
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:00:00+00:00"
+    # po 60 s od zápisu nový čas
+    t[0] += 30
+    now[0] += timedelta(seconds=30)
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
+
+    # chyba zápisu smyčku nezastaví (_guard)
+    def boom(*a, **kw):
+        raise RuntimeError("zápis selhal")
+    monkeypatch.setattr(queue, "set_state", boom)
+    t[0] += 60
+    bot.maybe_alive()
+    assert queue.get_state(conn, "bot_seen_at") == "2026-11-25T08:01:00+00:00"
+
+
+@pg
+def test_loop_zapise_zivost_hned_po_startu(conn, api, meta, media_dir, monkeypatch):
+    bot = _make_bot(conn, api, meta, media_dir)
+    order = []
+    monkeypatch.setattr(bot, "start", lambda: order.append("start"))
+    for name in ("maybe_alive", "maybe_send_next"):
+        monkeypatch.setattr(bot, name, lambda n=name: order.append(n))
+
+    class Stop(Exception):
+        pass
+
+    def stop():
+        raise Stop
+
+    monkeypatch.setattr(bot, "maybe_ingest", stop)
+    monkeypatch.setattr(bot, "_db_lost", lambda e: isinstance(e, Stop))
+    with pytest.raises(SystemExit):
+        bot.loop(sleep=lambda s: None)
+    assert order == ["start", "maybe_alive", "maybe_send_next"]

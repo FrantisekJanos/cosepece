@@ -2627,6 +2627,63 @@ check('sync_beh: chybný běh ok = 0 s textem chyby', [(int)$sbLast['ok'], $sbLa
     [0, true, true]);
 check('sync_beh: lastOk přeskočí chybný běh', (int)(Hlidac\SyncRuns::lastOk(db())['ok'] ?? 0), 1);
 
+echo "Živost bota Reels (bot_seen_at → Sentry)\n";
+// bot zapisuje reel_state.bot_seen_at (ISO s pásmem z Pythonu); synchronizace pošle do Sentry, když je starší než 15 min
+$rbSent = [];
+Hlidac\Sentry::reset();
+Hlidac\Sentry::setTransport(function (string $url, array $headers, string $body) use (&$rbSent): bool {
+    $rbSent[] = $body;
+    return true;
+});
+Hlidac\Sentry::init(['dsn' => 'https://abc@o1.ingest.de.sentry.io/456', 'environment' => 'test', 'throttle_dir' => ''], 'cli');
+$rbSet = function (?string $value) use ($rjKey): void {
+    db()->run("DELETE FROM reel_state WHERE $rjKey = 'bot_seen_at'");
+    if ($value !== null) {
+        db()->run("INSERT INTO reel_state ($rjKey, value) VALUES ('bot_seen_at', ?)", [$value]);
+    }
+};
+// tělo obálky Sentry: hlavička, typ, událost (JSON)
+$rbEvent = fn(string $body): array => (array)json_decode(explode("\n", $body)[2] ?? '', true);
+$rbNow = time();
+$rbSet(null);
+check('bot_seen_at: bez klíče nic', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)], [null, 0]);
+$rbFresh = gmdate('Y-m-d\TH:i:s+00:00', $rbNow - 300);
+$rbSet($rbFresh);
+check('bot_seen_at: před 5 min v pořádku, do Sentry nic', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)],
+    [['seen_at' => $rbFresh, 'stale' => false], 0]);
+// tvar z Pythonu (mikrosekundy) v časové zóně serveru východně od UTC: pásmo z hodnoty platí, ne zóna serveru
+$rbTz = date_default_timezone_get();
+date_default_timezone_set('Asia/Tokyo');
+$rbPy = gmdate('Y-m-d\TH:i:s', $rbNow - 600) . '.123456+00:00';
+$rbSet($rbPy);
+check('bot_seen_at: čas z Pythonu v jiné zóně serveru', [Hlidac\Sync::reelsBot(db(), $rbNow), count($rbSent)],
+    [['seen_at' => $rbPy, 'stale' => false], 0]);
+date_default_timezone_set($rbTz);
+$rbOld = gmdate('Y-m-d\TH:i:s+00:00', $rbNow - 1200);
+$rbSet($rbOld);
+$rbStale = Hlidac\Sync::reelsBot(db(), $rbNow);
+check('bot_seen_at: před 20 min stale, jedna zpráva do Sentry', [$rbStale, count($rbSent),
+    str_contains($rbSent[0] ?? '', 'Reels bot neodpovídá')], [['seen_at' => $rbOld, 'stale' => true], 1, true]);
+$rbEv = $rbEvent($rbSent[0] ?? '');
+check('bot_seen_at: zpráva error se stálým textem a stářím', [$rbEv['level'] ?? null, $rbEv['message']['formatted'] ?? null, $rbEv['extra'] ?? null],
+    ['error', 'Reels bot neodpovídá: bot_seen_at je starší než 15 min', ['bot_seen_at' => $rbOld, 'minut' => 20]]);
+Hlidac\Sentry::reset();
+$rbSet('nesmysl');
+$rbBad = Hlidac\Sync::reelsBot(db(), $rbNow);
+check('bot_seen_at: nečitelná hodnota stale, stáří neznámé', [$rbBad['stale'] ?? null, count($rbSent), $rbEvent($rbSent[1] ?? '')['extra'] ?? null],
+    [true, 2, ['bot_seen_at' => 'nesmysl', 'minut' => null]]);
+restore_exception_handler();
+restore_error_handler();
+Hlidac\Sentry::setTransport(null);
+Hlidac\Sentry::init(['dsn' => ''], 'cli');
+Hlidac\Sentry::reset();
+// běh synchronizace dá výsledek do reels_bot
+$rbFresh = gmdate('Y-m-d\TH:i:s+00:00', time() - 60);
+$rbSet($rbFresh);
+check('Sync::run: výsledek reels_bot', Hlidac\Sync::run()['reels_bot'] ?? 'chybí', ['seen_at' => $rbFresh, 'stale' => false]);
+// další Sync::run v testu nesmí hlásit
+$rbSet(null);
+
 echo "Stránky historie tisků (HistoryHtml, díra 6)\n";
 // uložená stránka historie tisku 311 z psp.cz (windows-1250) ze 19. 11. 2026
 $hhRaw = (string)file_get_contents(__DIR__ . '/html/historie-311.html');

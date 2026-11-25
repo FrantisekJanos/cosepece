@@ -9,6 +9,9 @@ use RuntimeException;
 
 final class Sync
 {
+    /** Stáří reel_state.bot_seen_at (s), od kterého synchronizace hlásí do Sentry, že bot Reels neběží. */
+    public const BOT_STALE_S = 900;
+
     public static function run(): array
     {
         $lockFile = APP_ROOT . '/data/sync.lock';
@@ -85,6 +88,12 @@ final class Sync
         $scorer->scoreBills();
         $scorer->scoreAlerts();
         $reels = self::reelsSnapshot($config);
+        try {
+            $reelsBot = self::reelsBot(db(), time());
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/ReelsBot']);
+            $reelsBot = ['error' => Http::redact($ex->getMessage())];
+        }
         // úklid: prošlé záznamy limitů dotazů a nepoužívané tokeny MCP vydané na webu
         RateLimit::cleanup();
         try {
@@ -113,6 +122,7 @@ final class Sync
             'mcp_tokens_revoked' => $revoked,
             'posts' => $posts,
             'reels_snapshot' => $reels,
+            'reels_bot' => $reelsBot,
             'seconds' => round(microtime(true) - $started, 1),
         ];
         db()->setMeta('last_result', json_encode($result, JSON_UNESCAPED_UNICODE));
@@ -135,5 +145,32 @@ final class Sync
             Sentry::capture($ex, ['kde' => 'Sync/ReelsSnapshot']);
             return ['error' => Http::redact($ex->getMessage())];
         }
+    }
+
+    /**
+     * Živost bota Reels: bot zapisuje reel_state.bot_seen_at (ISO 8601 s pásmem) každou minutu, svůj pád ale nenahlásí.
+     * Starší než BOT_STALE_S nebo nečitelná hodnota = zpráva do Sentry (stálý text, sdílené omezení drží jednu
+     * událost za hodinu). Bez tabulky reel_state (web bez služby reels/) nebo bez klíče null.
+     */
+    public static function reelsBot(Db $db, int $now): ?array
+    {
+        $key = $db->driver === 'mysql' ? '`key`' : 'key';
+        try {
+            $value = $db->value("SELECT value FROM reel_state WHERE $key = ?", ['bot_seen_at']);
+        } catch (\PDOException) {
+            return null;
+        }
+        if ($value === null) {
+            return null;
+        }
+        $value = (string)$value;
+        $seen = strtotime($value);
+        $minutes = $seen === false ? null : intdiv($now - $seen, 60);
+        $stale = $seen === false || $now - $seen > self::BOT_STALE_S;
+        if ($stale) {
+            Sentry::message('Reels bot neodpovídá: bot_seen_at je starší než 15 min', 'error',
+                ['bot_seen_at' => $value, 'minut' => $minutes]);
+        }
+        return ['seen_at' => $value, 'stale' => $stale];
     }
 }

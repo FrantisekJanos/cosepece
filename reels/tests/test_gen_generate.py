@@ -19,7 +19,7 @@ KEYS = [r["key"] for r in load_fixture("v3-cesta-311.json")["reasons"]]
 @pytest.fixture
 def fake(monkeypatch):
     state = {"calls": [], "renders": [], "landscape": [], "active": 0, "prepare": None, "timed_out": False,
-             "skip": set(), "land_fail": None}
+             "skip": set(), "land_fail": None, "paths": []}
 
     def run_claude(prompt, *, workdir, mcp_config, model, timeout_s=1200):
         state["calls"].append(prompt)
@@ -37,6 +37,7 @@ def fake(monkeypatch):
     def render_reel(card, out_path, *, template="template", orientation="portrait", **kw):
         state["active"] += 1
         assert state["active"] == 1, "render běží souběžně"
+        state["paths"].append(Path(out_path))  # výstup prozradí variantu (variant-N/…)
         if orientation == "landscape":
             assert Path(out_path).name.endswith("-sirka.mp4")
             state["landscape"].append(template)
@@ -619,3 +620,103 @@ def test_generate_cancelled_pred_modelem(tmp_path, fake):
     with pytest.raises(gen.Cancelled):
         _run(tmp_path, should_stop=lambda: True)
     assert fake["calls"] == [] and _state(tmp_path)["model_runs"] == 0
+
+
+# --- F5: otisk vyrenderované karty, strop renderu, log na vydání ---
+
+def _rendered_variants(fake) -> list[str]:
+    """Složky variant, pro které proběhl render (na výšku i na šířku), v pořadí volání."""
+    return [p.parent.name for p in fake["paths"]]
+
+
+def _retitle(tmp_path, n: int, title: str) -> None:
+    d = tmp_path / "out" / f"variant-{n}"
+    card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+    card["title"] = title
+    (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def test_pokracovani_vyrenderovana_se_zmenenou_kartou_renderuje_znovu(tmp_path, fake):
+    # karta vyrenderované varianty se změnila (ruční úprava, zásah modelu): staré video ke kartě nepatří
+    _run(tmp_path)
+    assert sorted(set(_rendered_variants(fake))) == ["variant-1", "variant-2", "variant-3"]
+    _retitle(tmp_path, 2, "Daň pro rafinerie: výborům zbylo 30 dní místo 60")
+    fake["paths"].clear()
+    r = _run(tmp_path)
+    assert _rendered_variants(fake) == ["variant-2", "variant-2"]  # na výšku a na šířku, jen varianta 2
+    assert len(fake["calls"]) == 1 and r.ok and all(v.ok for v in r.variants)
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "vyrenderovana"
+    assert st["card_sha"] == gen._sha(tmp_path / "out" / "variant-2" / "card.json")
+
+
+def _render_fails_for(fake, monkeypatch, folder: str) -> list[Path]:
+    """Podvrhne render, který u jedné varianty vždy spadne (prostředí); vrací seznam jejích pokusů."""
+    tries: list[Path] = []
+
+    def render_reel(card, out_path, **kw):
+        if Path(out_path).parent.name == folder:
+            tries.append(Path(out_path))
+            raise RuntimeError("Chromium spadl")
+        return fake["render_reel"](card, out_path, **kw)
+    monkeypatch.setattr(gen, "render_reel", render_reel)
+    return tries
+
+
+def test_render_selze_dvakrat_varianta_vyrazena(tmp_path, fake, monkeypatch):
+    # Review Focus 4: render padá kvůli prostředí jen u varianty 2; po RENDER_TRIES pokusech varianta skončí
+    # ve stavu render_selhal bez opravného běhu modelu a další vydání na její render nečekají
+    assert gen.RENDER_TRIES == 2 and gen.RENDER_FAILED == "render_selhal"
+    tries = _render_fails_for(fake, monkeypatch, "variant-2")
+    r1 = _run(tmp_path)
+    assert len(tries) == 1 and r1.ok and r1.unrendered == [2]
+    st = _state(tmp_path)["variants"]["2"]
+    assert st["state"] == "platna" and st["render_fails"] == 1
+    r2 = _run(tmp_path)
+    assert len(tries) == 2 and r2.ok and r2.unrendered == []
+    v = r2.variants[1]
+    assert not v.ok and v.errors and v.errors[0].startswith("render selhal 2×") and "Chromium spadl" in v.errors[0]
+    assert len(fake["calls"]) == 1 and r2.model_runs == 1 and r2.runs == []  # žádný opravný běh
+    st = _state(tmp_path)
+    assert st["model_runs"] == 1
+    assert st["variants"]["2"]["state"] == "render_selhal" and st["variants"]["2"]["render_fails"] == 2
+    assert st["variants"]["2"]["errors"] == v.errors
+    r3 = _run(tmp_path)
+    assert len(tries) == 2 and len(fake["calls"]) == 1 and r3.unrendered == [] and r3.ok
+    assert not r3.variants[1].ok and r3.variants[1].errors[0].startswith("render selhal 2×")
+    assert [v.ok for v in r3.variants] == [True, False, True]
+
+
+def test_neuspesne_rendery_se_nuluji_s_novou_kartou(tmp_path, fake, monkeypatch):
+    # počet neúspěšných renderů patří ke kartě: změněná karta dostane znovu RENDER_TRIES pokusů
+    tries = _render_fails_for(fake, monkeypatch, "variant-2")
+    _run(tmp_path)
+    assert _state(tmp_path)["variants"]["2"]["render_fails"] == 1
+    _retitle(tmp_path, 2, "Daň pro rafinerie: výborům zbylo 30 dní místo 60")
+    r = _run(tmp_path)
+    st = _state(tmp_path)["variants"]["2"]
+    assert len(tries) == 2 and st["state"] == "platna" and st["render_fails"] == 1 and r.unrendered == [2]
+
+
+def test_kazde_vydani_vlastni_log(tmp_path, fake, monkeypatch):
+    # claude.log patří jednomu vydání: log minulého vydání se přesune do claude-1.log
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):  # jako skutečný run_claude: běhy připisuje na konec logu
+        log = Path(kw["workdir"]) / "claude.log"
+        before = log.read_text(encoding="utf-8") if log.is_file() else ""
+        r = real(prompt, **kw)
+        log.write_text(before + f"=== běh {len(fake['calls'])} ===\n", encoding="utf-8")
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 1
+    # jiný vstup: nové generování ve stejné složce (varianta 2 má jiný formát, vydání má i opravné běhy)
+    _run(tmp_path, render=False, autopilot=True)
+    assert len(fake["calls"]) > 2
+    out = tmp_path / "out"
+    first = (out / "claude-1.log").read_text(encoding="utf-8")
+    last = (out / "claude.log").read_text(encoding="utf-8")
+    assert first == "=== běh 1 ===\n"
+    assert "=== běh 1 ===" not in last and all(f"=== běh {n} ===" in last for n in range(2, len(fake["calls"]) + 1))
+    assert sorted(p.name for p in out.glob("claude-*.log")) == ["claude-1.log"]

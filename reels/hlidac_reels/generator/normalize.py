@@ -144,6 +144,27 @@ def _fix_top(card: dict, server: dict[int, dict], notes: list[str]) -> None:
             item["klub"] = klub
 
 
+def _fix_story_author(story: dict, server: dict[int, dict], notes: list[str]) -> None:
+    """V `pribeh.autor` platí autor a klub ze serveru (klub ke dni podání), stejně jako v `pn.top`.
+
+    Klub od modelu (MCP vrací poslední klub) bez údaje serveru zmizí, autor bez údaje serveru zůstane."""
+    pn = server.get(_as_int(story.get("cislo")))
+    autor = story.get("autor")
+    if pn is None or not isinstance(autor, dict):
+        return
+    n, jmeno, klub = pn["cislo"], pn["jmeno"], pn["klub"]
+    if jmeno and autor.get("jmeno") != jmeno:
+        notes.append(f"pribeh PN {n}: autor {_quoted(autor.get('jmeno'))} → „{jmeno}“ (server)")
+        autor["jmeno"] = jmeno
+    if klub is None:
+        if "klub" in autor:
+            notes.append(f"pribeh PN {n}: klub {_quoted(autor['klub'])} odstraněn (server klub neuvádí)")
+            del autor["klub"]
+    elif autor.get("klub") != klub:
+        notes.append(f"pribeh PN {n}: klub {_quoted(autor.get('klub'))} → „{klub}“ (server)")
+        autor["klub"] = klub
+
+
 def _fix_autori(card: dict, server: dict[int, dict], notes: list[str]) -> None:
     """V pruzích `pn.autori` platí u autora zadaných PN klub ze serveru (ke dni podání), aby video neuvádělo
     v háčku jiný klub než v pruzích (model ho bere z MCP, které vrací poslední klub).
@@ -306,6 +327,8 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
         notes.append(f"popisek: doplněna věta „{CLOSING}“")
     server = _server_pn(focus_info)
     _set_authors(card, [pn for pn in server.values() if pn["jmeno"]], notes)
+    if fmt == "pribeh" and isinstance(card.get("pribeh"), dict):
+        _fix_story_author(card["pribeh"], server, notes)
     _fix_top(card, server, notes)
     _fix_autori(card, server, notes)
     caption = _caption_clubs(card, caption, notes)

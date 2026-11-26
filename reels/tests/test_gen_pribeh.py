@@ -162,7 +162,7 @@ def test_chybi_blok_nebo_autor_nebo_jine_pn():
     assert "chybí pole pribeh" in errs
     card = _card()
     card["pribeh"]["autor"] = {"jmeno": ""}
-    _, errs = _check(card)
+    _, errs = _check(card, _info(osoba=None))  # prázdné jméno doplní server; tady ho nezná ani server
     assert any("autor" in e for e in errs)
     card = _card()
     card["pribeh"]["cislo"] = 1814
@@ -351,3 +351,21 @@ def test_vzory_pro_model_projdou_kontrolou(name):
     errs = validate_variant(card, caption, template="template_pn_v1", ct=card["ct"],
                             reason_keys=[r["key"] for r in card["reasons"]], fmt="pribeh", focus_pn=[cislo])
     assert errs == []
+
+
+# --- autor a klub ze serveru (klub ke dni podání, MCP vrací poslední klub) ---
+
+def test_autor_a_klub_pribehu_ze_serveru():
+    card = _card()
+    card["pribeh"]["autor"] = {**card["pribeh"]["autor"], "jmeno": "M. Šebelová", "klub": "ANO"}
+    card, _ = _check(card)
+    assert card["pribeh"]["autor"]["jmeno"] == "Michaela Šebelová"
+    assert card["pribeh"]["autor"]["klub"] == "STAN"
+
+
+def test_klub_pribehu_zmizi_kdyz_ho_server_neuvadi():
+    card = _card()
+    card["pribeh"]["autor"] = {**card["pribeh"]["autor"], "klub": "ANO"}
+    card, _ = _check(card, _info(klub=None))
+    assert "klub" not in card["pribeh"]["autor"]
+    assert card["pribeh"]["autor"]["jmeno"] == "Michaela Šebelová"

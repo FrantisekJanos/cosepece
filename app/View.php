@@ -146,15 +146,38 @@ final class View
 <?php
     }
 
+    /**
+     * Cookie lišta a skript pro Google Analytics 4 (assets/consent.js). gtag.js se načte až po souhlasu
+     * (Consent Mode v2 basic). Bez platného Measurement ID vrátí prázdný řetězec, takže forky nic neměří.
+     */
+    public static function ga4Tags(array $ga4): string
+    {
+        $id = (string)($ga4['measurement_id'] ?? '');
+        if (!preg_match('/^G-[A-Z0-9]+$/', $id)) {
+            return '';
+        }
+        $js = asset('assets/consent.js') . '?v=' . (int)@filemtime(APP_ROOT . '/assets/consent.js');
+        return '<div id="cookie-bar" class="cookie-bar" role="region" aria-label="Souhlas s cookies" hidden>'
+            . '<p>Návštěvnost měříme bez cookies (Umami). Se souhlasem ji měříme i v Google Analytics, které ukládá cookies. '
+            . '<a href="' . e(url('metodika', [], 'cookies')) . '">Víc o cookies</a></p>'
+            . '<div class="cookie-actions">'
+            . '<button type="button" class="btn" data-consent="granted">Přijmout</button>'
+            . '<button type="button" class="btn" data-consent="denied">Odmítnout</button>'
+            . '</div></div>'
+            . "\n" . '<script defer src="' . e($js) . '" data-ga4="' . e($id) . '"></script>' . "\n";
+    }
+
     public static function footer(): void
     {
         $issues = (string)config('issues_url', '');
+        $ga4 = self::$noAnalytics ? '' : self::ga4Tags((array)config('ga4', []));
         ?>
 <footer class="foot">
   <p>Zdroj: <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřená data Poslanecké sněmovny</a> (tisky, sněmovní dokumenty, poslanci). Počty PN jsou podané písemné pozměňovací návrhy; Sněmovna neeviduje, které z nich byly platně podány ve 2. čtení. Příznaky se počítají automaticky z historie tisku.</p>
   <p class="foot-disclaimer"><strong>Upozornění:</strong> Obsah vzniká automaticky z otevřených dat a část rozborů (shrnutí, titulky a hodnocení závažnosti textů) připravuje umělá inteligence, která se může mýlit. Údaje mají informativní povahu, nejsou právní radou ani oficiálním stanoviskem Sněmovny a před dalším použitím je ověřte v původních zdrojích. <a href="<?= e(url('metodika', [], 'odpovednost')) ?>">Omezení odpovědnosti</a></p>
-  <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
+  <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($ga4 !== ''): ?> · <a href="#" data-cookie-settings>Nastavení cookies</a><?php endif; ?><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </footer>
+<?= $ga4 ?>
 </main>
 </body>
 </html>

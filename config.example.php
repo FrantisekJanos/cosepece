@@ -37,6 +37,11 @@ return [
         'domains' => '',    // měřit jen na těchto doménách, např. example.cz
     ],
 
+    // Google Analytics 4, jen se souhlasem z cookie lišty; prázdné = lišta ani GA4 se nevloží
+    'ga4' => [
+        'measurement_id' => '', // např. G-XXXXXXXXXX
+    ],
+
     // odkaz na veřejné issues (podněty a chyby)
     // limity dotazů z jedné IP adresy za minutu (app/RateLimit.php; 0 = bez limitu); popis pro uživatele na data.php#limity
     'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120],

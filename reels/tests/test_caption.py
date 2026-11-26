@@ -76,3 +76,58 @@ def test_threads_text_dlouha_veta_do_500():
 
 def test_threads_text_bez_ct():
     assert caption.for_network("Text.\n\nDál", None, "threads") == "Text.\n\nhttps://cosepece.cz"
+
+
+# --- X (poloautomat přes složku Pro X) ---
+
+def test_x_length_url_jako_23_a_cestina():
+    assert caption.x_length("Celý rozbor: https://cosepece.cz/tisk/221") == len("Celý rozbor: ") + 23
+    assert caption.x_length("žluťoučký kůň") == 13
+    assert caption.x_length("a🙂") == 3  # emoji počítá X dvakrát
+
+
+def test_x_length_domena_bez_schematu():
+    # X ji může počítat jako odkaz (23): počítá se nejméně 23, delší jako text
+    assert caption.x_length("web cosepece.cz.") == len("web ") + 23 + 1
+    long = "www.psp.cz/sqw/historie.sqw?o=10&t=221&x=abcdefgh"
+    assert caption.x_length(f"viz {long}") == 4 + len(long)
+    assert caption.x_length("4,5 mld. Kč, tj. 10.5 %") == len("4,5 mld. Kč, tj. 10.5 %")
+    assert caption.x_length("e-mail a@b.cz") == len("e-mail a@b.cz")
+
+
+def test_x_text_s_domenou_vejde():
+    first = "Rozbor najdete na cosepece.cz. " + ("Sněmovna zkrátila lhůtu. " * 20)
+    text = caption.x_text(first, 221)
+    assert caption.x_length(text) <= caption.X_LIMIT
+
+
+def test_x_text_kratky():
+    assert caption.x_text("Krátký text.\n\nDruhý odstavec.", 221) == (
+        "Krátký text.\n\nCelý rozbor: https://cosepece.cz/tisk/221")
+
+
+def test_x_text_zkrati_na_vetu():
+    first = ("Sněmovna zkrátila lhůtu. " * 30).strip()
+    text = caption.x_text(first + "\n\nDalší.", 221)
+    assert caption.x_length(text) <= caption.X_LIMIT
+    body = text.split("\n\n")[0]
+    assert body.endswith("lhůtu.") and len(body) > 200
+    assert text.endswith("Celý rozbor: https://cosepece.cz/tisk/221")
+
+
+def test_x_text_bez_vety():
+    text = caption.x_text("slovo " * 200, 221)
+    assert caption.x_length(text) <= caption.X_LIMIT
+    assert text.split("\n\n")[0].endswith("…")
+
+
+def test_x_text_emoji():
+    text = caption.x_text("🙂 " * 200, None)
+    assert caption.x_length(text) <= caption.X_LIMIT
+    assert text.endswith("\n\nhttps://cosepece.cz")
+
+
+def test_x_intent_url():
+    url = caption.x_intent_url("Celý rozbor & víc\n\nhttps://cosepece.cz/tisk/1")
+    assert url.startswith("https://x.com/intent/post?text=Cel%C3%BD%20rozbor%20%26%20v%C3%AD")
+    assert "%0A%0Ahttps%3A%2F%2Fcosepece.cz%2Ftisk%2F1" in url

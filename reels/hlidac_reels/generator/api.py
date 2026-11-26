@@ -132,3 +132,15 @@ class ReelsApi:
     def heartbeat(self, state: dict | None = None) -> None:
         """Worker žije; state = stav workeru {"state": "running"|"paused", ...}, None = prázdné tělo."""
         self._request("POST", "heartbeat", payload=state)
+
+    def x_pending(self) -> dict:
+        """Reels na X: {"wanted": [{id, set_id, variant, ct}], "remove": [id…]}. Starší server akci nezná: 400."""
+        r = self._request("GET", "x_pending")
+        wanted = r.get("wanted") if isinstance(r.get("wanted"), list) else []
+        remove = r.get("remove") if isinstance(r.get("remove"), list) else []
+        return {"wanted": [w for w in wanted if isinstance(w, dict)],
+                "remove": [i for i in remove if isinstance(i, int) and not isinstance(i, bool)]}
+
+    def x_ready(self, reel_id: int, result: str) -> None:
+        """Výsledek kopie videa do složky Pro X: "ready" nebo "missing" (video na PC není)."""
+        self._request("POST", "x_ready", payload={"id": reel_id, "result": result})

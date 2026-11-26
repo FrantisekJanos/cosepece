@@ -50,6 +50,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import xsync
 from .api import ApiError, ReelsApi
 from .claude import DEFAULT_MODEL, EnvError, _bin, parse_output
 from .generate import MIN_OK, Cancelled, generate
@@ -661,9 +662,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"chybné REELS_API_URL: {e}", file=sys.stderr)
         return 1
     handlers = _setup_logging(args.root)
+    # videa pro X do složky Pro X: vlastní vlákno vedle generování (xsync.py), při --once ne
+    xs = None if args.once else xsync.XSync(api, root=args.root, x_dir=xsync.default_dir(env))
     try:
         model = env.get("REELS_MODEL") or DEFAULT_MODEL
         log.info("worker start: API %s, model %s", getattr(api, "host", "?"), model)
+        if xs is not None:
+            xs.start()
         run(api, root=args.root, mcp_config=args.mcp_config, model=model,
             sleep=(lambda _s: None) if args.once else time.sleep, once=args.once)
         return 0
@@ -671,6 +676,8 @@ def main(argv: list[str] | None = None) -> int:
         log.info("worker ukončen")
         return 0
     finally:
+        if xs is not None:
+            xs.stop()
         for h in handlers:
             log.removeHandler(h)
             h.close()

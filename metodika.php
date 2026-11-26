@@ -154,6 +154,18 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
   <p class="muted small">Najdete-li chybu, <?php if ((string)config('issues_url', '') !== ''): ?><a href="<?= e((string)config('issues_url', '')) ?>">napište nám</a><?php else: ?>napište nám<?php endif; ?>. Opravy uvádíme v <a href="<?= e(url('zmeny')) ?>">přehledu změn</a>.</p>
 </section>
 
+<?php $ga4On = View::ga4Id((array)config('ga4', [])) !== ''; ?>
+<section class="card pad" id="cookies" aria-label="Měření návštěvnosti a cookies">
+  <h2>Měření návštěvnosti a cookies</h2>
+  <ul>
+    <li><b>Umami bez cookies.</b> Základní návštěvnost měříme nástrojem Umami na vlastním serveru. Neukládá cookies ani osobní údaje a respektuje nastavení „Do Not Track“.</li>
+    <?php if ($ga4On): ?>
+    <li><b>Google Analytics jen se souhlasem.</b> Pokud v liště souhlas dáte, načte se Google Analytics 4. Uloží cookies <code>_ga</code> a <code>_ga_…</code> (platí až 2 roky) a Google dostane adresu navštívené stránky, údaje o prohlížeči a přibližnou polohu. Bez souhlasu se Google Analytics vůbec nenačte. Reklamní funkce jsou vypnuté.</li>
+    <li><b>Změna rozhodnutí.</b> Souhlas můžete kdykoli změnit odkazem „Nastavení cookies“ v patičce stránky. Odmítnutí smaže cookies Google Analytics. Vaši volbu si pamatujeme v prohlížeči 12 měsíců.</li>
+    <?php endif; ?>
+  </ul>
+</section>
+
 <section class="card pad" aria-label="Omezení">
   <h2>Co skóre nevidí</h2>
   <ul>

@@ -152,8 +152,8 @@ final class View
      */
     public static function ga4Tags(array $ga4): string
     {
-        $id = (string)($ga4['measurement_id'] ?? '');
-        if (!preg_match('/^G-[A-Z0-9]+$/', $id)) {
+        $id = self::ga4Id($ga4);
+        if ($id === '') {
             return '';
         }
         $js = asset('assets/consent.js') . '?v=' . (int)@filemtime(APP_ROOT . '/assets/consent.js');
@@ -165,6 +165,13 @@ final class View
             . '<button type="button" class="btn" data-consent="denied">Odmítnout</button>'
             . '</div></div>'
             . "\n" . '<script defer src="' . e($js) . '" data-ga4="' . e($id) . '"></script>' . "\n";
+    }
+
+    /** Platné Measurement ID GA4 z konfigurace (G-…), jinak prázdný řetězec. */
+    public static function ga4Id(array $ga4): string
+    {
+        $id = (string)($ga4['measurement_id'] ?? '');
+        return preg_match('/^G-[A-Z0-9]+$/', $id) === 1 ? $id : '';
     }
 
     public static function footer(): void

@@ -3023,6 +3023,14 @@ check('ga4: lišta skrytá v HTML', str_contains($ga, 'id="cookie-bar"') && str_
 check('ga4: obě tlačítka', str_contains($ga, 'data-consent="granted"') && str_contains($ga, 'data-consent="denied"'), true);
 check('ga4: consent.js s ID', str_contains($ga, 'consent.js') && str_contains($ga, 'data-ga4="G-ABC123"'), true);
 check('ga4: gtag se nevkládá napřímo', str_contains($ga, 'googletagmanager'), false);
+$_GET = [];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/metodika.php');
+$htmlMetodika = (string)ob_get_clean();
+check('metodika: oddíl cookies', str_contains($htmlMetodika, 'id="cookies"'), true);
+check('metodika: bez GA4 v konfiguraci se o Google Analytics nemluví', str_contains($htmlMetodika, 'Google Analytics'), false);
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

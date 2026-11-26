@@ -10,6 +10,7 @@ from typing import Callable
 
 from .caption import for_network
 from .jobs import lease_expired
+from .publish import FB_LIMIT_PREFIX
 from .queue import (AUTO_HOLD, AUTO_SET_MAX, AUTO_SOURCE, HELD_MAX, PICKED_MAX, REQUESTED_SET_MAX,
                     UNPICKED_AFTER_DECISION, Expired, Reel, Unit)
 
@@ -449,6 +450,9 @@ def result_text(reel: Reel, threads: bool = False) -> str:
         head = f"#{reel.id} zveřejněno."
     elif reel.status == "unknown":
         head = f"#{reel.id}: výsledek zveřejnění je nejistý. Zkusit znovu nejdřív dohledá, co už na sítích je."
+    elif reel.status == "failed" and (reel.error or "").startswith(FB_LIMIT_PREFIX):
+        head = (f"#{reel.id}: Facebook odložen kvůli limitu Meta. Autopilot ho zveřejní sám, "
+                "až limit povolí (nejdřív za hodinu).")
     elif reel.status == "failed":
         head = f"#{reel.id}: zveřejnění selhalo."
     else:

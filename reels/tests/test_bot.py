@@ -1,6 +1,7 @@
 """Testy Telegram bota (PostgreSQL, marker pg; Telegram přes httpx.MockTransport, Meta falešná, bez sítě)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -3566,11 +3567,90 @@ def _autopilot_set(conn, media_dir: Path, set_id: int, n: int = 2, focus_pn=None
     return ids
 
 
-def _autopilot_bot(conn, api, meta, media_dir, threads=None):
+def _autopilot_bot(conn, api, meta, media_dir, threads=None, fb_gap=0):
+    """fb_gap = minimální rozestup FB v s; starší testy ho vypínají (položky jdou po SEND_INTERVAL)."""
     b = _make_bot(conn, api, meta, media_dir, threads=threads)
     t = [1000.0]
     b.clock = lambda: t[0]
+    b.fb_min_gap = timedelta(seconds=fb_gap)
     return b, t
+
+
+def _fb_published(conn, media_dir, n: int, ago: timedelta) -> None:
+    """n položek zveřejněných na FB před dobou ago (pro limit FB za 24 h)."""
+    from hlidac_reels import queue
+    at = datetime.now(timezone.utc) - ago
+    for _ in range(n):
+        rid = _add(conn, media_dir, next(_set_seq) + 1000)
+        assert queue.transition(conn, rid, "queued", "published", sent_at=at, published_at=at,
+                                fb_video_id=f"F{rid}", ig_media_id=f"I{rid}")
+
+
+@pg
+def test_autopilot_strop_fb_za_24h(conn, api, meta, media_dir):
+    from hlidac_reels.bot import FB_DAILY_CAP
+    assert FB_DAILY_CAP == 25
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    _fb_published(conn, media_dir, 25, timedelta(hours=23))
+    _fb_published(conn, media_dir, 3, timedelta(hours=25))  # mimo okno 24 h se nepočítá
+    ids = _autopilot_set(conn, media_dir, 41, n=1)
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "approved" and meta.calls["ig_create"] == 0
+
+
+@pg
+def test_autopilot_pod_stropem_zverejni(conn, api, meta, media_dir):
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    _fb_published(conn, media_dir, 24, timedelta(hours=23))
+    ids = _autopilot_set(conn, media_dir, 42, n=1)
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+
+
+@pg
+def test_autopilot_rozestup_fb_5_minut(conn, api, meta, media_dir):
+    from hlidac_reels.bot import FB_MIN_GAP
+    assert FB_MIN_GAP == timedelta(minutes=5)
+    bot, t = _autopilot_bot(conn, api, meta, media_dir, fb_gap=300)
+    _fb_published(conn, media_dir, 1, timedelta(minutes=4))
+    ids = _autopilot_set(conn, media_dir, 43, n=1)
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "approved"
+    with conn.cursor() as cur:  # poslední FB je teď 6 minut starý
+        cur.execute("UPDATE reel_queue SET published_at = now() - interval '6 minutes' WHERE fb_video_id IS NOT NULL")
+    conn.commit()
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+
+
+@pg
+def test_autopilot_limit_meta_odlozi_fb_a_dopublikuje(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    from hlidac_reels.bot import FB_LIMIT_KEY
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 44, n=2)
+    meta.fail["fb_upload_reel"] = MetaError("Abychom komunitu chránili před spamem…", status=400, code=368)
+    bot.maybe_autopublish()
+    r = _get(conn, ids[0])
+    assert r.status == "failed" and r.ig_media_id and not r.fb_video_id
+    assert r.error.startswith("Facebook: limit Meta (kód 368)")
+    assert "Facebook odložen" in api.texts()[-1] and "selhalo" not in api.texts()[-1]
+    assert queue.get_state(conn, FB_LIMIT_KEY) is not None
+    # během blokace se nezveřejní nic dalšího
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "approved" and meta.calls["ig_create"] == 1
+    # blokace vypršela: nejdřív se dopublikuje odložený FB (bez nového IG), pak další položka
+    del meta.fail["fb_upload_reel"]
+    queue.set_state(conn, FB_LIMIT_KEY, (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat())
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published" and meta.calls["ig_create"] == 1
+    assert _get(conn, ids[1]).status == "approved"
+    t[0] += 50
+    bot.maybe_autopublish()
+    assert _get(conn, ids[1]).status == "published"
 
 
 @pg

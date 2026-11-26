@@ -112,6 +112,12 @@ FINAL_EVENTS = ("done", "failed", "cancelled", "expired")  # události konečné
 # konečný stav bez konečné události (server zapisuje stav a událost dvěma příkazy) se sleduje nejvýš takhle dlouho
 STATUS_FINAL_WAIT = timedelta(minutes=10)
 MAX_JOB_ID = 999_999_999  # nejvyšší číslo zadání, které /zrus přijme
+# limit Meta: nejvýš 30 Reels na FB za klouzavých 24 h; autopilot drží rezervu a rozestup (všechny sítě
+# jdou spolu, takže se tím řídí i IG a Threads). Po chybě limitu stojí autopilot FB_LIMIT_PAUSE.
+FB_DAILY_CAP = 25
+FB_MIN_GAP = timedelta(minutes=5)
+FB_LIMIT_PAUSE = timedelta(hours=1)
+FB_LIMIT_KEY = "fb_limit_until"  # reel_state: do kdy autopilot nezveřejňuje (ISO čas, UTC) po chybě limitu Meta
 AUTOPILOT_KEY = "autopilot"  # reel_state: "1" = PN z /pn se zveřejní bez schválení
 # reel_state autopilot_skipped:<set_id> = JSON nevzniklých variant sady autopilota; ohlásí se po její poslední položce
 AUTOPILOT_SKIPPED_KEY = "autopilot_skipped:"
@@ -258,6 +264,7 @@ class Bot:
         self.now: Callable[[], datetime] = _now
         self._next_send_check = float("-inf")
         self._next_autopublish = float("-inf")
+        self.fb_min_gap = FB_MIN_GAP
         # None = převzetí sad z mezisložky vypnuté
         self.inbox_dir = inbox_dir
         self._next_ingest = float("-inf")
@@ -1582,11 +1589,19 @@ class Bot:
         # vypnutý přepínač: nezveřejní se nic (převzaté položky už /autopilot off vrátil ke schválení)
         if not self._autopilot_on():
             return
-        reel = queue.next_autopilot(self.conn)
-        if reel is not None:
-            # publish.run sám přejde approved → publishing; chyba skončí failed/unknown se Zkusit znovu
-            # a další položka sady přijde na řadu v dalším cyklu
-            self._publish(reel.id, publish.run, auto=True)
+        if self._fb_slot_free():
+            # nejdřív položka, které FB odmítl limit (IG a Threads už vyšly): retry dohledá a pošle jen FB
+            deferred = queue.next_fb_deferred(self.conn, publish.FB_LIMIT_PREFIX)
+            if deferred is not None:
+                reel = self._publish(deferred.id, publish.retry, auto=True)
+            else:
+                reel = queue.next_autopilot(self.conn)
+                if reel is not None:
+                    # publish.run sám přejde approved → publishing; chyba skončí failed/unknown se Zkusit znovu
+                    # a další položka sady přijde na řadu v dalším cyklu
+                    reel = self._publish(reel.id, publish.run, auto=True)
+            if publish.fb_deferred(reel):
+                queue.set_state(self.conn, FB_LIMIT_KEY, (_now() + FB_LIMIT_PAUSE).isoformat())
         # nevzniklé varianty sad, které už nemají co zveřejnit (i hlášení, které minule neodešlo)
         for key in queue.state_keys(self.conn, AUTOPILOT_SKIPPED_KEY):
             suffix = key[len(AUTOPILOT_SKIPPED_KEY):]
@@ -1596,6 +1611,18 @@ class Bot:
                 queue.delete_state(self.conn, key)
                 continue
             self._announce_skipped(int(suffix))
+
+    def _fb_slot_free(self) -> bool:
+        """Autopilot smí zveřejnit: neběží pauza po limitu Meta, za 24 h je na FB méně než FB_DAILY_CAP
+        a od posledního FB uplynul rozestup."""
+        now = _now()
+        until = _parse_time(queue.get_state(self.conn, FB_LIMIT_KEY))
+        if until is not None and now < until:
+            return False
+        if queue.fb_published_since(self.conn, now - timedelta(hours=24)) >= FB_DAILY_CAP:
+            return False
+        last = queue.last_fb_published(self.conn)
+        return last is None or now - last >= self.fb_min_gap
 
     def _announce_skipped(self, set_id: int) -> None:
         """Po poslední položce sady (žádná už nečeká ani se nezveřejňuje) ohlásí nevzniklé varianty jednou."""

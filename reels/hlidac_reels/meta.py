@@ -24,11 +24,23 @@ _TOKEN_RE = re.compile(r"access_token=[^&\s\"]+")
 class MetaError(Exception):
     """Chyba Graph API; message je už očištěná od tokenů."""
 
-    def __init__(self, message: str, status: int | None = None, code: int | None = None):
+    def __init__(self, message: str, status: int | None = None, code: int | None = None,
+                 subcode: int | None = None):
         self.message = message
         self.status = status
         self.code = code
+        self.subcode = subcode
         super().__init__(message)
+
+
+# kódy Graph API pro limit počtu volání nebo příspěvků (368 = dočasná blokace proti spamu, subkód 1390008)
+RATE_LIMIT_CODES = frozenset({4, 17, 32, 368, 613})
+RATE_LIMIT_SUBCODES = frozenset({1390008})
+
+
+def is_rate_limit(err: MetaError) -> bool:
+    """Chyba limitu Meta (příspěvek se nezveřejnil, jde to zkusit později)."""
+    return err.code in RATE_LIMIT_CODES or err.subcode in RATE_LIMIT_SUBCODES
 
 
 class MetaTimeout(MetaError):
@@ -92,9 +104,10 @@ class Meta:
                 if err.get("error_user_msg"):
                     msg += f" ({err['error_user_msg']})"
                 code = err.get("code") if isinstance(err.get("code"), int) else None
+                subcode = err.get("error_subcode") if isinstance(err.get("error_subcode"), int) else None
             else:
-                msg, code = f"HTTP {resp.status_code}: {resp.text[:300]}", None
-            raise MetaError(self._clean(msg), status=resp.status_code, code=code)
+                msg, code, subcode = f"HTTP {resp.status_code}: {resp.text[:300]}", None, None
+            raise MetaError(self._clean(msg), status=resp.status_code, code=code, subcode=subcode)
         return body
 
     def _graph(self, method: str, path: str, token: str, **kw: Any) -> dict[str, Any]:

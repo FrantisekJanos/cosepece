@@ -3013,6 +3013,31 @@ check('index hledání: hezké adresy bez úvodního lomítka', [in_array('tisk/
 check('index hledání: odkaz z položky', [Hlidac\SearchIndex::href('tisk/221#pn-5'), Hlidac\SearchIndex::href('https://odok.gov.cz/portal/veklep/material/X/')],
     ['/tisk/221#pn-5', 'https://odok.gov.cz/portal/veklep/material/X/']);
 
+// GA4 jen se souhlasem: bez platného ID se nic nevloží, gtag.js načte až consent.js po souhlasu
+check('ga4: prázdné ID → nic', Hlidac\View::ga4Tags(['measurement_id' => '']), '');
+check('ga4: chybí klíč → nic', Hlidac\View::ga4Tags([]), '');
+check('ga4: neplatné ID → nic', Hlidac\View::ga4Tags(['measurement_id' => 'G-x"><script>']), '');
+check('ga4: UA ID → nic', Hlidac\View::ga4Tags(['measurement_id' => 'UA-123']), '');
+$ga = Hlidac\View::ga4Tags(['measurement_id' => 'G-ABC123']);
+check('ga4: lišta skrytá v HTML', str_contains($ga, 'id="cookie-bar"') && str_contains($ga, ' hidden'), true);
+check('ga4: obě tlačítka', str_contains($ga, 'data-consent="granted"') && str_contains($ga, 'data-consent="denied"'), true);
+check('ga4: consent.js s ID', str_contains($ga, 'consent.js') && str_contains($ga, 'data-ga4="G-ABC123"'), true);
+check('ga4: gtag se nevkládá napřímo', str_contains($ga, 'googletagmanager'), false);
+check('ga4: odkaz Nastavení cookies vede bez JS na metodiku', Hlidac\View::cookieSettingsLink(['measurement_id' => 'G-ABC123']),
+    '<a href="' . e(url('metodika', [], 'cookies')) . '" data-cookie-settings>Nastavení cookies</a>');
+check('ga4: bez ID žádný odkaz Nastavení cookies', Hlidac\View::cookieSettingsLink([]), '');
+$consentJs = (string)file_get_contents(APP_ROOT . '/assets/consent.js');
+check('ga4: Google signals a personalizace reklam vypnuté v gtag config',
+    str_contains($consentJs, 'allow_google_signals: false') && str_contains($consentJs, 'allow_ad_personalization_signals: false'), true);
+$_GET = [];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/metodika.php');
+$htmlMetodika = (string)ob_get_clean();
+check('metodika: oddíl cookies', str_contains($htmlMetodika, 'id="cookies"'), true);
+check('metodika: bez GA4 v konfiguraci se o Google Analytics nemluví', str_contains($htmlMetodika, 'Google Analytics'), false);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

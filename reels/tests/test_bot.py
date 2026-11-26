@@ -3027,6 +3027,45 @@ def test_pn_tlacitko_vsechny_zvlast(bot, conn, api):
     assert len(jobs.pending(conn)) == 3
 
 
+def _story(job) -> bool:
+    """Vyrobí generátor k úloze příběh jednoho PN (template_pn_v1)? Údaje PN jako v claimu nového serveru."""
+    from hlidac_reels.generator.formats import wants_pribeh
+    info = [{"cislo": n, "has_text": True, "vysledek": None} for n in job.focus_pn or []]
+    return wants_pribeh(job.focus_pn, info)
+
+
+@pg
+def test_pnall_kazdy_pn_vlastni_video_pribeh(bot, conn, api):
+    # „Všechny zvlášť“: úloha s jedním PN pro každý z nich = jedno video pribeh na PN; společné video zůstává v2 + v3
+    from hlidac_reels import jobs
+    for cislo in (2376, 2377, 2378):
+        _pn(conn, cislo, 300)
+    bot.handle(_cb("pnall:2378,2377,2376"))
+    pending = jobs.pending(conn)
+    assert sorted(j.focus_pn for j in pending) == [[2376], [2377], [2378]]
+    assert all(_story(j) for j in pending)
+    bot.handle(_msg("/pn 2376+2377"))
+    (common,) = [j for j in jobs.pending(conn) if len(j.focus_pn) == 2]
+    assert not _story(common)
+
+
+@pg
+def test_pnnew_tlacitka_vyrobi_pribeh(bot, conn, api):
+    # /pnnew jde stejnou cestou jako /pn: tlačítko jednoho PN i „Všechny zvlášť“ = úlohy s jedním PN
+    from hlidac_reels import jobs
+    _pn_bot(bot)
+    for k, cislo in enumerate((2401, 2402, 2403)):
+        _pn(conn, cislo, 300, cas=f"2026-11-24 0{k}:00:00")
+    bot.handle(_msg("/pnnew"))
+    assert _buttons(api.sent()[-1]) == ["pn:2403", "pn:2402", "pn:2401", "pnall:2403,2402,2401"]
+    bot.handle(_cb("pn:2403"))
+    (job,) = jobs.pending(conn)
+    assert job.focus_pn == [2403] and _story(job)
+    bot.handle(_cb("pnall:2403,2402,2401"))
+    pending = jobs.pending(conn)
+    assert sorted(j.focus_pn for j in pending) == [[2401], [2402], [2403]] and all(_story(j) for j in pending)
+
+
 @pg
 def test_pn_v_napovede_fronte_a_chybe(bot, conn, api):
     from hlidac_reels import jobs

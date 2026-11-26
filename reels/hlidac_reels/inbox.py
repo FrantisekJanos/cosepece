@@ -18,14 +18,14 @@ from pathlib import Path
 
 from . import media, queue
 from .enqueue import CAPTION_LIMIT
-from .generator.formats import FORMATS
+from .generator.formats import FORMATS, PRIBEH, PRIBEH_TEMPLATE
 
 log = logging.getLogger(__name__)
 
 MAX_VIDEO_BYTES = 30 * 1024 * 1024
 MIN_VALID = 1  # sada s jedinou platnou variantou se převezme (stejně jako MIN_OK workeru)
 _SOURCES = ("manual", "auto_pick", "fresh")
-_TEMPLATES = ("template_v2", "template_v3")
+_TEMPLATES = ("template_v2", "template_v3", PRIBEH_TEMPLATE)
 _ERROR_LIMIT = 500
 
 
@@ -139,6 +139,9 @@ def _check_variant(conn, folder: Path, v: dict, seen_sha: set[str]) -> tuple[lis
     if v["template"] == "template_v3":
         if fmt not in FORMATS:
             errs.append(f"formát {fmt!r} není z {', '.join(FORMATS)}")
+    elif v["template"] == PRIBEH_TEMPLATE:
+        if fmt != PRIBEH:
+            errs.append(f"šablona {PRIBEH_TEMPLATE} potřebuje formát {PRIBEH}, ne {fmt!r}")
     elif fmt is not None:
         errs.append("template_v2 nesmí mít formát")
     if not caption:
@@ -222,7 +225,7 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict, autopilot: bool) -
                 rows.append((v, target, digest, land_target, land))
             try:
                 for v, target, digest, land_target, land in rows:
-                    fmt = v["format"] if v["template"] == "template_v3" else "v2"
+                    fmt = v["format"] if v["template"] != "template_v2" else "v2"
                     res.reel_ids.append(queue.add(
                         conn, video_path=str(target), video_sha256=digest, caption=v["caption"].strip(),
                         ct=m.get("ct"), format=fmt, source=m["source"], set_id=job_id,

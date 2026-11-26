@@ -1,5 +1,8 @@
 """Příkaz reels-generate: sada 3 variant k tisku (1× v2 z karty webu, 2× v3 z MCP) přes claude -p.
 
+Úloha s jedním PN (/pn 2376, „Všechny zvlášť“, /pnnew) od serveru, který posílá výsledek PN: jediná varianta
+`pribeh` (šablona template_pn_v1, příběh jednoho PN), formats.wants_pribeh.
+
 Každá platná varianta dostane i video na šířku 16:9 (pro Threads), když ho šablona umí (landscape.css).
 Selhání šířky variantu nevyřadí: zůstane jen na výšku a důvod je ve warnings.
 """
@@ -20,7 +23,7 @@ from ..media import validate as media_validate
 from ..render import has_landscape, render_reel
 from .claude import (DEFAULT_MODEL, EnvError, build_prompt, prepare_workdir, rotate_log, run_claude, write_focus,
                      write_published)
-from .formats import pick_formats
+from .formats import PRIBEH, PRIBEH_TEMPLATE, pick_formats, wants_pribeh
 from .normalize import normalize
 from .validate import check_layout, validate_variant
 
@@ -122,7 +125,7 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         v.caption = caption
         _append_notes(d / "normalize.json", notes)
         v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
-                                    fmt=v.format, focus_pn=focus_pn)
+                                    fmt=v.format, focus_pn=focus_pn, focus_info=focus_info)
         if not v.errors and layout:
             v.errors = check_layout(card, v.template)
     except Exception as e:  # noqa: BLE001
@@ -164,11 +167,25 @@ def _prompt_versions() -> dict[str, str]:
     return {name: hashlib.sha256((d / name).read_bytes()).hexdigest() for name in PROMPTS}
 
 
-def _input_hash(card_v2: dict, focus_pn: list[int] | None, formats: list[str]) -> str:
-    """Otisk vstupu úlohy: karta webu, zadané PN, formáty a verze návodů (kanonický JSON)."""
+def _story_prompt_version() -> str:
+    """sha256 návodu pribeh.md (jen v otisku úloh příběhu PN, ostatní úlohy jeho změna nerestartuje)."""
+    return hashlib.sha256((Path(__file__).parent / "prompts" / f"{PRIBEH}.md").read_bytes()).hexdigest()
+
+
+def _input_hash(card_v2: dict, focus_pn: list[int] | None, formats: list[str],
+                outcome: list | None = None) -> str:
+    """Otisk vstupu úlohy: karta webu, zadané PN, formáty a verze návodů (kanonický JSON).
+
+    Příběh PN (formats == ["pribeh"]): v otisku je i návod pribeh.md a výsledek PN ze serveru (`outcome`),
+    po hlasování tak úloha nepoužije kartu se starým výsledkem. Ostatní úlohy mají otisk jako dřív.
+    """
     # data_date server přepočítá při každém claimu (dnešní datum): do otisku nepatří, jinak by půlnoc smazala rozdělanou práci
     card = {k: v for k, v in card_v2.items() if k != "data_date"}
+    story = formats == [PRIBEH]
     data = {"card_v2": card, "focus_pn": focus_pn, "formats": formats, "prompts": _prompt_versions()}
+    if story:
+        data["prompts"] = {**data["prompts"], f"{PRIBEH}.md": _story_prompt_version()}
+        data["outcome"] = outcome
     raw = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -289,10 +306,15 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     focus_pn = sorted({int(n) for n in focus_pn}) if focus_pn else None
     # server pole has_text posílá u každého zadaného PN (F4); chybějící pole (starší server) = text je k dispozici
     has_text = all(i.get("has_text", True) for i in focus_info or [] if isinstance(i, dict))
+    story = wants_pribeh(focus_pn, focus_info)
     # formáty jsou v otisku vstupu: přepnutí autopilota úlohu správně začne znovu
-    formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text,
-                           autopilot=autopilot)
-    input_hash = _input_hash(card_v2, focus_pn, formats)
+    if story:  # příběh jednoho PN: jediná varianta, ručně i s autopilotem
+        formats = [PRIBEH]
+    else:
+        formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text,
+                               autopilot=autopilot)
+    outcome = [i.get("vysledek") for i in focus_info or [] if isinstance(i, dict)] if story else None
+    input_hash = _input_hash(card_v2, focus_pn, formats, outcome)
     st = _load_state(out, input_hash)
     if st is None:  # nový vstup: výstup minulého běhu se nesmí vydávat za nový (smaže i normalize.json)
         for old in out.glob("variant-*"):
@@ -304,8 +326,12 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     (out / "card_v2.json").write_text(json.dumps(card_v2, ensure_ascii=False, indent=1), encoding="utf-8")
     prepare_workdir(out, ct)
     write_published(out, published or [])
-    write_focus(out, focus_pn, focus_info or [])
-    variants = [Variant(1, "template_v2", None)] + [Variant(n, "template_v3", f) for n, f in enumerate(formats, 2)]
+    write_focus(out, focus_pn, focus_info or [], outcome=story)
+    if story:
+        variants = [Variant(1, PRIBEH_TEMPLATE, PRIBEH)]
+    else:
+        variants = ([Variant(1, "template_v2", None)]
+                    + [Variant(n, "template_v3", f) for n, f in enumerate(formats, 2)])
     entries: dict[str, dict] = st["variants"]
     for v in variants:
         entries.setdefault(str(v.n), {"state": MISSING, "errors": []})

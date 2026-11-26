@@ -46,6 +46,69 @@ def _v3_block(card: dict, fmt: str) -> list[str]:
     return errs
 
 
+# příběh jednoho PN (template_pn_v1): blok pribeh místo hook
+PRIBEH_REQUIRED = V2_REQUIRED[:6] + ("reasons", "format", "pribeh")
+PN_STATES = ("prijat", "castecne", "zamitnut", "ceka", "nehlasovatelny", "nezaznel")
+DECIDED = ("prijat", "castecne", "zamitnut")
+VOTE_URL = re.compile(r"^https://www\.psp\.cz/sqw/hlasy\.sqw\?g=\d+$")
+
+
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _pribeh_block(card: dict, focus_pn: list[int] | None, focus_info: list[dict] | None) -> list[str]:
+    """Pravidla šablony template_pn_v1 (scenar.md): PN je zadaný, změna jen s doslovnou citací a zdrojem,
+    znaky se zdrojem a hodnocení AI označené, verdikt přijat / zamítnut jen s hlasováním s počty a odkazem
+    na psp.cz a stavem ze serveru, dopad bez štítku AI jen se zdrojem."""
+    p = card.get("pribeh")
+    if not isinstance(p, dict) or not p:
+        return []  # chybějící pole hlásí kontrola povinných polí
+    errs: list[str] = []
+    if focus_pn and len(focus_pn) == 1 and str(p.get("cislo")) != str(focus_pn[0]):
+        errs.append(f"pribeh: cislo {p.get('cislo')!r}, zadání PN {focus_pn[0]}")
+    autor = p.get("autor")
+    if not isinstance(autor, dict) or _empty(autor.get("jmeno")):
+        errs.append("pribeh: chybí autor.jmeno")
+    co = p.get("co")
+    if not isinstance(co, dict):
+        errs.append("pribeh: chybí co (co PN mění, s doslovnou citací)")
+    else:
+        for key, what in (("citace", "doslovnou citaci z textu PN"), ("zdroj", "zdroj citace"),
+                          ("po", "znění po PN")):
+            if _empty(co.get(key)):
+                errs.append(f"pribeh: co nemá {what} ({key})")
+    for i, sign in enumerate(p.get("znaky") or [], 1):
+        if not isinstance(sign, dict):
+            errs.append(f"pribeh: znak {i} není objekt")
+            continue
+        if _empty(sign.get("zdroj")):
+            errs.append(f"pribeh: znak {i} nemá zdroj")
+        if sign.get("typ") == "ai" and sign.get("ai") is not True:
+            errs.append(f"pribeh: znak {i} je hodnocení AI bez štítku (ai: true)")
+    v = p.get("vysledek")
+    if v is not None:
+        stav = v.get("stav") if isinstance(v, dict) else None
+        if stav not in PN_STATES:
+            errs.append(f"pribeh: neznámý stav výsledku {stav!r}")
+        elif stav in DECIDED:
+            votes = [h for h in v.get("hlasovani") or [] if isinstance(h, dict)
+                     and isinstance(h.get("url"), str) and VOTE_URL.match(h["url"])
+                     and _number(h.get("pro")) and _number(h.get("proti"))]
+            if not votes:
+                errs.append(f"pribeh: verdikt {stav!r} bez hlasování s počty a odkazem na psp.cz")
+        server = next((i for i in focus_info or [] if isinstance(i, dict) and "vysledek" in i
+                       and str(i.get("cislo")) == str(p.get("cislo"))), None)
+        if server is not None and stav in PN_STATES:
+            srv = server["vysledek"].get("stav") if isinstance(server["vysledek"], dict) else None
+            if stav != srv and not (srv not in PN_STATES and stav == "ceka"):
+                errs.append(f"pribeh: stav výsledku {stav!r}, server uvádí {srv!r}")
+    d = p.get("dopad")
+    if isinstance(d, dict) and not _empty(d.get("text")) and d.get("ai") is False and _empty(d.get("zdroj")):
+        errs.append("pribeh: dopad bez štítku AI nemá zdroj")
+    return errs
+
+
 def _mentions(value, nums: set[int]) -> bool:
     """Zmiňuje hodnota (i vnořená) některé z čísel PN: pole s číslem, nebo samostatné číslo v textu?"""
     if isinstance(value, dict):
@@ -239,11 +302,15 @@ def _author_errors(card: dict, caption: str) -> list[str]:
 
 
 def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason_keys: list[str],
-                     fmt: str | None, focus_pn: list[int] | None = None) -> list[str]:
-    """Chyby karty a popisku česky; prázdný seznam = v pořádku. focus_pn = video k vybraným PN (/pn)."""
+                     fmt: str | None, focus_pn: list[int] | None = None,
+                     focus_info: list[dict] | None = None) -> list[str]:
+    """Chyby karty a popisku česky; prázdný seznam = v pořádku. focus_pn = video k vybraným PN (/pn),
+    focus_info = jejich údaje z claimu (u formátu pribeh výsledek hlasování ze serveru)."""
     errs: list[str] = []
     is_v3 = template == "template_v3"
-    for key in V3_REQUIRED if is_v3 else V2_REQUIRED:
+    is_pribeh = template == "template_pn_v1"
+    required = V3_REQUIRED if is_v3 else PRIBEH_REQUIRED if is_pribeh else V2_REQUIRED
+    for key in required:
         if key not in card or (key != "reasons" and _empty(card[key])):
             errs.append(f"chybí pole {key}")
     for key in PRESENT:
@@ -256,9 +323,11 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
         key = reason.get("key", "") if isinstance(reason, dict) else ""
         if key not in allowed:
             errs.append(f"klíč důvodu {key!r} tisk nemá (razítko by nebylo doložené)")
-    if is_v3:
+    if is_v3 or is_pribeh:
         if card.get("format") != fmt:
             errs.append(f"formát karty {card.get('format')!r}, zadání {fmt!r}")
+        elif is_pribeh:
+            errs += _pribeh_block(card, focus_pn, focus_info)
         elif fmt:
             errs += _v3_block(card, fmt)
     if len(caption) > CAPTION_LIMIT:

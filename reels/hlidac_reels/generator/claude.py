@@ -16,6 +16,7 @@ DEFAULT_MODEL = "claude-sonnet-5-5"
 ALLOWED_TOOLS = ["mcp__cosepece__*", "Read", "Write", "Edit", "Agent"]  # Edit: oprava variant (D1)
 DISALLOWED_TOOLS = ["Bash", "PowerShell", "WebFetch", "WebSearch"]
 V3_FORMATS = ("cesta", "pn", "zmena", "rozprava")
+PRIBEH = "pribeh"  # formats.PRIBEH (claude.py formats neimportuje, formats je bez závislostí)
 
 
 @dataclass
@@ -69,7 +70,7 @@ def prepare_workdir(workdir: Path, ct: int) -> None:
     """Zkopíruje návody, pravidla a vzory do `workdir/podklady/` (model čte jen pracovní složku).
 
     Vzory karet a popisku vybere z jiného tisku než `ct` a uloží pod obecnými jmény (vzor-v2.json,
-    vzor-v3-<formát>.json, vzor-popisek.txt).
+    vzor-v3-<formát>.json, vzor-pribeh.json, vzor-popisek.txt).
     """
     src, dest = HERE / "examples", Path(workdir) / "podklady"
     dest.mkdir(parents=True, exist_ok=True)
@@ -81,6 +82,9 @@ def prepare_workdir(workdir: Path, ct: int) -> None:
     shutil.copy2(_pick(list(src.glob("caption-*.txt")), ct), dest / "vzor-popisek.txt")
     for fmt in V3_FORMATS:
         shutil.copy2(_pick(list(src.glob(f"v3-{fmt}-*.json")), ct), dest / f"vzor-v3-{fmt}.json")
+    # příběh jednoho PN (šablona template_pn_v1): návod a vzor karty
+    shutil.copy2(HERE / "prompts" / f"{PRIBEH}.md", dest / f"{PRIBEH}.md")
+    shutil.copy2(_pick(list(src.glob(f"{PRIBEH}-*.json")), ct), dest / f"vzor-{PRIBEH}.json")
 
 
 def write_published(workdir: Path, published: list[dict]) -> None:
@@ -133,10 +137,35 @@ def _author_line(i: dict) -> str:
     return f"- autor: {name} (klub {club} ke dni podání{' ' + day if day else ''})"
 
 
-def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict]) -> None:
+# stavy pn_vysledek (app/PnOutcome.php) slovy pro zadání modelu
+OUTCOME_WORDS = {"prijat": "přijat", "castecne": "přijat zčásti", "zamitnut": "zamítnut",
+                 "ceka": "čeká na hlasování ve 3. čtení", "nehlasovatelny": "nehlasovalo se o něm (nehlasovatelný)",
+                 "nezaznel": "nezazněl ve 2. čtení", "neurceno": "výsledek nelze určit"}
+
+
+def _outcome_lines(vysledek) -> list[str]:
+    """Řádky zadání o výsledku PN ve 3. čtení ze serveru (claim focus_pn_info.vysledek)."""
+    if not isinstance(vysledek, dict) or not vysledek.get("stav"):
+        return ["- výsledek hlasování: zatím není (server ho neuvádí); verdikt přijat ani zamítnut nepiš"]
+    stav = str(vysledek["stav"])
+    lines = [f"- výsledek hlasování: {OUTCOME_WORDS.get(stav, stav)} (stav `{stav}`, ze serveru; "
+             "do karty ho doplní systém, nepřepisuj ho)"]
+    if vysledek.get("stanovisko"):
+        lines.append(f"- stanovisko výboru: {vysledek['stanovisko']}")
+    for h in vysledek.get("hlasovani") or []:
+        if not isinstance(h, dict):
+            continue
+        what = f" o návrhu {h['pismeno']}" if h.get("pismeno") else ""
+        lines.append(f"- hlasování č. {h.get('cislo')}{what} ({_pn_day(h.get('datum'))}): {h.get('vysledek')}, "
+                     f"pro {h.get('pro')}, proti {h.get('proti')}; {h.get('url_psp')}")
+    return lines
+
+
+def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict], outcome: bool = False) -> None:
     """Zapíše `podklady/zadani.md` pro video k vybraným PN (/pn); bez focus_pn soubor smaže.
 
-    Návody orchestrátoru, v2 a v3 soubor čtou: hlavní fakt, titulek a háček všech variant jsou o těchto PN.
+    Návody orchestrátoru, v2, v3 a pribeh soubor čtou: hlavní fakt, titulek a háček všech variant jsou o těchto
+    PN. outcome = příběh jednoho PN: zadání uvede i výsledek hlasování ze serveru.
     """
     path = Path(workdir) / "podklady" / "zadani.md"
     if not focus_pn:
@@ -157,20 +186,31 @@ def write_focus(workdir: Path, focus_pn: list[int] | None, info: list[dict]) -> 
         if i.get("titulek"):
             parts.append(f"- titulek: {i['titulek']} (shrnutí AI)")
         parts.append(f"- url_psp: {i.get('url_psp') or PSP_PN_URL.format(cislo=n)}")
+        if outcome:
+            parts += _outcome_lines(i.get("vysledek"))
         parts.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
 def _task_line(n: int, fmt: str | None) -> str:
+    if fmt == PRIBEH:
+        return f"- varianta {n}: „Přečti podklady/{PRIBEH}.md a postupuj podle něj. Varianta N = {n}. Výstup do variant-{n}/.“"
     if fmt is None:
         return f"- varianta {n}: „Přečti podklady/v2.md a postupuj podle něj. Výstup do variant-{n}/.“"
     return f"- varianta {n}: „Přečti podklady/v3.md a postupuj podle něj. Varianta N = {n}, formát F = {fmt}. Výstup do variant-{n}/.“"
 
 
 def build_prompt(*, ct: int, formats: list[str], workdir: Path, repair: dict[int, list[str]] | None = None) -> str:
-    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2, 3… = v3 ve formátech `formats`; `repair` = jen opravy."""
-    plan: dict[int, str | None] = {1: None, **{i: f for i, f in enumerate(formats, 2)}}
+    """Prompt orchestrátoru. Varianta 1 = v2, varianty 2, 3… = v3 ve formátech `formats`; `repair` = jen opravy.
+
+    formats = ["pribeh"]: jediná varianta 1, příběh jednoho PN (šablona template_pn_v1).
+    """
+    plan: dict[int, str | None]
+    if formats == [PRIBEH]:
+        plan = {1: PRIBEH}
+    else:
+        plan = {1: None, **{i: f for i, f in enumerate(formats, 2)}}
     numbers = sorted(repair) if repair else sorted(plan)
     tasks = "\n".join(_task_line(n, plan[n]) for n in numbers)
     fix = ""

@@ -28,14 +28,20 @@ def video_caption(reel: Reel, landscape: bool = False) -> str:
     if reel.ct is not None:
         parts.append(f"tisk {reel.ct}")
     if reel.format:
-        parts.append(reel.format)
+        parts.append(FORMAT_NAMES.get(reel.format, reel.format))
     if landscape:
         parts.append(LANDSCAPE_NOTE)
     return " · ".join(parts)[:VIDEO_CAPTION_LIMIT]
 
 
+# formáty, jejichž jméno v kódu člověku nic neřekne (příběh jednoho PN, šablona template_pn_v1)
+FORMAT_NAMES = {"pribeh": "příběh PN"}
+
+
 def _variant_label(reel: Reel) -> str:
-    """v2, nebo v3 s formátem (template_v3)."""
+    """v2, v3 s formátem (template_v3), nebo „příběh PN“ (template_pn_v1)."""
+    if reel.template == "template_pn_v1":
+        return FORMAT_NAMES["pribeh"]
     if reel.template == "template_v3":
         return f"v3 {reel.format}" if reel.format else "v3"
     return "v2"
@@ -497,7 +503,8 @@ def autopilot_done(reel: Reel, focus_pn: list[int] | None) -> str:
         what.append("PN " + "+".join(str(n) for n in focus_pn))
     if reel.ct is not None:
         what.append(f"tisk {reel.ct}")
-    what.append(f"varianta {reel.format or _variant_label(reel)}")
+    name = FORMAT_NAMES.get(reel.format or "")
+    what.append(f"varianta {reel.format} ({name})" if name else f"varianta {reel.format or _variant_label(reel)}")
     links = [f"{name} {link}" for name, link in (("FB", reel.fb_permalink), ("IG", reel.ig_permalink),
                                                 ("Threads", reel.threads_permalink)) if link]
     head = f"Autopilot zveřejnil #{reel.id} ({', '.join(what)})"
@@ -508,7 +515,7 @@ def autopilot_skipped(skipped: list[dict]) -> str:
     """Varianty sady autopilota, které generátor nevytvořil (z manifestu {n, format, errors}); prázdné = nic."""
     lines = []
     for s in skipped:
-        fmt = f" ({s['format']})" if s.get("format") else ""
+        fmt = f" ({FORMAT_NAMES.get(s['format'], s['format'])})" if s.get("format") else ""
         errors = s.get("errors") if isinstance(s.get("errors"), list) else []
         reason = "; ".join(str(e) for e in errors)[:REASON_LIMIT] or "důvod neuveden"
         lines.append(f"Varianta {s.get('n')}{fmt} nevznikla: {reason}")

@@ -225,6 +225,22 @@ def test_format_v2_musi_byt_null(conn, tmp_path):
     assert res[0].ok and list(res[0].rejected) == [1]
 
 
+def test_pribeh_jedna_varianta(conn, tmp_path):
+    # příběh jednoho PN: šablona template_pn_v1 jen s formátem pribeh
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"], templates={1: "template_pn_v1", 2: "template_pn_v1"})
+
+    def mut(m):
+        m["variants"][0]["format"] = "pribeh"
+        m["variants"][1]["format"] = "pn"
+    _rewrite(folder, jid, mut)
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    assert res[0].ok and list(res[0].rejected) == [2]
+    items = queue.set_items(conn, jid)
+    assert [(r.variant, r.template, r.format) for r in items] == [(1, "template_pn_v1", "pribeh")]
+
+
 def test_job_id_musi_odpovidat_slozce(conn, tmp_path):
     from hlidac_reels import inbox, queue
     jid = _job(conn)

@@ -1,0 +1,192 @@
+{
+  "ct": 300,
+  "nazev": "Novela zákoníku práce (platformová práce, rovné odměňování)",
+  "faze": "2. čtení",
+  "score": 68,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "url": "https://cosepece.cz/tisk/300",
+  "data_date": "2026-11-26",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-09-08",
+  "kdo": "ministr práce a sociálních věcí",
+  "format": "pribeh",
+  "reasons": [
+    {
+      "key": "ai",
+      "points": 24,
+      "label": "Rozbor PN č. 2364 (Marian Jurečka, KDU-ČSL): závažnost 8/10 – Rozsáhlý nový režim (nové paragrafy daňového řádu, informační systém, změna zákona o majetku státu) nesouvisí s platformovou prací ani rovnou odměnou a nová pravidla se použijí i na dříve vzniklé nedoplatky a dříve podané žádosti.; 6 z 36 PN se závažností ≥ 6"
+    },
+    {
+      "key": "ai_bill",
+      "points": 21,
+      "label": "Rozbor textu návrhu: závažnost 7/10 – Do návrhu o platformové práci a odměňování jsou vloženy rozsáhlé nesouvisející změny sociálního pojištění, nemocenského pojištění a podpory v nezaměstnanosti, včetně přechodných ustanovení, která nové lhůty pro zánik pojistného a přeplatků uplatňují na již běžící lhůty."
+    },
+    {
+      "key": "deadline_cut",
+      "points": 15,
+      "label": "Zkrácená lhůta pro výbory: 30 dní místo 60"
+    },
+    {
+      "key": "surge",
+      "points": 5,
+      "label": "Nával pozměňovacích návrhů"
+    },
+    {
+      "key": "omnibus",
+      "points": 3,
+      "label": "Souhrnná novela více zákonů"
+    },
+    {
+      "key": "pn_other_law",
+      "points": 0,
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (218/2000 Sb., 219/2000 Sb., 17/2012 Sb., 242/2016 Sb., 141/1961 Sb., 634/2004 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí",
+      "capped": true
+    },
+    {
+      "key": "pn_many",
+      "points": 0,
+      "label": "9 z 36 pozměňovacích návrhů je problematických",
+      "capped": true
+    }
+  ],
+  "title": "Do novely zákoníku práce míří nová pravidla pro daňové přeplatky",
+  "perex": "Pozměňovací návrh k novele o platformové práci a rovném odměňování vkládá nové paragrafy daňového řádu a mění zákon o majetku státu.",
+  "pribeh": {
+    "cislo": 2364,
+    "autor": {
+      "jmeno": "Marian Jurečka",
+      "klub": "KDU-ČSL",
+      "spolu": 2
+    },
+    "podano": "2026-11-22 20:08",
+    "url": "https://www.psp.cz/sqw/sd.sqw?cd=2364&o=10",
+    "co": {
+      "kde": "daňový řád, § 154a a 154b",
+      "popis": "Než stát vrátí přeplatek, ověří dluhy u jiných státních úřadů a přeplatek na ně může použít",
+      "bez_pred": "ve vládním návrhu není",
+      "pred_lab": "Vládní návrh",
+      "po": "nové § 154a a 154b daňového řádu",
+      "po_lab": "Po PN",
+      "citace": "Ustanovení § 154a a 154b zákona č. 280/2009 Sb. se ode dne nabytí své účinnosti použijí také na dříve vzniklé nedoplatky.",
+      "zdroj": "PN 2364, přechodná ustanovení"
+    },
+    "osa": [
+      {
+        "date": "2026-09-08",
+        "label": "Vláda předložila návrh"
+      },
+      {
+        "date": "2026-10-16",
+        "label": "1. čtení zahájeno"
+      },
+      {
+        "date": "2026-10-20",
+        "label": "Přikázáno výborům, lhůta 30 dní místo 60",
+        "hot": true
+      },
+      {
+        "date": "2026-11-22",
+        "cas": "20:08",
+        "label": "Podán pozměňovací návrh",
+        "pn": true
+      }
+    ],
+    "osa_souhrn": {
+      "cislo": 33,
+      "jednotka": "dní",
+      "popis": "od přikázání výborům do podání návrhu"
+    },
+    "naval": {
+      "dny": [
+        {
+          "date": "2026-10-05",
+          "count": 1
+        },
+        {
+          "date": "2026-11-12",
+          "count": 1
+        },
+        {
+          "date": "2026-11-19",
+          "count": 10
+        },
+        {
+          "date": "2026-11-22",
+          "count": 7,
+          "own": true
+        },
+        {
+          "date": "2026-11-23",
+          "count": 3
+        },
+        {
+          "date": "2026-11-24",
+          "count": 7
+        },
+        {
+          "date": "2026-11-25",
+          "count": 6
+        },
+        {
+          "date": "2026-11-26",
+          "count": 1
+        }
+      ],
+      "note": "34 z 36 pozměňovacích návrhů přišlo za 8 dní, od 19. do 26. 11.",
+      "sub": "tento je jeden ze 7 podaných v neděli 22. 11. večer"
+    },
+    "znaky": [
+      {
+        "typ": "prilepek",
+        "nadpis": "Sahá do jiných zákonů",
+        "text": "Novela je o platformové práci a rovném odměňování. Tento PN mění daňový řád a zákon o majetku státu (219/2000 Sb.).",
+        "zdroj": "PN 2364"
+      },
+      {
+        "typ": "zpetnost",
+        "nadpis": "Platí i na starší dluhy",
+        "text": "Nová pravidla se mají použít také na nedoplatky vzniklé před účinností.",
+        "zdroj": "PN 2364, přechodná ustanovení"
+      },
+      {
+        "typ": "ai",
+        "nadpis": "Podle AI mimo předmět",
+        "text": "Rozbor AI: rozsáhlý nový režim, závažnost 8 z 10.",
+        "zdroj": "rozbor cosepece.cz",
+        "ai": true
+      }
+    ],
+    "ferove": "Pozměňovací návrh je běžný nástroj. Zda se do zákona dostane, rozhodne až hlasování ve 3. čtení.",
+    "vysledek": {
+      "stav": "ceka",
+      "text": "O návrhu se zatím nehlasovalo.",
+      "dal": [
+        {
+          "label": "2. čtení: poslanec se k návrhu přihlásí v podrobné rozpravě",
+          "ted": true
+        },
+        {
+          "label": "Garanční výbor k němu dá stanovisko"
+        },
+        {
+          "label": "3. čtení: hlasování o návrzích a o celém zákonu"
+        }
+      ],
+      "stanoviska": "stav podle historie tisku 300 na psp.cz k 26. 11. 2026"
+    },
+    "dopad": {
+      "text": "Kdyby návrh prošel: než ti stát vrátí daňový přeplatek, zjistí, jestli nedlužíš jinému státnímu úřadu, a přeplatek může použít na ten dluh. I na dluh starší než zákon.",
+      "ai": true,
+      "fakta": [
+        {
+          "k": "Účinnost podle návrhu",
+          "v": "1. 1. 2028 a 1. 1. 2029"
+        }
+      ],
+      "zdroj": "PN 2364; shrnutí AI"
+    }
+  },
+  "zdroje": "Zdroj: psp.cz, sněmovní dokument 2364, historie tisku 300"
+}

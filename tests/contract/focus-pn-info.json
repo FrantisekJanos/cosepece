@@ -1,8 +1,13 @@
 [
   {"cislo": 9801, "osoba": "Test Poslanec", "cas": "2026-03-15 10:00:00", "titulek": null,
    "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=9801&o=10", "id_osoba": 6150, "klub": "ANO",
-   "klub_ke_dni": "2026-03-15", "has_text": true},
+   "klub_ke_dni": "2026-03-15", "has_text": true,
+   "vysledek": {"stav": "prijat", "pismena": "B1", "stanovisko": "souhlasné",
+    "hlasovani": [{"cislo": 400, "schuze": 34, "datum": "2026-04-20", "vysledek": "prijato", "pro": 120,
+      "proti": 50, "zdrzel": 10, "nehlasoval": 20, "pismeno": "B1", "varianta": null,
+      "url_psp": "https://www.psp.cz/sqw/hlasy.sqw?g=99901",
+      "kluby": [{"klub": "ANO", "pro": 70, "proti": 0, "zdrzel": 2}, {"klub": "ODS", "pro": 0, "proti": 30, "zdrzel": 0}]}]}},
   {"cislo": 9802, "osoba": "Test Ministr", "cas": "2026-03-16 09:00:00", "titulek": null,
    "url_psp": "https://www.psp.cz/sqw/sd.sqw?cd=9802&o=10", "id_osoba": null, "klub": null,
-   "klub_ke_dni": null, "has_text": false}
+   "klub_ke_dni": null, "has_text": false, "vysledek": null}
 ]

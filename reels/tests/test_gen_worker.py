@@ -185,6 +185,22 @@ def test_bez_vypadku_prazdny_skipped(tmp_path):
     assert api.skipped == []
 
 
+def test_process_pribeh_nese_format(tmp_path):
+    # příběh jednoho PN (template_pn_v1): formát pribeh jde v sadě i v nevzniklých variantách
+    def gen(*, out, ct, **kw):
+        out = Path(out)
+        v = Variant(1, "template_pn_v1", "pribeh", ok=True, caption="Popisek")
+        d = out / "variant-1"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "card.json").write_text(json.dumps({"ct": ct, "format": "pribeh"}), encoding="utf-8")
+        v.video = d / f"reel-{ct}-pribeh.mp4"
+        v.video.write_bytes(b"\0\0\0\x18ftypmp42")
+        return GenResult(ct=ct, formats=["pribeh"], variants=[v], ok=True)
+    api = FakeApi()
+    assert _process(api, tmp_path, gen) is True
+    assert [(v["n"], v["template"], v["format"]) for v in api.calls[-1][3]] == [(1, "template_pn_v1", "pribeh")]
+
+
 def test_process_preda_autopilota(tmp_path):
     seen: dict = {}
     _process(FakeApi(), tmp_path, fake_generate({1, 2}, seen))

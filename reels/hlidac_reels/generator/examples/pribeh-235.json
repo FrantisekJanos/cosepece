@@ -1,0 +1,155 @@
+{
+  "ct": 235,
+  "nazev": "Novela zákona o pojistném na veřejné zdravotní pojištění",
+  "faze": "V Senátu",
+  "score": 45,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "points": 20,
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (551/1991 Sb., 280/1992 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí"
+    },
+    {
+      "key": "ai",
+      "points": 15,
+      "label": "Rozbor PN č. 1813 (Michaela Šebelová, STAN): závažnost 5/10 – Jde o přílepek měnící dva jiné zákony o zdravotních pojišťovnách mimo předmět vládního návrhu o pojistném, s věcným dopadem na úzce vymezenou skupinu příjemců příspěvků, bez zpětnosti a zkracování lhůt.; 1 z 2 PN se závažností ≥ 5"
+    },
+    {
+      "key": "p90_requested",
+      "points": 10,
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk/235",
+  "data_date": "2026-11-26",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-06-23",
+  "kdo": "ministr zdravotnictví",
+  "format": "pribeh",
+  "title": "Strop 5 % na příspěvky pacientským organizacím má zmizet",
+  "perex": "Pozměňovací návrh k novele o pojistném ruší limit, kolik mohou zdravotní pojišťovny dát pacientským organizacím ze svého fondu.",
+  "pribeh": {
+    "cislo": 1813,
+    "autor": {
+      "jmeno": "Michaela Šebelová",
+      "klub": "STAN",
+      "spolu": 3
+    },
+    "podano": "2026-09-22 14:57",
+    "url": "https://www.psp.cz/sqw/sd.sqw?cd=1813&o=10",
+    "co": {
+      "kde": "§ 7a zákona o VZP",
+      "popis": "Příspěvky pacientským organizacím z fondu obecně prospěšných činností pojišťovny",
+      "pred": "nejvýš 5 % fondu",
+      "pred_lab": "Dnes",
+      "po": "bez stropu",
+      "po_lab": "Po PN",
+      "kontext": "Stejná změna pro zaměstnanecké pojišťovny (čl. V)",
+      "citace": "V § 7a odst. 2 písm. b) se slova „s tím, že úhrnná výše příspěvku poskytovaného pacientským organizacím nepřekročí 5 % z celkových zdrojů fondu obecně prospěšných činností Pojišťovny podle odstavce 1“ zrušují.",
+      "zdroj": "PN 1813, čl. IV"
+    },
+    "osa": [
+      {
+        "date": "2026-06-23",
+        "label": "Vláda předložila návrh"
+      },
+      {
+        "date": "2026-07-08",
+        "label": "1. čtení, přikázáno výboru"
+      },
+      {
+        "date": "2026-09-22",
+        "cas": "14:57",
+        "label": "Podán pozměňovací návrh",
+        "pn": true
+      },
+      {
+        "date": "2026-09-23",
+        "label": "2. čtení: konec podrobné rozpravy"
+      },
+      {
+        "date": "2026-11-04",
+        "label": "3. čtení: hlasování o návrzích"
+      }
+    ],
+    "osa_souhrn": {
+      "cislo": 43,
+      "jednotka": "dní",
+      "popis": "od podání návrhu do hlasování ve 3. čtení"
+    },
+    "znaky": [
+      {
+        "typ": "prilepek",
+        "nadpis": "Mění dva jiné zákony",
+        "text": "Vládní návrh měnil jen zákon o pojistném. Tento PN přidal změny zákona o VZP (551/1991 Sb.) a zákona o zaměstnaneckých pojišťovnách (280/1992 Sb.).",
+        "zdroj": "PN 1813, čl. IV a V"
+      },
+      {
+        "typ": "ai",
+        "nadpis": "Podle AI mimo předmět",
+        "text": "Rozbor AI: jde o příspěvky pacientským organizacím, ne o pojistné. Závažnost 5 z 10, bez zpětnosti.",
+        "zdroj": "rozbor cosepece.cz",
+        "ai": true
+      },
+      {
+        "typ": "termin",
+        "nadpis": "Den před koncem rozpravy",
+        "text": "Podán 22. 9. odpoledne, podrobná rozprava 2. čtení skončila 23. 9.",
+        "zdroj": "historie tisku 235, psp.cz"
+      }
+    ],
+    "ferove": "Zrušení stropu Sněmovna přijala 145 hlasy, nikdo nebyl proti.",
+    "vysledek": {
+      "stav": "castecne",
+      "text": "Hlasovalo se po částech: zrušení stropu prošlo, druhé body článků IV a V ne.",
+      "hlasovani": [
+        {
+          "o_cem": "návrh B bez bodu 2 čl. IV a bodu 2 čl. V",
+          "cislo": 400,
+          "schuze": 34,
+          "datum": "2026-11-04",
+          "vysledek": "přijato",
+          "pro": 145,
+          "proti": 0,
+          "zdrzel": 0,
+          "nehlasoval": 1,
+          "prihlaseno": 146,
+          "url": "https://www.psp.cz/sqw/hlasy.sqw?g=88989"
+        },
+        {
+          "o_cem": "bod 2 čl. IV a bod 2 čl. V",
+          "cislo": 401,
+          "schuze": 34,
+          "datum": "2026-11-04",
+          "vysledek": "zamítnuto",
+          "pro": 49,
+          "proti": 95,
+          "zdrzel": 0,
+          "nehlasoval": 2,
+          "prihlaseno": 146,
+          "url": "https://www.psp.cz/sqw/hlasy.sqw?g=88990"
+        }
+      ],
+      "stanoviska": "ministr: 1. část souhlas, 2. část nesouhlas (stenozáznam, neautorizováno)"
+    },
+    "dopad": {
+      "text": "Když zákon projde Senátem, pojišťovny budou moci dát pacientským organizacím víc než dnešních 5 % svého fondu obecně prospěšných činností.",
+      "ai": true,
+      "fakta": [
+        {
+          "k": "Strop dnes",
+          "v": "5 % fondu"
+        },
+        {
+          "k": "Účinnost podle schváleného znění",
+          "v": "1. 1. 2027"
+        }
+      ],
+      "zdroj": "schválené znění tisku 235, čl. IV až VI"
+    }
+  },
+  "zdroje": "Zdroj: psp.cz, sněmovní dokument 1813, hlasování č. 400 a 401 na 34. schůzi"
+}

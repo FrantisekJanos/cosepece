@@ -429,7 +429,8 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
                            # video k vybraným PN (/pn); starší server pole neposílá = celý tisk
                            focus_pn=[int(n) for n in job.get("focus_pn") or []] or None,
                            focus_info=list(job.get("focus_pn_info") or []),
-                           # úloha autopilota: jen 2 varianty (v2 + v3 pn); starší server pole neposílá
+                           # úloha autopilota: jen 2 varianty (v2 + v3 pn), u jednoho PN jediná varianta pribeh;
+                           # starší server pole neposílá
                            autopilot=job.get("autopilot") is True,
                            on_stage=prog.set, should_stop=gone)
             if gone():
@@ -461,8 +462,9 @@ def process(api, job: dict, *, root: Path, mcp_config: Path, model: str, generat
             for v in good:
                 card = json.loads((workdir / f"variant-{v.n}" / "card.json").read_text(encoding="utf-8"))
                 variants.append({"n": v.n, "template": v.template,
-                                 # template_v2 formát nemá (inbox jiný než null odmítne), template_v3 ho nese
-                                 "format": v.format if v.template == "template_v3" else None,
+                                 # template_v2 formát nemá (inbox jiný než null odmítne), template_v3 ho nese,
+                                 # template_pn_v1 má formát pribeh
+                                 "format": v.format if v.template != "template_v2" else None,
                                  "caption": v.caption, "card": card})
             prog.set("upload")
             uploading = True

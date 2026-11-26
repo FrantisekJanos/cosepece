@@ -144,6 +144,27 @@ def _fix_top(card: dict, server: dict[int, dict], notes: list[str]) -> None:
             item["klub"] = klub
 
 
+def _fix_story_author(story: dict, server: dict[int, dict], notes: list[str]) -> None:
+    """V `pribeh.autor` platí autor a klub ze serveru (klub ke dni podání), stejně jako v `pn.top`.
+
+    Klub od modelu (MCP vrací poslední klub) bez údaje serveru zmizí, autor bez údaje serveru zůstane."""
+    pn = server.get(_as_int(story.get("cislo")))
+    autor = story.get("autor")
+    if pn is None or not isinstance(autor, dict):
+        return
+    n, jmeno, klub = pn["cislo"], pn["jmeno"], pn["klub"]
+    if jmeno and autor.get("jmeno") != jmeno:
+        notes.append(f"pribeh PN {n}: autor {_quoted(autor.get('jmeno'))} → „{jmeno}“ (server)")
+        autor["jmeno"] = jmeno
+    if klub is None:
+        if "klub" in autor:
+            notes.append(f"pribeh PN {n}: klub {_quoted(autor['klub'])} odstraněn (server klub neuvádí)")
+            del autor["klub"]
+    elif autor.get("klub") != klub:
+        notes.append(f"pribeh PN {n}: klub {_quoted(autor.get('klub'))} → „{klub}“ (server)")
+        autor["klub"] = klub
+
+
 def _fix_autori(card: dict, server: dict[int, dict], notes: list[str]) -> None:
     """V pruzích `pn.autori` platí u autora zadaných PN klub ze serveru (ke dni podání), aby video neuvádělo
     v háčku jiný klub než v pruzích (model ho bere z MCP, které vrací poslední klub).
@@ -205,12 +226,92 @@ def _caption_clubs(card: dict, caption: str, notes: list[str]) -> str:
     return caption
 
 
+# stavy výsledku PN, které šablona template_pn_v1 ukáže (app/PnOutcome.php bez „neurceno“)
+PN_STATES = ("prijat", "castecne", "zamitnut", "ceka", "nehlasovatelny", "nezaznel")
+VOTE_WORDS = {"prijato": "přijato", "zamitnuto": "zamítnuto"}
+
+
+def _fix_signs(story: dict, notes: list[str]) -> None:
+    """Znaky bez zdroje vynechá (šablona by je stejně nezařadila); znak typu `ai` dostane štítek AI."""
+    signs = story.get("znaky")
+    if not isinstance(signs, list):
+        return
+    kept = []
+    for i, sign in enumerate(signs, 1):
+        if not isinstance(sign, dict) or not isinstance(sign.get("zdroj"), str) or not sign["zdroj"].strip():
+            notes.append(f"pribeh: vynechán znak {i} bez zdroje")
+            continue
+        if sign.get("typ") == "ai" and sign.get("ai") is not True:
+            sign["ai"] = True
+            notes.append(f"pribeh: znak {i} (typ ai) dostal štítek hodnocení AI")
+        kept.append(sign)
+    story["znaky"] = kept
+
+
+def _server_outcome(story: dict, focus_info: list[dict]) -> tuple[bool, dict | None]:
+    """(server výsledek posílá, výsledek PN karty) z claimu; bez klíče `vysledek` (starší server) (False, None)."""
+    cislo = _as_int(story.get("cislo"))
+    items = [i for i in focus_info or [] if isinstance(i, dict) and "vysledek" in i]
+    item = next((i for i in items if _as_int(i.get("cislo")) == cislo), None)
+    if item is None:
+        return False, None
+    vysledek = item["vysledek"]
+    return True, vysledek if isinstance(vysledek, dict) else None
+
+
+def _fix_outcome(story: dict, focus_info: list[dict], notes: list[str]) -> None:
+    """Výsledek PN platí ze serveru (pn_vysledek): stav, hlasování s počty, kluby a odkazem na psp.cz.
+
+    Od modelu zůstane jen popis (`text`, `o_cem` u stejného čísla hlasování, `dal`, `stanoviska`); text ke stavu,
+    který server neuvádí, zmizí. Bez výsledku ze serveru (null) zůstane nejvýš „čeká“, výsledek „neurceno“ vypadne
+    celý: verdikt bez doloženého hlasování šablona ukázat nesmí.
+    """
+    known, srv = _server_outcome(story, focus_info)
+    if not known:
+        return
+    model = story.get("vysledek") if isinstance(story.get("vysledek"), dict) else None
+    stav = srv.get("stav") if srv else None
+    if stav not in PN_STATES:
+        if model is not None and (stav == "neurceno" or model.get("stav") != "ceka"):
+            del story["vysledek"]
+            notes.append(f"pribeh: výsledek {_quoted(model.get('stav'))} vynechán (server výsledek "
+                         f"{'neurčil' if stav == 'neurceno' else 'neuvádí'})")
+        elif model is not None and model.get("hlasovani"):
+            model.pop("hlasovani")
+            notes.append("pribeh: hlasování vynecháno (server výsledek neuvádí)")
+        return
+    new = dict(model or {})
+    if model is None:
+        notes.append(f"pribeh: výsledek doplněn ze serveru („{stav}“)")
+    elif model.get("stav") != stav:
+        notes.append(f"pribeh: stav výsledku {_quoted(model.get('stav'))} → „{stav}“ (server)")
+        new.pop("text", None)
+    new["stav"] = stav
+    described = {_as_int(h.get("cislo")): h.get("o_cem") for h in (model or {}).get("hlasovani") or []
+                 if isinstance(h, dict) and isinstance(h.get("o_cem"), str) and h["o_cem"].strip()}
+    votes = []
+    for h in srv.get("hlasovani") or []:
+        if not isinstance(h, dict):
+            continue
+        o_cem = described.get(_as_int(h.get("cislo"))) or (f"návrh {h['pismeno']}" if h.get("pismeno") else None)
+        vote = {"o_cem": o_cem, "cislo": h.get("cislo"), "schuze": h.get("schuze"), "datum": h.get("datum"),
+                "vysledek": VOTE_WORDS.get(str(h.get("vysledek")), h.get("vysledek")), "pro": h.get("pro"),
+                "proti": h.get("proti"), "zdrzel": h.get("zdrzel"), "nehlasoval": h.get("nehlasoval"),
+                "kluby": h.get("kluby") or [], "url": h.get("url_psp")}
+        votes.append({k: v for k, v in vote.items() if v is not None})
+    if (model or {}).get("hlasovani") != votes:
+        notes.append(f"pribeh: hlasování ze serveru ({len(votes)})")
+    new["hlasovani"] = votes
+    story["vysledek"] = new
+
+
 def normalize(card: dict, caption: str, *, fmt: str | None,
               focus_info: list[dict]) -> tuple[dict, str, list[str]]:
     """Vrací novou kartu, nový popisek a seznam zásahů; vstupní karta zůstane beze změny.
 
     focus_info = údaje o zadaných PN z claimu serveru (/pn): autor a klub ke dni podání jdou do
-    `pn_autor` (každá varianta, v2 i v3), do `pn.top`, do pruhů `pn.autori` a do popisku.
+    `pn_autor` (každá varianta, v2 i v3), do `pn.top`, do pruhů `pn.autori` a do popisku; u formátu `pribeh`
+    platí výsledek hlasování ze serveru (`pribeh.vysledek`).
     """
     card = copy.deepcopy(card)
     notes: list[str] = []
@@ -218,11 +319,16 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     _nbsp_hook(card, notes)
     if fmt == "zmena":
         _drop_uncited(card, notes)
+    if fmt == "pribeh" and isinstance(card.get("pribeh"), dict):
+        _fix_signs(card["pribeh"], notes)
+        _fix_outcome(card["pribeh"], focus_info, notes)
     if CLOSING not in caption:
         caption = f"{caption.rstrip()}\n\n{CLOSING}" if caption.strip() else CLOSING
         notes.append(f"popisek: doplněna věta „{CLOSING}“")
     server = _server_pn(focus_info)
     _set_authors(card, [pn for pn in server.values() if pn["jmeno"]], notes)
+    if fmt == "pribeh" and isinstance(card.get("pribeh"), dict):
+        _fix_story_author(card["pribeh"], server, notes)
     _fix_top(card, server, notes)
     _fix_autori(card, server, notes)
     caption = _caption_clubs(card, caption, notes)

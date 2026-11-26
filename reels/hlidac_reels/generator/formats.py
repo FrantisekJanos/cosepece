@@ -1,4 +1,7 @@
-"""Výběr formátů v3 pro sadu (obvykle dva, u autopilota a /pn bez textu jeden): pravidlo podle klíčů důvodů skóre, ne úsudek modelu."""
+"""Výběr formátů v3 pro sadu (obvykle dva, u autopilota a /pn bez textu jeden): pravidlo podle klíčů důvodů skóre, ne úsudek modelu.
+
+Úloha s jedním PN dostane místo toho jedinou variantu `pribeh` (wants_pribeh).
+"""
 from __future__ import annotations
 
 FORMATS = ("cesta", "pn", "zmena", "rozprava")
@@ -11,6 +14,25 @@ FORMAT_TRIGGERS: dict[str, tuple[str, ...]] = {
 
 # video k vybraným PN (/pn): oba formáty ukazují obsah PN (kdo co přidal, co se mění)
 FOCUS_FORMATS = ["pn", "zmena"]
+
+# příběh jednoho PN (šablona template_pn_v1, návrh docs/superpowers/specs/2026-11-26-reels-pn-pribeh-design.md):
+# úloha s jedním PN = jediná varianta; mezi FORMATS není (/video ho nezadá)
+PRIBEH = "pribeh"
+PRIBEH_TEMPLATE = "template_pn_v1"
+
+
+def wants_pribeh(focus_pn: list[int] | None, focus_info: list[dict] | None) -> bool:
+    """Úloha s právě jedním PN (/pn 2376, tlačítka „Všechny zvlášť“ a /pnnew) dostane jednu variantu `pribeh`.
+
+    Jen když server u PN posílá klíč `vysledek` (i null): ten umí přijmout šablonu template_pn_v1, starší server
+    by ji odmítl a sada jde postaru (v2 + v3). PN bez textu (has_text false) také postaru: příběh stojí na
+    doslovné citaci z textu PN. Video k víc PN zůstává v2 + v3.
+    """
+    if not focus_pn or len(set(focus_pn)) != 1:
+        return False
+    cislo = int(focus_pn[0])
+    info = next((i for i in focus_info or [] if isinstance(i, dict) and str(i.get("cislo")) == str(cislo)), None)
+    return info is not None and "vysledek" in info and info.get("has_text", True) is not False
 
 
 def pick_formats(reason_keys: list[str], has_amendments: bool, hint: str | None = None,

@@ -1,0 +1,198 @@
+{
+  "ct": 235,
+  "nazev": "Novela zákona o pojistném na veřejné zdravotní pojištění",
+  "faze": "V Senátu",
+  "score": 45,
+  "quote": "",
+  "quote_source": "",
+  "verified": false,
+  "reasons": [
+    {
+      "key": "pn_other_law",
+      "points": 20,
+      "label": "Přílepek: pozměňovací návrh mění i jiný zákon (551/1991 Sb., 280/1992 Sb.); rozbor textu potvrdil, že s předmětem návrhu nesouvisí"
+    },
+    {
+      "key": "ai",
+      "points": 15,
+      "label": "Rozbor PN č. 1813 (Michaela Šebelová, STAN): závažnost 5/10 – Jde o přílepek měnící dva jiné zákony o zdravotních pojišťovnách mimo předmět vládního návrhu o pojistném, s věcným dopadem na úzce vymezenou skupinu příjemců příspěvků, bez zpětnosti a zkracování lhůt.; 1 z 2 PN se závažností ≥ 5"
+    },
+    {
+      "key": "p90_requested",
+      "points": 10,
+      "label": "Navrženo schválit už v 1. čtení (§ 90 odst. 2)"
+    }
+  ],
+  "url": "https://cosepece.cz/tisk/235",
+  "data_date": "2026-11-26",
+  "typ_navrhu": "vládní návrh",
+  "predlozeno": "2026-06-23",
+  "kdo": "ministr zdravotnictví",
+  "format": "pribeh",
+  "title": "Stát má za své pojištěnce platit ze základu 17 540 Kč místo 18 362 Kč",
+  "perex": "Pozměňovací návrh snížil částku, ze které stát platí zdravotní pojištění za státní pojištěnce, proti vládnímu návrhu o 822 Kč měsíčně.",
+  "pribeh": {
+    "cislo": 1796,
+    "autor": {
+      "jmeno": "Boris Šťastný",
+      "klub": "MS",
+      "spolu": 0
+    },
+    "podano": "2026-09-22 09:56",
+    "url": "https://www.psp.cz/sqw/sd.sqw?cd=1796&o=10",
+    "co": {
+      "kde": "čl. I bod 1",
+      "popis": "Měsíční základ, ze kterého stát platí zdravotní pojištění za státní pojištěnce",
+      "pred": "18 362 Kč",
+      "pred_lab": "Vládní návrh",
+      "po": "17 540 Kč",
+      "po_lab": "Po PN",
+      "kontext": "Dnes v zákoně: 14 074 Kč (§ 3c odst. 1)",
+      "citace": "V čl. I bodě 1 se částka „18 362 Kč“ nahrazuje částkou „17 540 Kč“.",
+      "zdroj": "PN 1796 (sněmovní dokument)"
+    },
+    "osa": [
+      {
+        "date": "2026-06-23",
+        "label": "Vláda předložila návrh"
+      },
+      {
+        "date": "2026-07-08",
+        "label": "1. čtení, přikázáno výboru"
+      },
+      {
+        "date": "2026-09-22",
+        "cas": "9:56",
+        "label": "Podán pozměňovací návrh",
+        "pn": true
+      },
+      {
+        "date": "2026-09-23",
+        "label": "2. čtení: konec podrobné rozpravy"
+      },
+      {
+        "date": "2026-11-04",
+        "label": "3. čtení: hlasování o návrzích"
+      }
+    ],
+    "osa_souhrn": {
+      "cislo": 43,
+      "jednotka": "dní",
+      "popis": "od podání návrhu do hlasování ve 3. čtení"
+    },
+    "znaky": [
+      {
+        "typ": "termin",
+        "nadpis": "Den před koncem rozpravy",
+        "text": "Podán 22. 9. ráno, podrobná rozprava 2. čtení skončila 23. 9.",
+        "zdroj": "historie tisku 235, psp.cz"
+      },
+      {
+        "typ": "rozsah",
+        "nadpis": "Mění jediné číslo",
+        "text": "Celý návrh je jedna věta. Rozbor AI mu dal závažnost 1 z 10.",
+        "zdroj": "PN 1796; rozbor cosepece.cz",
+        "ai": true
+      },
+      {
+        "typ": "penize",
+        "nadpis": "13 místo 21 miliard",
+        "text": "Podle odůvodnění návrhu vyjde změna státní rozpočet na asi 13 mld. Kč místo asi 21 mld. Kč.",
+        "zdroj": "odůvodnění PN 1796"
+      }
+    ],
+    "ferove": "Jednací řád dovoluje podat pozměňovací návrh až do konce podrobné rozpravy.",
+    "vysledek": {
+      "stav": "prijat",
+      "text": "Sněmovna ho přijala ve 3. čtení 4. 11. 2026.",
+      "hlasovani": [
+        {
+          "o_cem": "pozměňovací návrh A (Boris Šťastný)",
+          "cislo": 399,
+          "schuze": 34,
+          "datum": "2026-11-04",
+          "vysledek": "přijato",
+          "pro": 113,
+          "proti": 17,
+          "zdrzel": 1,
+          "nehlasoval": 15,
+          "prihlaseno": 146,
+          "kluby": [
+            {
+              "klub": "ANO2011",
+              "pro": 65,
+              "proti": 0,
+              "zdrzel": 0
+            },
+            {
+              "klub": "ODS",
+              "pro": 0,
+              "proti": 16,
+              "zdrzel": 2
+            },
+            {
+              "klub": "STAN",
+              "pro": 14,
+              "proti": 0,
+              "zdrzel": 0
+            },
+            {
+              "klub": "Piráti",
+              "pro": 0,
+              "proti": 0,
+              "zdrzel": 13
+            },
+            {
+              "klub": "KDU-ČSL",
+              "pro": 12,
+              "proti": 1,
+              "zdrzel": 1
+            },
+            {
+              "klub": "SPD",
+              "pro": 8,
+              "proti": 0,
+              "zdrzel": 0
+            },
+            {
+              "klub": "MS",
+              "pro": 6,
+              "proti": 0,
+              "zdrzel": 0
+            },
+            {
+              "klub": "TOP09",
+              "pro": 7,
+              "proti": 0,
+              "zdrzel": 0
+            },
+            {
+              "klub": "Nezařaz",
+              "pro": 1,
+              "proti": 0,
+              "zdrzel": 0
+            }
+          ],
+          "url": "https://www.psp.cz/sqw/hlasy.sqw?g=88988"
+        }
+      ],
+      "stanoviska": "garanční výbor: doporučil · ministr: souhlas (stenozáznam, neautorizováno)"
+    },
+    "dopad": {
+      "text": "Když zákon projde Senátem, stát bude od ledna 2027 platit pojišťovnám za státní pojištěnce ze základu 17 540 Kč měsíčně. Dnes je to 14 074 Kč.",
+      "ai": true,
+      "fakta": [
+        {
+          "k": "Základ dnes → nově",
+          "v": "14 074 → 17 540 Kč"
+        },
+        {
+          "k": "Účinnost podle schváleného znění",
+          "v": "1. 1. 2027"
+        }
+      ],
+      "zdroj": "schválené znění tisku 235"
+    }
+  },
+  "zdroje": "Zdroj: psp.cz, sněmovní dokument 1796, hlasování č. 399 na 34. schůzi"
+}

@@ -226,11 +226,14 @@ final class ReelJobs
     /**
      * Údaje vybraných PN tisku pro zadání generátoru: číslo, autor, čas podání, titulek rozboru AI, odkaz na psp.cz,
      * id osoby autora, klub autora ke dni podání (pn.klub z Importeru v podobě Clubs::label; bez údaje null, nic
-     * se neodhaduje), den, ke kterému klub platí, a zda je stažený text PN. Tvar drží tests/contract/focus-pn-info.json
-     * (čte ho i test generátoru v Pythonu). Starší worker nová pole ignoruje.
+     * se neodhaduje), den, ke kterému klub platí, zda je stažený text PN a výsledek ve 3. čtení (`vysledek`,
+     * PnOutcome; null = výsledek zatím není). Tvar drží tests/contract/focus-pn-info.json (čte ho i test generátoru
+     * v Pythonu). Starší worker nová pole ignoruje; nový worker podle klíče `vysledek` pozná server, který přijme
+     * šablonu template_pn_v1.
      */
     private function pnInfo(int $ct, array $pns): array
     {
+        $outcomes = $this->pnOutcomes($ct, $pns);
         $obdobi = (new Repo($this->db))->obdobi();
         $marks = implode(', ', array_fill(0, count($pns), '?'));
         $rows = $this->db->all(
@@ -240,7 +243,7 @@ final class ReelJobs
               WHERE p.ct = ? AND p.cislo IN ($marks) ORDER BY p.cislo",
             [$ct, ...$pns]
         );
-        return array_map(function (array $r) use ($obdobi): array {
+        return array_map(function (array $r) use ($obdobi, $outcomes): array {
             $ai = json_decode((string)($r['ai_json'] ?? ''), true);
             $title = is_array($ai) ? trim((string)($ai['titulek'] ?? '')) : '';
             $cas = $r['cas'] !== null ? (string)$r['cas'] : null;
@@ -255,8 +258,74 @@ final class ReelJobs
                 'klub' => $club !== '' ? $club : null,
                 'klub_ke_dni' => $club !== '' && $cas !== null ? substr($cas, 0, 10) : null,
                 'has_text' => (int)$r['has_text'] === 1,
+                'vysledek' => $outcomes[(int)$r['cislo']] ?? null,
             ];
         }, $rows);
+    }
+
+    /**
+     * Výsledky vybraných PN ve 3. čtení (tabulka pn_vysledek z PnOutcome) s hlasováními: číslo PN => {stav, pismena,
+     * stanovisko, hlasovani: [{cislo, schuze, datum (den), vysledek prijato|zamitnuto, pro, proti, zdrzel, nehlasoval,
+     * pismeno, varianta, url_psp, kluby: [{klub (Clubs::label), pro, proti, zdrzel}]}]}. Hlasování, které tabulka
+     * hlasovani nemá, se vynechá (bez počtů by video verdikt neukázalo).
+     */
+    private function pnOutcomes(int $ct, array $pns): array
+    {
+        $marks = implode(', ', array_fill(0, count($pns), '?'));
+        $rows = $this->db->all("SELECT cislo, pismena, stav, hlasovani, stanovisko FROM pn_vysledek WHERE ct = ? AND cislo IN ($marks)",
+            [$ct, ...$pns]);
+        $refs = [];
+        foreach ($rows as $i => $r) {
+            $list = json_decode((string)($r['hlasovani'] ?? ''), true);
+            $rows[$i]['hlasovani'] = is_array($list) ? array_values(array_filter($list, fn($v) => is_array($v) && isset($v['id']))) : [];
+            foreach ($rows[$i]['hlasovani'] as $v) {
+                $refs[(int)$v['id']] = true;
+            }
+        }
+        $votes = [];
+        $clubs = [];
+        if ($refs !== []) {
+            $ids = array_keys($refs);
+            $in = implode(', ', array_fill(0, count($ids), '?'));
+            foreach ($this->db->all("SELECT id_hlasovani, schuze, cislo, datum, pro, proti, zdrzel, nehlasoval, vysledek FROM hlasovani WHERE id_hlasovani IN ($in)", $ids) as $v) {
+                $votes[(int)$v['id_hlasovani']] = $v;
+            }
+            foreach ($this->db->all("SELECT id_hlasovani, klub, pro, proti, zdrzel FROM hlasovani_kluby WHERE id_hlasovani IN ($in) ORDER BY klub", $ids) as $c) {
+                $clubs[(int)$c['id_hlasovani']][] = ['klub' => Clubs::label((string)$c['klub']), 'pro' => (int)$c['pro'],
+                    'proti' => (int)$c['proti'], 'zdrzel' => (int)$c['zdrzel']];
+            }
+        }
+        $out = [];
+        foreach ($rows as $r) {
+            $list = [];
+            foreach ($r['hlasovani'] as $ref) {
+                $v = $votes[(int)$ref['id']] ?? null;
+                if ($v === null) {
+                    continue;
+                }
+                $list[] = [
+                    'cislo' => (int)$v['cislo'],
+                    'schuze' => $v['schuze'] !== null ? (int)$v['schuze'] : null,
+                    'datum' => $v['datum'] !== null ? substr((string)$v['datum'], 0, 10) : null,
+                    'vysledek' => (string)$v['vysledek'] === 'A' ? 'prijato' : 'zamitnuto',
+                    'pro' => (int)$v['pro'],
+                    'proti' => (int)$v['proti'],
+                    'zdrzel' => (int)$v['zdrzel'],
+                    'nehlasoval' => (int)$v['nehlasoval'],
+                    'pismeno' => isset($ref['pismeno']) ? (string)$ref['pismeno'] : null,
+                    'varianta' => !empty($ref['varianta']) ? (int)$ref['varianta'] : null,
+                    'url_psp' => 'https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$v['id_hlasovani'],
+                    'kluby' => $clubs[(int)$v['id_hlasovani']] ?? [],
+                ];
+            }
+            $out[(int)$r['cislo']] = [
+                'stav' => (string)$r['stav'],
+                'pismena' => $r['pismena'] !== null && $r['pismena'] !== '' ? (string)$r['pismena'] : null,
+                'stanovisko' => $r['stanovisko'] !== null && $r['stanovisko'] !== '' ? (string)$r['stanovisko'] : null,
+                'hlasovani' => $list,
+            ];
+        }
+        return $out;
     }
 
     /** Platí token pro vydanou úlohu? (po vrácení do fronty nebo novém výdeji starý token neplatí) */

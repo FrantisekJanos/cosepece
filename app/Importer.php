@@ -33,6 +33,8 @@ final class Importer
             $club = $row['id_osoba'] ? $clubs->at((int)$row['id_osoba'], substr((string)$row['cas'], 0, 10)) : null;
             $pn[$i]['klub'] = $club !== null ? mb_substr($club, 0, 40) : null;
         }
+        // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení (jen k zobrazení)
+        $shortNames = $this->loadShortNames($clubs);
 
         // agregace PN podle čísla tisku
         $pnByCt = [];
@@ -63,6 +65,7 @@ final class Importer
                 'vyhlaseno' => $this->vyhlaseno($list),
                 'souhrn_pn' => $souhrny[$tisk['id_tisk']]['cislo_za'] ?? null,
                 'souhrn_pn_at' => $souhrny[$tisk['id_tisk']]['datum'] ?? null,
+                'navrhovatel_klub' => $this->proposerClub($tisk, $shortNames, $clubs),
             ];
         }
 
@@ -91,7 +94,7 @@ final class Importer
             $this->db->insertMany('tisky', [
                 'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
                 'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
-                'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at',
+                'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at', 'navrhovatel_klub',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce', 'id_hlasovani',
@@ -308,6 +311,58 @@ final class Importer
         return $out;
     }
 
+    /**
+     * Zkrácená jména poslanců období ve tvaru, v jakém je Sněmovna uvádí u navrhovatele tisku („Babiš A.“,
+     * u dvou křestních jmen i „Havel M. O.“): zkrácené jméno => id_osoba. Poslanec období = osoba s členstvím
+     * v některém klubu. Hodnota 0 znamená, že stejné zkrácené jméno má víc poslanců; klub se pak neurčuje
+     * (nic se neodhaduje).
+     *
+     * @return array<string, int>
+     */
+    private function loadShortNames(Clubs $clubs): array
+    {
+        $members = array_fill_keys($clubs->memberIds(), true);
+        $out = [];
+        foreach ($this->source->rows('poslanci', 'osoby.unl') as $c) {
+            $id = (int)$c[0];
+            $surname = trim($c[2] ?? '');
+            $first = preg_split('~\s+~u', trim($c[3] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            if (!isset($members[$id]) || $surname === '' || $first === []) {
+                continue;
+            }
+            $initials = array_map(fn(string $word): string => mb_substr($word, 0, 1) . '.', $first);
+            foreach (array_unique([$surname . ' ' . $initials[0], $surname . ' ' . implode(' ', $initials)]) as $key) {
+                $out[$key] = isset($out[$key]) && $out[$key] !== $id ? 0 : $id;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, ve stejném pořadí jako jména
+     * v navrhovateli a oddělené čárkou („Babiš A.,Plaga R.“ → „ANO2011,ANO2011“; neurčený klub = prázdné místo).
+     * První jméno se určí podle id osoby u tisku (je-li), ostatní podle zkráceného jména, pokud ho má právě
+     * jeden poslanec období. Vládní, senátní a krajské návrhy klub nemají; null = neurčil se žádný.
+     * Jen se zobrazuje, do skóre nevstupuje.
+     *
+     * @param array<string, int> $shortNames výstup loadShortNames()
+     */
+    private function proposerClub(array $tisk, array $shortNames, Clubs $clubs): ?string
+    {
+        if ($tisk['typ_navrhu'] !== 'poslanecký' || !$tisk['predlozeno']) {
+            return null;
+        }
+        $day = substr((string)$tisk['predlozeno'], 0, 10);
+        $names = explode(',', (string)preg_replace('~\s+a další$~u', '', trim((string)$tisk['navrhovatel'])));
+        $out = [];
+        foreach ($names as $i => $name) {
+            $id = $i === 0 ? (int)($tisk['navrh_osoba'] ?? 0) : 0;
+            $id = $id ?: (int)($shortNames[trim($name)] ?? 0);
+            $out[] = $id > 0 ? (string)$clubs->at($id, $day) : '';
+        }
+        return implode('', $out) !== '' ? mb_substr(implode(',', $out), 0, 120) : null;
+    }
+
     private function loadTisky(int $obdobiId): array
     {
         $out = [];
@@ -323,6 +378,8 @@ final class Importer
                 'druh' => (int)$c[1],
                 'typ_navrhu' => Analyzer::typNavrhu((int)$c[1], $uplny, (int)($c[5] ?? 0)),
                 'navrhovatel' => trim($c[9] ?? ''),
+                // osoba uvedená u tisku jako navrhovatel (jen u části tisků); do tabulky se neukládá
+                'navrh_osoba' => (int)($c[8] ?? 0) ?: null,
                 'nazev' => trim($c[10] ?? ''),
                 'uplny_nazev' => $uplny,
                 'predlozeno' => $this->czDate($c[11] ?? ''),

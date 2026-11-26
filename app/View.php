@@ -239,6 +239,22 @@ final class View
         return e((string)$name) . ($label !== '' ? ' <span class="club">(' . e($label) . ')</span>' : '');
     }
 
+    /**
+     * Navrhovatel tisku s kluby jmenovaných předkladatelů, např. „Babiš A. (ANO) a další“
+     * (tisky.navrhovatel_klub); bez klubů jen text navrhovatele. Vrací hotové HTML.
+     */
+    public static function proposer(?string $proposer, ?string $clubs): string
+    {
+        if (trim((string)$clubs) === '') {
+            return e(trim((string)$proposer));
+        }
+        [$parts, $rest] = Clubs::proposerParts($proposer, $clubs);
+        return implode(', ', array_map(
+            fn(array $p): string => e($p[0]) . ($p[1] !== '' ? ' <span class="club">(' . e($p[1]) . ')</span>' : ''),
+            $parts
+        )) . e($rest);
+    }
+
     public static function chips(array $flags): string
     {
         $out = '';

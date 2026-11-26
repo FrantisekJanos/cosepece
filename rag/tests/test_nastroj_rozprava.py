@@ -640,18 +640,22 @@ def test_pg_get_pn_projevy(pgconn):
     """get_pn: projevy z steno.projev_pn bez předsedajících a zrušených, s počtem; PN bez zmínek = prázdný seznam."""
     with pgconn.cursor() as cur:
         cur.execute(f"CREATE SCHEMA {SCHEMA_WEB}")
-        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn (cislo int, ct int, id_osoba int, osoba text, cas text, "
+        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn (cislo int, ct int, id_osoba int, osoba text, klub text, cas text, "
                     "id_dokument int)")
         cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.pn_text (id_dokument int, ai_score int, ai_model text, ai_json text,
                         signals text, laws text, chars int, docx_url text)""")
-        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.pn (cislo, ct, id_osoba, osoba, id_dokument) VALUES (%s,%s,%s,%s,%s)",
-                        [(2244, 76, 2001, "Karel Haas", 1), (2246, 76, 2001, "Karel Haas", 2)])
+        cur.executemany(f"INSERT INTO {SCHEMA_WEB}.pn (cislo, ct, id_osoba, osoba, klub, id_dokument) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        [(2244, 76, 2001, "Karel Haas", "ANO2011", 1), (2246, 76, 2001, "Karel Haas", None, 2)])
         cur.execute(f"SET search_path TO {SCHEMA_WEB}, public")
         # zmínka v projevu předsedajícího (turn 3) a ve zrušeném projevu (turn 4) se nepočítá
         cur.execute("""INSERT INTO steno.projev_pn (projev_id, cislo_pn)
                        SELECT id, 2244 FROM steno.projev WHERE schuze = %s AND turn IN (3, 4)""", (SCHUZE,))
     pgconn.commit()
     r = tools.get_pn(pgconn, 2244)
+    # klub předkladatele ke dni podání (pn.klub z webu), bez údaje None
+    assert r["klub"] == "ANO2011" and tools.get_pn(pgconn, 2246)["klub"] is None
+    assert [p["klub"] for p in tools.pn_k_tisku(pgconn, 76)["pn"]] == ["ANO2011", None]
     assert r["projevy_celkem"] == 1
     assert r["projevy"] == [{"klic": "10/980/2/1", "datum": DEN1.isoformat(), "recnik": "Poslanec Karel Haas",
                              "klub": "ANO2011", "druh": "recnik", "url": "https://www.psp.cz/s980002.htm#r1"}]

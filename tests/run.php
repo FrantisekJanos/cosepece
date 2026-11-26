@@ -78,6 +78,58 @@ check('zkratky klubů pro zobrazení', array_map([Hlidac\Clubs::class, 'label'],
     ['ANO', 'TOP 09', 'Motoristé', 'nezařazení', 'KDU-ČSL', '']);
 check('jméno s klubem a bez klubu', [Hlidac\View::person('Jan <Jakob>', 'ODS'), Hlidac\View::person('Vít Rakušan', null)],
     ['Jan &lt;Jakob&gt; <span class="club">(ODS)</span>', 'Vít Rakušan']);
+// klub jmenovaných předkladatelů poslaneckého návrhu ke dni předložení (tisky.navrhovatel_klub): tisk 78 podle id osoby
+// u tisku, tisk 221 podle zkráceného jména „Vondráček R.“, vládní návrh klub nemá
+check('klub předkladatele návrhu', array_column(db()->all('SELECT ct, navrhovatel_klub FROM tisky WHERE ct IN (78, 90, 221) ORDER BY ct'), 'navrhovatel_klub', 'ct'),
+    [78 => 'ANO2011', 90 => null, 221 => 'ANO2011']);
+$clubImporter = new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-clubs', $tmp . '/src'));
+$shortNames = (new ReflectionMethod($clubImporter, 'loadShortNames'))->invoke($clubImporter, $clubs);
+check('zkrácená jména poslanců: jednoznačné má id, shodné u dvou poslankyň 0, osoba bez klubu chybí',
+    [$shortNames['Vondráček R.'] ?? null, $shortNames['Kovářová V.'] ?? null, isset($shortNames['Rakušan V.'])], [5462, 0, false]);
+$proposerClub = fn(array $t): ?string => (new ReflectionMethod($clubImporter, 'proposerClub'))->invoke($clubImporter,
+    $t + ['typ_navrhu' => 'poslanecký', 'predlozeno' => '2026-08-01', 'navrh_osoba' => null], $shortNames, $clubs);
+check('kluby předkladatelů: víc jmen, nejednoznačné jméno, přestup, id osoby u tisku, vládní návrh', [
+    $proposerClub(['navrhovatel' => 'Vondráček R.,Jurečka M. a další']),
+    $proposerClub(['navrhovatel' => 'Kovářová V., Jurečka M.']),
+    $proposerClub(['navrhovatel' => 'Kovářová V. a další']),
+    $proposerClub(['navrhovatel' => 'Jakob J.', 'predlozeno' => '2026-06-01']),
+    $proposerClub(['navrhovatel' => 'Jakob J.']),
+    $proposerClub(['navrhovatel' => 'Kovářová V. a další', 'navrh_osoba' => 90011]),
+    $proposerClub(['navrhovatel' => 'Vondráček R.', 'typ_navrhu' => 'vládní']),
+], ['ANO2011,KDU-ČSL', ',KDU-ČSL', null, 'ODS', 'Piráti', 'Piráti', null]);
+check('navrhovatel s kluby jako text i HTML', [
+    Hlidac\Clubs::proposer('Babiš A.,Plaga R. a další', 'ANO2011,'), Hlidac\Clubs::proposer('min. financí', null),
+    Hlidac\Clubs::proposer('Kovářová V., Jurečka M.', ',KDU-ČSL'), Hlidac\View::proposer('Vondráček R. a další', 'ANO2011'),
+    Hlidac\View::proposer('<b> a další', null), Hlidac\Clubs::person('Jan Novák', 'TOP09'), Hlidac\Clubs::person('Jan Novák', null),
+], ['Babiš A. (ANO), Plaga R. a další', 'min. financí', 'Kovářová V., Jurečka M. (KDU-ČSL)',
+    'Vondráček R. <span class="club">(ANO)</span> a další', '&lt;b&gt; a další', 'Jan Novák (TOP 09)', 'Jan Novák']);
+// texty upozornění: klub u předkladatele návrhu i u autorů nových PN
+$newbillBody = 'Předkladatel: Vondráček R. (ANO) a další. Návrh poslanců, Senátu ani krajů neprochází meziresortním připomínkovým řízením.';
+$pnAlertKey = (string)db()->value("SELECT alert_key FROM alerts WHERE kind = 'pn' AND ct = 90 AND body LIKE '%Jurečka%'");
+check('upozornění: klub u předkladatele návrhu a u autora PN', [db()->value("SELECT body FROM alerts WHERE alert_key = 'newbill:221'"),
+    db()->value('SELECT body FROM alerts WHERE alert_key = ?', [$pnAlertKey])], [$newbillBody, '1 pozměňovací návrh od 1 poslance: Marian Jurečka (KDU-ČSL).']);
+// starší texty (před zavedením klubů v upozorněních): klub z PN poslance k tisku nejblíž před časem upozornění
+$byAuthor = ['Jan Jakob' => [['2026-03-01 10:00:00', 'ODS'], ['2026-07-02 09:00:00', 'Piráti']], 'Marian Jurečka' => [['2026-07-02 10:00:00', 'KDU-ČSL']]];
+check('starší text upozornění na PN dostane kluby, jiné texty zůstanou', [
+    Hlidac\AlertBuilder::bodyWithClubs('5 pozměňovacích návrhů od 3 poslanců: Jan Jakob (3), Marian Jurečka, Vít Rakušan.', $byAuthor, '2026-03-01 12:00:00'),
+    Hlidac\AlertBuilder::bodyWithClubs('Dne 2. 7. 2026 podáno 12 pozměňovacích návrhů. 12 pozměňovacích návrhů od 7 poslanců: Jan Jakob (4), Marian Jurečka (2), a další.', $byAuthor, '2026-07-02 18:00:00'),
+    Hlidac\AlertBuilder::bodyWithClubs('1 pozměňovací návrh od 1 poslance: Jan Jakob (Piráti).', $byAuthor, '2026-07-02 18:00:00'),
+    Hlidac\AlertBuilder::bodyWithClubs('Zákon vyšel jako č. 1/2026 Sb. (vyhlášen 1. 2. 2026).', $byAuthor, '2026-07-02 18:00:00'),
+], [
+    '5 pozměňovacích návrhů od 3 poslanců: Jan Jakob (ODS) 3×, Marian Jurečka (KDU-ČSL), Vít Rakušan.',
+    'Dne 2. 7. 2026 podáno 12 pozměňovacích návrhů. 12 pozměňovacích návrhů od 7 poslanců: Jan Jakob (Piráti) 4×, Marian Jurečka (KDU-ČSL) 2×, a další.',
+    '1 pozměňovací návrh od 1 poslance: Jan Jakob (Piráti).',
+    'Zákon vyšel jako č. 1/2026 Sb. (vyhlášen 1. 2. 2026).',
+]);
+// jednorázové doplnění do uložených upozornění: první běh po nasazení je upraví, další už nic nemění
+db()->run("UPDATE alerts SET body = ? WHERE alert_key = 'newbill:221'", [str_replace(' (ANO)', '', $newbillBody)]);
+db()->run('UPDATE alerts SET body = ? WHERE alert_key = ?', ['1 pozměňovací návrh od 1 poslance: Marian Jurečka.', $pnAlertKey]);
+db()->run("DELETE FROM meta WHERE k = 'alerts_clubs'");
+$clubTisky = array_column(db()->all('SELECT * FROM tisky'), null, 'ct');
+$clubBuilder = new Hlidac\AlertBuilder(db(), config());
+check('doplnění klubů do starších upozornění proběhne jednou', [$clubBuilder->backfillClubs($clubTisky), db()->value("SELECT body FROM alerts WHERE alert_key = 'newbill:221'"),
+    db()->value('SELECT body FROM alerts WHERE alert_key = ?', [$pnAlertKey]), $clubBuilder->backfillClubs($clubTisky), db()->getMeta('alerts_clubs') !== null],
+    [2, $newbillBody, '1 pozměňovací návrh od 1 poslance: Marian Jurečka (KDU-ČSL).', 0, true]);
 check('bootstrap nic neposlal', (int)db()->value('SELECT COUNT(*) FROM alerts WHERE posted <> 2'), 0);
 check('upozornění vytvořena', (int)db()->value('SELECT COUNT(*) FROM alerts') > 5, true);
 check('tisk 221 sledovaný', (int)db()->value("SELECT watched FROM alerts WHERE alert_key = 'newbill:221'"), 1);
@@ -732,8 +784,12 @@ $fixtureBill(9806, 20, [1 => 9], [1 => ['ai_model' => 'claude-haiku-5-5']]);
 $fixtureBill(9807, 20, [1 => 9, 2 => 6]);
 // dva PN 5/10 mezi 20 → práh min(6, 5) = 5, dva PN, plné body
 $fixtureBill(9808, 20, [1 => 5, 2 => 5]);
+// klub předkladatele v popisu důvodu (jen k orientaci, body se nemění)
+db()->run("UPDATE pn SET klub = 'TOP09' WHERE ct = 9805");
 $rescore();
 $d = $reasonsOf(9801);
+check('důvod skóre z rozboru PN: předkladatel s klubem, bez klubu jen jméno', [str_contains($reasonsOf(9805)['ai']['label'] ?? '', '(Test Poslanec, TOP 09): závažnost 6/10'),
+    str_contains($d['ai']['label'] ?? '', '(Test Poslanec): závažnost 6/10')], [true, true]);
 check('tisk D (3 z 4 PN s AI 6): pn_many', [isset($d['pn_many']), str_contains($d['pn_many']['label'] ?? '', '3 z 4')], [true, true]);
 check('tisk D: plné body AI 18 a důvod „3 z 4 PN“', [$d['ai']['points'] ?? null, str_contains($d['ai']['label'] ?? '', '3 z 4 PN se závažností ≥ 6')], [18, true]);
 $e = $reasonsOf(9802);
@@ -798,6 +854,9 @@ $api = new Hlidac\Api(db(), new Hlidac\Repo(db()), config());
 [$st, $body] = $api->handle(['tisk' => '78']);
 check('api.php?tisk=78: detail s důvody, hlasováním a odkazy', [$st, $body['tisk']['ct'] ?? null, isset($body['tisk']['duvody'], $body['tisk']['upozorneni']),
     count($body['tisk']['hlasovani'] ?? []), str_contains((string)($body['tisk']['psp_url'] ?? ''), 'psp.cz')], [200, 78, true, 4, true]);
+check('api.php: kluby jmenovaných předkladatelů (poslanecký návrh pole, vládní prázdné pole)',
+    [$body['tisk']['navrhovatel'] ?? null, $body['tisk']['navrhovatel_klub'] ?? null, $api->handle(['tisk' => '90'])[1]['tisk']['navrhovatel_klub'] ?? null],
+    ['Babiš A.', ['ANO'], []]);
 check('api.php?tisk=…: neznámý tisk 404', $api->handle(['tisk' => '99999'])[0], 404);
 check('api.php?since=špatně: 400', $api->handle(['since' => '1. 11. 2026'])[0], 400);
 check('api.php?zakon=špatně: 400', $api->handle(['zakon' => 'střet'])[0], 400);
@@ -945,6 +1004,18 @@ ob_start();
 $clubHtml = (string)ob_get_clean();
 check('detail tisku: klub u předkladatelů PN', [substr_count($clubHtml, 'Marian Jurečka <span class="club">(KDU-ČSL)</span>') >= 2,
     str_contains($clubHtml, 'Jan Jakob <span class="club">(Piráti)</span>')], [true, true]);
+// klub u předkladatele poslaneckého návrhu: v hlavičce tisku a v tabulce tisků
+$proposerHtml = [];
+foreach (['tisk.php' => ['ct' => '221'], 'tisky.php' => ['vse' => '1']] as $page => $query) {
+    $_GET = $query;
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/' . $page);
+    $proposerHtml[$page] = (string)ob_get_clean();
+}
+check('klub u předkladatele návrhu v hlavičce tisku a v tabulce tisků', [str_contains($proposerHtml['tisk.php'], 'předkladatel Vondráček R. <span class="club">(ANO)</span> a další'),
+    str_contains($proposerHtml['tisky.php'], 'Vondráček R. <span class="club">(ANO)</span> a další')], [true, true]);
 // tisk bez pozměňovacích návrhů blok nemá (ani prázdnou kartu)
 $noPnCt = (int)db()->value('SELECT t.ct FROM tisky t WHERE NOT EXISTS (SELECT 1 FROM pn p WHERE p.ct = t.ct) ORDER BY t.ct LIMIT 1');
 $_GET = ['ct' => (string)$noPnCt];
@@ -1198,6 +1269,10 @@ $kinds = array_unique(array_column($si['items'], 'k'));
 sort($kinds);
 check('index obsahuje tisky, zákony, PN, autory a témata', array_values(array_intersect(['osoba', 'pn', 'tema', 'tisk', 'zakon'], $kinds)), ['osoba', 'pn', 'tema', 'tisk', 'zakon']);
 $first = fn(string $q) => (function ($r) { $k = array_key_first($r); return $k === null ? null : [$k, $r[$k][0]['id']]; })(Hlidac\SearchIndex::search($si, $q));
+// klub u autora PN (ke dni podání) a u osoby (z jejího nejnovějšího PN)
+$siItem = fn(string $kind, string $id): string => (string)(array_values(array_filter($si['items'], fn(array $i): bool => $i['k'] === $kind && (string)$i['id'] === $id))[0]['s'] ?? '');
+check('hledání: klub u autora PN a u osoby', [str_ends_with($siItem('pn', '2312'), ' · Marian Jurečka (KDU-ČSL)'), str_ends_with($siItem('pn', '771'), ' · Jan Jakob (ODS)'),
+    str_starts_with($siItem('osoba', 'Marian Jurečka'), 'KDU-ČSL · '), str_starts_with($siItem('osoba', 'Jan Jakob'), 'Piráti · ')], [true, true, true, true]);
 check('číslo tisku najde tisk jako první', [$first('221'), $first('tisk 221'), $first('sněmovní tisk 221')], [['tisk', '221'], ['tisk', '221'], ['tisk', '221']]);
 check('číslo zákona najde zákon', $first('159/2006'), ['zakon', '159/2006']);
 check('bez diakritiky a začátkem slova', $first('stret zaj')[1] ?? null, $first('Střet zájmů')[1] ?? null);

@@ -29,6 +29,7 @@ final class AlertBuilder
         $created += $this->fromAmendments($tisky, $bootstrap, $posted);
         $created += $this->fromUpcoming($posted);
         $created += $this->fromRegulations($posted);
+        $this->backfillClubs($tisky);
 
         if ($bootstrap) {
             $this->db->setMeta('bootstrapped', date('Y-m-d H:i:s'));
@@ -50,7 +51,7 @@ final class AlertBuilder
                 $t,
                 ($t['predlozeno'] ?: date('Y-m-d')) . ' 00:00:00',
                 'Nový ' . $t['typ_navrhu'] . ' návrh: ' . $t['nazev'],
-                'Předkladatel: ' . $t['navrhovatel'] . '. Návrh poslanců, Senátu ani krajů neprochází meziresortním připomínkovým řízením.',
+                'Předkladatel: ' . Clubs::proposer($t['navrhovatel'], $t['navrhovatel_klub'] ?? null) . '. Návrh poslanců, Senátu ani krajů neprochází meziresortním připomínkovým řízením.',
                 $posted
             );
         }
@@ -213,14 +214,17 @@ final class AlertBuilder
                         $surgeDay = $day;
                     }
                 }
+                // předkladatelé s klubem ke dni podání (pn.klub); klub slouží jen k orientaci
                 $authors = [];
+                $authorClub = [];
                 foreach ($list as $r) {
                     $authors[$r['osoba']] = ($authors[$r['osoba']] ?? 0) + 1;
+                    $authorClub[$r['osoba']] = $r['klub'] ?? null;
                 }
                 arsort($authors);
                 $names = [];
                 foreach (array_slice($authors, 0, 5, true) as $name => $c) {
-                    $names[] = $c > 1 ? "$name ($c)" : $name;
+                    $names[] = self::authorLabel((string)$name, $authorClub[$name], $c);
                 }
                 if (count($authors) > 5) {
                     $names[] = 'a další';
@@ -243,6 +247,87 @@ final class AlertBuilder
         }
         $this->db->pdo->commit();
         return $n;
+    }
+
+    /** Předkladatel v textu upozornění: „Věra Kovářová (STAN) 2×“; počet jen u víc než jednoho návrhu. */
+    private static function authorLabel(string $name, ?string $club, int $count): string
+    {
+        return Clubs::person($name, $club) . ($count > 1 ? ' ' . $count . '×' : '');
+    }
+
+    /**
+     * Doplní poslanecký klub ke jménům v textech dřív vytvořených upozornění (jednorázově po zavedení klubů
+     * v upozorněních, pak už se nic nemění):
+     *  - nové PN a nával: „… od 2 poslanců: Jan Novák (3), Věra Kovářová.“ → „Jan Novák (ODS) 3×, Věra Kovářová (STAN).“
+     *    Klub je z PN téhož poslance k témuž tisku, nejbližšího před časem upozornění (jinak jeho prvního).
+     *  - nový poslanecký návrh: „Předkladatel: Babiš A. a další.“ → „Předkladatel: Babiš A. (ANO) a další.“
+     * Jména bez známého klubu zůstávají beze změny. Odeslané příspěvky na sítích se nemění, jen text na webu,
+     * v RSS a v API.
+     *
+     * @return int počet upravených upozornění
+     */
+    public function backfillClubs(array $tisky): int
+    {
+        if ($this->db->getMeta('alerts_clubs') !== null) {
+            return 0;
+        }
+        $obdobi = (int)$this->db->getMeta('obdobi_cislo', '0');
+        $pn = [];
+        foreach ($this->db->all('SELECT ct, osoba, klub, cas FROM pn WHERE klub IS NOT NULL ORDER BY cas') as $p) {
+            $pn[(int)$p['ct']][(string)$p['osoba']][] = [(string)$p['cas'], (string)$p['klub']];
+        }
+        $changed = 0;
+        $rows = $this->db->all("SELECT alert_key, kind, ct, event_at, body FROM alerts WHERE kind IN ('pn', 'surge', 'newbill') AND (obdobi IS NULL OR obdobi = ?)", [$obdobi]);
+        $this->db->pdo->beginTransaction();
+        foreach ($rows as $a) {
+            $ct = (int)$a['ct'];
+            $body = (string)$a['body'];
+            if ($a['kind'] === 'newbill') {
+                $t = $tisky[$ct] ?? null;
+                $old = 'Předkladatel: ' . ($t['navrhovatel'] ?? '') . '. ';
+                $new = $t !== null && str_starts_with($body, $old)
+                    ? 'Předkladatel: ' . Clubs::proposer($t['navrhovatel'], $t['navrhovatel_klub'] ?? null) . '. ' . substr($body, strlen($old))
+                    : $body;
+            } else {
+                $new = self::bodyWithClubs($body, $pn[$ct] ?? [], (string)$a['event_at']);
+            }
+            if ($new !== $body) {
+                $this->db->run('UPDATE alerts SET body = ? WHERE alert_key = ?', [$new, (string)$a['alert_key']]);
+                $changed++;
+            }
+        }
+        $this->db->setMeta('alerts_clubs', date('Y-m-d H:i:s'));
+        $this->db->pdo->commit();
+        return $changed;
+    }
+
+    /**
+     * Text upozornění na nové PN ve starém tvaru („…: Jan Novák (3), Věra Kovářová, a další.“) s doplněnými kluby.
+     * Jiný tvar textu nebo text, který už kluby má, vrací beze změny.
+     *
+     * @param array<string, list<array{0: string, 1: string}>> $byAuthor jméno => [[čas podání, klub], …] vzestupně
+     */
+    public static function bodyWithClubs(string $body, array $byAuthor, string $eventAt): string
+    {
+        if (!preg_match('~^(.* od \d+ poslanc(?:e|ů): )(.+)\.$~us', $body, $m)) {
+            return $body;
+        }
+        $names = [];
+        foreach (explode(', ', $m[2]) as $item) {
+            if (!preg_match('~^(.+?)(?: \((\d+)\))?$~u', $item, $n) || $item === 'a další' || !isset($byAuthor[$n[1]])) {
+                $names[] = $item;
+                continue;
+            }
+            // klub z posledního PN poslance k tisku do času upozornění, jinak z jeho prvního
+            $club = $byAuthor[$n[1]][0][1];
+            foreach ($byAuthor[$n[1]] as [$cas, $klub]) {
+                if ($cas <= $eventAt) {
+                    $club = $klub;
+                }
+            }
+            $names[] = self::authorLabel($n[1], $club, (int)($n[2] ?? 1));
+        }
+        return $m[1] . implode(', ', $names) . '.';
     }
 
     private function pnLabel(int $count): string

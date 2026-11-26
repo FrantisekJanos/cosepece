@@ -177,6 +177,7 @@ final class Api
             'uplny_nazev' => $t['uplny_nazev'],
             'typ_navrhu' => $t['typ_navrhu'],
             'navrhovatel' => $t['navrhovatel'],
+            'navrhovatel_klub' => self::proposerClubs($t['navrhovatel_klub'] ?? null),
             'faze' => $t['faze'],
             'predlozeno' => $t['predlozeno'],
             'posledni_zmena' => $t['posledni'],
@@ -189,6 +190,20 @@ final class Api
             'url' => absUrl('tisk', ['ct' => (int)$t['ct']]),
             'psp_url' => View::pspTiskUrl((int)$t['ct'], $obdobi),
         ];
+    }
+
+    /**
+     * Kluby předkladatelů jmenovaných u poslaneckého návrhu (tisky.navrhovatel_klub) jako pole ve stejném
+     * pořadí jako jména v poli navrhovatel; null = klub se neurčil. Bez údaje prázdné pole.
+     *
+     * @return list<?string>
+     */
+    private static function proposerClubs(?string $clubs): array
+    {
+        if (trim((string)$clubs) === '') {
+            return [];
+        }
+        return array_map(fn(string $c): ?string => Clubs::label($c) !== '' ? Clubs::label($c) : null, explode(',', (string)$clubs));
     }
 
     private function alert(array $a): array

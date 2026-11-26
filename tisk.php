@@ -104,7 +104,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
 <section class="detail-head">
   <span class="chips"><?= View::scoreBadge((int)$t['score']) ?><?= View::chips($t['flags']) ?></span>
   <h1><?= e($t['uplny_nazev'] ?: $t['nazev']) ?></h1>
-  <p class="muted">Tisk <?= $ct ?> · <?= e($t['typ_navrhu']) ?> návrh · předkladatel <?= e($t['navrhovatel']) ?> · předloženo <?= e(formatDate($t['predlozeno'])) ?><?= $t['sbirka'] ? ' · vyhlášeno jako ' . e($t['sbirka']) . ' Sb.' : '' ?></p>
+  <p class="muted">Tisk <?= $ct ?> · <?= e($t['typ_navrhu']) ?> návrh · předkladatel <?= View::proposer($t['navrhovatel'], $t['navrhovatel_klub'] ?? null) ?> · předloženo <?= e(formatDate($t['predlozeno'])) ?><?= $t['sbirka'] ? ' · vyhlášeno jako ' . e($t['sbirka']) . ' Sb.' : '' ?></p>
   <div class="actions">
     <a class="btn" href="<?= e(View::pspTiskUrl($ct, $obdobi)) ?>">Otevřít na psp.cz</a>
   </div>

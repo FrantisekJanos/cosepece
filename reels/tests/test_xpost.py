@@ -51,7 +51,7 @@ def test_want_ze_zverejnene(conn, media_dir):  # noqa: F811
     st, req, ready, msg = _x(conn, rid)
     assert (st, req, ready, msg) == ("wanted", NOW, None, None)
     # druhý klik nic nemění
-    assert xpost.want(conn, rid, NOW) == "wanted"
+    assert xpost.want(conn, rid, NOW) == "waiting"
     for prev in ("missing", "skipped"):
         _set(conn, rid, x_status=prev, x_msg_id=55)
         assert xpost.want(conn, rid, NOW) == "wanted"

@@ -55,7 +55,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid
+from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid, xpost
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
@@ -345,7 +345,9 @@ class Bot:
                     "sendretry": self._send_retry, "drop": self._drop_held,
                     "resend": self._resend_buttons,  # resend:0 pod přehledem /fronta
                     # zadání generátoru: id úlohy (reel_jobs), ne položky fronty
-                    "jobcancel": self._job_cancel, "jobretry": self._job_retry}
+                    "jobcancel": self._job_cancel, "jobretry": self._job_retry,
+                    # Reels na X přes složku Pro X (xpost.py)
+                    "x": self._x_want, "xdone": self._x_done, "xskip": self._x_skip}
         handler = handlers.get(action)
         if handler is None:
             self._try("answerCallbackQuery", self.tg.answer_callback, cb_id, "Neznámé tlačítko.")
@@ -412,6 +414,8 @@ class Bot:
                 raise
             reel = self._publish_crashed(reel_id, e)
         buttons = retry_buttons(reel_id) if reel.status in ("failed", "unknown") else None
+        if reel.status == "published" and reel.set_id is not None:
+            buttons = xpost.publish_buttons(reel_id)  # video ze sady je na PC: jde nabídnout na X
         if auto and reel.status == "published":
             text = autopilot_done(reel, jobs.focus_pn(self.conn, reel.set_id) if reel.set_id else None)
         else:
@@ -1022,6 +1026,52 @@ class Bot:
         self._guard("kontrola vydání bez známky života", self._check_silent)
         self._guard("odeslání událostí", self._send_urgent)
         self._guard("přepis stavových zpráv", self._update_status_messages)
+        self._guard("zprávy Pro X", self._x_notify)
+
+    # --- Reels na X (složka Pro X na PC, xpost.py) -------------------------
+
+    def _x_want(self, reel_id: int, cb_id, msg_id) -> None:
+        state = xpost.want(self.conn, reel_id, self.now())
+        if state == "wanted":
+            self._answer(cb_id, "Na X: čekám na PC")
+            self._drop_buttons(msg_id)
+            self._say(xpost.wanted_text(reel_id), reply_to=msg_id)
+            return
+        self._answer(cb_id, {"waiting": "Na X: pořád čekám na PC", "ready": "Video už je ve složce Pro X.",
+                                 "done": "Už je na X."}.get(
+            state, "Na X jde jen zveřejněné video ze sady generátoru."))
+
+    def _x_finish(self, reel_id: int, cb_id, msg_id, status: str) -> None:
+        if not xpost.finish(self.conn, reel_id, status):
+            self._answer(cb_id, "Položka už na X nečeká.")
+            return
+        self._answer(cb_id, "Hotovo" if status == "done" else "Zrušeno")
+        self._drop_buttons(msg_id)
+
+    def _x_done(self, reel_id: int, cb_id, msg_id) -> None:
+        self._x_finish(reel_id, cb_id, msg_id, "done")
+
+    def _x_skip(self, reel_id: int, cb_id, msg_id) -> None:
+        self._x_finish(reel_id, cb_id, msg_id, "skipped")
+
+    def _x_notify(self) -> None:
+        """Zprávy o videích, která worker nahlásil (ready: text a odkaz na X, missing: video na PC není).
+        Každá jednou (x_msg_id); když odeslání selže, zkusí se v dalším běhu."""
+        for item in xpost.to_notify(self.conn):
+            if item.x_status == "missing":
+                msg_id = self.tg.send_text(self.chat_id, xpost.missing_text(item.id), xpost.missing_buttons(item.id))
+            else:
+                text, url = xpost.ready_message(item)
+                try:
+                    msg_id = self.tg.send_text(self.chat_id, text, xpost.ready_buttons(item.id, url))
+                except TelegramError as e:
+                    if not e.rejected:
+                        raise
+                    # Telegram odmítl tlačítko s odkazem (např. délka): odkaz do textu, tlačítka jen Hotovo / Zrušit
+                    log.warning("Pro X #%s: tlačítko s odkazem odmítnuto: %s", item.id, self._safe(e))
+                    msg_id = self.tg.send_text(self.chat_id, f"{text}\n\nOtevřít X: {url}",
+                                               xpost.ready_buttons(item.id, None))
+            xpost.mark_notified(self.conn, item.id, item.x_status, msg_id)
 
     def _update_status_messages(self) -> None:
         """Průběh vyžádaných zadání bez autopilota jen přepisem jejich stavové zprávy (žádné sendMessage)."""

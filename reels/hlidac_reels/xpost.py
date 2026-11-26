@@ -33,8 +33,8 @@ def file_name(reel_id: int, ct: int | None) -> str:
 
 
 def want(conn, reel_id: int, now: datetime) -> str:
-    """Vlastník chce video na X. 'wanted' = žádost platí (i opakovaná); jinak dosavadní stav (ready, done),
-    'gone' = položka není zveřejněná nebo není ze sady generátoru."""
+    """Vlastník chce video na X. 'wanted' = nová žádost; jinak dosavadní stav beze změny ('waiting' = žádost už
+    čeká na PC, 'ready', 'done'), 'gone' = položka není zveřejněná nebo není ze sady generátoru."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE reel_queue SET x_status='wanted', x_requested_at=%s, x_ready_at=NULL, x_msg_id=NULL "
@@ -51,7 +51,7 @@ def want(conn, reel_id: int, now: datetime) -> str:
         return "wanted"
     if row is None or row[0] != "published" or row[1] is None:
         return "gone"
-    return row[2] or "gone"
+    return {"wanted": "waiting"}.get(row[2], row[2]) or "gone"
 
 
 def finish(conn, reel_id: int, status: str) -> bool:

@@ -27,9 +27,14 @@ class TelegramError(Exception):
         return self.status is not None and 400 <= self.status < 500 and self.status != 429
 
 
+def _button(text: str, data: str) -> dict[str, str]:
+    # data s https:// = tlačítko, které otevře odkaz (např. nový příspěvek na X), jinak callback
+    return {"text": text, "url": data} if data.startswith("https://") else {"text": text, "callback_data": data}
+
+
 def _markup(buttons: list[tuple[str, str]] | None) -> dict[str, Any]:
     # každé tlačítko na vlastním řádku (dlouhé popisky se na telefonu nezkracují)
-    return {"inline_keyboard": [[{"text": text, "callback_data": data}] for text, data in buttons or []]}
+    return {"inline_keyboard": [[_button(text, data)] for text, data in buttons or []]}
 
 
 class Telegram:

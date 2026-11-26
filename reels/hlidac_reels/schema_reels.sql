@@ -118,3 +118,14 @@ CREATE TABLE IF NOT EXISTS reel_events (
 );
 CREATE INDEX IF NOT EXISTS reel_events_unsent_idx ON reel_events (urgency, id) WHERE notified_at IS NULL;
 CREATE INDEX IF NOT EXISTS reel_events_job_idx ON reel_events (job_id, id);
+
+-- Reels na X přes složku Pro X (2026-11-26): vlastník u zveřejněné položky klikne Na X, worker na PC zkopíruje
+-- video do složky a nahlásí ready (nebo missing), bot pošle text s odkazem intent X. done/skipped = vyřízeno.
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_status       text;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_requested_at timestamptz;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_ready_at     timestamptz;
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_msg_id       bigint;  -- zpráva Pro X / video chybí (odeslaná = nic znovu)
+ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_x_status_check;
+ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_x_status_check
+    CHECK (x_status IS NULL OR x_status IN ('wanted','ready','missing','done','skipped'));
+CREATE INDEX IF NOT EXISTS reel_queue_x_status_idx ON reel_queue (x_status) WHERE x_status IS NOT NULL;

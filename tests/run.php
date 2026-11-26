@@ -1921,9 +1921,9 @@ $rjC = $jobs->claim();
 check('claim úlohy k PN: focus_pn jako pole čísel', [$rjC['job_id'] ?? null, $rjC['focus_pn'] ?? null], [$rjPnJob, [2312, 2313]]);
 check('claim úlohy k PN: údaje PN', $rjC['focus_pn_info'] ?? null, [
     ['cislo' => 2312, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:44:24', 'titulek' => null,
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
     ['cislo' => 2313, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:45:15', 'titulek' => 'Titulek PN 2313',
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
 ]);
 check('pole PostgreSQL → čísla', [Hlidac\ReelJobs::parsePnArray('{2376,2377}'), Hlidac\ReelJobs::parsePnArray(null), Hlidac\ReelJobs::parsePnArray('{}'), Hlidac\ReelJobs::parsePnArray('x')],
     [[2376, 2377], null, null, null]);
@@ -2002,6 +2002,10 @@ check('result: v2 s formátem → 400', $raBad($raVariant(2, ['template' => 'tem
 check('result: v3 bez formátu → 400', $raBad($raVariant(2, ['format' => null])), 400);
 check('result: neznámá šablona → 400', $raBad($raVariant(2, ['template' => 'v2'])), 400);
 check('result: v3 s neznámým formátem → 400', $raBad($raVariant(2, ['format' => 'zkratka'])), 400);
+// příběh jednoho PN (template_pn_v1) má jen formát pribeh; pribeh jiná šablona nenese
+check('result: template_pn_v1 bez formátu → 400', $raBad($raVariant(2, ['template' => 'template_pn_v1', 'format' => null])), 400);
+check('result: template_pn_v1 s formátem pn → 400', $raBad($raVariant(2, ['template' => 'template_pn_v1', 'format' => 'pn'])), 400);
+check('result: v3 s formátem pribeh → 400', $raBad($raVariant(2, ['format' => 'pribeh'])), 400);
 check('result: odmítnuté šablony nezapíšou manifest', is_file($raDir . '/manifest.json'), false);
 check('result se špatným claim tokenem → 409', $api->handle('POST', 'result', [], $raJson(['job_id' => $raJob, 'variants' => [$raVariant(1), $raVariant(2)]]), $raH(str_repeat('0', 32)))[0], 409);
 check('GET ?action=result → 400', $api->handle('GET', 'result', [], '', $raH($raClaim))[0], 400);
@@ -2031,6 +2035,18 @@ check('result s 1 variantou → 200, úloha done', [$raSt, $raRes, $rjStatus($ra
 check('manifest: jediná varianta a skipped (jen platné položky)', [array_column($raManifest1['variants'] ?? [], 'n'), $raManifest1['skipped'] ?? null],
     [[1], [['n' => 2, 'format' => 'pn', 'errors' => ['render selhal', 'chybí PN']], ['n' => 3, 'format' => null, 'errors' => []]]]);
 check('skipped jako poznámka v reel_jobs.error', $rjStatus($raJob1)['error'], 'Nevzniklé varianty: 2 (pn): render selhal, chybí PN; 3: bez udaného důvodu');
+
+// úloha s jedním PN: jediná varianta template_pn_v1 ve formátu pribeh (worker ji vyrobí místo v2 + v3)
+$rjReset();
+$raJobP = $rjAdd('manual', 221);
+$raClaimP = (string)($api->handle('GET', 'claim', [], '', $raH())[1]['job']['claim_token'] ?? '');
+$api->handle('PUT', 'video', ['job_id' => (string)$raJobP, 'n' => '1'], $raMp4(), $raH($raClaimP));
+[$raSt, $raRes] = $api->handle('POST', 'result', [], $raJson(['job_id' => $raJobP,
+    'variants' => [$raVariant(1, ['template' => 'template_pn_v1', 'format' => 'pribeh'])],
+    'skipped' => [['n' => 2, 'format' => 'pribeh', 'errors' => ['x']]]]), $raH($raClaimP));
+$raManifestP = json_decode((string)@file_get_contents($raInbox . '/' . $raJobP . '/manifest.json'), true);
+check('result: template_pn_v1 s formátem pribeh → 200, manifest', [$raSt, $raManifestP['variants'][0]['template'] ?? null,
+    $raManifestP['variants'][0]['format'] ?? null, $raManifestP['skipped'][0]['format'] ?? null], [200, 'template_pn_v1', 'pribeh', 'pribeh']);
 
 // výsledek po vypršení claimu: úloha se vrátila do fronty a vydala jinému claimu → 409, nic se nezapíše
 $rjReset();
@@ -2660,6 +2676,12 @@ db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) V
 // rozbor AI proběhl (bez titulku): úloha k PN se vydá až s rozborem všech zadaných PN (oprava 25. 11.)
 db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Text PN', 7, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
     [json_encode(['zavaznost' => 0]), json_encode(['zavaznost' => 0])]);
+// výsledek PN 9801 ve 3. čtení (PnOutcome) s hlasováním a kluby: claim ho posílá generátoru (šablona template_pn_v1)
+db()->run("INSERT INTO hlasovani (id_hlasovani, ct, schuze, cislo, datum, pro, proti, zdrzel, nehlasoval, prihlaseno, kvorum, vysledek, nazev, krok)
+    VALUES (99901, 311, 34, 400, '2026-04-20 10:15', 120, 50, 10, 20, 180, 91, 'A', 'PN B1', 0)");
+db()->run("INSERT INTO hlasovani_kluby (id_hlasovani, klub, pro, proti, zdrzel, nepritomen) VALUES (99901, 'ODS', 0, 30, 0, 1), (99901, 'ANO2011', 70, 0, 2, 3)");
+db()->run('INSERT INTO pn_vysledek (ct, cislo, pismena, stav, hlasovani, stanovisko, updated_at) VALUES (311, 9801, ?, ?, ?, ?, ?)',
+    ['B1', 'prijat', json_encode([['cislo' => 400, 'id' => 99901, 'vysledek' => 'A', 'pismeno' => 'B1', 'varianta' => null]]), 'souhlasné', '2026-04-20 12:00:00']);
 $rjReset();
 $f4Job = $rjAdd('manual', 311);
 db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9801,9802}', $f4Job]);
@@ -2667,6 +2689,9 @@ check('claim úlohy k PN: klub ke dni podání a has_text (tests/contract/focus-
     json_decode((string)file_get_contents(APP_ROOT . '/tests/contract/focus-pn-info.json'), true));
 db()->run('DELETE FROM pn_text WHERE id_dokument IN (99801, 99802)');
 db()->run('DELETE FROM pn WHERE id_dokument IN (99801, 99802)');
+db()->run('DELETE FROM pn_vysledek WHERE ct = 311 AND cislo = 9801');
+db()->run('DELETE FROM hlasovani_kluby WHERE id_hlasovani = 99901');
+db()->run('DELETE FROM hlasovani WHERE id_hlasovani = 99901');
 $rjReset();
 
 // úklid

@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-26', 'Google Analytics jen se souhlasem',
+        'Návštěvnost dál měříme bez cookies nástrojem Umami. Nově ji se souhlasem měříme i v Google Analytics. Při první návštěvě se dole objeví lišta s tlačítky Přijmout a Odmítnout. Bez souhlasu se Google Analytics vůbec nenačte. Rozhodnutí jde kdykoli změnit odkazem „Nastavení cookies“ v patičce, co se ukládá, popisuje stránka Jak hodnotíme. Skóre se nemění.',
+        [95], false],
     ['2026-11-26', 'Poslanecký klub u všech jmen',
         'Klub teď uvádíme všude, kde se na webu objeví jméno poslance: v textech upozornění na nové pozměňovací návrhy, například „Věra Kovářová (STAN) 2×“, u předkladatele poslaneckého návrhu („Vondráček R. (ANO) a další“) v hlavičce tisku, v tabulkách tisků a v upozornění na nový návrh, ve výsledcích hledání, v popisu důvodu skóre z rozboru pozměňovacího návrhu a ve výstupech pro AI asistenty. Doplnili jsme ho i do dříve vydaných upozornění. U pozměňovacích návrhů jde o klub ke dni podání, u návrhu zákona ke dni předložení. Kde se klub nedá určit jednoznačně, například když stejné zkrácené jméno mají dva poslanci, zůstává jen jméno. Skóre na klubu ani na jménu nezávisí.',
         [94], false],

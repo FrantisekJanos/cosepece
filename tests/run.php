@@ -3023,6 +3023,12 @@ check('ga4: lišta skrytá v HTML', str_contains($ga, 'id="cookie-bar"') && str_
 check('ga4: obě tlačítka', str_contains($ga, 'data-consent="granted"') && str_contains($ga, 'data-consent="denied"'), true);
 check('ga4: consent.js s ID', str_contains($ga, 'consent.js') && str_contains($ga, 'data-ga4="G-ABC123"'), true);
 check('ga4: gtag se nevkládá napřímo', str_contains($ga, 'googletagmanager'), false);
+check('ga4: odkaz Nastavení cookies vede bez JS na metodiku', Hlidac\View::cookieSettingsLink(['measurement_id' => 'G-ABC123']),
+    '<a href="' . e(url('metodika', [], 'cookies')) . '" data-cookie-settings>Nastavení cookies</a>');
+check('ga4: bez ID žádný odkaz Nastavení cookies', Hlidac\View::cookieSettingsLink([]), '');
+$consentJs = (string)file_get_contents(APP_ROOT . '/assets/consent.js');
+check('ga4: Google signals a personalizace reklam vypnuté v gtag config',
+    str_contains($consentJs, 'allow_google_signals: false') && str_contains($consentJs, 'allow_ad_personalization_signals: false'), true);
 $_GET = [];
 ob_start();
 (function (string $file): void {

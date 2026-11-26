@@ -38,7 +38,7 @@
       analytics_storage: 'granted', ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied'
     });
     window.gtag('js', new Date());
-    window.gtag('config', id);
+    window.gtag('config', id, { allow_google_signals: false, allow_ad_personalization_signals: false });
     var s = document.createElement('script');
     s.async = true;
     s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);

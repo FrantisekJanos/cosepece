@@ -167,6 +167,15 @@ final class View
             . "\n" . '<script defer src="' . e($js) . '" data-ga4="' . e($id) . '"></script>' . "\n";
     }
 
+    /** Odkaz do patičky, který znovu otevře cookie lištu; bez JavaScriptu vede na vysvětlení v metodice. */
+    public static function cookieSettingsLink(array $ga4): string
+    {
+        if (self::ga4Id($ga4) === '') {
+            return '';
+        }
+        return '<a href="' . e(url('metodika', [], 'cookies')) . '" data-cookie-settings>Nastavení cookies</a>';
+    }
+
     /** Platné Measurement ID GA4 z konfigurace (G-…), jinak prázdný řetězec. */
     public static function ga4Id(array $ga4): string
     {
@@ -182,7 +191,7 @@ final class View
 <footer class="foot">
   <p>Zdroj: <a href="https://www.psp.cz/sqw/hp.sqw?k=1300">otevřená data Poslanecké sněmovny</a> (tisky, sněmovní dokumenty, poslanci). Počty PN jsou podané písemné pozměňovací návrhy; Sněmovna neeviduje, které z nich byly platně podány ve 2. čtení. Příznaky se počítají automaticky z historie tisku.</p>
   <p class="foot-disclaimer"><strong>Upozornění:</strong> Obsah vzniká automaticky z otevřených dat a část rozborů (shrnutí, titulky a hodnocení závažnosti textů) připravuje umělá inteligence, která se může mýlit. Údaje mají informativní povahu, nejsou právní radou ani oficiálním stanoviskem Sněmovny a před dalším použitím je ověřte v původních zdrojích. <a href="<?= e(url('metodika', [], 'odpovednost')) ?>">Omezení odpovědnosti</a></p>
-  <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($ga4 !== ''): ?> · <a href="#" data-cookie-settings>Nastavení cookies</a><?php endif; ?><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
+  <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($ga4 !== ''): ?> · <?= self::cookieSettingsLink((array)config('ga4', [])) ?><?php endif; ?><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </footer>
 <?= $ga4 ?>
 </main>

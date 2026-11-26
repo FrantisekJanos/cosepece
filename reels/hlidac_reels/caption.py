@@ -16,6 +16,9 @@ X_INTENT = "https://x.com/intent/post?text="
 # twitter-text v3: kódové body v těchto rozsazích váží 1, ostatní (CJK, emoji…) 2
 _X_LIGHT = ((0, 4351), (8192, 8205), (8208, 8223), (8242, 8247))
 _URL_RE = re.compile(r"https?://\S+")
+# doména bez https:// (cosepece.cz, www.psp.cz/sqw/…): X ji podle tvaru počítá jako odkaz (23), nebo jako text
+_BARE_DOMAIN_RE = re.compile(r"(?<![\w@./-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}\b(?:/\S*)?",
+                             re.IGNORECASE)
 
 _PARAGRAPH_RE = re.compile(r"\n[ \t\r]*\n")
 
@@ -67,13 +70,25 @@ def for_network(caption: str, ct: int | None, network: Literal["fb", "ig", "thre
 
 
 def x_length(text: str) -> int:
-    """Délka textu, jak ji počítá X: odkaz http(s) = 23, latinka včetně české diakritiky 1, ostatní znaky 2.
+    """Délka textu, jak ji počítá X: odkaz http(s) = 23, doména bez schématu nejméně 23, latinka včetně české
+    diakritiky 1, ostatní znaky 2.
 
     Emoji složená ze sekvence (ZWJ) se tu počítají po kódových bodech, tedy spíš víc než na X (bezpečná strana)."""
     total = 0
     pos = 0
     for m in _URL_RE.finditer(text):
-        total += _x_chars(text[pos:m.start()]) + X_URL_LENGTH
+        total += _x_bare(text[pos:m.start()]) + X_URL_LENGTH
+        pos = m.end()
+    return total + _x_bare(text[pos:])
+
+
+def _x_bare(text: str) -> int:
+    """Text bez odkazů https://: doména bez schématu se počítá jako delší z obou možností (odkaz 23, nebo text),
+    protože X krátké domény bez cesty za odkaz někdy nebere (bezpečná strana)."""
+    total = 0
+    pos = 0
+    for m in _BARE_DOMAIN_RE.finditer(text):
+        total += _x_chars(text[pos:m.start()]) + max(X_URL_LENGTH, _x_chars(m.group()))
         pos = m.end()
     return total + _x_chars(text[pos:])
 

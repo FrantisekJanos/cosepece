@@ -86,6 +86,21 @@ def test_x_length_url_jako_23_a_cestina():
     assert caption.x_length("a🙂") == 3  # emoji počítá X dvakrát
 
 
+def test_x_length_domena_bez_schematu():
+    # X ji může počítat jako odkaz (23): počítá se nejméně 23, delší jako text
+    assert caption.x_length("web cosepece.cz.") == len("web ") + 23 + 1
+    long = "www.psp.cz/sqw/historie.sqw?o=10&t=221&x=abcdefgh"
+    assert caption.x_length(f"viz {long}") == 4 + len(long)
+    assert caption.x_length("4,5 mld. Kč, tj. 10.5 %") == len("4,5 mld. Kč, tj. 10.5 %")
+    assert caption.x_length("e-mail a@b.cz") == len("e-mail a@b.cz")
+
+
+def test_x_text_s_domenou_vejde():
+    first = "Rozbor najdete na cosepece.cz. " + ("Sněmovna zkrátila lhůtu. " * 20)
+    text = caption.x_text(first, 221)
+    assert caption.x_length(text) <= caption.X_LIMIT
+
+
 def test_x_text_kratky():
     assert caption.x_text("Krátký text.\n\nDruhý odstavec.", 221) == (
         "Krátký text.\n\nCelý rozbor: https://cosepece.cz/tisk/221")

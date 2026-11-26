@@ -135,13 +135,15 @@ final class SearchIndex
             $ai[(int)$r['id_dokument']] = json_decode((string)$r['ai_json'], true) ?: [];
         }
         $names = [];
-        foreach ($this->db->all('SELECT id_dokument, cislo, ct, osoba, cas FROM pn ORDER BY cas DESC') as $p) {
+        // klub autora: u PN ke dni podání, u osoby z jejího nejnovějšího PN (řazeno od nejnovějších)
+        $nameClub = [];
+        foreach ($this->db->all('SELECT id_dokument, cislo, ct, osoba, klub, cas FROM pn ORDER BY cas DESC') as $p) {
             $a = $ai[(int)$p['id_dokument']] ?? [];
             $osoba = trim((string)$p['osoba']);
             $items[] = [
                 'k' => 'pn', 'id' => (string)(int)$p['cislo'],
                 't' => trim((string)($a['titulek'] ?? '')) !== '' ? 'AI: ' . self::shorten((string)$a['titulek'], 140) : 'Pozměňovací návrh č. ' . (int)$p['cislo'],
-                's' => 'PN č. ' . (int)$p['cislo'] . ' k tisku ' . (int)$p['ct'] . ($osoba !== '' ? ' · ' . $osoba : ''),
+                's' => 'PN č. ' . (int)$p['cislo'] . ' k tisku ' . (int)$p['ct'] . ($osoba !== '' ? ' · ' . Clubs::person($osoba, $p['klub']) : ''),
                 'd' => self::shorten((string)($a['perex'] ?? ''), 160),
                 'x' => '',
                 'u' => Url::path('tisk', ['ct' => (int)$p['ct']], 'pn-' . (int)$p['cislo']),
@@ -149,12 +151,14 @@ final class SearchIndex
             ];
             if ($osoba !== '') {
                 $names[$osoba] = ($names[$osoba] ?? 0) + 1;
+                $nameClub[$osoba] ??= Clubs::label($p['klub']);
             }
         }
         foreach ($names as $name => $n) {
             $items[] = [
                 'k' => 'osoba', 'id' => $name, 't' => $name,
-                's' => $n . ' ' . ($n === 1 ? 'pozměňovací návrh' : ($n < 5 ? 'pozměňovací návrhy' : 'pozměňovacích návrhů')),
+                's' => (($nameClub[$name] ?? '') !== '' ? $nameClub[$name] . ' · ' : '')
+                    . $n . ' ' . ($n === 1 ? 'pozměňovací návrh' : ($n < 5 ? 'pozměňovací návrhy' : 'pozměňovacích návrhů')),
                 'd' => '', 'x' => '',
                 'u' => Url::path('hledat', ['q' => (string)$name]),
                 'w' => $n,

@@ -153,14 +153,14 @@ def tisk_podle_sbirky(sb: str) -> dict:
 
 @server.tool(annotations=READ_ONLY)
 def pn_k_tisku(ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
-    """Pozměňovací návrhy k tisku: číslo, autor, čas podání, AI skóre a titulek, předkladatelé s počty
-    (přes všechny PN). celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
+    """Pozměňovací návrhy k tisku: číslo, autor a jeho poslanecký klub ke dni podání (klub; None u členů vlády
+    a tam, kde ho data neuvádějí), čas podání, AI skóre a titulek, předkladatelé s počty (přes všechny PN). celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
     return _call("pn_k_tisku", tools.pn_k_tisku, ct, id_osoba, limit, offset)
 
 
 @server.tool(annotations=READ_ONLY)
 def get_pn(cislo: int) -> dict:
-    """Detail pozměňovacího návrhu podle čísla (např. 2329): autor, tisk, AI rozbor (odvozený text), příznaky,
+    """Detail pozměňovacího návrhu podle čísla (např. 2329): autor a jeho klub ke dni podání, tisk, AI rozbor (odvozený text), příznaky,
     projevy (klíče a řečníci projevů, které PN zmiňují; nejvýš 20, celkem v projevy_celkem; celý text get_projev).
     Text PN čtěte po celcích: osnova_textu(pn=cislo) → get_cel(pn=cislo, …); osnova_dostupna říká, zda už je."""
     return _call("get_pn", tools.get_pn, cislo)

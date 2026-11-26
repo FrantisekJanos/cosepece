@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-26', 'Poslanecký klub u všech jmen',
+        'Klub teď uvádíme všude, kde se na webu objeví jméno poslance: v textech upozornění na nové pozměňovací návrhy, například „Věra Kovářová (STAN) 2×“, u předkladatele poslaneckého návrhu („Vondráček R. (ANO) a další“) v hlavičce tisku, v tabulkách tisků a v upozornění na nový návrh, ve výsledcích hledání, v popisu důvodu skóre z rozboru pozměňovacího návrhu a ve výstupech pro AI asistenty. Doplnili jsme ho i do dříve vydaných upozornění. U pozměňovacích návrhů jde o klub ke dni podání, u návrhu zákona ke dni předložení. Kde se klub nedá určit jednoznačně, například když stejné zkrácené jméno mají dva poslanci, zůstává jen jméno. Skóre na klubu ani na jménu nezávisí.',
+        [94], false],
     ['2026-11-25', 'Ve videích k pozměňovacím návrhům je klub předkladatele',
         'Ve videích k vybraným pozměňovacím návrhům teď u předkladatele uvádíme poslanecký klub: v obraze šedým štítkem, stejným pro všechny kluby, a v popisku v závorce, například „Jan Novák (ODS)“. Jde o klub ke dni podání návrhu podle otevřených dat Sněmovny. Když údaj chybí, třeba u člena vlády, klub neuvádíme. V den, kdy poslanec klub změnil, platí nový klub; stejně to nově počítáme na webu i u hlasování podle klubů. Skóre se nemění.',
         [89], false],

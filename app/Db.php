@@ -312,6 +312,9 @@ final class Db
         $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
         // poslanecký klub předkladatele ke dni podání PN (app/Clubs.php); jen se zobrazuje, do skóre nevstupuje
         $this->addColumn('pn', 'klub', 'VARCHAR(40)');
+        // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, v pořadí jmen v navrhovateli
+        // a oddělené čárkou (Importer::proposerClub); jen se zobrazují, do skóre nevstupují
+        $this->addColumn('tisky', 'navrhovatel_klub', 'VARCHAR(120)');
         // výsledek 1. kola zůstane uložený i po ověření silnějším modelem (#2 bod 4)
         foreach (['tisk_text', 'pn_text'] as $table) {
             $this->addColumn($table, 'ai_prev_json', $text);

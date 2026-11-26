@@ -79,6 +79,7 @@ $fields = [
         ['uplny_nazev', 'text', 'úplný název návrhu'],
         ['typ_navrhu', 'text', 'předkladatel: vládní, poslanecký, senátní, krajský'],
         ['navrhovatel', 'text', 'navrhovatel podle psp.cz'],
+        ['navrhovatel_klub', 'pole textů', 'u poslaneckého návrhu poslanecké kluby předkladatelů jmenovaných v poli navrhovatel, ve stejném pořadí a ke dni předložení (null = klub se nepodařilo určit); u ostatních návrhů prázdné pole'],
         ['faze', 'text', 'fáze projednávání (číselník níže)'],
         ['predlozeno', 'datum', 'den předložení Sněmovně (YYYY-MM-DD)'],
         ['posledni_zmena', 'datum a čas', 'poslední krok v historii tisku (YYYY-MM-DD HH:MM:SS)'],

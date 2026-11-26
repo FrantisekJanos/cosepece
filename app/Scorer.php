@@ -123,7 +123,7 @@ final class Scorer
             $pnDates[(int)$p['ct']][] = substr((string)$p['cas'], 0, 10);
         }
         $pnText = [];
-        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.ai_model, x.signals, x.ai_json, p.osoba FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
+        foreach ($this->db->all('SELECT x.ct, x.cislo, x.rule_score, x.ai_score, x.ai_model, x.signals, x.ai_json, p.osoba, p.klub FROM pn_text x JOIN pn p ON p.id_dokument = x.id_dokument') as $x) {
             $pnText[(int)$x['ct']][] = $x;
         }
         $billText = [];
@@ -383,7 +383,9 @@ final class Scorer
             if (!$full) {
                 $points = (int)round($points * (float)$w['ai_pn_single_factor']);
             }
-            $add('ai', $points, 'Rozbor PN č. ' . $aiWorst['cislo'] . ' (' . $aiWorst['osoba'] . '): závažnost ' . $maxAi . '/10' . ($why !== '' ? ' – ' . $why : '')
+            // klub předkladatele je v popisu jen k orientaci; body na jménu ani klubu nezávisí
+            $club = Clubs::label($aiWorst['klub'] ?? null);
+            $add('ai', $points, 'Rozbor PN č. ' . $aiWorst['cislo'] . ' (' . $aiWorst['osoba'] . ($club !== '' ? ', ' . $club : '') . '): závažnost ' . $maxAi . '/10' . ($why !== '' ? ' – ' . $why : '')
                 . "; $reaching z $pnTotal PN se závažností ≥ $level"
                 . ($full ? '' : ' (ojedinělý nález mezi více PN: ' . (int)round(100 * (float)$w['ai_pn_single_factor']) . ' % bodů)'));
         }

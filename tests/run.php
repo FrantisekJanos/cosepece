@@ -2614,6 +2614,61 @@ check('F5: next_hm bez úvodní nuly', json_decode((string)($f5Waits[0]['detail'
 $rjClock = $f5ClockBak;
 $f3EvReset();
 
+echo "Reels na X: složka Pro X (ReelsX, x_pending, x_ready)\n";
+// sloupce reel_queue.x_* a set_id/variant (v produkci je přidá schema_reels.sql služby reels/)
+foreach (['set_id' => 'BIGINT', 'variant' => 'SMALLINT', 'x_status' => 'VARCHAR(20)', 'x_requested_at' => $rjTs,
+          'x_ready_at' => $rjTs, 'x_msg_id' => 'BIGINT'] as $rxCol => $rxType) {
+    if (db()->driver === 'pgsql') {
+        db()->run("ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS $rxCol $rxType");
+    } else {
+        try {
+            db()->run("ALTER TABLE reel_queue ADD COLUMN $rxCol $rxType");
+        } catch (\PDOException $e) {
+            // sloupec už je (opakovaný běh nad stejnou databází)
+        }
+    }
+}
+$rxClock = strtotime('2026-11-26 12:00:00');
+$rxApi = new Hlidac\ReelsApi(db(), $raCfg, function () use (&$rxClock): int { return $rxClock; });
+$rxStamp = fn(int $ts): string => date(db()->driver === 'pgsql' ? 'Y-m-d H:i:sP' : 'Y-m-d H:i:s', $ts);
+$rxAdd = function (?string $status, ?int $setId, ?int $ct, int $ageDays = 0) use (&$rxClock, $rxStamp): int {
+    static $n = 0;
+    $n++;
+    db()->run("INSERT INTO reel_queue (source, ct, video_path, video_sha256, caption, status, set_id, variant, x_status, x_requested_at)
+        VALUES ('manual', ?, 'x.mp4', ?, 'popisek', 'published', ?, 2, ?, ?)",
+        [$ct, sha1('rx' . $n), $setId, $status, $status === null ? null : $rxStamp($rxClock - $ageDays * 86400)]);
+    return (int)db()->value('SELECT MAX(id) FROM reel_queue');
+};
+$rjReset();
+$rxW = $rxAdd('wanted', 7, 221);
+$rxM = $rxAdd('wanted', null, null);
+$rxD = $rxAdd('done', 7, 221, 3);
+$rxOld = $rxAdd('skipped', 7, 221, 20);
+$rxR = $rxAdd('ready', 7, 221);
+$rxAdd(null, 7, 221);
+check('x_pending bez tokenu → 403', $rxApi->handle('GET', 'x_pending', [], '', [])[0], 403);
+check('POST x_pending → 400', $rxApi->handle('POST', 'x_pending', [], '', $raH())[0], 400);
+[$rxSt, $rxP] = $rxApi->handle('GET', 'x_pending', [], '', $raH());
+check('x_pending: čekající ke kopii a vyřízené ke smazání (jen 14 dní)', [$rxSt, $rxP], [200, [
+    'wanted' => [['id' => $rxW, 'set_id' => 7, 'variant' => 2, 'ct' => 221], ['id' => $rxM, 'set_id' => null, 'variant' => 2, 'ct' => null]],
+    'remove' => [$rxD],
+]]);
+check('GET x_ready → 400', $rxApi->handle('GET', 'x_ready', [], '', $raH())[0], 400);
+check('x_ready s neplatným výsledkem → 400', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxW, 'result' => 'done']), $raH())[0], 400);
+check('x_ready bez id → 400', $rxApi->handle('POST', 'x_ready', [], $raJson(['result' => 'ready']), $raH())[0], 400);
+check('x_ready ready', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxW, 'result' => 'ready']), $raH()), [200, ['ok' => true, 'updated' => true]]);
+check('x_ready missing', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxM, 'result' => 'missing']), $raH())[1]['updated'] ?? null, true);
+check('x_ready nečekající položky nic nezmění', [
+    $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxD, 'result' => 'ready']), $raH())[1]['updated'] ?? null,
+    $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxR, 'result' => 'missing']), $raH())[1]['updated'] ?? null,
+], [false, false]);
+$rxRow = db()->one('SELECT x_status, x_ready_at FROM reel_queue WHERE id = ?', [$rxW]);
+check('x_ready zapíše stav a čas', [$rxRow['x_status'], strtotime((string)$rxRow['x_ready_at'])], ['ready', $rxClock]);
+check('stavy po hlášení', array_column(db()->all('SELECT x_status FROM reel_queue WHERE id IN (?, ?, ?) ORDER BY id', [$rxM, $rxD, $rxR]), 'x_status'),
+    ['missing', 'done', 'ready']);
+check('missing se po hlášení smaže taky', $rxApi->handle('GET', 'x_pending', [], '', $raH())[1]['remove'], [$rxM, $rxD]);
+$rjReset();
+
 echo "Reels: snímek hlavních nálezů (ReelsSnapshot)\n";
 db()->run('UPDATE tisky SET score = 99, reasons = ? WHERE ct = 221', [json_encode([
     ['key' => 'sensitive', 'label' => 'Citlivá oblast', 'points' => 5],

@@ -15,6 +15,8 @@
 //        (bez kind = 3 pokusy jako u staršího workeru); reason "limit" u env = čeká se na limit předplatného
 //   POST ?action=heartbeat  tělo prázdné (starší worker) nebo {"state": "running"|"paused","reason"?,"detail"?,"until"?}
 //        → {"ok": true}; stav workeru do reel_state.worker_state
+//   GET  ?action=x_pending                  → {"wanted": [{"id","set_id","variant","ct"}], "remove": [id…]} (app/ReelsX.php)
+//   POST ?action=x_ready {"id","result": "ready"|"missing"}  → {"ok": true, "updated": bool}
 // Neplatný claim token → 409; když uživatel úlohu zrušil, 409 {"error", "status": "cancelled"} a složka úlohy
 // v mezisložce se smaže (video, result, progress i fail).
 // Mezisložku čte služba reels (bot): přebírá jen složky s manifest.json, který se proto zapisuje jako poslední
@@ -39,10 +41,12 @@ final class ReelsApi
     private const CHUNK = 1024 * 1024;
 
     private ReelJobs $jobs;
+    private ReelsX $x;
 
     public function __construct(private Db $db, private array $config, ?callable $now = null)
     {
         $this->jobs = new ReelJobs($db, $config, $now);
+        $this->x = new ReelsX($db, $now);
     }
 
     /**
@@ -69,7 +73,8 @@ final class ReelsApi
             return [403, ['error' => 'Neplatný token']];
         }
 
-        $methods = ['claim' => 'GET', 'video' => 'PUT', 'result' => 'POST', 'fail' => 'POST', 'heartbeat' => 'POST', 'progress' => 'POST'];
+        $methods = ['claim' => 'GET', 'video' => 'PUT', 'result' => 'POST', 'fail' => 'POST', 'heartbeat' => 'POST', 'progress' => 'POST',
+            'x_pending' => 'GET', 'x_ready' => 'POST'];
         if (!isset($methods[$action]) || $methods[$action] !== $method) {
             return [400, ['error' => 'Neznámá akce']];
         }
@@ -78,6 +83,9 @@ final class ReelsApi
             $state = $body !== '' && strlen($body) <= self::MAX_JSON_BYTES ? json_decode($body, true) : null;
             $this->jobs->heartbeat(is_array($state) ? $state : null);
             return [200, ['ok' => true]];
+        }
+        if ($action === 'x_pending' || $action === 'x_ready') {
+            return $this->xAction($action, $body);
         }
 
         $inbox = $this->inboxDir();
@@ -402,5 +410,24 @@ final class ReelsApi
             }
         }
         @rmdir($dir);
+    }
+
+    /** Reels na X (složka Pro X na PC): seznam pro worker a hlášení výsledku kopie, viz ReelsX. */
+    private function xAction(string $action, string $body): array
+    {
+        $x = $this->x;
+        if ($action === 'x_pending') {
+            return [200, $x->pending()];
+        }
+        if (strlen($body) > self::MAX_JSON_BYTES) {
+            return [413, ['error' => 'Požadavek je příliš velký']];
+        }
+        $data = json_decode($body, true);
+        $id = is_array($data) ? self::positiveInt($data['id'] ?? null) : null;
+        $result = is_array($data) ? ($data['result'] ?? null) : null;
+        if ($id === null || !in_array($result, ReelsX::RESULTS, true)) {
+            return [400, ['error' => 'Chybí id nebo result (' . implode(', ', ReelsX::RESULTS) . ')']];
+        }
+        return [200, ['ok' => true, 'updated' => $x->ready($id, $result)]];
     }
 }

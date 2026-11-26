@@ -289,3 +289,20 @@ def test_fb_finish_ok_permalink_selze_vrati_fallback(tmp_path, resp):
     video.write_bytes(b"x")
     assert _meta(_fb_handler(resp)).fb_upload_reel(video, "x") == (
         "V1", "https://www.facebook.com/reel/V1")
+
+
+def test_chyba_limitu_ma_subcode_a_pozna_se():
+    from hlidac_reels.meta import is_rate_limit
+
+    def handler(req):
+        return httpx.Response(400, json={"error": {
+            "message": "Abychom komunitu chránili před spamem…", "code": 368, "error_subcode": 1390008}})
+
+    with pytest.raises(MetaError) as e:
+        _meta(handler).ig_create("https://cosepece.cz/v.mp4", "x")
+    assert e.value.code == 368 and e.value.subcode == 1390008
+    assert is_rate_limit(e.value)
+    assert is_rate_limit(MetaError("x", status=400, code=4))
+    assert is_rate_limit(MetaError("x", status=400, code=100, subcode=1390008))
+    assert not is_rate_limit(MetaError("x", status=400, code=100))
+    assert not is_rate_limit(MetaError("x"))

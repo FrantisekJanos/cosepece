@@ -543,6 +543,34 @@ def next_autopilot(conn) -> Reel | None:
     return r
 
 
+def fb_published_since(conn, since: datetime) -> int:
+    """Kolik položek vyšlo na FB od okamžiku since (limit Meta je 30 Reels za klouzavých 24 h)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM reel_queue WHERE fb_video_id IS NOT NULL AND published_at >= %s", (since,))
+        n = cur.fetchone()[0]
+    conn.commit()
+    return n
+
+
+def last_fb_published(conn) -> datetime | None:
+    """Čas posledního zveřejnění na FB (pro minimální rozestup autopilota)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT max(published_at) FROM reel_queue WHERE fb_video_id IS NOT NULL")
+        at = cur.fetchone()[0]
+    conn.commit()
+    return at
+
+
+def next_fb_deferred(conn, prefix: str) -> Reel | None:
+    """Nejstarší položka autopilota, které FB odmítl limit Meta (failed, chyba začíná prefix)."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM reel_queue WHERE status='failed' AND autopilot AND error LIKE %s "
+                    "ORDER BY id LIMIT 1", (prefix + "%",))
+        r = _row(cur)
+    conn.commit()
+    return r
+
+
 def autopilot_to_approval(conn) -> list[int]:
     """Vypnutý autopilot: dosud nezveřejněné položky autopilota (jen approved) jdou ke schválení jako běžné.
 

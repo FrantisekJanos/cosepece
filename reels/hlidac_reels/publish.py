@@ -17,11 +17,13 @@ from pathlib import Path
 
 from . import queue
 from .caption import for_network
-from .meta import MetaError, MetaTimeout
+from .meta import MetaError, MetaTimeout, is_rate_limit
 from .queue import Reel
 from .threads import ThreadsError, ThreadsNoToken, ThreadsTimeout
 
 PREFIX_LEN = 80
+# začátek chyby položky, které FB odmítl limit Meta: autopilot FB odloží a dopublikuje sám (bot._autopublish)
+FB_LIMIT_PREFIX = "Facebook: limit Meta"
 
 
 class _NotSent(Exception):
@@ -182,7 +184,13 @@ def run(conn, meta, reel_id: int, *, media_dir: str, public_base: str, threads=N
                 if p is not None:
                     p[1].unlink(missing_ok=True)
         if not reel.fb_video_id:
-            _publish_fb(conn, meta, reel)
+            try:
+                _publish_fb(conn, meta, reel)
+            except MetaError as e:
+                if not is_rate_limit(e):
+                    raise
+                # limit Meta: FB se nezveřejnil (výsledek jistý), IG a Threads už vyšly
+                errors.append(("failed", f"{FB_LIMIT_PREFIX} (kód {e.code or e.subcode}): {e.message}"))
     except Exception as e:  # noqa: BLE001 – chyba IG nebo FB (klasifikace v _outcome)
         errors.append(_outcome(e))
     if errors:
@@ -193,6 +201,11 @@ def run(conn, meta, reel_id: int, *, media_dir: str, public_base: str, threads=N
         return _finish(conn, reel_id, status, reel.attempts, "; ".join(m for _, m in errors))
     queue.transition(conn, reel_id, "publishing", "published", published_at=_now(), error=None)
     return queue.get(conn, reel_id)
+
+
+def fb_deferred(reel: Reel | None) -> bool:
+    """Položka, které FB odmítl limit Meta (ostatní sítě vyšly); dopublikuje ji autopilot."""
+    return bool(reel and reel.status == "failed" and (reel.error or "").startswith(FB_LIMIT_PREFIX))
 
 
 def reconcile(conn, meta, reel_id: int, threads=None) -> Reel:

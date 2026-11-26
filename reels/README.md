@@ -155,7 +155,8 @@ v2/v3, kontrola videa) → nahrání platných videí (`PUT`, každé nejvýš 3
 Sada s 1–3 platnými variantami projde (i jediná platná se pošle), bez platné varianty worker nahlásí `fail`.
 Nevzniklé varianty jdou v `result` jako `skipped: [{n, format, errors}]`: server je zapíše do manifestu a jako
 poznámku do `reel_jobs.error` (úloha je přesto `done`). Úloha autopilota (`autopilot` v claimu, z `/pn`) má jen
-2 varianty: v2 a v3 `pn`. Bez úlohy nebo po chybě sítě čeká
+2 varianty: v2 a v3 `pn`. Úloha s jedním PN má jedinou variantu `pribeh` (viz Příběh jednoho PN níže, ručně
+i s autopilotem). Bez úlohy nebo po chybě sítě čeká
 5 minut. Worker zpracuje vždy jen jednu úlohu a druhá instance (třeba naplánovaná úloha plus ruční spuštění) hned
 skončí se zprávou (zámek `worker.lock` v pracovní složce).
 
@@ -181,7 +182,8 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
   varianty se jen vyrenderují. Jiný vstup nebo prompt začne od nuly. „Stejný vstup“ je stejná karta z webu (bez `data_date`), takže hodinová synchronizace dat, která kartu změní, spustí úlohu znovu od nuly. Rozpočet je 4 běhy modelu na úlohu (generování
   plus nejvýš 3 cílené opravy jen vadných variant, s doslovnými chybami); běh přerušený chybou prostředí se nepočítá.
   Hotové platné varianty se renderují hned, takže je pozdější chyba prostředí nezahodí.
-- Video k PN bez textu PN a úloha autopilota dostanou jen formát `pn`, sada má pak 2 varianty.
+- Video k PN bez textu PN a úloha autopilota dostanou jen formát `pn`, sada má pak 2 varianty (neplatí pro úlohu
+  s jedním PN, ta dostane `pribeh`, viz níže).
 
 **Worker při chybě a výpadku:**
 
@@ -245,6 +247,25 @@ titulek AI, odkaz na psp.cz). Generátor zapíše `podklady/zadani.md` a vezme p
 všech variant na zadaných PN, tisk je jen kontext; kontrola vyřadí variantu, jejíž karta nebo popisek číslo žádného
 zadaného PN nezmíní. Ručně: `reels-generate … --pn 2376,2377`.
 
+**Příběh jednoho PN (formát `pribeh`, šablona `template_pn_v1`):** úloha s právě jedním PN (`/pn 2376`, tlačítko
+„Video k PN“, „Všechny zvlášť“ i tlačítka `/pnnew`, ručně i s autopilotem) dostane místo v2 + v3 jedinou variantu
+`n = 1` s šablonou `template_pn_v1`, na výšku i na šířku (`formats.wants_pribeh`). Podmínky: server u PN posílá
+ve `focus_pn_info` klíč `vysledek` (i `null`; starší server ho nemá a `template_pn_v1` by odmítl) a PN má text
+(`has_text`, příběh stojí na doslovné citaci). Jinak a u společného videa víc PN (`/pn 2376+2377`) zůstává v2 + v3.
+- `vysledek` = výsledek PN ve 3. čtení z `pn_vysledek` (`app/PnOutcome.php`): `{stav, pismena, stanovisko,
+  hlasovani: [{cislo, schuze, datum, vysledek prijato|zamitnuto, pro, proti, zdrzel, nehlasoval, pismeno, varianta,
+  url_psp, kluby: [{klub, pro, proti, zdrzel}]}]}`, bez výsledku `null`. Zadání `zadani.md` ho modelu vypíše.
+- Návod `generator/prompts/pribeh.md`, vzory karty `generator/examples/pribeh-<ct>.json` (`podklady/vzor-pribeh.json`).
+- Normalizace: `pribeh.vysledek` platí ze serveru (stav, hlasování s počty, kluby a odkazem; od modelu zůstane `o_cem`
+  u stejného čísla hlasování, `text` jen ke stejnému stavu); bez výsledku ze serveru zůstane nejvýš „čeká“, `neurceno`
+  vypadne. Znaky bez zdroje vypadnou, znak `typ: ai` dostane `ai: true`.
+- Kontrola (autopilot zveřejní bez schválení): `pribeh.cislo` = zadaný PN, autor, `co` s citací, zdrojem a `po`,
+  znaky se zdrojem a hodnocení AI se štítkem, verdikt přijat / zamítnut / zčásti jen s hlasováním s počty a odkazem
+  `https://www.psp.cz/sqw/hlasy.sqw?g=…`, stav shodný se serverem, dopad bez štítku AI jen se zdrojem; dál jako u v3
+  (důvody skóre, číslo PN v kartě i popisku, autor a klub v popisku, závěrečná věta, rozvržení).
+- V otisku vstupu úlohy je i `pribeh.md` a výsledek ze serveru: po hlasování úloha začne znovu. Telegram formát
+  píše jako „příběh PN“, autopilot hlásí „varianta pribeh (příběh PN)“.
+
 Ze sady pošle bot všechny varianty a pod ně jednu zprávu s tlačítky Vybrat N a Hotovo, zbytek zamítnout. Vybrat N
 pošle variantě vlastní náhled se Schválit / Upravit popisek / Zamítnout (jako samostatné video) a zpráva sady přijde
 jen o její tlačítko, takže jde vybrat víc variant. Hotovo zamítne zbylé nevybrané varianty (před výběrem celou sadu);
@@ -304,7 +325,8 @@ variantou se bere jako samostatné video.
 ## Autopilot (`/pn` bez schválení)
 
 Přepínač `autopilot` (tabulka `reel_state`, výchozí vypnuto) mění jen chování `/pn`. Zapnutý autopilot nastaví nové
-úloze z `/pn` příznak `reel_jobs.autopilot`; worker pro ni vygeneruje 2 varianty (v2 a v3 `pn`). Sada smí mít u všech
+úloze z `/pn` příznak `reel_jobs.autopilot`; worker pro ni vygeneruje 2 varianty (v2 a v3 `pn`), u úlohy s jedním PN
+jedinou variantu `pribeh`. Sada smí mít u všech
 úloh 1 až 3 platné varianty (minimum 1): nevzniklé varianty jdou v manifestu jako `skipped` a jako poznámka do
 `reel_jobs.error`, sada s jedinou platnou variantou se pošle.
 

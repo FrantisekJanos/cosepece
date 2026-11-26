@@ -25,7 +25,7 @@ reels-worker = "hlidac_reels.generator.worker:main"
 include = ["hlidac_reels*"]
 
 [tool.setuptools.package-data]
-hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "schema_reels.sql", "generator/prompts/*", "generator/examples/*"]
+hlidac_reels = ["template/*", "template/fonts/*", "template_v2/*", "template_v3/*", "template_pn_v1/*", "schema_reels.sql", "generator/prompts/*", "generator/examples/*"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -1,0 +1,75 @@
+/* Příběh PN na šířku: 1920 × 1080 (Threads, X), bezpečný okraj 60 px dokola.
+   Platí jen s třídou landscape na <html> (nastavuje loadCard(card, "landscape")); stejné scény, pohyb i zvuk
+   jako na výšku, jiné je jen rozvržení. Žádné transition ani animation. */
+html.landscape, html.landscape body, html.landscape #frame { width: 1920px; height: 1080px; }
+html.landscape #ring { left: 840px; top: -260px; }
+
+html.landscape #top { top: 60px; left: 80px; right: 80px; }
+html.landscape .toprow { font-size: 28px; }
+html.landscape #rec { width: 16px; height: 16px; margin-right: 14px; }
+html.landscape #prog { gap: 8px; margin-top: 16px; }
+html.landscape #prog .seg { height: 6px; }
+html.landscape #footer { left: 80px; right: 80px; bottom: 60px; font-size: 22px; }
+
+/* tělo scény 1760 × 810; dvousloupcové scény: .side-a vlevo, .side-b vpravo (bez obsahu jedné strany .solo = sloupec) */
+html.landscape .body { top: 148px; bottom: 122px; left: 80px; right: 80px; }
+html.landscape .body.two:not(.solo) { flex-direction: row; justify-content: flex-start; align-items: stretch;
+  column-gap: 88px !important; }
+html.landscape .body.two:not(.solo) > .side-a, html.landscape .body.two:not(.solo) > .side-b { display: flex;
+  flex-direction: column; justify-content: safe center; gap: 28px; min-width: 0; flex: 1 1 0; }
+
+/* háček: číslo PN vlevo (šířka podle obsahu, nejvýš 45 %), titulek a autor vpravo */
+html.landscape #s-hook .body.two:not(.solo) > .side-a { flex: 0 1 auto; max-width: 45%; }
+html.landscape #hk-sub { max-width: 640px; }
+html.landscape .hkrow .big { font-size: 300px; }
+html.landscape .hkrow .of { font-size: 130px; }
+
+/* kdo: autor vlevo, čas podání a tisk vpravo */
+html.landscape .when { border-top: 0; padding-top: 0; }
+html.landscape #kd-name { font-size: 100px; }
+
+/* co mění: před × po vlevo, citace vpravo */
+html.landscape .zrow.big .zv { font-size: 130px; }
+html.landscape .zrow.mid .zv { font-size: 80px; }
+html.landscape .paper.small .q { font-size: 40px; }
+
+/* osa vodorovně (--n = počet kroků, nastavuje reel.js), odstupy ve dnech sedí na lince mezi body */
+html.landscape #s-n-kdy .body { gap: 40px; }
+html.landscape #ky-tl { padding-left: 0; padding-top: 44px; }
+html.landscape #ky-line { left: 16px; top: 57px; bottom: auto; width: auto; height: 6px; transform-origin: 0 50%;
+  right: calc((100% - (var(--n) - 1) * 28px) / var(--n) - 16px); }
+html.landscape #ky-rows, html.landscape #ky-tl.dense #ky-rows { flex-direction: row; gap: 28px; }
+html.landscape #ky-rows .step { flex: 1 1 0; min-width: 0; padding-top: 58px; }
+html.landscape #ky-rows .step .dot { left: 0; top: 0; }
+html.landscape #ky-rows .step .d { font-size: 32px; }
+html.landscape #ky-tl.dense .step .d { font-size: 28px; }
+html.landscape #ky-rows .step .s { font-size: calc(60px - var(--n) * 4px); margin-top: 6px; }
+html.landscape #ky-rows .gapd { position: absolute; top: -50px; left: calc(-50% + 2px); transform: translateX(-50%); }
+
+/* nával: graf vlevo, komentář vpravo */
+html.landscape #s-n-naval .body.two:not(.solo) > .side-a { flex: 1.4 1 0; }
+html.landscape #nv-chart { height: 520px; }
+
+/* znaky vlevo, razítko a férová poznámka vpravo */
+html.landscape #s-n-znaky .body.two:not(.solo) > .side-a { flex: 1.5 1 0; }
+html.landscape .zh { font-size: 52px; }
+html.landscape .zt { font-size: 38px; }
+html.landscape #zn-list { gap: 22px; }
+
+/* výsledek: verdikt vlevo, hlasování vpravo */
+html.landscape #s-n-vys .body.two:not(.solo) > .side-a { flex: .8 1 0; }
+html.landscape .verd { font-size: 170px; }
+html.landscape .verd.castecne { font-size: 104px; }
+html.landscape .verd.jine { font-size: 96px; }
+html.landscape .vote:first-child, html.landscape #vy-dal { border-top: 0; padding-top: 0; }
+html.landscape .vn b { font-size: 70px; }
+html.landscape .vn.ost b { font-size: 50px; }
+
+/* dopad: text vlevo, fakta vpravo */
+html.landscape #s-n-dopad .body.two:not(.solo) > .side-a { flex: 1.4 1 0; }
+html.landscape #dp-text { font-size: 62px; }
+html.landscape .fk:first-child { border-top: 0; padding-top: 0; }
+
+/* konec: logo a odkaz vlevo, poznámky o zdrojích vpravo */
+html.landscape #s-end .body.two > .side-a { flex: 0 0 auto; max-width: 62%; }
+html.landscape .logo { font-size: 184px; }

@@ -1,0 +1,189 @@
+/* Šablona Reelu „příběh jednoho pozměňovacího návrhu“. Základ (paleta, typografie, razítka) je v reel.css,
+   který je kopií v3. Pohyb nastavuje reel.js v seek(t); žádné transition ani animation.
+   Zásada rozvržení: žádný prvek s pevnou šířkou větší než sloupec, každý text se umí zalomit i uvnitř slova
+   (overflow-wrap: anywhere) a má data-fit, takže ho fit() zmenší nebo zkrátí. */
+.labrow { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.aibadge { flex: none; font: 500 30px/1.2 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--yellow); border: 4px solid var(--yellow); padding: 6px 16px; transform-origin: 100% 50%; }
+.aibadge.sm { font-size: 24px; padding: 2px 10px; border-width: 3px; }
+.src { font: 500 32px/1.3 'IBM Plex Mono', monospace; color: var(--grey); overflow-wrap: anywhere; }
+.klub.sm { font-size: 28px; padding: 4px 14px; }
+.t, .t2, .m, .h, .q { overflow-wrap: anywhere; min-width: 0; }
+.klub, .chip, .tag { max-width: 100%; overflow-wrap: anywhere; }
+.pwrap { min-width: 0; }
+#fontload { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }
+
+/* 1 háček: „PN“ šedě, číslo dokumentu žlutě */
+#s-hook .body { gap: 30px; }
+.hkrow { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 26px; row-gap: 30px; transform-origin: 0 80%; }
+.hkrow .big { font-size: 330px; color: var(--yellow); white-space: nowrap; }
+.hkrow .of { font-size: 150px; color: var(--grey); text-transform: uppercase; margin-left: 0; }
+#hk-title { font-size: 100px; padding-right: .08em; }
+#hk-pn { flex-wrap: wrap; align-items: baseline; gap: 4px 36px; }
+#hk-pn .pna { min-width: 0; font: 500 28px/1 'IBM Plex Mono', monospace; }
+#hk-pn .klub { display: inline-block; white-space: nowrap; }
+
+/* 2 kdo a kdy: monogram místo fotky, šedý štítek klubu, čas podání jako časomíra */
+#s-n-kdo .body { gap: 30px; }
+#s-n-kdo .whorow { gap: 34px; }
+#s-n-kdo .mono { width: 170px; height: 212px; font-size: 96px; }
+#kd-name { flex: 1; min-width: 0; font-size: 92px; }
+.when { display: flex; flex-direction: column; gap: 10px; border-top: 6px solid var(--line); padding-top: 26px; min-width: 0; }
+.clock { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 34px; }
+.cdate { font: 400 128px/1.15 Anton, sans-serif; color: var(--paper); white-space: nowrap; }
+.ctime { font: 500 104px/1.15 'IBM Plex Mono', monospace; color: var(--yellow); white-space: nowrap; }
+.when .metarow { gap: 10px 20px; }
+.totisk { display: flex; flex-direction: column; gap: 8px; border-left: 14px solid var(--grey); padding-left: 30px; min-width: 0; }
+.totisk .t2 { font-size: 50px; }
+.totisk .m { font-size: 34px; }
+
+/* 3 co mění: před × po, doslovná citace */
+.s-z .body { gap: 28px; }
+.whotyp { max-width: 100%; overflow-wrap: anywhere; }
+.zrow { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.zbox { border: 6px solid var(--line); padding: 14px 28px 16px; transform-origin: 50% 60%; display: flex; align-items: center;
+  gap: 30px; min-width: 0; }
+.zbox.po { border-color: var(--yellow); }
+.zk { flex: none; width: 190px; font: 500 30px/1.25 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--grey); overflow-wrap: anywhere; }
+.zbox.po .zk { color: var(--yellow); }
+.zv { position: relative; min-width: 0; font: 400 150px/1.12 Anton, sans-serif; text-transform: uppercase; color: var(--grey);
+  overflow-wrap: anywhere; }
+.zbox.po .zv { color: var(--yellow); }
+.zrow.mid .zv { font-size: 92px; }
+.zrow.big .zv, .zrow.mid .zv { white-space: nowrap; }
+.zrow.txt .zbox { flex-direction: column; align-items: flex-start; gap: 8px; }
+.zrow.txt .zk { width: auto; }
+.zrow.txt .zv { font: 600 46px/1.25 'IBM Plex Sans', sans-serif; text-transform: none; }
+.zrow.txt .zbox.pred .zv { color: #C9C6BF; }
+.zv .strike { position: absolute; left: -4%; right: -4%; top: 48%; height: 12px; background: var(--red); transform-origin: 0 50%; }
+.zrow.txt .strike { display: none; }
+.zrow.txt .zbox.pred .zv.old { text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 5px; }
+.paper.small { padding: 30px 36px; margin: 6px 22px 0 6px; box-shadow: 12px 12px 0 var(--red); min-width: 0; }
+.paper.small .q { font-size: 38px; line-height: 1.42; }
+.zlab { font: 500 28px/1.2 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .1em; color: #6c6a66;
+  margin-bottom: 10px; }
+#s-n-co .m { font-size: 36px; }
+
+/* 4 osa: kde v cestě zákona PN přišel; krok s PN žlutě, sporný krok červeně, ostatní šedě */
+#s-n-kdy .body { gap: 32px; }
+#ky-tl { position: relative; padding-left: 64px; }
+#ky-line { position: absolute; left: 13px; top: 20px; bottom: 30px; width: 6px; background: var(--line); transform-origin: 50% 0; }
+#ky-rows { display: flex; flex-direction: column; gap: 18px; }
+#ky-rows .step { min-width: 0; }
+#ky-rows .step .dot { background: var(--grey); }
+#ky-rows .step .d { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; color: var(--grey); }
+#ky-rows .step .s { font-size: 46px; overflow-wrap: anywhere; }
+#ky-rows .step.own .dot { background: var(--yellow); }
+#ky-rows .step.own .d { color: var(--yellow); }
+#ky-rows .step.own .s { color: var(--yellow); }
+#ky-rows .step.hot .dot { background: var(--red); }
+#ky-rows .step.hot .d { color: var(--red); }
+.gapd { font: 500 30px/1.2 'IBM Plex Mono', monospace; color: var(--ink); background: var(--grey); padding: 3px 12px; white-space: nowrap; }
+.step.aft .gapd { background: var(--yellow); }
+.step.hot .gapd { background: var(--red); color: var(--paper); }
+.pntag { font: 400 34px/1.2 Anton, sans-serif; color: var(--ink); background: var(--yellow); padding: 0 12px; letter-spacing: .04em; }
+.sumrow { display: flex; align-items: center; gap: 32px; border-top: 6px solid var(--line); padding-top: 26px; min-width: 0; }
+.sumrow .pnbig { flex: none; font-size: 170px; color: var(--yellow); }
+.sumrow .pntxt { min-width: 0; }
+#ky-tl.dense #ky-rows { gap: 10px; }
+#ky-tl.dense .step .d { font-size: 32px; }
+#ky-tl.dense .step .s { font-size: 40px; margin-top: 0; }
+#ky-tl.dense .gapd { font-size: 26px; }
+#ky-tl.dense + .sumrow { padding-top: 16px; }
+#ky-tl.dense + .sumrow .pnbig { font-size: 130px; }
+
+/* 5 nával: sloupce po dnech, den tohoto PN žlutě */
+#s-n-naval .body { gap: 36px; }
+#nv-chart { display: flex; align-items: flex-end; gap: 16px; height: 500px; border-bottom: 6px solid var(--line); }
+.col { flex: 1; min-width: 0; overflow: hidden; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.col .cv { font: 400 72px/1.1 Anton, sans-serif; color: var(--paper); }
+.col .cb { width: 100%; background: var(--grey); transform-origin: 50% 100%; }
+.col.own .cb { background: var(--yellow); }
+.col.own .cv { color: var(--yellow); }
+.col.late .cb { background: var(--red); }
+.col.late .cv { color: var(--red); }
+#nv-dates { display: flex; gap: 16px; margin-top: 12px; }
+#nv-dates span { flex: 1; min-width: 0; text-align: center; font: 500 26px/1.2 'IBM Plex Mono', monospace; color: var(--grey);
+  overflow: hidden; white-space: nowrap; }
+#nv-dates span.own { color: var(--yellow); }
+#nv-note { font-size: 54px; }
+
+/* 6 znaky: proč si ho všímáme */
+#s-n-znaky .body { gap: 30px; }
+#zn-list { display: flex; flex-direction: column; gap: 30px; min-width: 0; }
+.zn { display: flex; gap: 26px; align-items: flex-start; min-width: 0; }
+.zi { flex: none; width: 72px; height: 72px; background: var(--red); color: var(--paper); font: 400 50px/72px Anton, sans-serif;
+  text-align: center; transform-origin: 50% 50%; }
+.znb { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.zh { font: 400 60px/1.2 Anton, sans-serif; text-transform: uppercase; letter-spacing: .02em; overflow-wrap: anywhere; }
+.zt { font: 600 44px/1.26 'IBM Plex Sans', sans-serif; color: #E2DFD8; overflow-wrap: anywhere; }
+.bs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
+.bs .src { font-size: 28px; }
+#s-n-znaky .stamps { padding: 10px 0 10px 22px; }
+#s-n-znaky .stamp { font-size: 88px; }
+#zn-fer { border-left: 14px solid var(--grey); padding-left: 30px; font-size: 38px; }
+
+/* 7 výsledek: verdikt a hlasovací pruh (200 poslanců), kluby jen šedým štítkem */
+#s-n-vys .body { gap: 26px; }
+.verd { position: relative; align-self: flex-start; max-width: 100%; font: 400 180px/1.2 Anton, sans-serif; text-transform: uppercase;
+  letter-spacing: .02em; padding: 0 34px; white-space: nowrap; transform-origin: 0 60%; }
+.verd.prijat, .verd.castecne { background: var(--paper); color: var(--ink); box-shadow: 16px 16px 0 var(--yellow); margin-bottom: 16px; }
+.verd.castecne { font-size: 124px; box-shadow: 16px 16px 0 var(--grey); }
+.verd.zamitnut { color: var(--grey); border: 10px solid var(--grey); }
+.verd.ceka, .verd.jine { color: var(--yellow); border: 10px dashed var(--yellow); }
+.verd.jine { font-size: 110px; }
+#vy-strike { position: absolute; left: 3%; right: 3%; top: 47%; height: 16px; background: var(--red); transform-origin: 0 50%;
+  display: none; }
+.verd.zamitnut #vy-strike { display: block; }
+#vy-text { font-size: 48px; line-height: 1.26; }
+#vy-votes { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+#vy-votes:empty, #vy-dal:empty { display: none; }
+.vote { display: flex; flex-direction: column; gap: 12px; min-width: 0; border-top: 6px solid var(--line); padding-top: 20px; }
+.vhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; min-width: 0; }
+.vres { font: 400 40px/1.25 Anton, sans-serif; text-transform: uppercase; letter-spacing: .04em; padding: 0 14px;
+  background: var(--paper); color: var(--ink); transform-origin: 0 50%; }
+.vres.ne { background: var(--red); color: var(--paper); }
+.vco { font: 600 40px/1.24 'IBM Plex Sans', sans-serif; overflow-wrap: anywhere; }
+.vbar { display: flex; height: 54px; background: var(--line); }
+.vbar > div { height: 100%; min-width: 0; }
+.vbar i { height: 100%; transform-origin: 0 50%; }
+.vbar .vpro i { background: var(--paper); }
+.vbar .vproti i { background: var(--red); }
+.vbar .vost i { background: var(--grey); }
+.vnums { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 34px; min-width: 0; }
+.vn { display: flex; align-items: baseline; gap: 12px; }
+.vn b { font: 400 80px/1.1 Anton, sans-serif; color: var(--paper); }
+.vn.proti b { color: var(--red); }
+.vn.ost b { color: var(--grey); font-size: 56px; }
+.vn span { font: 500 30px/1.2 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--grey); }
+.vkl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
+.vkk { font: 500 28px/1.2 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--grey);
+  margin-right: 6px; }
+.vkl .klub { font-size: 26px; padding: 3px 12px; white-space: nowrap; }
+#vy-dal { display: flex; flex-direction: column; gap: 16px; min-width: 0; border-top: 6px solid var(--line); padding-top: 22px; }
+.dal { display: flex; gap: 22px; align-items: flex-start; min-width: 0; }
+.dal .dn { flex: none; width: 56px; height: 56px; border: 6px solid var(--grey); color: var(--grey); font: 400 36px/44px Anton, sans-serif;
+  text-align: center; transform-origin: 50% 50%; }
+.dal.now .dn { border-color: var(--yellow); background: var(--yellow); color: var(--ink); }
+.dal .dt { flex: 1; min-width: 0; font: 600 42px/1.25 'IBM Plex Sans', sans-serif; overflow-wrap: anywhere; }
+.dal.now .dt { color: var(--yellow); }
+#vy-stan { font-size: 30px; }
+
+/* 8 dopad: co to znamená pro člověka (shrnutí AI viditelně označené) */
+#s-n-dopad .body { gap: 34px; }
+#dp-text { font-size: 58px; }
+#dp-fakta { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+#dp-fakta:empty { display: none; }
+.fk { display: flex; flex-direction: column; gap: 2px; border-top: 6px solid var(--line); padding-top: 14px; min-width: 0; }
+.fkk { font: 500 30px/1.25 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--grey);
+  overflow-wrap: anywhere; }
+.fkv { font: 400 76px/1.18 Anton, sans-serif; text-transform: uppercase; color: var(--yellow); overflow-wrap: anywhere; }
+
+/* konec */
+#end-src { font-size: 32px; }
+#end-ct { font-size: 54px; }
+/* dlouhá adresa se ořízne výpustkou, rámeček nikdy nepřesáhne sloupec */
+.url { max-width: 100%; }
+#end-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#end-cursor { flex: none; }

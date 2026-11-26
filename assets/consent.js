@@ -68,8 +68,10 @@
     if (v === 'granted') {
       load();
     } else {
+      // načtený gtag nejdřív zastavit, jinak by cookies po smazání zapsal znovu
+      if (loaded) window.gtag('consent', 'update', { analytics_storage: 'denied' });
       clear();
-      if (loaded) location.reload(); // načtený gtag by měřil dál
+      if (loaded) location.reload(); // po obnovení se gtag už nenačte
     }
   });
 

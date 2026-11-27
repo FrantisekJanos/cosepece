@@ -469,7 +469,8 @@ final class ReelJobs
      * Karta pro šablonu v2 (stejný tvar jako data/reels-ukazky/cards-export.php) nebo null, když tisk nemá
      * titulek z rozboru AI. U úlohy k vybraným PN ($focusPn) se titulek tisku bez nálezu (Repo::headline bere jen
      * závažnost ≥ 4 s citací) nahradí rozborem prvního zadaného PN s titulkem, bez ohledu na závažnost. Volitelně typ_navrhu, predlozeno, deadline (zkrácená lhůta pro výbory)
-     * a pn (počet PN, autorů a podaných v den konce podrobné rozpravy). timeline se nevyplňuje: popisy kroků
+     * a pn (počet PN, autorů a podaných v den konce podrobné rozpravy), predkladatel (proposerCard) a pn_autor
+     * (autor PN, ze kterého je titulek, s klubem ke dni podání; headlineAuthor). timeline se nevyplňuje: popisy kroků
      * v ruční sérii jsou redakční, z tabulky kroky by šly do videa surové názvy stavů.
      */
     public function cardV2(int $ct, ?array $focusPn = null): ?array
@@ -512,6 +513,15 @@ final class ReelJobs
         if (($t['predlozeno'] ?? '') !== '' && $t['predlozeno'] !== null) {
             $card['predlozeno'] = substr((string)$t['predlozeno'], 0, 10);
         }
+        // kdo návrh předkládá (scéna „Kdo to přináší“) a autor PN, ze kterého je titulek; jen z dat, ne od modelu
+        $who = self::proposerCard($t);
+        if ($who !== null) {
+            $card['predkladatel'] = $who;
+        }
+        $authors = $this->headlineAuthor($ct, (string)$h['source']);
+        if ($authors !== []) {
+            $card['pn_autor'] = $authors;
+        }
         $lhuta = isset($t['lhuta']) ? (int)$t['lhuta'] : null;
         if (Analyzer::committeeCut($lhuta)) {
             $card['deadline'] = ['label' => 'Lhůta pro výbory', 'normal' => Analyzer::LHUTA_VYBORY, 'actual' => $lhuta, 'unit' => 'dní'];
@@ -528,6 +538,104 @@ final class ReelJobs
             }
         }
         return $card;
+    }
+
+    /**
+     * Předkladatel návrhu pro scénu „Kdo to přináší“ šablony v2: {typ, jmeno, funkce?, klub?, predlozeno?,
+     * skupina?: {count, kluby?: [{klub, count}]}}. Deterministicky z řádku tisku:
+     * - vládní: celý název ministerstva z navrhovatele (Proposers::institution, neznámý tvar beze změny),
+     * - poslanecký: první navrhovatel celým jménem (tisky.navrhovatele z Importeru, jinak text navrhovatele, např.
+     *   „Babiš A.“) a jeho klub ke dni předložení; u skupiny počet poslanců z úplného názvu a kluby jen tehdy,
+     *   když se určily u všech (jinak jen počet nebo „a další poslanci“),
+     * - senátní: Senát a senátoři z navrhovatele, krajský: zastupitelstvo z úplného názvu.
+     * Klub je jen popisek (Clubs::label), žádné hodnocení. Bez jména null (šablona scénu vynechá).
+     */
+    public static function proposerCard(array $t): ?array
+    {
+        $typ = (string)($t['typ_navrhu'] ?? '');
+        $text = trim((string)($t['navrhovatel'] ?? ''));
+        $day = ($t['predlozeno'] ?? '') !== '' && $t['predlozeno'] !== null ? substr((string)$t['predlozeno'], 0, 10) : null;
+        $who = null;
+        if ($typ === 'vládní') {
+            $name = Proposers::institution($text);
+            $who = $name !== null ? ['typ' => 'Vládní návrh', 'jmeno' => $name] : null;
+        } elseif ($typ === 'senátní') {
+            $who = ['typ' => 'Senátní návrh', 'jmeno' => 'Senát'];
+            if ($text !== '') {
+                $who['funkce'] = 'navrhli senátoři ' . $text;
+            }
+        } elseif ($typ === 'krajský') {
+            $name = Proposers::regionName($t['uplny_nazev'] ?? null) ?? ($text !== '' ? $text : null);
+            $who = $name !== null ? ['typ' => 'Krajský návrh', 'jmeno' => $name] : null;
+        } elseif ($typ === 'poslanecký') {
+            $who = self::mpProposer($t, $text);
+        }
+        if ($who === null) {
+            return null;
+        }
+        if ($day !== null) {
+            $who['predlozeno'] = $day;
+        }
+        return $who;
+    }
+
+    /** Poslanecký návrh pro proposerCard(): první navrhovatel, jeho klub a skupina (viz tam). */
+    private static function mpProposer(array $t, string $text): ?array
+    {
+        $data = json_decode((string)($t['navrhovatele'] ?? ''), true);
+        $data = is_array($data) ? $data : [];
+        $first = is_array($data['prvni'] ?? null) ? $data['prvni'] : null;
+        [$parts, $rest] = Clubs::proposerParts($text, $t['navrhovatel_klub'] ?? null);
+        $name = $first !== null && trim((string)($first['jmeno'] ?? '')) !== '' ? trim((string)$first['jmeno']) : trim((string)($parts[0][0] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+        $club = $first !== null && ($first['klub'] ?? null) !== null ? Clubs::label((string)$first['klub']) : (string)($parts[0][1] ?? '');
+        $count = isset($data['pocet']) && is_int($data['pocet']) ? $data['pocet'] : null;
+        $female = ($first['pohlavi'] ?? null) === 'Z';
+        $who = ['typ' => 'Poslanecký návrh', 'jmeno' => $name];
+        if ($count !== null && $count > 1) {
+            $who['funkce'] = $female ? 'první podepsaná' : 'první podepsaný';
+            $group = ['count' => $count];
+            if (is_array($data['kluby'] ?? null) && array_sum($data['kluby']) === $count) {
+                $kluby = [];
+                foreach ($data['kluby'] as $k => $n) {
+                    $kluby[] = ['klub' => Clubs::label((string)$k), 'count' => (int)$n];
+                }
+                // od největšího zastoupení, při shodě podle zkratky (stabilní pořadí, žádné řazení podle strany)
+                usort($kluby, fn(array $a, array $b): int => [$b['count'], $a['klub']] <=> [$a['count'], $b['klub']]);
+                $group['kluby'] = $kluby;
+            }
+            $who['skupina'] = $group;
+        } elseif ($rest !== '' || count($parts) > 1) {
+            // počet neznámý (název končí „a dalších“): jen že jich je víc
+            $who['funkce'] = 'a další poslanci';
+        } elseif ($first !== null && ($first['pohlavi'] ?? null) !== null) {
+            $who['funkce'] = $female ? 'poslankyně' : 'poslanec';
+        }
+        if ($club !== '') {
+            $who['klub'] = $club;
+        }
+        return $who;
+    }
+
+    /**
+     * Autor PN, ze kterého je titulek karty (zdroj „pozměňovací návrh č. N“ z Repo::headline nebo pnHeadline),
+     * s klubem ke dni podání (pn.klub z Importeru, Clubs::label): [{cislo, jmeno, klub}] jako pn_autor u /pn.
+     * Titulek z textu návrhu nebo PN bez autora = [].
+     */
+    private function headlineAuthor(int $ct, string $source): array
+    {
+        if (!preg_match('~^pozměňovací návrh č\. (\d+)$~u', $source, $m)) {
+            return [];
+        }
+        $row = $this->db->one('SELECT cislo, osoba, klub FROM pn WHERE ct = ? AND cislo = ? ORDER BY id_dokument LIMIT 1', [$ct, (int)$m[1]]);
+        $name = $row !== null ? trim((string)$row['osoba']) : '';
+        if ($name === '') {
+            return [];
+        }
+        $club = Clubs::label($row['klub'] !== null ? (string)$row['klub'] : null);
+        return [['cislo' => (int)$row['cislo'], 'jmeno' => $name, 'klub' => $club !== '' ? $club : null]];
     }
 
     /**

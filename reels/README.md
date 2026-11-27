@@ -318,6 +318,22 @@ variantou se bere jako samostatné video.
   `tests/contract/focus-pn-info.json`). Normalizace zapíše `pn_autor`, přepíše autora a klub zadaných PN v `pn.top`
   a `pn.autori`, do popisku vloží „ (ANO)“ za jméno (u jména v závorce „(Jan Novák, ANO)“). Kontrola chce příjmení
   a klub jako první údaj za jménem. Šablony ukazují „PN 2376 · Jan Novák“ se šedým štítkem.
+- Kdo to přináší (šablona v2, varianta 1 každé sady): karta `card_v2` z `claim` nese `predkladatel` a u titulku
+  z PN i `pn_autor`. Obojí skládá server z dat Sněmovny (`ReelJobs::proposerCard`, `app/Proposers.php`), ne model:
+  - vládní návrh: `{typ: "Vládní návrh", jmeno: "Ministerstvo financí", predlozeno}`, celý název ministerstva
+    ze zkratky `tisky.navrhovatel` („min. financí“, „ministr vnitra“, „min. zdrav., min. fin.“); neznámý tvar
+    zůstane jako v datech („Předseda vlády“),
+  - poslanecký: první navrhovatel celým jménem a jeho klub ke dni předložení (`tisky.navrhovatele` z Importeru,
+    bez jména v `osoby.unl` zkrácené „Babiš A.“), u skupiny `skupina.count` z úplného názvu tisku („Návrh
+    poslanců Radka Vondráčka, … a Filipa Turka“) a `skupina.kluby` jen tehdy, když se jednoznačně určil každý
+    jmenovaný poslanec i jeho klub ke dni předložení; název s „a dalších“ počet nemá („a další poslanci“),
+  - senátní: Senát a senátoři z navrhovatele, krajský: zastupitelstvo z úplného názvu,
+  - `pn_autor`: když titulek karty pochází z PN (`quote_source` „pozměňovací návrh č. N“, i bez zadaných PN),
+    `[{cislo, jmeno, klub}]` s klubem ke dni podání (`pn.klub`), jako u `/pn`.
+  Normalizace varianty v2 (`normalize(..., server_card=card_v2)`) tato pole vezme ze serveru a model je nepřepíše;
+  bez nich je od modelu smaže. Zadané PN (`/pn`) mají v `pn_autor` přednost. v3 autora z titulku nebere (jiný úhel).
+  Kontrola pak chce v popisku autora PN a jeho klub. Starší worker pole ignoruje, nový worker se starším serverem
+  scénu jen vynechá.
 - Generátor: vyrenderovaná varianta se použije jen se stejným `card_sha`; render nejvýš 2× na variantu
   (`RENDER_TRIES`, pak stav `render_selhal`); log `claude-<n>.log` na vydání (posledních 5); rozvržení na šířku se
   kontroluje před renderem (chyba vyřadí jen šířku); „10 z dvanácti“ zůstane v háčku celé.

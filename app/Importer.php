@@ -35,6 +35,8 @@ final class Importer
         }
         // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení (jen k zobrazení)
         $shortNames = $this->loadShortNames($clubs);
+        // poslanci období (jména v 1. pádě, pohlaví) pro navrhovatele z úplného názvu tisku (Proposers, jen k zobrazení)
+        $members = $this->loadMembers($clubs);
 
         // agregace PN podle čísla tisku
         $pnByCt = [];
@@ -66,6 +68,7 @@ final class Importer
                 'souhrn_pn' => $souhrny[$tisk['id_tisk']]['cislo_za'] ?? null,
                 'souhrn_pn_at' => $souhrny[$tisk['id_tisk']]['datum'] ?? null,
                 'navrhovatel_klub' => $this->proposerClub($tisk, $shortNames, $clubs),
+                'navrhovatele' => $this->proposers($tisk, $shortNames, $members, $clubs),
             ];
         }
 
@@ -94,7 +97,7 @@ final class Importer
             $this->db->insertMany('tisky', [
                 'id_tisk', 'ct', 'druh', 'typ_navrhu', 'navrhovatel', 'nazev', 'uplny_nazev', 'predlozeno',
                 'faze', 'posledni', 'p90', 'p90ok', 'zl', 'pn_count', 'pn_last', 'zakony', 'sbirka',
-                'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at', 'navrhovatel_klub',
+                'vyhlaseno', 'lhuta', 'souhrn_pn', 'souhrn_pn_at', 'navrhovatel_klub', 'navrhovatele',
             ], $tiskyRows);
             $this->db->insertMany('kroky', [
                 'id_hist', 'id_tisk', 'ct', 'datum', 'typ_stavu', 'stav', 'akce_id', 'akce', 'id_hlasovani',
@@ -361,6 +364,76 @@ final class Importer
             $out[] = $id > 0 ? (string)$clubs->at($id, $day) : '';
         }
         return implode('', $out) !== '' ? mb_substr(implode(',', $out), 0, 120) : null;
+    }
+
+    /**
+     * Poslanci období (osoba s členstvím v některém klubu): id => [křestní jména, příjmení, pohlaví M|Z|''].
+     *
+     * @return array<int, array{0: string, 1: string, 2: string}>
+     */
+    private function loadMembers(Clubs $clubs): array
+    {
+        $members = array_fill_keys($clubs->memberIds(), true);
+        $out = [];
+        foreach ($this->source->rows('poslanci', 'osoby.unl') as $c) {
+            $id = (int)$c[0];
+            $first = trim($c[3] ?? '');
+            $surname = trim($c[2] ?? '');
+            if (isset($members[$id]) && $first !== '' && $surname !== '') {
+                $sex = trim($c[6] ?? '');
+                $out[$id] = [$first, $surname, in_array($sex, ['M', 'Z'], true) ? $sex : ''];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Navrhovatelé poslaneckého návrhu pro video (ReelJobs::cardV2) jako JSON: {"pocet": počet poslanců nebo null,
+     * "prvni": {"jmeno": „Radek Vondráček“, "klub": zkratka ke dni předložení nebo null, "pohlavi": M|Z|null} nebo null,
+     * "kluby": {zkratka: počet} nebo null}. Počet jen z úplného názvu, který vyjmenuje všechny (Proposers::count).
+     * První navrhovatel podle id osoby u tisku, jinak podle jednoznačného zkráceného jména nebo jména v názvu.
+     * Kluby skupiny jen tehdy, když se jednoznačně určila každá osoba z názvu i její klub ke dni předložení;
+     * jinak null (raději bez údaje než s neúplným rozdělením). Vládní, senátní a krajské návrhy: null.
+     *
+     * @param array<string, int> $shortNames výstup loadShortNames()
+     * @param array<int, array{0: string, 1: string, 2: string}> $members výstup loadMembers()
+     */
+    private function proposers(array $tisk, array $shortNames, array $members, Clubs $clubs): ?string
+    {
+        if ($tisk['typ_navrhu'] !== 'poslanecký' || !$tisk['predlozeno']) {
+            return null;
+        }
+        $day = substr((string)$tisk['predlozeno'], 0, 10);
+        $count = Proposers::count($tisk['uplny_nazev'] ?? null, $tisk['navrhovatel'] ?? null);
+        $parsed = Proposers::genitiveNames($tisk['uplny_nazev'] ?? null);
+        $people = array_map(fn(array $m): array => [$m[0], $m[1]], $members);
+        $ids = [];
+        foreach ($parsed[0] ?? [] as $name) {
+            $ids[] = Proposers::matchGenitive($name, $people);
+        }
+        $names = explode(',', (string)preg_replace('~\s+a další$~u', '', trim((string)$tisk['navrhovatel'])));
+        $firstId = (int)($tisk['navrh_osoba'] ?? 0) ?: (int)($shortNames[trim($names[0])] ?? 0) ?: (int)($ids[0] ?? 0);
+        $first = null;
+        if ($firstId > 0 && isset($members[$firstId])) {
+            [$given, $surname, $sex] = $members[$firstId];
+            $first = ['jmeno' => $given . ' ' . $surname, 'klub' => $clubs->at($firstId, $day), 'pohlavi' => $sex !== '' ? $sex : null];
+        }
+        $groups = null;
+        if ($count !== null && $count === count($ids) && !in_array(null, $ids, true) && count(array_unique($ids)) === $count) {
+            $groups = [];
+            foreach ($ids as $id) {
+                $club = $clubs->at((int)$id, $day);
+                if ($club === null) {
+                    $groups = null;
+                    break;
+                }
+                $groups[$club] = ($groups[$club] ?? 0) + 1;
+            }
+        }
+        if ($count === null && $first === null) {
+            return null;
+        }
+        return json_encode(['pocet' => $count, 'prvni' => $first, 'kluby' => $groups], JSON_UNESCAPED_UNICODE);
     }
 
     private function loadTisky(int $obdobiId): array

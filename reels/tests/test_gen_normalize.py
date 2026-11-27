@@ -361,3 +361,87 @@ def test_stary_server_bez_klubu():
     errs = validate_variant(new, cap, template="template_v3", ct=311, reason_keys=keys, fmt="pn",
                             focus_pn=[9801, 9802])
     assert errs == []
+
+
+# --- Kdo to přináší: předkladatel a autor PN z titulku platí z karty serveru (card_v2), jen ve variantě v2 ---
+
+WHO = {"typ": "Vládní návrh", "jmeno": "Ministerstvo financí", "predlozeno": "2026-08-25"}
+HEAD_AUTHOR = [{"cislo": 2181, "jmeno": "Hana Ančincová", "klub": "Piráti"}]
+
+
+def _server_card(**extra) -> dict:
+    card = load_fixture("card-1-v2.json")
+    card.update(extra)
+    return card
+
+
+def test_v2_predkladatel_a_autor_ze_serveru():
+    server = _server_card(predkladatel=WHO, pn_autor=HEAD_AUTHOR)
+    model = load_fixture("card-1-v2.json")
+    # model předkladatele přepsal a autora PN si vymyslel jinak
+    model["predkladatel"] = {"typ": "Vládní návrh", "jmeno": "Vláda ČR"}
+    model["pn_autor"] = [{"cislo": 2181, "jmeno": "Někdo Jiný", "klub": "ODS"}]
+    caption = _caption("PN 2181 podala Hana Ančincová (Piráti).")
+    new, cap, notes = normalize(model, caption, fmt=None, focus_info=[], server_card=server)
+    assert new["predkladatel"] == WHO
+    assert new["pn_autor"] == HEAD_AUTHOR
+    assert any(n.startswith("predkladatel:") for n in notes) and any(n.startswith("pn_autor:") for n in notes)
+    # druhá normalizace nic nemění
+    again, _, notes2 = normalize(new, cap, fmt=None, focus_info=[], server_card=server)
+    assert again == new and notes2 == []
+
+
+def test_v2_bez_udaju_serveru_pole_od_modelu_zmizi():
+    model = load_fixture("card-1-v2.json")
+    model["predkladatel"] = {"typ": "Vládní návrh", "jmeno": "Vláda ČR"}
+    model["pn_autor"] = HEAD_AUTHOR
+    new, _, notes = normalize(model, CAPTION, fmt=None, focus_info=[], server_card=_server_card())
+    assert "predkladatel" not in new and "pn_autor" not in new
+    assert any(n.startswith("predkladatel:") for n in notes)
+
+
+def test_v2_doplni_predkladatele_kdyz_ho_model_vynechal():
+    server = _server_card(predkladatel=WHO)
+    new, _, notes = normalize(load_fixture("card-1-v2.json"), CAPTION, fmt=None, focus_info=[], server_card=server)
+    assert new["predkladatel"] == WHO and "pn_autor" not in new
+    assert notes == ["predkladatel: ze serveru (Ministerstvo financí)"]
+
+
+def test_v2_vadny_tvar_ze_serveru_se_nebere():
+    # starší nebo poškozená data: předkladatel bez jména a autor bez čísla do karty nejdou
+    server = _server_card(predkladatel={"typ": "Vládní návrh"}, pn_autor=[{"jmeno": "Bez Čísla"}, "x"])
+    new, _, _ = normalize(load_fixture("card-1-v2.json"), CAPTION, fmt=None, focus_info=[], server_card=server)
+    assert "predkladatel" not in new and "pn_autor" not in new
+
+
+def test_zadane_pn_maji_prednost_pred_autorem_z_titulku():
+    server = _server_card(pn_autor=HEAD_AUTHOR)
+    new, _, _ = normalize(load_fixture("card-1-v2.json"), CAPTION, fmt=None, focus_info=_info(), server_card=server)
+    assert new["pn_autor"] == AUTHORS
+
+
+def test_v3_autora_z_titulku_nebere():
+    # varianty v3 si volí vlastní úhel: autor PN z titulku karty serveru by mohl patřit k jinému faktu
+    server = _server_card(predkladatel=WHO, pn_autor=HEAD_AUTHOR)
+    new, _, _ = normalize(load_fixture("v3-pn-311.json"), CAPTION, fmt="pn", focus_info=[], server_card=server)
+    assert "pn_autor" not in new and "predkladatel" not in new
+
+
+def test_bez_karty_serveru_predkladatel_zustane():
+    # starší volání (bez server_card): předkladatel od modelu zůstane jako dřív
+    model = load_fixture("card-1-v2.json")
+    model["predkladatel"] = WHO
+    new, _, _ = normalize(model, CAPTION, fmt=None, focus_info=[])
+    assert new["predkladatel"] == WHO
+
+
+def test_kontrola_v2_s_autorem_z_titulku():
+    # s autorem PN z titulku chce kontrola v popisku jméno a klub jako u /pn
+    server = _server_card(predkladatel=WHO, pn_autor=HEAD_AUTHOR)
+    keys = [r["key"] for r in server["reasons"]]
+    for caption, ok in ((_caption("PN 2181 podala Hana Ančincová (Piráti)."), True),
+                        (_caption("PN 2181 podala Hana Ančincová."), True),   # klub doplní normalizace
+                        (_caption("Pozměňovací návrh mění penzijní spoření."), False)):
+        new, cap, _ = normalize(load_fixture("card-1-v2.json"), caption, fmt=None, focus_info=[], server_card=server)
+        errs = validate_variant(new, cap, template="template_v2", ct=new["ct"], reason_keys=keys, fmt=None)
+        assert (errs == []) is ok, errs

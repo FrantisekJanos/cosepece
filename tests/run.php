@@ -82,6 +82,45 @@ check('jméno s klubem a bez klubu', [Hlidac\View::person('Jan <Jakob>', 'ODS'),
 // u tisku, tisk 221 podle zkráceného jména „Vondráček R.“, vládní návrh klub nemá
 check('klub předkladatele návrhu', array_column(db()->all('SELECT ct, navrhovatel_klub FROM tisky WHERE ct IN (78, 90, 221) ORDER BY ct'), 'navrhovatel_klub', 'ct'),
     [78 => 'ANO2011', 90 => null, 221 => 'ANO2011']);
+// navrhovatelé pro video (tisky.navrhovatele, Importer::proposers): 221 = 4 poslanci podle úplného názvu, první podle
+// zkráceného jména; ostatní tři v testovacích datech nejsou, takže kluby skupiny chybí. 78 = jeden poslanec bez řádku
+// v osoby.unl (jméno se neurčí). Vládní návrh nic.
+check('navrhovatelé poslaneckého návrhu (JSON)', array_map(fn($v) => $v === null ? null : json_decode((string)$v, true),
+    array_column(db()->all('SELECT ct, navrhovatele FROM tisky WHERE ct IN (78, 90, 221) ORDER BY ct'), 'navrhovatele', 'ct')), [
+    78 => ['pocet' => 1, 'prvni' => null, 'kluby' => null],
+    90 => null,
+    221 => ['pocet' => 4, 'prvni' => ['jmeno' => 'Radek Vondráček', 'klub' => 'ANO2011', 'pohlavi' => 'M'], 'kluby' => null],
+]);
+check('celý název ministerstva ze zkratky navrhovatele', array_map([Hlidac\Proposers::class, 'institution'], [
+    'min. financí', 'ministr vnitra', 'min. práce a soc. věcí', 'min. prům. a obchodu', 'min.pro místní rozvoj', 'min. živ. prostředí',
+    'ministr živ. prostředí', 'min. zdrav., min. fin.', 'min.pro sport,prev.,zdr.', 'ministr školství', 'předseda vlády', 'vláda', '', null,
+]), [
+    'Ministerstvo financí', 'Ministerstvo vnitra', 'Ministerstvo práce a sociálních věcí', 'Ministerstvo průmyslu a obchodu',
+    'Ministerstvo pro místní rozvoj', 'Ministerstvo životního prostředí', 'Ministerstvo životního prostředí',
+    'Ministerstvo zdravotnictví a Ministerstvo financí', 'Ministerstvo pro sport, prevenci a zdraví',
+    'Ministerstvo školství, mládeže a tělovýchovy', 'Předseda vlády', 'Vláda', null, null,
+]);
+check('neznámá zkratka ministerstva zůstane beze změny', Hlidac\Proposers::institution('min. pro nové věci'), 'Min. pro nové věci');
+check('jména navrhovatelů z úplného názvu a jejich počet', [
+    Hlidac\Proposers::genitiveNames('Návrh poslanců Radka Vondráčka, Davida Pražáka, Marie Pošarové a Filipa Turka na vydání zákona, kterým se mění'),
+    Hlidac\Proposers::genitiveNames('Návrh poslanců Radka Vondráčka a dalších na vydání zákona o lobbování'),
+    Hlidac\Proposers::genitiveNames('Vládní návrh zákona, kterým se mění'),
+    Hlidac\Proposers::count('Návrh poslankyně Jany Malé na vydání zákona', 'Malá J.'),
+    Hlidac\Proposers::count('Návrh poslanců Radka Vondráčka a dalších na vydání zákona', 'Vondráček R. a další'),
+    Hlidac\Proposers::count('Návrh poslanců Jana Nováka a Petra Malého na vydání zákona', 'Novák J., Malý P.'),
+    Hlidac\Proposers::count('Návrh poslanců Jana Nováka a Petra Malého na vydání zákona', 'Novák J.'),
+    Hlidac\Proposers::count('Návrh poslanců Jana Nováka na vydání zákona', 'Novák J. a další'),
+], [
+    [['Radka Vondráčka', 'Davida Pražáka', 'Marie Pošarové', 'Filipa Turka'], false], [['Radka Vondráčka'], true], null, 1, null, 2, null, null,
+]);
+$genPeople = [1 => ['Jan', 'Novák'], 2 => ['Jana', 'Nováková'], 3 => ['Filip', 'Turek'], 4 => ['Jiří', 'Novotný'],
+    5 => ['Zbyněk', 'Malý'], 6 => ['Marie', 'Pošarová'], 7 => ['Jan', 'Novák'], 8 => ['Matěj Ondřej', 'Havel'], 9 => ['Pavel', 'Němec']];
+check('osoba ke jménu ve 2. pádě (jednoznačně, jinak null)', array_map(fn(string $g) => Hlidac\Proposers::matchGenitive($g, $genPeople), [
+    'Filipa Turka', 'Jany Novákové', 'Jiřího Novotného', 'Zbyňka Malého', 'Marie Pošarové', 'Matěje Ondřeje Havla', 'Pavla Němce',
+    'Jana Nováka', 'Filipa Turkové', 'Petra Turka', 'Matěje Havla',
+]), [3, 2, 4, 5, 6, 8, 9, null, null, null, null]);
+check('krajský návrh: zastupitelstvo z úplného názvu', [Hlidac\Proposers::regionName('Návrh zastupitelstva Jihomoravského kraje na vydání zákona, kterým'),
+    Hlidac\Proposers::regionName('Návrh poslanců X na vydání')], ['Zastupitelstvo Jihomoravského kraje', null]);
 $clubImporter = new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-clubs', $tmp . '/src'));
 $shortNames = (new ReflectionMethod($clubImporter, 'loadShortNames'))->invoke($clubImporter, $clubs);
 check('zkrácená jména poslanců: jednoznačné má id, shodné u dvou poslankyň 0, osoba bez klubu chybí',
@@ -97,6 +136,47 @@ check('kluby předkladatelů: víc jmen, nejednoznačné jméno, přestup, id os
     $proposerClub(['navrhovatel' => 'Kovářová V. a další', 'navrh_osoba' => 90011]),
     $proposerClub(['navrhovatel' => 'Vondráček R.', 'typ_navrhu' => 'vládní']),
 ], ['ANO2011,KDU-ČSL', ',KDU-ČSL', null, 'ODS', 'Piráti', 'Piráti', null]);
+$members = (new ReflectionMethod($clubImporter, 'loadMembers'))->invoke($clubImporter, $clubs);
+$proposers = fn(array $t): mixed => json_decode((string)(new ReflectionMethod($clubImporter, 'proposers'))->invoke($clubImporter,
+    $t + ['typ_navrhu' => 'poslanecký', 'predlozeno' => '2026-08-01', 'navrh_osoba' => null], $shortNames, $members, $clubs), true);
+check('navrhovatelé: všichni určení → kluby skupiny; jeden neurčený → bez klubů; přestup ke dni; vládní nic', [
+    $proposers(['navrhovatel' => 'Vondráček R. a další', 'uplny_nazev' => 'Návrh poslanců Radka Vondráčka, Mariana Jurečky, Věry Kovářové a Jana Jakoba na vydání zákona']),
+    $proposers(['navrhovatel' => 'Vondráček R. a další', 'uplny_nazev' => 'Návrh poslanců Radka Vondráčka a Jana Neznámého na vydání zákona']),
+    $proposers(['navrhovatel' => 'Jakob J.', 'uplny_nazev' => 'Návrh poslance Jana Jakoba na vydání zákona', 'predlozeno' => '2026-06-01']),
+    $proposers(['navrhovatel' => 'Kovářová V. a další', 'uplny_nazev' => 'Návrh poslankyň Vandy Kovářové a Věry Kovářové na vydání zákona']),
+    $proposers(['navrhovatel' => 'min. financí', 'uplny_nazev' => 'Vládní návrh zákona', 'typ_navrhu' => 'vládní']),
+], [
+    ['pocet' => 4, 'prvni' => ['jmeno' => 'Radek Vondráček', 'klub' => 'ANO2011', 'pohlavi' => 'M'], 'kluby' => ['ANO2011' => 1, 'KDU-ČSL' => 1, 'ODS' => 1, 'Piráti' => 1]],
+    ['pocet' => 2, 'prvni' => ['jmeno' => 'Radek Vondráček', 'klub' => 'ANO2011', 'pohlavi' => 'M'], 'kluby' => null],
+    ['pocet' => 1, 'prvni' => ['jmeno' => 'Jan Jakob', 'klub' => 'ODS', 'pohlavi' => 'M'], 'kluby' => ['ODS' => 1]],
+    // zkrácené jméno „Kovářová V.“ mají dvě poslankyně: první se určí podle jména v názvu (Vanda, Piráti)
+    ['pocet' => 2, 'prvni' => ['jmeno' => 'Vanda Kovářová', 'klub' => 'Piráti', 'pohlavi' => 'Z'], 'kluby' => ['Piráti' => 1, 'ODS' => 1]],
+    null,
+]);
+// předkladatel pro scénu „Kdo to přináší“ (ReelJobs::proposerCard): jen z dat, klub jako popisek
+$pc = fn(array $t): ?array => Hlidac\ReelJobs::proposerCard($t + ['predlozeno' => '2026-08-25 00:00:00', 'navrhovatel_klub' => null, 'navrhovatele' => null, 'uplny_nazev' => '']);
+check('předkladatel: vládní, poslanecká skupina s kluby, skupina bez počtu, jeden poslanec, senát, kraj, prázdný', [
+    $pc(['typ_navrhu' => 'vládní', 'navrhovatel' => 'min. financí']),
+    $pc(['typ_navrhu' => 'poslanecký', 'navrhovatel' => 'Vondráček R. a další', 'navrhovatel_klub' => 'ANO2011',
+        'navrhovatele' => json_encode(['pocet' => 4, 'prvni' => ['jmeno' => 'Radek Vondráček', 'klub' => 'ANO2011', 'pohlavi' => 'M'],
+            'kluby' => ['ANO2011' => 2, 'ODS' => 1, 'KDU-ČSL' => 1]])]),
+    $pc(['typ_navrhu' => 'poslanecký', 'navrhovatel' => 'Babiš A. a další', 'navrhovatel_klub' => 'ANO2011']),
+    $pc(['typ_navrhu' => 'poslanecký', 'navrhovatel' => 'Malá T.', 'navrhovatele' => json_encode(['pocet' => 1,
+        'prvni' => ['jmeno' => 'Taťána Malá', 'klub' => 'ANO2011', 'pohlavi' => 'Z'], 'kluby' => ['ANO2011' => 1]])]),
+    $pc(['typ_navrhu' => 'senátní', 'navrhovatel' => 'Canov M. a další']),
+    $pc(['typ_navrhu' => 'krajský', 'navrhovatel' => 'Jihomoravský kraj', 'uplny_nazev' => 'Návrh zastupitelstva Jihomoravského kraje na vydání zákona']),
+    $pc(['typ_navrhu' => 'vládní', 'navrhovatel' => '']),
+], [
+    ['typ' => 'Vládní návrh', 'jmeno' => 'Ministerstvo financí', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný',
+        'skupina' => ['count' => 4, 'kluby' => [['klub' => 'ANO', 'count' => 2], ['klub' => 'KDU-ČSL', 'count' => 1], ['klub' => 'ODS', 'count' => 1]]],
+        'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'funkce' => 'a další poslanci', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Taťána Malá', 'funkce' => 'poslankyně', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Senátní návrh', 'jmeno' => 'Senát', 'funkce' => 'navrhli senátoři Canov M. a další', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Krajský návrh', 'jmeno' => 'Zastupitelstvo Jihomoravského kraje', 'predlozeno' => '2026-08-25'],
+    null,
+]);
 check('navrhovatel s kluby jako text i HTML', [
     Hlidac\Clubs::proposer('Babiš A.,Plaga R. a další', 'ANO2011,'), Hlidac\Clubs::proposer('min. financí', null),
     Hlidac\Clubs::proposer('Kovářová V., Jurečka M.', ',KDU-ČSL'), Hlidac\View::proposer('Vondráček R. a další', 'ANO2011'),
@@ -1844,6 +1924,10 @@ check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score
     [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
 check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
 check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk/221', '2026-11-20']);
+check('karta v2: předkladatel z dat (4 poslanci, první s klubem), titulek z textu návrhu bez autora PN',
+    [$card['predkladatel'] ?? null, array_key_exists('pn_autor', $card ?? [])],
+    [['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný', 'skupina' => ['count' => 4],
+        'klub' => 'ANO', 'predlozeno' => '2026-06-08'], false]);
 check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
 check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
 check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
@@ -1874,6 +1958,16 @@ $rjReset();
 $rjPnNo = $rjAdd('manual', 78);
 db()->run('UPDATE reel_jobs SET focus_pn = ? WHERE id = ?', ['{9782}', $rjPnNo]);
 check('úloha /pn bez titulku tisku i PN → failed', [$jobs->claim(), $rjStatus($rjPnNo)['status'], $rjStatus($rjPnNo)['error']], [null, 'failed', 'tisk ani zadané PN nemají titulek z rozboru AI']);
+// titulek z PN i bez zadaných PN (Repo::headline, závažnost ≥ 4 s citací): karta nese autora PN a klub ke dni podání
+db()->run("UPDATE pn SET klub = 'ANO2011' WHERE id_dokument = 99781");
+db()->run("UPDATE pn_text SET ai_score = 6, ai_at = '2026-11-24 12:00:00' WHERE id_dokument = 99781");
+$rjCardHead = $jobs->cardV2(78);
+check('karta z titulku PN: autor a klub PN ze serveru, předkladatel tisku',
+    [$rjCardHead['quote_source'] ?? null, $rjCardHead['pn_autor'] ?? null, $rjCardHead['predkladatel'] ?? null],
+    ['pozměňovací návrh č. 9781', [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => 'ANO']],
+        ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'klub' => 'ANO', 'predlozeno' => '2026-01-12']]);
+db()->run("UPDATE pn SET klub = NULL WHERE id_dokument = 99781");
+check('karta /pn: autor PN bez klubu → klub null', $jobs->cardV2(78, [9781])['pn_autor'] ?? null, [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => null]]);
 db()->run('DELETE FROM pn_text WHERE id_dokument IN (99781, 99782)');
 db()->run('DELETE FROM pn WHERE id_dokument IN (99781, 99782)');
 
@@ -2900,6 +2994,13 @@ $hhStats = $hh->run($hhNow);
 check('historie: stažené stránky kandidátů', $hhUrls, array_map(fn($ct) => 'https://www.psp.cz/sqw/historie.sqw?o=10&t=' . $ct, $hhCands));
 check('historie: uložen nový krok a PN, které otevřená data nemají', [$hhStats['stazeno'], $hhStats['kroky'], $hhStats['pn'] === $hhPnNew, $hhPnNew > 0],
     [count($hhCands), 1, true, true]);
+// stránky jsou z 20. 11. 2026 ($hhNow), Importer ale bere jen záznamy mladší než KEEP_DAYS podle skutečných hodin:
+// seen_at na teď, jinak test od 27. 11. 2026 padá
+$hhFresh = function (): void {
+    db()->run('UPDATE html_kroky SET seen_at = ?', [date('Y-m-d H:i:s')]);
+    db()->run('UPDATE html_pn SET seen_at = ?', [date('Y-m-d H:i:s')]);
+};
+$hhFresh();
 $hhImport = (new Hlidac\Importer(db(), $hhSource))->run();
 check('historie: Importer přimíchá krok a PN', [$hhImport['html_kroky'], $hhImport['html_pn'], (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311')],
     [1, $hhPnNew, $hhPnKnown + $hhPnNew]);
@@ -2911,6 +3012,7 @@ $hhPnRow = db()->one('SELECT cislo, osoba, cas FROM pn WHERE id_dokument = 31040
 check('historie: PN se jménem autora a časem podání', [$hhPnRow['cislo'] ?? null, ($hhPnRow['osoba'] ?? '') !== '', $hhPnRow['cas'] ?? null], [2040, true, '2026-10-19 16:18:44']);
 // druhý běh nic nezdvojí; záznam, který už je v otevřených datech, a neověřený starší než týden zmizí
 $hh->run($hhNow);
+$hhFresh();
 db()->run("INSERT INTO html_kroky (id_hist, id_tisk, ct, id_prechod, datum, seen_at) VALUES (212587, 43433, 311, 2030, NULL, ?)", [date('Y-m-d H:i:s')]);
 db()->run("INSERT INTO html_pn (id_dokument, cislo, ct, id_osoba, osoba, cas, seen_at) VALUES (39999, 2999, 311, NULL, 'X', NULL, ?)", [date('Y-m-d H:i:s', time() - 8 * 86400)]);
 $hhImport2 = (new Hlidac\Importer(db(), $hhSource))->run();

@@ -116,6 +116,10 @@ return [
         'timeout' => 300,      // s na jeden rozbor přes CLI
     ],
 
+    // profily na sociálních sítích (ikony v hlavičce webu); výchozí jsou v app/View.php (View::SOCIAL),
+    // tady je lze přepsat, prázdná adresa ikonu skryje
+    // 'social' => ['facebook' => 'https://www.facebook.com/…', 'instagram' => '', 'x' => 'https://x.com/…'],
+
     // generátor Reels: worker na PC si přes reels_api.php bere úlohy a nahrává videa (token v hlavičce X-Hlidac-Token).
     // Prázdný token nebo ZMENTE… = rozhraní vypnuté (403). inbox_dir = mezisložka pro bota (volume reelsinbox).
     'reels' => [

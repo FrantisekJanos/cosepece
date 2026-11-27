@@ -3302,6 +3302,15 @@ db()->run('DELETE FROM pn_text WHERE ct = 9950');
 db()->run('DELETE FROM pn WHERE ct = 9950');
 $dropBill(9950);
 
+// --- ikony sociálních sítí v hlavičce ---
+echo "Sociální sítě v hlavičce\n";
+$socialHtml = Hlidac\View::socialLinks();
+check('sítě: tři odkazy v novém panelu, s popisem pro čtečky a bez cizího obsahu', [substr_count($socialHtml, '<a href="https://'), substr_count($socialHtml, 'target="_blank" rel="noopener"'),
+    str_contains($socialHtml, 'href="https://www.facebook.com/cosepece/"') && str_contains($socialHtml, 'href="https://www.instagram.com/cosepece/"') && str_contains($socialHtml, 'href="https://x.com/cosepece"'),
+    str_contains($socialHtml, 'aria-label="Hlídač zákonů na síti Instagram"'), preg_match('~<(script|img|iframe)\b~', $socialHtml)],
+    [3, 3, true, true, 0]);
+check('sítě: ikony jsou v hlavičce stránky před menu', (bool)preg_match('~</a>\s*(<form[^>]*search-top.*?</form>\s*)?<div class="social">.*?</div>\s*<div class="top-row2">~s', $htmlMetodika), true);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

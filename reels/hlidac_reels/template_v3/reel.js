@@ -895,6 +895,11 @@
   };
 
   window.duration = function () { return total; };
+  // obálka: render.py dá do snímku 0 ustálenou 1. scénu (náhled na sítích), přehrávání běží od t = 0 beze změny
+  window.coverTime = function () {
+    if (!scenes.length) return 0;
+    return scenes.length === 1 ? total - 0.05 : scenes[0].end - WIPE - 0.1;
+  };
   window.sceneIds = function () { return scenes.map(function (s) { return s.id; }); };
 
   // ---------- vměstnání textů ----------

@@ -454,6 +454,10 @@ final class Repo
 
     public function bill(int $ct): ?array
     {
+        // ct je v DB integer; větší číslo z URL by PostgreSQL odmítl chybou 22003 (Sentry COSEPECE-PHP-2)
+        if ($ct < 1 || $ct > 2147483647) {
+            return null;
+        }
         $t = $this->db->one('SELECT * FROM tisky WHERE ct = ?', [$ct]);
         if ($t !== null) {
             $t['flags'] = $this->flags($t);

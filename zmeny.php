@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-27', 'Vysvětlení pozměňovacích návrhů v API a pro AI asistenty',
+        'Vysvětlení, co by pozměňovací návrh změnil v praxi, je nově i ve strojových výstupech. V API ho vrací detail tisku s parametrem pn=1 (api.php?tisk=311&pn=1) spolu se seznamem návrhů, předkladateli a jejich kluby. AI asistenti připojení přes MCP ho dostanou v detailu návrhu a v seznamu návrhů k tisku jednu větu. Jde o text od jazykového modelu, který se může mýlit a do skóre nevstupuje.',
+        [106], false],
     ['2026-11-27', 'Odkazy na sociální sítě v hlavičce',
         'Vpravo nahoře jsou nově ikony s odkazy na profily projektu na Facebooku, Instagramu a síti X. Ikony jsou součástí stránky, žádný kód sociálních sítí se nenačítá, takže se o návštěvě nedozvědí, dokud na odkaz nekliknete.',
         [102], false],

@@ -154,13 +154,17 @@ def tisk_podle_sbirky(sb: str) -> dict:
 @server.tool(annotations=READ_ONLY)
 def pn_k_tisku(ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
     """Pozměňovací návrhy k tisku: číslo, autor a jeho poslanecký klub ke dni podání (klub; None u členů vlády
-    a tam, kde ho data neuvádějí), čas podání, AI skóre a titulek, předkladatelé s počty (přes všechny PN). celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
+    a tam, kde ho data neuvádějí), čas podání, AI skóre a titulek, v_praxi (jedna věta, co by PN změnil; odvozený
+    text od jazykového modelu, celé vysvětlení je v get_pn), předkladatelé s počty (přes všechny PN). celkem a dalsi_offset (None na konci) pro stránkování přes offset."""
     return _call("pn_k_tisku", tools.pn_k_tisku, ct, id_osoba, limit, offset)
 
 
 @server.tool(annotations=READ_ONLY)
 def get_pn(cislo: int) -> dict:
     """Detail pozměňovacího návrhu podle čísla (např. 2329): autor a jeho klub ke dni podání, tisk, AI rozbor (odvozený text), příznaky,
+    v_praxi (co by se změnilo, kdyby PN prošel: co_se_meni, pred s pred_zdroj = navrh nebo zakon, po, v_praxi,
+    koho_se_tyka, priklad = modelový příklad, podle_predkladatele = tvrzení z odůvodnění, nejiste, citace doslova z textu,
+    model; odvozený text od jazykového modelu, do skóre nevstupuje; None, když vysvětlení zatím není),
     projevy (klíče a řečníci projevů, které PN zmiňují; nejvýš 20, celkem v projevy_celkem; celý text get_projev).
     Text PN čtěte po celcích: osnova_textu(pn=cislo) → get_cel(pn=cislo, …); osnova_dostupna říká, zda už je."""
     return _call("get_pn", tools.get_pn, cislo)

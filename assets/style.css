@@ -102,6 +102,15 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .pn-item { flex-direction: column; align-items: stretch !important; }
 .pn-summary { color: var(--ink-2); }
 .club { color: var(--muted); font-weight: 400; white-space: nowrap; }
+.pn-praxe { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; }
+.pn-praxe-head { font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--ink-2); }
+.pn-praxe-head .muted { font-weight: 400; }
+.pn-praxe-what { font-weight: 600; line-height: 1.4; }
+.pn-praxe-more summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+.pn-praxe-more p { margin: 8px 0 0; }
+.pn-praxe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 8px; font-size: 14px; line-height: 1.5; }
+.pn-praxe-grid > div { padding: 8px 10px; background: var(--line-soft); border-radius: 6px; overflow-wrap: anywhere; }
+.pn-praxe-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
 .pn-flagged { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pn-flagged strong { margin-right: 2px; }
 .pn-flagged a.chip { text-decoration: none; }

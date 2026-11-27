@@ -322,6 +322,59 @@ final class View
         return '<span class="muted small">Ověřeno druhým modelem ' . e((string)$x['ai_model']) . $prev . '</span>';
     }
 
+    /**
+     * Blok „Co by se změnilo v praxi“ u pozměňovacího návrhu (pn_text.praxe_json z PnPractice): hlavní věta
+     * a dopad jsou vidět hned, stav před a po, dotčené skupiny, příklad a tvrzení předkladatele se rozbalují.
+     * Nadpis se řídí výsledkem hlasování ve 3. čtení ($outcome z PnOutcome), text sám zůstává podmiňovací.
+     * Vrací hotové HTML; bez vysvětlení prázdný řetězec.
+     */
+    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null): string
+    {
+        if (!is_array($p) || trim((string)($p['co_se_meni'] ?? '')) === '') {
+            return '';
+        }
+        $state = (string)($outcome['stav'] ?? '');
+        $head = match ($state) {
+            'prijat' => 'Co se tím v praxi mění <span class="muted">(Sněmovna návrh přijala)</span>',
+            'zamitnut' => 'Co by se změnilo v praxi <span class="muted">(návrh neprošel)</span>',
+            default => 'Co by se změnilo v praxi',
+        };
+        $html = '<div class="pn-praxe"><span class="pn-praxe-head">' . $head . '</span>'
+            . '<span class="pn-praxe-what">' . e((string)$p['co_se_meni']) . '</span>'
+            . '<span class="small">' . e((string)($p['v_praxi'] ?? '')) . '</span>';
+        $more = '';
+        $technical = ($p['typ'] ?? '') === 'technicka_uprava';
+        if (!$technical) {
+            $before = trim((string)($p['pred'] ?? ''));
+            $beforeLabel = match ($p['pred_zdroj'] ?? null) {
+                'navrh' => 'Podle projednávaného návrhu',
+                'zakon' => 'Podle dnešního zákona',
+                default => 'Bez tohoto návrhu',
+            };
+            $more .= '<div class="pn-praxe-grid">'
+                . ($before !== '' ? '<div><span class="pn-praxe-label">' . $beforeLabel . '</span>' . e($before) . '</div>' : '')
+                . '<div><span class="pn-praxe-label">S tímto návrhem</span>' . e((string)($p['po'] ?? '')) . '</div></div>';
+            $who = array_filter(array_map('strval', (array)($p['koho_se_tyka'] ?? [])), fn(string $w): bool => trim($w) !== '');
+            if ($who !== []) {
+                $more .= '<p class="small"><span class="muted">Koho se to týká:</span> ' . e(implode(', ', $who)) . '</p>';
+            }
+            if (trim((string)($p['priklad'] ?? '')) !== '') {
+                $more .= '<p class="small">' . e((string)$p['priklad']) . ' <span class="muted">(modelový příklad)</span></p>';
+            }
+        }
+        if (trim((string)($p['podle_predkladatele'] ?? '')) !== '') {
+            $more .= '<p class="small"><span class="muted">Předkladatel uvádí:</span> ' . e((string)$p['podle_predkladatele']) . '</p>';
+        }
+        if (trim((string)($p['nejiste'] ?? '')) !== '') {
+            $more .= '<p class="small muted">Z textu neplyne: ' . e((string)$p['nejiste']) . '</p>';
+        }
+        if ($more !== '') {
+            $html .= '<details class="pn-praxe-more"><summary>' . ($technical ? 'Co uvádí předkladatel' : 'Před a po, koho se to týká') . '</summary>' . $more . '</details>';
+        }
+        return $html . '<span class="muted small">Vysvětlení připravil jazykový model' . ($model !== null && $model !== '' ? ' (' . e($model) . ')' : '')
+            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.</span></div>';
+    }
+
     public static function isPastPeriod(array $alert): bool
     {
         static $current = null;

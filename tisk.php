@@ -181,7 +181,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
               <?php if (!empty($x['signals']['large'])): ?><span class="chip chip-surge">Rozsáhlý</span><?php endif; ?>
               <?php if ($x['ai_score'] !== null): ?><span class="chip <?= (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' ?>">AI <?= (int)$x['ai_score'] ?>/10</span><?php endif; ?>
             </span>
-            <?php if (!empty($x['ai']['shrnuti'])): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
+            <?php if (is_string($x['ai']['shrnuti'] ?? null) && $x['ai']['shrnuti'] !== ''): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
             <?= View::aiRounds($x) ?>
             <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
             <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
@@ -269,8 +269,8 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     <?php if (isset($bai['souvisi_s_predmetem']) && $bai['souvisi_s_predmetem'] === false): ?><span class="chip chip-cut">Nesouvisí s předmětem</span><?php endif; ?>
   </span>
   <?= View::aiRounds($billText) ?>
-  <?php if (!empty($bai['shrnuti'])): ?><p><?= e($bai['shrnuti']) ?></p><?php endif; ?>
-  <?php if (!empty($bai['duvod'])): ?><p class="muted"><?= e($bai['duvod']) ?></p><?php endif; ?>
+  <?php if (is_string($bai['shrnuti'] ?? null) && $bai['shrnuti'] !== ''): ?><p><?= e($bai['shrnuti']) ?></p><?php endif; ?>
+  <?php if (is_string($bai['duvod'] ?? null) && $bai['duvod'] !== ''): ?><p class="muted"><?= e($bai['duvod']) ?></p><?php endif; ?>
   <?php foreach ((array)($bai['upravy'] ?? []) as $note): ?><p class="muted small">Automatická korekce: <?= e((string)$note) ?></p><?php endforeach; ?>
   <?php
     // doslovné citace: ověřené citace AI, jinak pasáže nalezené pravidly

@@ -3413,6 +3413,64 @@ check('sítě: tři odkazy v novém panelu, s popisem pro čtečky a bez cizího
     [3, 3, true, true, 0]);
 check('sítě: ikony jsou v hlavičce stránky před menu', (bool)preg_match('~</a>\s*(<form[^>]*search-top.*?</form>\s*)?<div class="social">.*?</div>\s*<div class="top-row2">~s', $htmlMetodika), true);
 
+// --- opravy po kontrole kódu a bezpečnosti ---
+echo "Opravy po kontrole\n";
+// čísla mimo rozsah v adrese: i zápis s exponentem, znaménkem nebo s textem za číslem (dřív chyba 500 z databáze)
+check('adresa: číslo mimo rozsah se ořízne v každém zápisu, text hledání a běžné hodnoty zůstanou',
+    normalizeQuery(['ct' => '1e12', 'id' => '+99999999999', 'o' => '-1e12', 'tisk' => '1e12abc', 'a' => '99999999999', 'q' => '1e12 korun', 'z' => '159/2006', 'strana' => '3', 'pole' => ['x'], 'typ' => 'pn']),
+    ['ct' => '999999999', 'id' => '999999999', 'o' => '999999999', 'tisk' => '999999999', 'a' => '999999999', 'q' => '1e12 korun', 'z' => '159/2006', 'strana' => '3', 'typ' => 'pn']);
+check('adresa: po oříznutí se číslo vejde do sloupce INTEGER', [(int)normalizeQuery(['ct' => '1e12'])['ct'] <= 2147483647, (int)'1e12' > 2147483647], [true, true]);
+// rozbor: pole nebo číslo místo textu nesmí skončit chybou typu na stránce tisku
+$fxSan = Hlidac\AiReviewer::sanitize(['titulek' => ['x'], 'perex' => 5, 'shrnuti' => ['pole'], 'duvod' => true, 'zavaznost' => '4', 'zpetnost_smer' => ['x'],
+    'citace' => ['Citace.', ['vnořené'], 7], 'jine_zakony' => 'ne pole', 'upravy' => [1, 'poznámka']]);
+check('rozbor: netextová pole se zahodí', [$fxSan['titulek'], $fxSan['perex'], $fxSan['shrnuti'], $fxSan['duvod'], $fxSan['zavaznost'], $fxSan['citace'], $fxSan['jine_zakony'], $fxSan['upravy']],
+    ['', '', '', '', 4, ['Citace.'], [], ['poznámka']]);
+check('rozbor: textová pole zůstávají', array_intersect_key(Hlidac\AiReviewer::sanitize(['titulek' => 'Titulek', 'shrnuti' => 'Shrnutí.', 'duvod' => 'Důvod.', 'zavaznost' => 3, 'citace' => ['a']]), ['shrnuti' => 1, 'duvod' => 1, 'titulek' => 1]),
+    ['titulek' => 'Titulek', 'shrnuti' => 'Shrnutí.', 'duvod' => 'Důvod.']);
+// pojistky vysvětlení „v praxi“: čísla paragrafů a zákonů nejsou hodnoty ke sčítání, částka 2 000 Kč není letopočet
+$fxSrc = Hlidac\PnPractice::numbers('Lhůta 30 dnů, § 44a zákona č. 218/2000 Sb., v kapitole 308, bodě 22, kauce 5 000 000 Kč místo 1 000 000 Kč, od roku 2027, 2 000 Kč, 5,5 mil Kč, 1.500 Kč.');
+check('v praxi: odkazy na ustanovení a předpisy nejsou hodnoty', $fxSrc, ['30' => true, '44' => false, '218' => false, '308' => false, '22' => false, '5000000' => true, '1000000' => true, '2000' => true, '5500000' => true, '1500' => true]);
+check('v praxi: součet s číslem paragrafu neprojde, rozdíl dvou částek ano, letopočet se neověřuje, částka kolem 2 000 ano', [
+    Hlidac\PnPractice::unsupported('Lhůta by byla 74 dnů.', $fxSrc), Hlidac\PnPractice::unsupported('Doplatil by 4 000 000 Kč.', $fxSrc),
+    Hlidac\PnPractice::unsupported('Platilo by to v roce 2031, podle § 44.', $fxSrc), Hlidac\PnPractice::unsupported('Poplatek by byl 2 050 Kč, nebo 2031 Kč.', $fxSrc),
+    Hlidac\PnPractice::unsupported('Celkem 5 500 000 Kč a 1 500 Kč.', $fxSrc), Hlidac\PnPractice::unsupported('Částka 1,2345 tis. Kč.', $fxSrc),
+], [['74'], [], [], ['2050', '2031'], [], ['1,2345 tis.']]);
+check('v praxi: jméno předkladatele se pozná v celém jménu a uprostřed věty, běžná slova na začátku věty ne', [
+    Hlidac\PnPractice::mentionsAuthor('Nová pravidla by platila.', 'Jan Novák'), Hlidac\PnPractice::mentionsAuthor('Výbor by rozhodoval.', 'Marek Výborný'),
+    Hlidac\PnPractice::mentionsAuthor('Malá a střední firmy by platily méně.', 'Taťána Malá'), Hlidac\PnPractice::mentionsAuthor('Konečně platí. Konečné rozhodnutí.', 'Irena Ferčíková Konečná'),
+    Hlidac\PnPractice::mentionsAuthor('Podle Nováka by to platilo.', 'Jan Novák'), Hlidac\PnPractice::mentionsAuthor('Návrh poslance Výborného mění lhůtu.', 'Marek Výborný'),
+    Hlidac\PnPractice::mentionsAuthor('Jan Novák navrhuje změnu.', 'Jan Novák'), Hlidac\PnPractice::mentionsAuthor('Změna, kterou Ireně Ferčíkové Konečné vytýkají.', 'Irena Ferčíková Konečná'),
+    Hlidac\PnPractice::mentionsAuthor('Podle Jurečky jde o podporu.', 'Marian Jurečka'), Hlidac\PnPractice::mentionsAuthor('Cokoli.', ''),
+], [false, false, false, false, true, true, true, true, true, false]);
+// počitadla pokusů patří k verzi: vyčerpané pokusy ze starší verze frontu neblokují; uložená vysvětlení jde znovu prověřit
+$fixtureBill(9960, 0, []);
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, fetched_at) VALUES (9960, ?, 100, '{}', ?)", [$pxBill, date('Y-m-d H:i:s')]);
+foreach ([[99961, 9961], [99962, 9962]] as [$fxId, $fxCislo]) {
+    db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (?, ?, 9960, 1, 'Karel Vzorný', '2026-11-20 10:00:00', 'ODS')", [$fxId, $fxCislo]);
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, fetched_at) VALUES (?, 9960, ?, ?, 300, '', '{}', 0, ?)", [$fxId, $fxCislo, $pxPn, date('Y-m-d H:i:s')]);
+}
+db()->run('UPDATE pn_text SET praxe_tries = 3, praxe_fails = 10 WHERE id_dokument = 99961');
+check('v praxi: pokusy vyčerpané ve starší verzi (bez praxe_try_v) frontu neblokují', array_column($practice->queue(10, 9960), 'id'), [99962, 99961]);
+$practice->saveError(99961, 'Pojistka: zkouška', true);
+check('v praxi: první neúspěch v nové verzi začíná počitadla od nuly', array_map('intval', db()->one('SELECT praxe_tries, praxe_fails, praxe_try_v FROM pn_text WHERE id_dokument = 99961')),
+    ['praxe_tries' => 1, 'praxe_fails' => 0, 'praxe_try_v' => Hlidac\PnPractice::VERSION]);
+$practice->saveError(99961, 'Pojistka: zkouška', true);
+$practice->saveError(99961, 'Pojistka: zkouška', true);
+check('v praxi: v aktuální verzi tři odmítnutí PN z fronty vyřadí', array_column($practice->queue(10, 9960), 'id'), [99962]);
+// uložená vysvětlení: jedno v pořádku, jedno s číslem, které novými pojistkami neprojde (součet lhůty s číslem paragrafu)
+$fxGood = Hlidac\PnPractice::sanitize($pxResult, $pxPn, Hlidac\PnText::normativePart($pxBill), 'Karel Vzorný', false);
+$fxBad = array_replace($fxGood, ['v_praxi' => 'Agentura by složila 5 000 000 Kč do 61 dnů.']);
+db()->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ? WHERE id_dokument = 99961', [json_encode($fxGood, JSON_UNESCAPED_UNICODE), 'claude-haiku-5-5', date('Y-m-d H:i:s'), Hlidac\PnPractice::VERSION]);
+db()->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ? WHERE id_dokument = 99962', [json_encode($fxBad, JSON_UNESCAPED_UNICODE), 'claude-haiku-5-5', date('Y-m-d H:i:s'), Hlidac\PnPractice::VERSION]);
+$fxStats = $practice->resanitizeStored();
+check('v praxi: nová kontrola uložených vysvětlení vrátí nevyhovující do fronty', [$fxStats['vraceno_do_fronty'] >= 1, db()->value('SELECT praxe_json FROM pn_text WHERE id_dokument = 99962'),
+    db()->value('SELECT praxe_at FROM pn_text WHERE id_dokument = 99962'), str_starts_with((string)db()->value('SELECT praxe_error FROM pn_text WHERE id_dokument = 99962'), 'Pojistka (nová kontrola uloženého vysvětlení): pole v_praxi'),
+    json_decode((string)db()->value('SELECT praxe_json FROM pn_text WHERE id_dokument = 99961'), true)['v_praxi'] ?? null, in_array(99962, array_column($practice->queue(10, 9960), 'id'), true)],
+    [true, null, null, true, $fxGood['v_praxi'], true]);
+db()->run('DELETE FROM pn_text WHERE ct = 9960');
+db()->run('DELETE FROM pn WHERE ct = 9960');
+$dropBill(9960);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

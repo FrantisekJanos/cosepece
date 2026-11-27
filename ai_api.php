@@ -75,6 +75,7 @@ try {
             }
             $reviewer->saveResult((string)$body['kind'], (int)$body['id'], $body['result'], $model);
         } elseif ($isPractice) {
+            // klient hlásí výpadek modelu (limit předplatného, časový limit): nepočítá se mezi odmítnutí pojistkou
             $practice->saveError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         } else {
             $reviewer->saveError((string)$body['kind'], (int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));

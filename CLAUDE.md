@@ -102,7 +102,8 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem (smí přidat
                    modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
                    (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele; odmítnutý výsledek
-                   se neuloží (praxe_error, nejvýš praxe_tries pokusů). Po změně promptu zvyš PnPractice::VERSION
+                   se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
+                   v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní). Po změně promptu zvyš PnPractice::VERSION
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),

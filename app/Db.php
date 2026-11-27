@@ -312,6 +312,15 @@ final class Db
         $this->addColumn('pn_text', 'ai_prompt', 'INTEGER');
         // poslanecký klub předkladatele ke dni podání PN (app/Clubs.php); jen se zobrazuje, do skóre nevstupuje
         $this->addColumn('pn', 'klub', 'VARCHAR(40)');
+        // vysvětlení PN „v praxi“ (app/PnPractice.php): samostatný průchod AI, do skóre nevstupuje
+        $this->addColumn('pn_text', 'praxe_json', $text);
+        $this->addColumn('pn_text', 'praxe_model', 'VARCHAR(60)');
+        $this->addColumn('pn_text', 'praxe_at', 'VARCHAR(19)');
+        $this->addColumn('pn_text', 'praxe_v', 'INTEGER');
+        $this->addColumn('pn_text', 'praxe_error', $text);
+        $this->addColumn('pn_text', 'praxe_tries', 'INTEGER');
+        // výpadky modelu nebo spojení u vysvětlení „v praxi“ (zvlášť od odmítnutí pojistkou v praxe_tries)
+        $this->addColumn('pn_text', 'praxe_fails', 'INTEGER');
         // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, v pořadí jmen v navrhovateli
         // a oddělené čárkou (Importer::proposerClub); jen se zobrazují, do skóre nevstupují
         $this->addColumn('tisky', 'navrhovatel_klub', 'VARCHAR(120)');

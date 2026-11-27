@@ -3212,6 +3212,199 @@ $htmlMetodika = (string)ob_get_clean();
 check('metodika: oddíl cookies', str_contains($htmlMetodika, 'id="cookies"'), true);
 check('metodika: bez GA4 v konfiguraci se o Google Analytics nemluví', str_contains($htmlMetodika, 'Google Analytics'), false);
 
+// --- vysvětlení PN „v praxi“ (app/PnPractice.php): samostatný průchod AI s pojistkami, do skóre nevstupuje ---
+echo "Vysvětlení PN v praxi\n";
+$pxPn = "Pozměňovací návrh poslance Karla Vzorného\nk vládnímu návrhu zákona o agenturách práce\n"
+    . "V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.\n"
+    . "Odůvodnění\nKauce má omezit zakládání účelových agentur. Dopad odhadujeme na 40 agentur.";
+$pxBill = "Vládní návrh ZÁKON\nČl. I\nZákon o zaměstnanosti se mění takto:\n3. V § 60 se částka „500 000 Kč“ nahrazuje částkou „1 000 000 Kč“.\n"
+    . "Čl. II\nÚčinnost\nTento zákon nabývá účinnosti dnem 1. ledna 2027.\nDůvodová zpráva\nObecná část.";
+check('v praxi: text změn a odůvodnění zvlášť (bez nadpisu)', Hlidac\PnPractice::split($pxPn),
+    ["Pozměňovací návrh poslance Karla Vzorného\nk vládnímu návrhu zákona o agenturách práce\nV čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.",
+        'Kauce má omezit zakládání účelových agentur. Dopad odhadujeme na 40 agentur.']);
+check('v praxi: PN bez odůvodnění', Hlidac\PnPractice::split('V čl. I se bod 2 zrušuje.'), ['V čl. I se bod 2 zrušuje.', '']);
+// kontext z návrhu zákona: krátký celý, u dlouhého jen články, které PN zmiňuje, jinak nic
+$pxLong = "Čl. I\nPrvní článek. " . str_repeat('a ', 300) . "\nČÁST DRUHÁ\nČl. II\nDruhý článek o kauci.\nČl. III\nTřetí článek. " . str_repeat('b ', 300);
+check('v praxi: kontext z návrhu zákona', [Hlidac\PnPractice::billContext('Krátký návrh.', 'V čl. I …', 1000), Hlidac\PnPractice::billContext($pxLong, 'V části druhé čl. II se …', 600),
+    Hlidac\PnPractice::billContext($pxLong, 'Bez odkazu na článek.', 600), Hlidac\PnPractice::billContext($pxLong, 'V čl. II se …', 0),
+    str_starts_with(Hlidac\PnPractice::billContext($pxLong, 'V čl. III a čl. II se …', 700), "Čl. II\nDruhý článek o kauci.\n\nČl. III\nTřetí článek.")],
+    ['Krátký návrh.', "Čl. II\nDruhý článek o kauci.", '', '', true]);
+$pxSettings = Hlidac\PnPractice::settings([]);
+$pxPrompt1 = Hlidac\PnPractice::prompt('Návrh zákona o agenturách práce', $pxPn, $pxBill, $pxSettings, false);
+$pxPrompt2 = Hlidac\PnPractice::prompt('Návrh zákona o agenturách práce', $pxPn, $pxBill, $pxSettings, true);
+check('v praxi: prompt má text změn, odůvodnění a kontext zvlášť; důvodová zpráva návrhu v kontextu není',
+    [str_contains($pxPrompt1, "Text změn, které PN navrhuje:\n<<<\nPozměňovací návrh poslance"), str_contains($pxPrompt1, "Odůvodnění předkladatele (jeho vlastní tvrzení, ne ověřená fakta):\n<<<\nKauce má omezit"),
+        str_contains($pxPrompt1, 'nabývá účinnosti dnem 1. ledna 2027'), str_contains($pxPrompt1, 'Obecná část'), str_contains($pxPrompt1, '{')
+            && !preg_match('~\{[A-Z_]+\}~', $pxPrompt1)],
+    [true, true, true, false, true]);
+check('v praxi: modelový příklad jen v promptu pro silnější model', [str_contains($pxPrompt1, '"priklad"'), str_contains($pxPrompt2, '"priklad"')], [false, true]);
+// čísla: jednotky, desetinná čísla, bez letopočtů a malých čísel
+check('v praxi: čísla z textu', array_map('strval', array_keys(Hlidac\PnPractice::numbers('Od 1. 1. 2027 platí 17 000 000 Kč, dřív 5 mil. Kč a 102,8 mil. Kč; sazba 13,5 %, § 60d, do 4 měsíců, 13 mld., 250 tis. Kč.'))),
+    ['17000000', '5000000', '102800000', '13,5', '60', '13000000000', '250000']);
+$pxSource = Hlidac\PnPractice::numbers($pxPn . "\n" . $pxBill);
+check('v praxi: číslo mimo text projde jen jako součet nebo rozdíl dvou čísel z textu',
+    [Hlidac\PnPractice::unsupported('Doplatil by 4 000 000 Kč, celkem 5 mil. Kč, tedy o 500 000 Kč víc než 4 500 000 Kč.', $pxSource),
+        Hlidac\PnPractice::unsupported('Platba by byla 2 368 Kč, tedy 13,5 % základu.', $pxSource)],
+    [[], ['2368', '13,5']]);
+$pxResult = ['typ' => 'vecna_zmena', 'koho_se_tyka' => ['agentury práce'], 'co_se_mění' => 'Kauce agentur práce by vzrostla na 5 000 000 Kč.',
+    'pred' => 'Podle návrhu by kauce byla 1 000 000 Kč.', 'pred_zdroj' => 'navrh', 'po' => 'Kauce by byla 5 000 000 Kč.',
+    'v_praxi' => 'Agentura práce by musela složit 5 mil. Kč místo 1 000 000 Kč.', 'priklad' => 'Například: agentura s kaucí 1 000 000 Kč by doplatila 4 000 000 Kč.',
+    'podle_predkladatele' => 'Kauce má omezit zakládání účelových agentur.', 'nejiste' => null,
+    'citace' => ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.', 'Vymyšlená věta.', 'Kauce má omezit zakládání účelových agentur.']];
+$pxSan = fn(array $over, bool $strong = false): array|string => (function () use ($pxResult, $over, $pxPn, $pxBill, $strong) {
+    try {
+        return Hlidac\PnPractice::sanitize(array_replace($pxResult, $over), $pxPn, Hlidac\PnText::normativePart($pxBill), 'Karel Vzorný', $strong);
+    } catch (DomainException $ex) {
+        return $ex->getMessage();
+    }
+})();
+$pxClean = $pxSan([]);
+check('v praxi: klíč s diakritikou, citace jen z textu změn, příklad od rychlého modelu pryč',
+    [$pxClean['co_se_meni'] ?? null, $pxClean['citace'] ?? null, $pxClean['priklad'], $pxClean['upravy'] ?? null, array_key_exists('co_se_mění', (array)$pxClean)],
+    ['Kauce agentur práce by vzrostla na 5 000 000 Kč.', ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.'], null, ['vypuštěno: příklad od rychlého modelu'], false]);
+check('v praxi: silnější model smí příklad s rozdílem dvou čísel z textu', $pxSan([], true)['priklad'] ?? null, 'Například: agentura s kaucí 1 000 000 Kč by doplatila 4 000 000 Kč.');
+$pxDropped = $pxSan(['pred' => 'Dnes je kauce 750 000 Kč.', 'priklad' => 'Například: agentura by ročně zaplatila 28 416 Kč.', 'podle_predkladatele' => 'Ušetří se 9 mld. Kč.'], true);
+check('v praxi: nepovinná pole s číslem mimo text se vypustí', [$pxDropped['pred'], $pxDropped['pred_zdroj'], $pxDropped['priklad'], $pxDropped['podle_predkladatele'], count($pxDropped['upravy'] ?? [])],
+    [null, null, null, null, 3]);
+check('v praxi: odmítnutí (číslo mimo text, hodnoticí slovo, jméno předkladatele, bez citace, prázdné pole)', [
+    $pxSan(['v_praxi' => 'Agentura by platila 2 368 Kč měsíčně.']),
+    $pxSan(['po' => 'Kauce by byla lepší pojistkou.']),
+    $pxSan(['v_praxi' => 'Podle Vzorného by agentura složila 5 000 000 Kč.']),
+    $pxSan(['citace' => ['Kauce má omezit zakládání účelových agentur.']]),
+    $pxSan(['po' => ' ']),
+], ['pole v_praxi uvádí číslo, které v textech není: 2368', 'hodnoticí slovo „lepší“', 'jméno předkladatele ve vysvětlení', 'žádná citace není doslova v textu změn', 'chybí pole po']);
+check('v praxi: úvod „Předkladatel uvádí, že“ se z tvrzení odstraní (web ho doplňuje sám)',
+    [$pxSan(['podle_predkladatele' => 'Předkladatelka uvádí, že kauce omezí účelové agentury.'])['podle_predkladatele'], $pxSan(['podle_predkladatele' => 'Podle předkladatele návrh nic nestojí.'])['podle_predkladatele']],
+    ['Kauce omezí účelové agentury.', 'Návrh nic nestojí.']);
+check('v praxi: neznámý typ a příliš mnoho skupin', [$pxSan(['typ' => 'revoluce'])['typ'], count($pxSan(['koho_se_tyka' => ['a', 'b', 'c', 'd', 'e', 7]])['koho_se_tyka'])], ['vecna_zmena', 4]);
+
+// průchod s falešným CLI: rychlý model, pak silnější u PN s nálezem; odmítnutý výsledek se zkusí nejvýš praxe_tries×
+$fixtureBill(9950, 0, []);
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, fetched_at) VALUES (9950, ?, 100, '{}', ?)", [$pxBill, date('Y-m-d H:i:s')]);
+foreach ([[99951, 9951, $pxPn], [99952, 9952, str_replace('5 000 000', '6 000 000', $pxPn) . ' ODMITNOUT']] as [$pxId, $pxCislo, $pxText]) {
+    db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (?, ?, 9950, 1, 'Karel Vzorný', '2026-11-20 10:00:00', 'ODS')", [$pxId, $pxCislo]);
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, fetched_at) VALUES (?, 9950, ?, ?, 300, '', '{}', 0, ?)", [$pxId, $pxCislo, $pxText, date('Y-m-d H:i:s')]);
+}
+$pxCli = $tmp . '/claude-praxe.php';
+file_put_contents($pxCli, '#!' . PHP_BINARY . "\n" . <<<'FAKE'
+<?php
+$prompt = stream_get_contents(STDIN);
+$strong = str_contains(implode(' ', $argv), '--model claude-sonnet-5-5');
+$result = ['typ' => 'vecna_zmena', 'koho_se_tyka' => ['agentury práce'], 'co_se_mění' => 'Kauce agentur práce by vzrostla.',
+    'pred' => 'Podle návrhu by kauce byla 1 000 000 Kč.', 'pred_zdroj' => 'navrh', 'po' => 'Kauce by byla 5 000 000 Kč.',
+    'v_praxi' => $strong ? 'Agentura práce by musela složit 5 000 000 Kč. Tak to popsal silnější model.' : 'Agentura práce by musela složit 5 000 000 Kč.',
+    'priklad' => 'Například: agentura s kaucí 1 000 000 Kč by doplatila 4 000 000 Kč.',
+    'podle_predkladatele' => 'Kauce má omezit zakládání účelových agentur.', 'nejiste' => null,
+    'citace' => ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.']];
+if (str_contains($prompt, 'ODMITNOUT')) {
+    $result['v_praxi'] = 'Agentura by ročně zaplatila 77 777 Kč.';
+    $result['citace'] = ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „6 000 000 Kč“.'];
+}
+if (!str_contains($prompt, 'Text změn, které PN navrhuje') || str_contains($prompt, '"priklad"') !== $strong) {
+    $result = ['chyba' => 'nečekaný prompt'];
+}
+echo json_encode(['type' => 'result', 'is_error' => false, 'stop_reason' => 'end_turn', 'result' => json_encode($result, JSON_UNESCAPED_UNICODE)]);
+FAKE);
+chmod($pxCli, 0755);
+$pxConfig = config();
+$pxConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $pxCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5', 'verify_model' => 'claude-sonnet-5-5'];
+$practice = new Hlidac\PnPractice(db(), $pxConfig);
+$pxScore = (int)db()->value('SELECT score FROM tisky WHERE ct = 9950');
+$pxQueue = $practice->queue(10, 9950);
+check('v praxi: fronta s druhem praxe a promptem', [array_column($pxQueue, 'id'), array_unique(array_column($pxQueue, 'kind')), str_contains($pxQueue[0]['prompt'] ?? '', 'Dotčená část projednávaného návrhu zákona')],
+    [[99952, 99951], ['praxe'], true]);
+check('v praxi: běh rychlého modelu (jeden výsledek pojistky odmítnou)', $practice->run(10, 9950), ['reviewed' => 1, 'errors' => 1]);
+$pxRow = fn(int $id): array => db()->one('SELECT praxe_json, praxe_model, praxe_v, praxe_error, praxe_tries, praxe_at FROM pn_text WHERE id_dokument = ?', [$id]);
+$pxStored = json_decode((string)$pxRow(99951)['praxe_json'], true);
+check('v praxi: uložené vysvětlení rychlého modelu bez příkladu', [$pxRow(99951)['praxe_model'], (int)$pxRow(99951)['praxe_v'], $pxStored['v_praxi'] ?? null, $pxStored['priklad'], (int)$pxRow(99951)['praxe_tries']],
+    ['claude-haiku-5-5', Hlidac\PnPractice::VERSION, 'Agentura práce by musela složit 5 000 000 Kč.', null, 0]);
+check('v praxi: odmítnutý výsledek je chyba s důvodem a čeká na další pokus', [$pxRow(99952)['praxe_json'], str_starts_with((string)$pxRow(99952)['praxe_error'], 'Pojistka: pole v_praxi uvádí číslo'),
+    (int)$pxRow(99952)['praxe_tries'], array_column($practice->queue(10, 9950), 'id')], [null, true, 1, [99952]]);
+$practice->run(10, 9950);
+$practice->run(10, 9950);
+check('v praxi: po třech neúspěších se PN z fronty vyřadí', [(int)$pxRow(99952)['praxe_tries'], $practice->queue(10, 9950)], [3, []]);
+// druhé kolo: jen PN s nálezem (závažnost od praxe_verify_min nebo příznak pravidel)
+check('v praxi: bez nálezu druhé kolo není', $practice->queue(10, 9950, true), []);
+db()->run('UPDATE pn_text SET ai_score = 5 WHERE id_dokument = 99951');
+check('v praxi: PN s nálezem jde do druhého kola', array_column($practice->queue(10, 9950, true), 'id'), [99951]);
+check('v praxi: běh silnějšího modelu', $practice->run(10, 9950, true), ['reviewed' => 1, 'errors' => 0]);
+$pxStored = json_decode((string)$pxRow(99951)['praxe_json'], true);
+check('v praxi: silnější model přepíše vysvětlení a smí přidat příklad', [$pxRow(99951)['praxe_model'], str_contains($pxStored['v_praxi'] ?? '', 'silnější model'), $pxStored['priklad'] ?? null, $practice->queue(10, 9950, true)],
+    ['claude-sonnet-5-5', true, 'Například: agentura s kaucí 1 000 000 Kč by doplatila 4 000 000 Kč.', []]);
+check('v praxi: opožděný výsledek rychlého modelu vysvětlení silnějšího modelu nepřepíše',
+    [$practice->saveResult(99951, array_replace($pxResult, ['v_praxi' => 'Pozdní výsledek s 5 000 000 Kč.']), 'claude-haiku-5-5'), $pxRow(99951)['praxe_model']], [true, 'claude-sonnet-5-5']);
+check('v praxi: skóre tisku se nemění', (int)db()->value('SELECT score FROM tisky WHERE ct = 9950'), $pxScore);
+// výpadek modelu nebo spojení (limit předplatného, časový limit) se nepočítá mezi odmítnutí pojistkou: má vlastní
+// počitadlo praxe_fails s vyšším stropem a PN s chybou jde ve frontě až za ostatní
+db()->run('UPDATE pn_text SET praxe_tries = 0, praxe_error = NULL WHERE id_dokument = 99952');
+db()->run('UPDATE pn_text SET praxe_at = NULL WHERE id_dokument = 99951');
+$pxFails = fn(int $id): array => array_map('intval', db()->one('SELECT COALESCE(praxe_tries, 0) AS t, COALESCE(praxe_fails, 0) AS f FROM pn_text WHERE id_dokument = ?', [$id]));
+check('v praxi: fronta před výpadkem', array_column($practice->queue(10, 9950), 'id'), [99952, 99951]);
+$practice->saveError(99952, 'claude CLI nedoběhlo včas');
+check('v praxi: výpadek modelu se nepočítá mezi pokusy a PN jde na konec fronty', [$pxFails(99952), array_column($practice->queue(10, 9950), 'id'), db()->value('SELECT praxe_error FROM pn_text WHERE id_dokument = 99952')],
+    [['t' => 0, 'f' => 1], [99951, 99952], 'claude CLI nedoběhlo včas']);
+// běh, ve kterém model nevrátí JSON (např. hláška o vyčerpaném limitu): chyba běhu, počitadlo výpadků
+$pxBadCli = $tmp . '/claude-limit.php';
+file_put_contents($pxBadCli, '#!' . PHP_BINARY . "\n<?php\necho json_encode(['type' => 'result', 'is_error' => false, 'result' => 'Usage limit reached']);\n");
+chmod($pxBadCli, 0755);
+$pxLimited = new Hlidac\PnPractice(db(), ['ai' => ['cli_path' => $pxBadCli] + $pxConfig['ai']] + $pxConfig);
+check('v praxi: běh při výpadku modelu', [$pxLimited->run(10, 9950), $pxFails(99951), $pxFails(99952)], [['reviewed' => 0, 'errors' => 2], ['t' => 0, 'f' => 1], ['t' => 0, 'f' => 2]]);
+for ($i = 0; $i < 8; $i++) {
+    $practice->saveError(99952, 'výpadek');
+}
+check('v praxi: po deseti výpadcích se PN z fronty vyřadí (strop praxe_fails)', [$pxFails(99952), array_column($practice->queue(10, 9950), 'id'),
+    array_column((new Hlidac\PnPractice(db(), ['ai' => ['praxe_fails' => 20] + $pxConfig['ai']] + $pxConfig))->queue(10, 9950), 'id')],
+    [['t' => 0, 'f' => 10], [99951], [99952, 99951]]);
+$pxOk6 = array_replace($pxResult, ['po' => 'Kauce by byla 6 000 000 Kč.', 'v_praxi' => 'Agentura by složila 6 000 000 Kč.', 'pred' => null, 'priklad' => null,
+    'citace' => ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „6 000 000 Kč“.']]);
+check('v praxi: úspěšné uložení obě počitadla vynuluje', [$practice->saveResult(99952, $pxOk6, 'claude-haiku-5-5'), $pxFails(99952), db()->value('SELECT praxe_error FROM pn_text WHERE id_dokument = 99952')],
+    [true, ['t' => 0, 'f' => 0], null]);
+check('v praxi: odmítnutí pojistkou dál počítá praxe_tries', [$practice->saveResult(99952, array_replace($pxOk6, ['v_praxi' => 'Agentura by platila 77 777 Kč.']), 'claude-haiku-5-5'), $pxFails(99952)],
+    [false, ['t' => 1, 'f' => 0]]);
+db()->run('UPDATE pn_text SET praxe_json = NULL, praxe_model = NULL, praxe_at = NULL, praxe_error = NULL, praxe_fails = 0, praxe_tries = 0 WHERE id_dokument = 99952');
+db()->run('UPDATE pn_text SET praxe_fails = 0, praxe_error = NULL WHERE id_dokument = 99951');
+db()->run("UPDATE pn_text SET praxe_at = NULL, praxe_tries = 0 WHERE ct = 9950");
+db()->run("UPDATE tisky SET faze = 'Vyhlášeno' WHERE ct = 9950");
+check('v praxi: vyhlášené zákony se nevysvětlují, vypnutý průchod frontu nemá', [$practice->queue(10, 9950),
+    (new Hlidac\PnPractice(db(), ['ai' => ['praxe_enabled' => false] + $pxConfig['ai']]))->queue(10)], [[], []]);
+db()->run("UPDATE tisky SET faze = '2. čtení' WHERE ct = 9950");
+db()->run("UPDATE pn_text SET praxe_at = ? WHERE id_dokument = 99951", [date('Y-m-d H:i:s')]);
+// zobrazení na stránce tisku a nadpis podle výsledku hlasování
+$_GET = ['ct' => '9950'];
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/tisk.php');
+$pxHtml = (string)ob_get_clean();
+check('v praxi: blok na stránce tisku jen u PN s vysvětlením', [substr_count($pxHtml, 'class="pn-praxe"'), str_contains($pxHtml, 'Co by se změnilo v praxi'),
+    str_contains($pxHtml, '<span class="pn-praxe-label">Podle projednávaného návrhu</span>Podle návrhu by kauce byla 1 000 000 Kč.'),
+    str_contains($pxHtml, 'Předkladatel uvádí:</span> Kauce má omezit'), str_contains($pxHtml, '(modelový příklad)'), str_contains($pxHtml, 'Vysvětlení připravil jazykový model (claude-sonnet-5-5)')],
+    [1, true, true, true, true, true]);
+// citace z textu PN je uvnitř rámečku nad nadpisem (jednou); bez citace z rozboru se vezme citace vysvětlení
+$pxQuoteHtml = '<div class="pn-praxe"><blockquote class="quote small">V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.</blockquote><span class="pn-praxe-head">';
+check('v praxi: citace z PN nad nadpisem uvnitř rámečku', [str_contains($pxHtml, $pxQuoteHtml), substr_count($pxHtml, '<blockquote class="quote small">V čl. I bodě 3'),
+    str_starts_with(Hlidac\View::pnPractice($pxStored, null, null, 'Citace z rozboru <x>.'), '<div class="pn-praxe"><blockquote class="quote small">Citace z rozboru &lt;x&gt;.</blockquote>'),
+    str_starts_with(Hlidac\View::pnPractice(['co_se_meni' => 'x'], null), '<div class="pn-praxe"><span class="pn-praxe-head">')],
+    [true, 1, true, true]);
+check('v praxi: nadpis podle výsledku a technická úprava bez rozbalení', [
+    str_contains(Hlidac\View::pnPractice($pxStored, 'claude-haiku-5-5', ['stav' => 'prijat']), 'Co se tím v praxi mění <span class="muted">(Sněmovna návrh přijala)</span>'),
+    str_contains(Hlidac\View::pnPractice($pxStored, null, ['stav' => 'zamitnut']), '(návrh neprošel)'),
+    str_contains(Hlidac\View::pnPractice(['typ' => 'technicka_uprava', 'co_se_meni' => 'Přečíslování bodů.', 'v_praxi' => 'Pro lidi ani firmy se tím nic nemění.', 'po' => 'x'], null), '<details'),
+    Hlidac\View::pnPractice(null, null), Hlidac\View::pnPractice(['co_se_meni' => '<b>'], null) === '' ? '' : str_contains(Hlidac\View::pnPractice(['co_se_meni' => '<b>'], null), '&lt;b&gt;'),
+], [true, true, false, '', true]);
+db()->run('DELETE FROM pn_text WHERE ct = 9950');
+db()->run('DELETE FROM pn WHERE ct = 9950');
+$dropBill(9950);
+
+// --- ikony sociálních sítí v hlavičce ---
+echo "Sociální sítě v hlavičce\n";
+$socialHtml = Hlidac\View::socialLinks();
+check('sítě: tři odkazy v novém panelu, s popisem pro čtečky a bez cizího obsahu', [substr_count($socialHtml, '<a href="https://'), substr_count($socialHtml, 'target="_blank" rel="noopener"'),
+    str_contains($socialHtml, 'href="https://www.facebook.com/cosepece/"') && str_contains($socialHtml, 'href="https://www.instagram.com/cosepece/"') && str_contains($socialHtml, 'href="https://x.com/cosepece"'),
+    str_contains($socialHtml, 'aria-label="Hlídač zákonů na síti Instagram"'), preg_match('~<(script|img|iframe)\b~', $socialHtml)],
+    [3, 3, true, true, 0]);
+check('sítě: ikony jsou v hlavičce stránky před menu', (bool)preg_match('~</a>\s*(<form[^>]*search-top.*?</form>\s*)?<div class="social">.*?</div>\s*<div class="top-row2">~s', $htmlMetodika), true);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

@@ -174,6 +174,11 @@ Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým pob�
 2. `php bin/ai.php --remote=… --all --verify` – nálezy se závažností ≥ 6 znovu posoudí silnější model **Sonnet**;
    jeho výsledek nahradí první rozbor (na webu „ověřeno druhým modelem“).
 3. Po každé dávce web přepočítá skóre.
+4. `php bin/ai.php --remote=… --praxe` a totéž s `--verify` – vysvětlení pozměňovacích návrhů „v praxi“
+   (Haiku všechny, Sonnet znovu ty s nálezem), jedna dávka za běh (`AI_PRAXE_LIMIT`, výchozí 20), aby dohánění
+   starších návrhů neblokovalo rozbor nových. Jednorázově lze dohnat ručně s `--all`. Web výsledek uloží jen
+   tehdy, když projde pojistkami (citace a čísla musí být v textu); odmítnutý se v logu ukáže jako `ODMÍTNUTO`
+   a zkusí se příště. Skóre se nemění.
 
 Limit předplatného: při běžném provozu (desítky nových textů denně) se nepozná. Když se limit při prvním
 dohánění vyčerpá, rozbory skončí chybou a doženou se v dalších hodinách.

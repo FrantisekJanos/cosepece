@@ -62,6 +62,7 @@ php bin/ai.php --ct=221           # AI rozbor přes claude CLI (předplatné) na
 HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (ai_api.php, token v hlavičce X-Hlidac-Token)
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
+php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
 ```
@@ -95,6 +96,14 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    hodnocení (< sample_below, číslo textu % sample_every = AiReviewer::SAMPLE_REMAINDER).
                    Repo::aiReliability() počítá shodu modelů pro metodika.php#spolehlivost-ai. Po změně promptu zvyš
                    AiReviewer::PROMPT_VERSION – fronta pak postupně znovu posoudí starší rozbory (ai_prompt)
+  6b. PnPractice   vysvětlení PN „v praxi“ (co by se změnilo, kdyby prošel): samostatný průchod s vlastním promptem,
+                   sloupce pn_text.praxe_*, do skóre nevstupuje. Model dostane zvlášť text změn, odůvodnění
+                   předkladatele a dotčenou část návrhu zákona (billContext). Fronta ai_api.php?praxe=1 (kind praxe),
+                   klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem (smí přidat
+                   modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
+                   (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele; odmítnutý výsledek
+                   se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
+                   v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní). Po změně promptu zvyš PnPractice::VERSION
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),

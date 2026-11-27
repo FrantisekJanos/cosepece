@@ -106,10 +106,19 @@ return [
         // spolehlivost (#7 bod 7): hraniční hodnocení repeat_min–repeat_max posoudí rychlý model repeat_runs× a platí medián;
         // každý sample_every-tý text s hodnocením pod sample_below namátkou ověří i silnější model
         'repeat_runs' => 3, 'repeat_min' => 3, 'repeat_max' => 7, 'sample_every' => 10, 'sample_below' => 4,
+        // vysvětlení PN „v praxi“ (app/PnPractice.php, bin/ai.php --praxe): samostatný průchod, do skóre nevstupuje.
+        // praxe_bill_max = do kolika znaků se text návrhu zákona přiloží celý (u delších jen články, které PN zmiňuje);
+        // praxe_verify_min = od jaké závažnosti (nebo s příznakem pravidel) vysvětlení přepíše silnější model
+        // praxe_tries = kolikrát smí pojistky výsledek odmítnout; praxe_fails = kolikrát smí selhat model nebo spojení
+        'praxe_enabled' => true, 'praxe_bill_max' => 40000, 'praxe_verify_min' => 4, 'praxe_tries' => 3, 'praxe_fails' => 10,
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI
     ],
+
+    // profily na sociálních sítích (ikony v hlavičce webu); výchozí jsou v app/View.php (View::SOCIAL),
+    // tady je lze přepsat, prázdná adresa ikonu skryje
+    // 'social' => ['facebook' => 'https://www.facebook.com/…', 'instagram' => '', 'x' => 'https://x.com/…'],
 
     // generátor Reels: worker na PC si přes reels_api.php bere úlohy a nahrává videa (token v hlavičce X-Hlidac-Token).
     // Prázdný token nebo ZMENTE… = rozhraní vypnuté (403). inbox_dir = mezisložka pro bota (volume reelsinbox).

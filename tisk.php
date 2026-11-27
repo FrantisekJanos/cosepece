@@ -160,7 +160,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
         <?php endforeach; ?>
       </p>
     <?php endif; ?>
-    <p class="muted small">Hodnocení „AI N/10“ a shrnutí připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz.</p>
+    <p class="muted small">Hodnocení „AI N/10“, shrnutí a vysvětlení „v praxi“ připravuje jazykový model a může se mýlit; rozhodující je text návrhu na psp.cz. Vysvětlení popisuje, co by se změnilo, kdyby byl návrh přijat, a do skóre nevstupuje.</p>
     <?php if ($pnOutcomes !== []): ?>
       <p class="muted small">Výsledek ve 3. čtení (přijat, zamítnut…) bereme ze souhrnu pozměňovacích návrhů, stenozáznamu a hlasování, bez AI. Kde hlasování nejde přiřadit jednoznačně, uvádíme „nelze určit“. Senát a prezident mohou znění ještě změnit.</p>
     <?php endif; ?>
@@ -185,7 +185,11 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <?= View::aiRounds($x) ?>
             <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
             <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
-            <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
+            <?php // citace z textu PN: s vysvětlením „v praxi“ je uvnitř jeho rámečku nad nadpisem, jinak samostatně ?>
+            <?php $pnQuote = trim((string)(($x['ai']['citace'] ?? [])[0] ?? '')); ?>
+            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote); ?>
+            <?php if ($pnPractice === '' && $pnQuote !== ''): ?><blockquote class="quote small"><?= e($pnQuote) ?></blockquote><?php endif; ?>
+            <?= $pnPractice ?>
           <?php endif; ?>
         </li>
       <?php endforeach; ?>

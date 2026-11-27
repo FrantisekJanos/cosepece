@@ -4,6 +4,7 @@
 #   1. stáhne z hostingu (ai_api.php) texty čekající na rozbor, posoudí je přes `claude -p` (Haiku, předplatné)
 #   2. nejzávažnější nálezy znovu posoudí silnější model (Sonnet)
 #   3. výsledky pošle zpět; hosting ověří citace a přepočítá skóre
+#   4. vysvětlení PN „v praxi“ (Haiku, u PN s nálezem znovu Sonnet); hosting je pustí jen přes pojistky
 # Nastavení je v deploy/ai-remote.env (vzor deploy/ai-remote.env.example).
 
 set -u
@@ -51,6 +52,10 @@ STATUS=0
   export HLIDAC_TOKEN
   "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all || STATUS=1
   "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_LIMIT:-20}" --all --verify || STATUS=1
+  # vysvětlení „v praxi“ až po rozboru: procedurální nálezy mají přednost. Bez --all: jedna dávka za běh,
+  # aby dohánění starších PN (stovky textů) neblokovalo rozbor nových; jednorázově lze dohnat ručně s --all
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_PRAXE_LIMIT:-20}" --praxe || STATUS=1
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_PRAXE_LIMIT:-20}" --praxe --verify || STATUS=1
   # chyba některé fáze = nenulový návratový kód (launchd/cron ji pak ukáže), i když druhá fáze proběhla
   echo "=== $(date '+%F %T') konec$([ "$STATUS" = 0 ] || echo ' s chybami')"
 } >> "$LOG" 2>&1

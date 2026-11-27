@@ -106,8 +106,8 @@ def _server_pn(focus_info: list[dict]) -> dict[int, dict]:
     return {n: by_num[n] for n in sorted(by_num)}
 
 
-def _set_authors(card: dict, authors: list[dict], notes: list[str]) -> None:
-    """`pn_autor` píše jen normalizace (údaje serveru); bez zadaných PN se pole od modelu odstraní."""
+def _set_authors(card: dict, authors: list[dict], notes: list[str], source: str = "zadaných PN") -> None:
+    """`pn_autor` píše jen normalizace (údaje serveru); bez údajů serveru se pole od modelu odstraní."""
     if not authors:
         if "pn_autor" in card:
             del card["pn_autor"]
@@ -117,7 +117,39 @@ def _set_authors(card: dict, authors: list[dict], notes: list[str]) -> None:
         return
     card["pn_autor"] = authors
     which = ", ".join(f"PN {a['cislo']} {a['jmeno']}" + (f" ({a['klub']})" if a["klub"] else "") for a in authors)
-    notes.append(f"pn_autor: autoři zadaných PN ze serveru ({which})")
+    notes.append(f"pn_autor: autoři {source} ze serveru ({which})")
+
+
+def _headline_authors(server_card: dict | None) -> list[dict]:
+    """Autor PN, ze kterého je titulek karty serveru (`card_v2.pn_autor`, i bez zadaných PN), ve tvaru
+    `{"cislo", "jmeno", "klub"}`; položky bez čísla nebo jména se vynechají. Starší server pole neposílá → []."""
+    rows = server_card.get("pn_autor") if isinstance(server_card, dict) else None
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        cislo, jmeno, klub = _as_int(row.get("cislo")), row.get("jmeno"), row.get("klub")
+        if cislo is None or not isinstance(jmeno, str) or not jmeno.strip():
+            continue
+        out.append({"cislo": cislo, "jmeno": jmeno.strip(),
+                    "klub": klub.strip() if isinstance(klub, str) and klub.strip() else None})
+    return out
+
+
+def _set_proposer(card: dict, server_card: dict, notes: list[str]) -> None:
+    """`predkladatel` (scéna „Kdo to přináší“) platí jen ze serveru, model ho nepíše ani nemění. Bez platného
+    předkladatele ze serveru (jméno a typ; starší server pole nemá) se pole od modelu odstraní."""
+    who = server_card.get("predkladatel")
+    valid = isinstance(who, dict) and all(isinstance(who.get(k), str) and who[k].strip() for k in ("typ", "jmeno"))
+    if not valid:
+        if "predkladatel" in card:
+            del card["predkladatel"]
+            notes.append("predkladatel: odstraněn, server předkladatele neuvádí")
+        return
+    if card.get("predkladatel") == who:
+        return
+    card["predkladatel"] = copy.deepcopy(who)
+    notes.append(f"predkladatel: ze serveru ({who['jmeno']})")
 
 
 def _fix_top(card: dict, server: dict[int, dict], notes: list[str]) -> None:
@@ -306,12 +338,15 @@ def _fix_outcome(story: dict, focus_info: list[dict], notes: list[str]) -> None:
 
 
 def normalize(card: dict, caption: str, *, fmt: str | None,
-              focus_info: list[dict]) -> tuple[dict, str, list[str]]:
+              focus_info: list[dict], server_card: dict | None = None) -> tuple[dict, str, list[str]]:
     """Vrací novou kartu, nový popisek a seznam zásahů; vstupní karta zůstane beze změny.
 
     focus_info = údaje o zadaných PN z claimu serveru (/pn): autor a klub ke dni podání jdou do
     `pn_autor` (každá varianta, v2 i v3), do `pn.top`, do pruhů `pn.autori` a do popisku; u formátu `pribeh`
     platí výsledek hlasování ze serveru (`pribeh.vysledek`).
+    server_card = karta tisku ze serveru (`card_v2` z claimu). Ve variantě v2 (`fmt` None) z ní platí
+    `predkladatel` a bez zadaných PN i `pn_autor` (autor PN, ze kterého je titulek, s klubem ke dni podání);
+    model je nemůže přepsat. Bez server_card (starší volání) se předkladatel nekontroluje.
     """
     card = copy.deepcopy(card)
     notes: list[str] = []
@@ -326,7 +361,14 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
         caption = f"{caption.rstrip()}\n\n{CLOSING}" if caption.strip() else CLOSING
         notes.append(f"popisek: doplněna věta „{CLOSING}“")
     server = _server_pn(focus_info)
-    _set_authors(card, [pn for pn in server.values() if pn["jmeno"]], notes)
+    authors = [pn for pn in server.values() if pn["jmeno"]]
+    v2 = fmt is None and isinstance(server_card, dict)
+    if v2:
+        _set_proposer(card, server_card, notes)
+    if not authors and v2 and _headline_authors(server_card):
+        _set_authors(card, _headline_authors(server_card), notes, "PN z titulku")
+    else:
+        _set_authors(card, authors, notes)
     if fmt == "pribeh" and isinstance(card.get("pribeh"), dict):
         _fix_story_author(card["pribeh"], server, notes)
     _fix_top(card, server, notes)

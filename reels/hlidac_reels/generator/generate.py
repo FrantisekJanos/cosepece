@@ -97,10 +97,13 @@ def _fingerprints(workdir: Path, numbers: list[int]) -> dict[int, tuple[str | No
 
 
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
-           focus_pn: list[int] | None = None, focus_info: list[dict] | None = None) -> dict | None:
+           focus_pn: list[int] | None = None, focus_info: list[dict] | None = None,
+           server_card: dict | None = None) -> dict | None:
     """Načte, znormalizuje a ověří variantu; vrací kartu, nebo None (chyby v v.errors).
 
     Normalizovaná karta a popisek se zapíšou zpět do složky varianty, zásahy do `normalize.json`.
+    server_card = karta tisku ze serveru (`card_v2`): ve variantě v2 z ní platí `predkladatel` a autor PN
+    z titulku (`pn_autor`), viz normalize().
     """
     d = workdir / f"variant-{v.n}"
     v.errors = []
@@ -117,7 +120,8 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         v.errors = ["card.json není objekt"]
         return None
     try:  # pád kontroly (nečekaný tvar karty, chybějící Chromium) vyřadí jen tuto variantu
-        card, caption, notes = normalize(card, v.caption, fmt=v.format, focus_info=focus_info or [])
+        card, caption, notes = normalize(card, v.caption, fmt=v.format, focus_info=focus_info or [],
+                                         server_card=server_card if v.template == "template_v2" else None)
         if notes:
             (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
             if caption != v.caption:
@@ -393,7 +397,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     def check(v: Variant, unchanged: set[int] | None = None) -> None:
         """Kontrola varianty (po běhu modelu i bez něj) a zápis stavu."""
-        cards[v.n] = card = _check(v, out, ct, reason_keys, render, focus_pn, focus_info)
+        cards[v.n] = card = _check(v, out, ct, reason_keys, render, focus_pn, focus_info, card_v2)
         if card is not None:
             save(v, VALID)
             return

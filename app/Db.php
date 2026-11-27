@@ -315,6 +315,9 @@ final class Db
         // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, v pořadí jmen v navrhovateli
         // a oddělené čárkou (Importer::proposerClub); jen se zobrazují, do skóre nevstupují
         $this->addColumn('tisky', 'navrhovatel_klub', 'VARCHAR(120)');
+        // navrhovatelé poslaneckého návrhu pro video Reels (JSON: počet, první navrhovatel, kluby skupiny ke dni
+        // předložení; Importer::proposers); jen se zobrazují, do skóre nevstupují
+        $this->addColumn('tisky', 'navrhovatele', $text);
         // výsledek 1. kola zůstane uložený i po ověření silnějším modelem (#2 bod 4)
         foreach (['tisk_text', 'pn_text'] as $table) {
             $this->addColumn($table, 'ai_prev_json', $text);

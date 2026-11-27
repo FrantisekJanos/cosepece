@@ -1211,6 +1211,7 @@ check('upozornění na Senát a přehlasování (první běh se neposílá)', $s
 check('upozornění na Senát nepřidává body (skóre = skóre tisku)', (int)db()->value("SELECT COUNT(*) FROM alerts a JOIN tisky t ON t.ct = a.ct
     WHERE a.kind IN ('senate', 'override') AND a.alert_key NOT LIKE '%/%' AND a.score <> t.score"), 0);
 $api90 = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->bill(90);
+check('tisk s číslem mimo rozsah integer → null, ne chyba DB', [(new Hlidac\Repo(db()))->bill(PHP_INT_MAX), (new Hlidac\Repo(db()))->bill(1000000000000), (new Hlidac\Repo(db()))->bill(0)], [null, null, null]);
 $api221 = (new Hlidac\Api(db(), new Hlidac\Repo(db()), config()))->bill(221);
 check('API: průchod Senátem u tisku 90, null u tisku mimo Senát', [$api90['senat']['vysledek'] ?? null, count($api90['senat']['popis'] ?? []), $api221['senat']], ['vracen', 4, null]);
 check('detail tisku 90 ukazuje Senát', str_contains($prepHtml, 'Senát a kroky po něm') && str_contains($prepHtml, 'Senát návrh vrátil Sněmovně s pozměňovacími návrhy (22. 6. 2026).')

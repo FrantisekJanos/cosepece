@@ -185,8 +185,11 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <?= View::aiRounds($x) ?>
             <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
             <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
-            <?php foreach (array_slice($x['ai']['citace'] ?? [], 0, 1) as $q): ?><blockquote class="quote small"><?= e(trim((string)$q)) ?></blockquote><?php endforeach; ?>
-            <?= View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null) ?>
+            <?php // citace z textu PN: s vysvětlením „v praxi“ je uvnitř jeho rámečku nad nadpisem, jinak samostatně ?>
+            <?php $pnQuote = trim((string)(($x['ai']['citace'] ?? [])[0] ?? '')); ?>
+            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote); ?>
+            <?php if ($pnPractice === '' && $pnQuote !== ''): ?><blockquote class="quote small"><?= e($pnQuote) ?></blockquote><?php endif; ?>
+            <?= $pnPractice ?>
           <?php endif; ?>
         </li>
       <?php endforeach; ?>

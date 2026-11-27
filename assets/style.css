@@ -103,6 +103,7 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .pn-summary { color: var(--ink-2); }
 .club { color: var(--muted); font-weight: 400; white-space: nowrap; }
 .pn-praxe { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; }
+.pn-praxe > .quote { margin: 0 0 6px; }
 .pn-praxe-head { font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--ink-2); }
 .pn-praxe-head .muted { font-weight: 400; }
 .pn-praxe-what { font-weight: 600; line-height: 1.4; }

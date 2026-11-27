@@ -326,20 +326,23 @@ final class View
      * Blok „Co by se změnilo v praxi“ u pozměňovacího návrhu (pn_text.praxe_json z PnPractice): hlavní věta
      * a dopad jsou vidět hned, stav před a po, dotčené skupiny, příklad a tvrzení předkladatele se rozbalují.
      * Nadpis se řídí výsledkem hlasování ve 3. čtení ($outcome z PnOutcome), text sám zůstává podmiňovací.
-     * Vrací hotové HTML; bez vysvětlení prázdný řetězec.
+     * Nad nadpisem je doslovná citace z textu PN ($quote: citace z rozboru, jinak první citace vysvětlení),
+     * aby čtenář viděl znění návrhu a hned pod ním, co znamená. Vrací hotové HTML; bez vysvětlení prázdný řetězec.
      */
-    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null): string
+    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null): string
     {
         if (!is_array($p) || trim((string)($p['co_se_meni'] ?? '')) === '') {
             return '';
         }
+        $quote = trim((string)($quote ?? '')) !== '' ? trim((string)$quote) : trim((string)(((array)($p['citace'] ?? []))[0] ?? ''));
         $state = (string)($outcome['stav'] ?? '');
         $head = match ($state) {
             'prijat' => 'Co se tím v praxi mění <span class="muted">(Sněmovna návrh přijala)</span>',
             'zamitnut' => 'Co by se změnilo v praxi <span class="muted">(návrh neprošel)</span>',
             default => 'Co by se změnilo v praxi',
         };
-        $html = '<div class="pn-praxe"><span class="pn-praxe-head">' . $head . '</span>'
+        $html = '<div class="pn-praxe">' . ($quote !== '' ? '<blockquote class="quote small">' . e($quote) . '</blockquote>' : '')
+            . '<span class="pn-praxe-head">' . $head . '</span>'
             . '<span class="pn-praxe-what">' . e((string)$p['co_se_meni']) . '</span>'
             . '<span class="small">' . e((string)($p['v_praxi'] ?? '')) . '</span>';
         $more = '';

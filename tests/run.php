@@ -3257,6 +3257,12 @@ check('v praxi: blok na stránce tisku jen u PN s vysvětlením', [substr_count(
     str_contains($pxHtml, '<span class="pn-praxe-label">Podle projednávaného návrhu</span>Podle návrhu by kauce byla 1 000 000 Kč.'),
     str_contains($pxHtml, 'Předkladatel uvádí:</span> Kauce má omezit'), str_contains($pxHtml, '(modelový příklad)'), str_contains($pxHtml, 'Vysvětlení připravil jazykový model (claude-sonnet-5-5)')],
     [1, true, true, true, true, true]);
+// citace z textu PN je uvnitř rámečku nad nadpisem (jednou); bez citace z rozboru se vezme citace vysvětlení
+$pxQuoteHtml = '<div class="pn-praxe"><blockquote class="quote small">V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.</blockquote><span class="pn-praxe-head">';
+check('v praxi: citace z PN nad nadpisem uvnitř rámečku', [str_contains($pxHtml, $pxQuoteHtml), substr_count($pxHtml, '<blockquote class="quote small">V čl. I bodě 3'),
+    str_starts_with(Hlidac\View::pnPractice($pxStored, null, null, 'Citace z rozboru <x>.'), '<div class="pn-praxe"><blockquote class="quote small">Citace z rozboru &lt;x&gt;.</blockquote>'),
+    str_starts_with(Hlidac\View::pnPractice(['co_se_meni' => 'x'], null), '<div class="pn-praxe"><span class="pn-praxe-head">')],
+    [true, 1, true, true]);
 check('v praxi: nadpis podle výsledku a technická úprava bez rozbalení', [
     str_contains(Hlidac\View::pnPractice($pxStored, 'claude-haiku-5-5', ['stav' => 'prijat']), 'Co se tím v praxi mění <span class="muted">(Sněmovna návrh přijala)</span>'),
     str_contains(Hlidac\View::pnPractice($pxStored, null, ['stav' => 'zamitnut']), '(návrh neprošel)'),

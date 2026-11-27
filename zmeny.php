@@ -11,7 +11,7 @@ use Hlidac\View;
 $changes = [
     ['2026-11-27', 'Co by pozměňovací návrh změnil v praxi',
         'U pozměňovacích návrhů přibývá vysvětlení, co by se změnilo, kdyby návrh prošel: jednou větou o co jde, jaký je stav podle projednávaného návrhu a s pozměňovacím návrhem, koho se to týká a co uvádí předkladatel v odůvodnění. Dosud bylo u návrhu jen technické shrnutí typu „zrušují se body 2 až 4“. Vysvětlení připravuje jazykový model z textu návrhu, je to popis bez hodnocení a do skóre nevstupuje. Zobrazí se jen tehdy, když je doložené citací z textu a jeho částky a lhůty jsou v podkladech; odhady dopadů neděláme. Vysvětlení se doplňují postupně, nejdřív u tisků s nejvyšším skóre.',
-        [99], false],
+        [100], false],
     ['2026-11-26', 'Google Analytics jen se souhlasem',
         'Návštěvnost dál měříme bez cookies nástrojem Umami. Nově ji se souhlasem měříme i v Google Analytics. Při první návštěvě se dole objeví lišta s tlačítky Přijmout a Odmítnout. Bez souhlasu se Google Analytics vůbec nenačte. Rozhodnutí jde kdykoli změnit odkazem „Nastavení cookies“ v patičce, co se ukládá, popisuje stránka Jak hodnotíme. Skóre se nemění.',
         [95], false],

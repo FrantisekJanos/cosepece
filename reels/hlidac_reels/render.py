@@ -108,6 +108,7 @@ def audio_cues(card: Card, template: str = "template", orientation: Orientation 
 
 
 CUES_JS = "typeof window.audioCues === 'function' ? window.audioCues() : null"
+COVER_JS = "typeof window.coverTime === 'function' ? window.coverTime() : null"
 
 
 def render_reel(card: Card, out_path: Path, *, fps: int = 30, template: str = "template", seed: int = 0,
@@ -120,8 +121,11 @@ def render_reel(card: Card, out_path: Path, *, fps: int = 30, template: str = "t
             duration = float(page.evaluate("window.duration()"))
             cues = page.evaluate(CUES_JS)
             frames = int(round(duration * fps))
+            # snímek 0 = obálka (ustálená 1. scéna), aby náhled na IG, FB a Threads nebyl prázdný;
+            # od snímku 1 běží animace od začátku jako dřív
+            cover = page.evaluate(COVER_JS)
             for i in range(frames):
-                page.evaluate("t => window.seek(t)", i / fps)
+                page.evaluate("t => window.seek(t)", cover if i == 0 and cover is not None else i / fps)
                 page.screenshot(path=str(frames_dir / f"{i:05d}.png"), type="png")
         video_in = ["-framerate", str(fps), "-i", str(frames_dir / "%05d.png")]
         if cues is None:

@@ -3496,6 +3496,34 @@ check('mapa webu: adresa se znaky & a < se v XML ošetří', Hlidac\Sitemap::xml
     '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n" . '  <url><loc>https://x.cz/?a=1&amp;b=&lt;2&gt;</loc></url>' . "\n</urlset>\n");
 check('mapa webu: adresa /sitemap.xml vede na sitemap.php', Hlidac\Url::route('sitemap.xml'), ['sitemap.php', []]);
 
+// --- vysvětlení „v praxi“ v API (api.php?tisk=N&pn=1) ---
+echo "Vysvětlení v praxi v API\n";
+$fixtureBill(9970, 0, []);
+foreach ([[99971, 9971, '2026-11-20 10:00:00', 'ODS'], [99972, 9972, '2026-11-21 09:00:00', null]] as [$apId, $apCislo, $apCas, $apKlub]) {
+    db()->run('INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (?, ?, 9970, 1, ?, ?, ?)', [$apId, $apCislo, 'Karel Vzorný', $apCas, $apKlub]);
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, fetched_at) VALUES (?, 9970, ?, ?, 300, '', '{}', 0, ?)", [$apId, $apCislo, $pxPn, date('Y-m-d H:i:s')]);
+}
+$apStored = Hlidac\PnPractice::sanitize($pxResult, $pxPn, Hlidac\PnText::normativePart($pxBill), 'Karel Vzorný', false) + ['upravy' => ['interní poznámka']];
+db()->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, ai_score = 5, ai_json = ? WHERE id_dokument = 99971',
+    [json_encode($apStored, JSON_UNESCAPED_UNICODE), 'claude-haiku-5-5', date('Y-m-d H:i:s'), Hlidac\PnPractice::VERSION, json_encode(['shrnuti' => 'Zvyšuje kauci.', 'zavaznost' => 5], JSON_UNESCAPED_UNICODE)]);
+$apApi = new Hlidac\Api(db(), new Hlidac\Repo(db()), config());
+[$apSt, $apBody] = $apApi->handle(['tisk' => '9970', 'pn' => '1']);
+$apPn = $apBody['tisk']['pozmenovaci_navrhy'] ?? null;
+check('api: bez pn=1 se pozměňovací návrhy nevypisují', array_key_exists('pozmenovaci_navrhy', $apApi->handle(['tisk' => '9970'])[1]['tisk']), false);
+check('api: pn=1 vypíše návrhy od nejnovějšího s klubem, závažností a shrnutím', [$apSt, array_column((array)$apPn, 'cislo'), $apPn[1]['predkladatel'] ?? null, $apPn[1]['klub'] ?? null, $apPn[0]['klub'],
+    $apPn[1]['podano'] ?? null, $apPn[1]['ai_zavaznost'] ?? null, $apPn[1]['shrnuti'] ?? null, $apPn[0]['ai_zavaznost'], str_contains((string)($apPn[1]['psp_url'] ?? ''), 'sd.sqw?cd=9971'),
+    str_ends_with((string)($apPn[1]['url'] ?? ''), '#pn-9971')],
+    [200, [9972, 9971], 'Karel Vzorný', 'ODS', null, '2026-11-20 10:00:00', 5, 'Zvyšuje kauci.', null, true, true]);
+check('api: vysvětlení v praxi u návrhu, který ho má; bez interních poznámek', [$apPn[1]['v_praxi']['co_se_meni'] ?? null, $apPn[1]['v_praxi']['po'] ?? null, $apPn[1]['v_praxi']['pred_zdroj'] ?? null,
+    $apPn[1]['v_praxi']['koho_se_tyka'] ?? null, $apPn[1]['v_praxi']['citace'] ?? null, $apPn[1]['v_praxi']['model'] ?? null, array_key_exists('upravy', (array)($apPn[1]['v_praxi'] ?? [])),
+    array_keys((array)($apPn[1]['v_praxi'] ?? []))],
+    ['Kauce agentur práce by vzrostla na 5 000 000 Kč.', 'Kauce by byla 5 000 000 Kč.', 'navrh', ['agentury práce'], ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „5 000 000 Kč“.'], 'claude-haiku-5-5', false,
+        ['typ', 'koho_se_tyka', 'co_se_meni', 'pred', 'pred_zdroj', 'po', 'v_praxi', 'priklad', 'podle_predkladatele', 'nejiste', 'citace', 'model']]);
+check('api: návrh bez vysvětlení má v_praxi null', array_key_exists('v_praxi', (array)($apPn[0] ?? [])) && $apPn[0]['v_praxi'] === null, true);
+db()->run('DELETE FROM pn_text WHERE ct = 9970');
+db()->run('DELETE FROM pn WHERE ct = 9970');
+$dropBill(9970);
+
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";
 exit($failures === 0 ? 0 : 1);

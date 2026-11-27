@@ -643,7 +643,13 @@ def test_pg_get_pn_projevy(pgconn):
         cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn (cislo int, ct int, id_osoba int, osoba text, klub text, cas text, "
                     "id_dokument int)")
         cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.pn_text (id_dokument int, ai_score int, ai_model text, ai_json text,
-                        signals text, laws text, chars int, docx_url text)""")
+                        signals text, laws text, chars int, docx_url text, praxe_json text, praxe_model text)""")
+        # vysvětlení „v praxi“ jen u PN 2244; interní poznámka „upravy“ se ven nevydává
+        cur.execute(f"INSERT INTO {SCHEMA_WEB}.pn_text (id_dokument, praxe_json, praxe_model) VALUES (1, %s, %s)",
+                    ('{"typ": "vecna_zmena", "koho_se_tyka": ["agentury práce"], "co_se_meni": "Kauce by vzrostla.", '
+                     '"pred": null, "pred_zdroj": null, "po": "Kauce by byla 5 000 000 Kč.", "v_praxi": "Agentura by složila '
+                     '5 000 000 Kč.", "priklad": null, "podle_predkladatele": null, "nejiste": null, '
+                     '"citace": ["V čl. I se částka nahrazuje."], "upravy": ["vypuštěno: příklad"]}', "claude-haiku-5-5"))
         cur.executemany(f"INSERT INTO {SCHEMA_WEB}.pn (cislo, ct, id_osoba, osoba, klub, id_dokument) "
                         "VALUES (%s,%s,%s,%s,%s,%s)",
                         [(2244, 76, 2001, "Karel Haas", "ANO2011", 1), (2246, 76, 2001, "Karel Haas", None, 2)])
@@ -656,6 +662,14 @@ def test_pg_get_pn_projevy(pgconn):
     # klub předkladatele ke dni podání (pn.klub z webu), bez údaje None
     assert r["klub"] == "ANO2011" and tools.get_pn(pgconn, 2246)["klub"] is None
     assert [p["klub"] for p in tools.pn_k_tisku(pgconn, 76)["pn"]] == ["ANO2011", None]
+    # vysvětlení „v praxi“: v seznamu jen hlavní věta, v detailu celé (bez interních poznámek), bez vysvětlení None
+    assert [p["v_praxi"] for p in tools.pn_k_tisku(pgconn, 76)["pn"]] == ["Kauce by vzrostla.", None]
+    assert "praxe_json" not in tools.pn_k_tisku(pgconn, 76)["pn"][0]
+    assert r["v_praxi"] == {"typ": "vecna_zmena", "koho_se_tyka": ["agentury práce"], "co_se_meni": "Kauce by vzrostla.",
+                            "pred": None, "pred_zdroj": None, "po": "Kauce by byla 5 000 000 Kč.",
+                            "v_praxi": "Agentura by složila 5 000 000 Kč.", "priklad": None, "podle_predkladatele": None,
+                            "nejiste": None, "citace": ["V čl. I se částka nahrazuje."], "model": "claude-haiku-5-5"}
+    assert tools.get_pn(pgconn, 2246)["v_praxi"] is None and "praxe_json" not in r
     assert r["projevy_celkem"] == 1
     assert r["projevy"] == [{"klic": "10/980/2/1", "datum": DEN1.isoformat(), "recnik": "Poslanec Karel Haas",
                              "klub": "ANO2011", "druh": "recnik", "url": "https://www.psp.cz/s980002.htm#r1"}]

@@ -20,7 +20,8 @@ final class Api
         try {
             if (isset($q['tisk'])) {
                 $ct = (int)$q['tisk'];
-                $bill = $ct > 0 ? $this->bill($ct) : null;
+                // ?pn=1 přidá seznam pozměňovacích návrhů s vysvětlením „v praxi“ (u tisků se stovkou PN stovky kB)
+                $bill = $ct > 0 ? $this->bill($ct, !empty($q['pn'])) : null;
                 return $bill === null ? [404, ['error' => 'Tisk nenalezen']] : [200, $this->wrap(['tisk' => $bill])];
             }
             if (!empty($q['pripravovane'])) {
@@ -77,13 +78,16 @@ final class Api
         return $out;
     }
 
-    public function bill(int $ct): ?array
+    public function bill(int $ct, bool $withAmendments = false): ?array
     {
         $t = $this->repo->bill($ct);
         if ($t === null) {
             return null;
         }
         $out = $this->summary($t);
+        if ($withAmendments) {
+            $out['pozmenovaci_navrhy'] = $this->amendments($ct);
+        }
         $out['hlasovani'] = array_map(fn(array $v) => [
             'id' => (int)$v['id_hlasovani'], 'datum' => $v['datum'], 'vysledek' => $v['vysledek'] === 'A' ? 'přijato' : 'zamítnuto',
             'pro' => (int)$v['pro'], 'proti' => (int)$v['proti'], 'zdrzel' => (int)$v['zdrzel'], 'kvorum' => (int)$v['kvorum'],
@@ -104,6 +108,49 @@ final class Api
         // průchod Senátem a kroky po něm (null, dokud návrh do Senátu nedošel); jen popis postupu, do skóre nevstupuje
         $senate = Analyzer::senate($this->repo->steps($ct));
         $out['senat'] = $senate['doruceno'] !== null ? $senate + ['popis' => Analyzer::senateLines($senate)] : null;
+        return $out;
+    }
+
+    /**
+     * Písemné pozměňovací návrhy k tisku od nejnovějšího: kdo a kdy je podal, závažnost a shrnutí z rozboru AI
+     * a vysvětlení „v praxi“ (PnPractice; null, dokud není). Vysvětlení je odvozený text od jazykového modelu
+     * a do skóre nevstupuje; interní poznámky o zásazích pojistek se nevydávají.
+     */
+    public function amendments(int $ct): array
+    {
+        $obdobi = (int)$this->db->getMeta('obdobi_cislo', '0');
+        $texts = $this->repo->pnTexts($ct);
+        $out = [];
+        foreach ($this->repo->amendments($ct) as $p) {
+            $x = $texts[(int)$p['id_dokument']] ?? null;
+            $ai = is_array($x['ai'] ?? null) ? $x['ai'] : [];
+            $praxe = is_array($x['praxe'] ?? null) && trim((string)($x['praxe']['co_se_meni'] ?? '')) !== '' ? $x['praxe'] : null;
+            $club = Clubs::label($p['klub'] ?? null);
+            $out[] = [
+                'cislo' => (int)$p['cislo'],
+                'predkladatel' => $p['osoba'],
+                'klub' => $club !== '' ? $club : null,
+                'podano' => $p['cas'],
+                'ai_zavaznost' => $x !== null && $x['ai_score'] !== null ? (int)$x['ai_score'] : null,
+                'shrnuti' => is_string($ai['shrnuti'] ?? null) && $ai['shrnuti'] !== '' ? $ai['shrnuti'] : null,
+                'v_praxi' => $praxe === null ? null : [
+                    'typ' => $praxe['typ'] ?? null,
+                    'koho_se_tyka' => array_values(array_filter((array)($praxe['koho_se_tyka'] ?? []), 'is_string')),
+                    'co_se_meni' => $praxe['co_se_meni'],
+                    'pred' => $praxe['pred'] ?? null,
+                    'pred_zdroj' => $praxe['pred_zdroj'] ?? null,
+                    'po' => $praxe['po'] ?? null,
+                    'v_praxi' => $praxe['v_praxi'] ?? null,
+                    'priklad' => $praxe['priklad'] ?? null,
+                    'podle_predkladatele' => $praxe['podle_predkladatele'] ?? null,
+                    'nejiste' => $praxe['nejiste'] ?? null,
+                    'citace' => array_values(array_filter((array)($praxe['citace'] ?? []), 'is_string')),
+                    'model' => $x['praxe_model'] ?? null,
+                ],
+                'psp_url' => View::pspSdUrl((int)$p['cislo'], $obdobi),
+                'url' => absUrl('tisk', ['ct' => $ct], 'pn-' . (int)$p['cislo']),
+            ];
+        }
         return $out;
     }
 

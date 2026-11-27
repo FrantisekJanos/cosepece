@@ -117,6 +117,7 @@ Omezení: otevřená data obsahují u pozměňovacího návrhu jen číslo, auto
 |---|---|
 | `api.php` | tisky aktuálního období od poslední změny: číslo, název, fáze, skóre, úroveň, důvody, příznaky, odkazy |
 | `api.php?tisk=221` | detail tisku + hlasování (i podle klubů) + upozornění + stav rozboru textů |
+| `api.php?tisk=221&pn=1` | totéž a navíc pozměňovací návrhy s vysvětlením, co by změnily v praxi |
 | `api.php?upozorneni=1` | upozornění (bez `min_score` od úrovně „Pozor“) |
 | `api.php?pripravovane=1` | připravované zákony u vlády (ještě ne ve Sněmovně): fáze, připomínkové řízení, schválení vládou |
 

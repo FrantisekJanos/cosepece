@@ -57,8 +57,8 @@ $exampleCt = (int)(db()->value('SELECT t.ct FROM tisky t JOIN kroky k ON k.id_ti
 $endpoints = [
     'tisky' => ['Tisky', 'api.php', 'Návrhy zákonů aktuálního volebního období seřazené od poslední změny, se skóre a důvody.',
         ['since', 'min_score', 'zakon', 'limit'], ['limit' => '3']],
-    'tisk' => ['Detail tisku', 'api.php?tisk={číslo}', 'Jeden tisk: vše jako v seznamu a navíc hlasování ve Sněmovně (i podle klubů), upozornění a stav rozboru textů.',
-        [], ['tisk' => (string)$exampleCt]],
+    'tisk' => ['Detail tisku', 'api.php?tisk={číslo}', 'Jeden tisk: vše jako v seznamu a navíc hlasování ve Sněmovně (i podle klubů), upozornění a stav rozboru textů. S parametrem pn=1 i pozměňovací návrhy s vysvětlením, co by změnily v praxi.',
+        ['pn'], ['tisk' => (string)$exampleCt]],
     'upozorneni' => ['Upozornění', 'api.php?upozorneni=1', 'Upozornění na kroky v projednávání (nové pozměňovací návrhy, § 90/2, zkrácené lhůty, schválení, vyhlášení) a na připravované zákony u vlády (krátké připomínky, mimo plán), od nejnovějších. Bez min_score jen od úrovně „Pozor“ (' . (int)$w['level_watch'] . ' bodů).',
         ['since', 'min_score', 'zakon', 'ct', 'limit'], ['upozorneni' => '1', 'limit' => '3']],
     'pripravovane' => ['Připravované zákony', 'api.php?pripravovane=1', 'Návrhy zákonů, které připravuje vláda a Sněmovna je ještě nedostala, od nejpokročilejší fáze. S parametrem druh=narizeni připravovaná nařízení vlády (ta do Sněmovny nejdou). Jiné filtry nemá.',
@@ -67,6 +67,7 @@ $endpoints = [
 $filters = [
     'since' => ['YYYY-MM-DD', 'jen tisky změněné / upozornění od tohoto dne (včetně)', 'since=2026-11-01'],
     'min_score' => ['0–100', 'jen se skóre aspoň tolik (alias min)', 'min_score=50'],
+    'pn' => ['1', 'u detailu tisku přidá pole pozmenovaci_navrhy (návrhy s vysvětlením „v praxi“; u tisků s desítkami návrhů je odpověď výrazně větší)', 'pn=1'],
     'zakon' => ['číslo/rok', 'jen tisky, které mění daný zákon, a upozornění k nim i k připravovaným změnám tohoto zákona (alias law)', 'zakon=159/2006'],
     'ct' => ['číslo', 'jen upozornění k tomuto tisku', 'ct=221'],
     'limit' => ['1–500', 'nejvýš tolik položek (výchozí 100)', 'limit=20'],
@@ -96,6 +97,7 @@ $fields = [
         ['upozorneni', 'pole objektů', 'upozornění k tisku (pole jako níže)'],
         ['rozbor_textu', 'objekt', 'posouzeno / celkem: kolik textů (návrh a pozměňovací návrhy) už posoudil rozbor AI'],
         ['vysledky_pn', 'pole objektů', 'výsledek písemných pozměňovacích návrhů ve 3. čtení: cislo, pismena (ze souhrnu po 2. čtení), stav (prijat, castecne, zamitnut, nehlasovatelny = podle zpravodaje se o něm nehlasovalo, nezaznel = v souhrnu po 2. čtení není, ceka = 3. čtení ještě neproběhlo, neurceno = nelze určit), stanovisko_vyboru, hlasovani (cislo, vysledek, pismeno, varianta, psp_url); prázdné pole, dokud souhrn a hlasování nejsou'],
+        ['pozmenovaci_navrhy', 'pole objektů', 'jen s parametrem pn=1 (api.php?tisk=311&pn=1): písemné pozměňovací návrhy od nejnovějšího: cislo, predkladatel, klub (ke dni podání), podano, ai_zavaznost (0–10 nebo null), shrnuti (z rozboru AI), v_praxi, psp_url, url. v_praxi je vysvětlení, co by se změnilo, kdyby návrh prošel (null, dokud není): typ, koho_se_tyka, co_se_meni, pred a pred_zdroj (navrh = podle projednávaného návrhu, zakon = podle dnešního zákona), po, v_praxi, priklad (modelový příklad), podle_predkladatele (tvrzení z odůvodnění), nejiste, citace (doslova z textu návrhu), model. Vysvětlení připravuje jazykový model, může se mýlit a do skóre nevstupuje'],
         ['senat', 'objekt nebo null', 'průchod Senátem: doruceno, vysledek (schvalen, vracen, zamitnut, nezabyval, necinny, bez_usneseni nebo null), rozhodnuto, lhuta_do (30 dní od doručení, dokud Senát nerozhodl), snemovna (setrvala = přehlasovala Senát, prijala = přijala jeho znění), snemovna_datum, veto, veto_prehlasovano, popis (věty česky); null = návrh do Senátu nedošel'],
     ],
     'Upozornění' => [

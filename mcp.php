@@ -45,8 +45,8 @@ $tools = [
         ['hledej_v_textech', 'hledání v textech návrhů a PN podle slov i podle významu, i podle měněného zákona'],
     ],
     'Pozměňovací návrhy' => [
-        ['pn_k_tisku', 'pozměňovací návrhy k tisku s autory a hodnocením AI'],
-        ['get_pn', 'detail pozměňovacího návrhu včetně projevů, které ho zmiňují'],
+        ['pn_k_tisku', 'pozměňovací návrhy k tisku s autory, hodnocením AI a větou, co by návrh změnil v praxi'],
+        ['get_pn', 'detail pozměňovacího návrhu včetně vysvětlení, co by změnil v praxi, a projevů, které ho zmiňují'],
     ],
     'Rozprava a projevy (stenoprotokoly)' => [
         ['rozprava', 'celá rozprava k tisku v pořadí, jak zazněla, s reakcemi a zmíněnými PN'],

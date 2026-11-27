@@ -310,6 +310,18 @@ def tisk_podle_sbirky(conn, sb: str) -> dict:
 
 # ---------------------------------------------------------------- pozměňovací návrhy
 
+def _praxe(praxe_json: str | None, model: str | None) -> dict | None:
+    """Vysvětlení PN „v praxi“ (pn_text.praxe_json z webu): co by se změnilo, kdyby PN prošel. Odvozený text od
+    jazykového modelu, do skóre nevstupuje. Bez vysvětlení None; interní poznámky o zásazích pojistek se nevydávají."""
+    praxe = _json(praxe_json)
+    if not isinstance(praxe, dict) or not praxe.get("co_se_meni"):
+        return None
+    out = {k: praxe.get(k) for k in ("typ", "koho_se_tyka", "co_se_meni", "pred", "pred_zdroj", "po", "v_praxi", "priklad",
+                                     "podle_predkladatele", "nejiste", "citace")}
+    out["model"] = model
+    return out
+
+
 def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
     where, params = ["p.ct = %s"], [ct]
     if id_osoba:
@@ -321,13 +333,17 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
                    params)
     total = sum(a["n"] for a in autori)
     off = _offset(offset)
-    rows = _rows(conn, f"""SELECT p.cislo, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_json, t.laws, t.chars
+    rows = _rows(conn, f"""SELECT p.cislo, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_json, t.laws, t.chars,
+                                  t.praxe_json
                            FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument
                            WHERE {w} ORDER BY p.cas, p.cislo LIMIT %s OFFSET %s""",
                  (*params, _limit(limit, 100), off))
     for r in rows:
         ai = _json(r.pop("ai_json"))
         r["titulek"] = ai.get("titulek") if isinstance(ai, dict) else None
+        # z vysvětlení „v praxi“ jen hlavní věta (celé je v get_pn), aby se seznam vešel do limitu odpovědi
+        praxe = _json(r.pop("praxe_json", None))
+        r["v_praxi"] = praxe.get("co_se_meni") if isinstance(praxe, dict) else None
         r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={r['cislo']}&o={OBDOBI}"
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(rows), "predkladatele": [(a["osoba"], a["n"]) for a in autori], "pn": rows}
@@ -336,11 +352,12 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
 def get_pn(conn, cislo: int) -> dict:
     """Detail PN. Text se čte po celcích přes osnova_textu(pn=…) a get_cel(pn=…); osnova_dostupna říká, zda už je."""
     r = _one(conn, """SELECT p.cislo, p.ct, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_model, t.ai_json, t.signals,
-                             t.laws, t.chars, t.docx_url
+                             t.laws, t.chars, t.docx_url, t.praxe_json, t.praxe_model
                       FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument WHERE p.cislo = %s""", (cislo,))
     if not r:
         raise ValueError(f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám.")
     r["ai"] = _json(r.pop("ai_json"))
+    r["v_praxi"] = _praxe(r.pop("praxe_json", None), r.pop("praxe_model", None))
     r["priznaky"] = _json(r.pop("signals"))
     r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={cislo}&o={OBDOBI}"
     r["url_web"] = f"{SITE}/tisk/{r['ct']}"

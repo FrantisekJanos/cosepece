@@ -2994,6 +2994,13 @@ $hhStats = $hh->run($hhNow);
 check('historie: stažené stránky kandidátů', $hhUrls, array_map(fn($ct) => 'https://www.psp.cz/sqw/historie.sqw?o=10&t=' . $ct, $hhCands));
 check('historie: uložen nový krok a PN, které otevřená data nemají', [$hhStats['stazeno'], $hhStats['kroky'], $hhStats['pn'] === $hhPnNew, $hhPnNew > 0],
     [count($hhCands), 1, true, true]);
+// stránky jsou z 20. 11. 2026 ($hhNow), Importer ale bere jen záznamy mladší než KEEP_DAYS podle skutečných hodin:
+// seen_at na teď, jinak test od 27. 11. 2026 padá
+$hhFresh = function (): void {
+    db()->run('UPDATE html_kroky SET seen_at = ?', [date('Y-m-d H:i:s')]);
+    db()->run('UPDATE html_pn SET seen_at = ?', [date('Y-m-d H:i:s')]);
+};
+$hhFresh();
 $hhImport = (new Hlidac\Importer(db(), $hhSource))->run();
 check('historie: Importer přimíchá krok a PN', [$hhImport['html_kroky'], $hhImport['html_pn'], (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 311')],
     [1, $hhPnNew, $hhPnKnown + $hhPnNew]);
@@ -3005,6 +3012,7 @@ $hhPnRow = db()->one('SELECT cislo, osoba, cas FROM pn WHERE id_dokument = 31040
 check('historie: PN se jménem autora a časem podání', [$hhPnRow['cislo'] ?? null, ($hhPnRow['osoba'] ?? '') !== '', $hhPnRow['cas'] ?? null], [2040, true, '2026-10-19 16:18:44']);
 // druhý běh nic nezdvojí; záznam, který už je v otevřených datech, a neověřený starší než týden zmizí
 $hh->run($hhNow);
+$hhFresh();
 db()->run("INSERT INTO html_kroky (id_hist, id_tisk, ct, id_prechod, datum, seen_at) VALUES (212587, 43433, 311, 2030, NULL, ?)", [date('Y-m-d H:i:s')]);
 db()->run("INSERT INTO html_pn (id_dokument, cislo, ct, id_osoba, osoba, cas, seen_at) VALUES (39999, 2999, 311, NULL, 'X', NULL, ?)", [date('Y-m-d H:i:s', time() - 8 * 86400)]);
 $hhImport2 = (new Hlidac\Importer(db(), $hhSource))->run();

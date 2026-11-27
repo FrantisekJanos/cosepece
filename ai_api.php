@@ -4,7 +4,9 @@
 // Token v hlavičce X-Hlidac-Token (dřív ?token=…, stále přijímáno).
 //   GET  ai_api.php?action=queue&limit=10[&ct=221][&verify=1]  → {"items": [{kind, id, ct, prompt}]}
 //        verify=1: nejzávažnější nálezy k ověření silnějším modelem
+//        praxe=1: fronta vysvětlení PN „v praxi“ (kind = praxe; s verify=1 druhé kolo silnějším modelem)
 //   POST ai_api.php?action=result  {"kind","id","result","model"} nebo {"kind","id","error"}
+//        u kind = praxe odpověď {"ok": true, "accepted": false}, když výsledek neprošel pojistkami
 //   POST ai_api.php?action=done    → přepočet skóre
 
 declare(strict_types=1);
@@ -12,6 +14,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\AiReviewer;
+use Hlidac\PnPractice;
 use Hlidac\Scorer;
 
 header('Content-Type: application/json; charset=utf-8');
@@ -41,6 +44,7 @@ if (empty(config('ai.enabled'))) {
 }
 
 $reviewer = new AiReviewer(db(), config());
+$practice = new PnPractice(db(), config());
 $action = (string)($_GET['action'] ?? '');
 
 try {
@@ -49,6 +53,9 @@ try {
         $ct = isset($_GET['ct']) ? (int)$_GET['ct'] : null;
         // známka života klienta AI i při prázdné frontě (hlídání dat v botovi reels)
         $reviewer->markPolled();
+        if (!empty($_GET['praxe'])) {
+            aiApiReply(['items' => $practice->queue($limit, $ct, !empty($_GET['verify']))]);
+        }
         aiApiReply(['items' => $reviewer->queue($limit, $ct, !empty($_GET['verify']))]);
     }
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -59,9 +66,16 @@ try {
         if (!is_array($body) || !isset($body['kind'], $body['id'])) {
             aiApiReply(['error' => 'Chybí kind a id'], 400);
         }
+        $isPractice = (string)$body['kind'] === 'praxe';
         if (isset($body['result']) && is_array($body['result'])) {
             $model = isset($body['model']) && is_string($body['model']) && preg_match('~^[a-z0-9.\-]{1,60}$~', $body['model']) ? $body['model'] : null;
+            if ($isPractice) {
+                // vysvětlení PN „v praxi“: výsledek, který neprojde pojistkami, se neuloží a zkusí se znovu
+                aiApiReply(['ok' => true, 'accepted' => $practice->saveResult((int)$body['id'], $body['result'], $model)]);
+            }
             $reviewer->saveResult((string)$body['kind'], (int)$body['id'], $body['result'], $model);
+        } elseif ($isPractice) {
+            $practice->saveError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         } else {
             $reviewer->saveError((string)$body['kind'], (int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         }

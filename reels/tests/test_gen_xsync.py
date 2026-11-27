@@ -22,6 +22,7 @@ class FakeXApi:
         self.fail_ready = fail_ready
         self.pending_calls = 0
         self.reports: list[tuple[int, str]] = []
+        self.paths: dict[int, str | None] = {}
 
     def x_pending(self):
         self.pending_calls += 1
@@ -29,10 +30,11 @@ class FakeXApi:
             raise self.error
         return {"wanted": self.wanted, "remove": self.remove}
 
-    def x_ready(self, reel_id, result):
+    def x_ready(self, reel_id, result, path=None):
         if self.fail_ready is not None:
             raise self.fail_ready
         self.reports.append((reel_id, result))
+        self.paths[reel_id] = path
 
 
 def _variant(root: Path, set_id: int, n: int, *names: str) -> Path:
@@ -64,7 +66,46 @@ def test_sync_kopie_ready_a_missing(tmp_path):
     xsync.sync_once(api, root, xdir)
     assert (xdir / "0012-tisk221.mp4").read_bytes() == b"reel-221-pn-sirka.mp4"
     assert api.reports == [(12, "ready"), (13, "missing"), (14, "missing")]
+    assert api.paths == {12: str(xdir / "0012-tisk221.mp4"), 13: None, 14: None}  # cesta jen u ready
     assert sorted(p.name for p in xdir.iterdir()) == ["0012-tisk221.mp4"]  # žádné .part
+
+
+def test_sync_otevre_pruzkumnika_jen_u_ready(tmp_path, caplog):
+    root, xdir = tmp_path / "gen", tmp_path / "Pro X"
+    _variant(root, 7, 1, "reel-1-v2.mp4")
+    _variant(root, 8, 1, "reel-2-v2.mp4")
+    opened: list = []
+    api = FakeXApi(wanted=[{"id": 1, "set_id": 7, "variant": 1, "ct": 1},
+                           {"id": 2, "set_id": None, "variant": None, "ct": None}])
+    xsync.sync_once(api, root, xdir, opened.append)
+    assert opened == [xdir / "0001-tisk1.mp4"]
+
+    # chyba Průzkumníka jen do logu: položka je ready a další se zkopíruje
+    def broken(path):
+        raise OSError("explorer nejde")
+
+    api = FakeXApi(wanted=[{"id": 3, "set_id": 7, "variant": 1, "ct": 1}, {"id": 4, "set_id": 8, "variant": 1, "ct": 2}])
+    with caplog.at_level(logging.WARNING):
+        xsync.sync_once(api, root, xdir, broken)
+    assert api.reports == [(3, "ready"), (4, "ready")]
+    assert "explorer nejde" in caplog.text
+
+
+def test_open_enabled_a_reveal(monkeypatch, tmp_path):
+    monkeypatch.delenv("REELS_X_OPEN", raising=False)
+    monkeypatch.setattr(xsync.os, "name", "nt")
+    assert xsync.open_enabled({})
+    assert not xsync.open_enabled({"REELS_X_OPEN": "0"})
+    assert not xsync.open_enabled({"REELS_X_OPEN": " Ne "})
+    monkeypatch.setenv("REELS_X_OPEN", "false")
+    assert not xsync.open_enabled({})
+    assert xsync.open_enabled({"REELS_X_OPEN": "1"})
+    monkeypatch.setattr(xsync.os, "name", "posix")
+    assert not xsync.open_enabled({"REELS_X_OPEN": "1"})
+    calls = []
+    monkeypatch.setattr(xsync.subprocess, "Popen", lambda args: calls.append(args))
+    xsync.reveal(tmp_path / "Pro X" / "0001-tisk1.mp4")
+    assert calls == [["explorer.exe", f"/select,{tmp_path / 'Pro X' / '0001-tisk1.mp4'}"]]
 
 
 def test_sync_smaze_vyrizene(tmp_path):
@@ -170,8 +211,9 @@ def test_worker_main_spusti_xsync(monkeypatch, tmp_path):
     seen = {}
 
     class FakeXSync:
-        def __init__(self, api, root, x_dir, interval=xsync.INTERVAL_S):
+        def __init__(self, api, root, x_dir, interval=xsync.INTERVAL_S, opener=None):
             seen["x_dir"] = x_dir
+            seen["opener"] = opener
 
         def start(self):
             seen["started"] = True
@@ -181,9 +223,10 @@ def test_worker_main_spusti_xsync(monkeypatch, tmp_path):
 
     monkeypatch.setattr(worker.xsync, "XSync", FakeXSync)
     monkeypatch.setattr(worker, "run", lambda api, **kw: seen.setdefault("run", True))
+    monkeypatch.setattr(worker.xsync, "open_enabled", lambda env: True)
     argv = ["--env", str(env), "--root", str(tmp_path / "root"), "--mcp-config", str(mcp)]
     assert worker.main(argv) == 0
-    assert seen == {"x_dir": tmp_path / "px", "started": True, "run": True, "stopped": True}
+    assert seen == {"x_dir": tmp_path / "px", "opener": xsync.reveal, "started": True, "run": True, "stopped": True}
     seen.clear()
     assert worker.main(argv + ["--once"]) == 0
     assert seen == {"run": True}

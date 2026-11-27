@@ -72,7 +72,8 @@ def test_na_x_ready_hotovo(bot, conn, api, media_dir):  # noqa: F811
     api.calls.clear()
     bot._x_notify()
     msg = api.sent()[-1]
-    assert msg["text"].startswith(f"Pro X: #{rid:04d} · tisk 221\nVideo: {rid:04d}-tisk221.mp4")
+    assert msg["text"].startswith(f"Pro X: #{rid:04d} · tisk 221\nVideo: <code>{rid:04d}-tisk221.mp4</code>")
+    assert msg["parse_mode"] == "HTML"
     assert "Sněmovna zkrátila lhůtu.\n\nCelý rozbor: https://cosepece.cz/tisk/221" in msg["text"]
     buttons = _all_buttons(msg)
     assert buttons[0][0] == "Otevřít X" and buttons[0][1].startswith("https://x.com/intent/post?text=Sn%C4%9Bmovna")

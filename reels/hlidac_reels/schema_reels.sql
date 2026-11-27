@@ -125,6 +125,7 @@ ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_status       text;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_requested_at timestamptz;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_ready_at     timestamptz;
 ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_msg_id       bigint;  -- zpráva Pro X / video chybí (odeslaná = nic znovu)
+ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS x_path         text;    -- cesta k videu na PC (hlásí worker, 2026-11-27)
 ALTER TABLE reel_queue DROP CONSTRAINT IF EXISTS reel_queue_x_status_check;
 ALTER TABLE reel_queue ADD CONSTRAINT reel_queue_x_status_check
     CHECK (x_status IS NULL OR x_status IN ('wanted','ready','missing','done','skipped'));

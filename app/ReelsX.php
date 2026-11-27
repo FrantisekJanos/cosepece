@@ -1,6 +1,7 @@
 <?php
 // Reels na X přes složku Pro X (worker na PC): které video zkopírovat, které soubory smazat, a hlášení výsledku.
 // Sloupce reel_queue.x_* vlastní služba reels/ (reels/hlidac_reels/schema_reels.sql), PHP je nemigruje.
+// x_path = cesta k videu na PC, kterou nahlásil worker (jen pro zprávu bota).
 // Stavy x_status: wanted (vlastník klikl Na X) → ready | missing (hlásí worker) → done | skipped (tlačítka bota).
 
 declare(strict_types=1);
@@ -13,6 +14,8 @@ final class ReelsX
     public const RESULTS = ['ready', 'missing'];
     /** soubory vyřízených položek se mažou ze složky Pro X, dokud je položka mladší než tolik dní */
     public const REMOVE_DAYS = 14;
+    /** nejdelší cesta k videu na PC, kterou server uloží (x_path); delší se zahodí */
+    public const PATH_MAX = 400;
     /** nejvýš tolik položek ke zkopírování v jedné odpovědi */
     private const WANTED_LIMIT = 50;
     private const REMOVE_LIMIT = 500;
@@ -53,17 +56,33 @@ final class ReelsX
 
     /**
      * Worker hlásí výsledek kopie ($result z RESULTS). Mění jen položku, která pořád čeká (wanted): pozdní hlášení
-     * po Zrušit nebo Hotovo nic nepřepíše. True = zapsáno.
+     * po Zrušit nebo Hotovo nic nepřepíše. $path = celá cesta k videu na PC (bot ji vypíše ve zprávě Pro X); uloží
+     * se jen u ready a jen rozumná (cleanPath), starší worker ji neposílá. True = zapsáno.
      */
-    public function ready(int $id, string $result): bool
+    public function ready(int $id, string $result, ?string $path = null): bool
     {
         if (!in_array($result, self::RESULTS, true)) {
             throw new \InvalidArgumentException('neplatný výsledek');
         }
+        $path = $result === 'ready' ? self::cleanPath($path) : null;
         return $this->db->run(
-            "UPDATE reel_queue SET x_status = ?, x_ready_at = ? WHERE id = ? AND x_status = 'wanted'",
-            [$result, $this->stamp(($this->now)()), $id]
+            "UPDATE reel_queue SET x_status = ?, x_ready_at = ?, x_path = ? WHERE id = ? AND x_status = 'wanted'",
+            [$result, $this->stamp(($this->now)()), $path, $id]
         )->rowCount() > 0;
+    }
+
+    /** Cesta od workeru: text bez řídicích znaků, nejvýš PATH_MAX znaků; jinak null (zpráva pak ukáže jen jméno). */
+    public static function cleanPath(mixed $path): ?string
+    {
+        if (!is_string($path)) {
+            return null;
+        }
+        $path = trim($path);
+        if ($path === '' || mb_strlen($path) > self::PATH_MAX || preg_match('/[\x00-\x1F\x7F]/', $path)
+            || !mb_check_encoding($path, 'UTF-8')) {
+            return null;
+        }
+        return $path;
     }
 
     /** Čas pro sloupce časů (stejně jako ReelJobs::stamp: PostgreSQL s posunem pásma, SQLite text). */

@@ -435,6 +435,6 @@ final class ReelsApi
         if ($id === null || !in_array($result, ReelsX::RESULTS, true)) {
             return [400, ['error' => 'Chybí id nebo result (' . implode(', ', ReelsX::RESULTS) . ')']];
         }
-        return [200, ['ok' => true, 'updated' => $x->ready($id, $result)]];
+        return [200, ['ok' => true, 'updated' => $x->ready($id, $result, $data['path'] ?? null)]];
     }
 }

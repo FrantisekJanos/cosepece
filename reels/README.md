@@ -203,7 +203,7 @@ reels-worker --env <soubor .env> --root <pracovní složka> --mcp-config <mcp.js
 
 | Volba | Význam |
 |---|---|
-| `--env` | soubor `KEY=VALUE` mimo repo: `REELS_API_URL` (adresa `reels_api.php`, jen https), `REELS_WORKER_TOKEN`, volitelně `REELS_MODEL` (jinak výchozí model generátoru) a `REELS_X_DIR` (složka `Pro X`, viz Reels na X) |
+| `--env` | soubor `KEY=VALUE` mimo repo: `REELS_API_URL` (adresa `reels_api.php`, jen https), `REELS_WORKER_TOKEN`, volitelně `REELS_MODEL` (jinak výchozí model generátoru) a `REELS_X_DIR` (složka `Pro X`, viz Reels na X), `REELS_X_OPEN=0` (neotevírat Průzkumníka) |
 | `--root` | pracovní složka: podsložka na úlohu, `worker.lock`, `worker.log` |
 | `--mcp-config` | JSON s MCP serverem cosepece pro `claude -p` (mimo repo) |
 | `--once` | jeden průchod bez čekání, na zkoušku |
@@ -354,8 +354,11 @@ dává na X ručně v prohlížeči na PC, bot a worker mu připraví video a te
 2. Klik nastaví `reel_queue.x_status = 'wanted'` a bot odpoví „Na X #NNNN: čekám na PC“. Opakovaný klik nic nemění.
 3. Worker (vlákno `x_sync`, `generator/xsync.py`, každých 60 s, vedle generování) si přes `GET x_pending` řekne
    o čekající položky, zkopíruje video ze složky sady (`<root>/<set_id>/variant-<n>/`, přednost má `*-sirka.mp4`)
-   do složky `Pro X` jako `NNNN-tiskCT.mp4` (kopie přes `.part`) a nahlásí `POST x_ready` `ready`, bez videa `missing`.
-4. Bot (`maybe_events`, každou minutu) pošle u `ready` zprávu „Pro X: #NNNN · tisk CT“ s celým textem příspěvku
+   do složky `Pro X` jako `NNNN-tiskCT.mp4` (kopie přes `.part`) a nahlásí `POST x_ready` `ready` s celou cestou
+   (`path`, server ji uloží do `x_path`), bez videa `missing`. Na Windows pak otevře Průzkumníka s označeným videem
+   (`explorer.exe /select,…`), aby šlo hned přetáhnout do X; vypnout jde `REELS_X_OPEN=0` v `--env`.
+4. Bot (`maybe_events`, každou minutu) pošle u `ready` zprávu „Pro X: #NNNN · tisk CT“ (parse_mode HTML) s cestou
+   k videu jako `<code>` (klepnutím se zkopíruje; bez `x_path` jen jméno souboru), s celým textem příspěvku
    a tlačítky **Otevřít X** (`https://x.com/intent/post?text=…`), **Hotovo na X** (`xdone:`), **Zrušit** (`xskip:`).
    Když Telegram tlačítko s odkazem odmítne, odkaz je v textu zprávy. U `missing` „Video #NNNN na PC není“ s tlačítkem
    **Zkusit znovu**. Každá zpráva odejde jednou (`x_msg_id`).
@@ -366,8 +369,8 @@ Text pro X (`caption.x_text`): první odstavec popisku zkrácený (jako `threads
 s „Celý rozbor: odkaz“ měl nejvýš 280 znaků podle počítání X (`x_length`: odkaz 23, latinka 1, emoji a CJK 2).
 
 Stavy `x_status`: NULL → `wanted` → `ready` | `missing` → `done` | `skipped`; z `missing` a `skipped` jde znovu Na X.
-Server `x_ready` mění jen položku ve stavu `wanted`. Sloupce `x_status`, `x_requested_at`, `x_ready_at`, `x_msg_id`
-přidá bot při startu (`schema_reels.sql`).
+Server `x_ready` mění jen položku ve stavu `wanted`. Sloupce `x_status`, `x_requested_at`, `x_ready_at`, `x_msg_id`,
+`x_path` přidá bot při startu (`schema_reels.sql`). Telegram neumí odkaz `file://`, proto cesta jako kód a Průzkumník.
 
 - Složka: `REELS_X_DIR` v `--env` workeru (volitelné), jinak `Videos\Pro X` v profilu uživatele; worker ji založí.
 - Pořadí nasazení: server (web a bot), potom worker. Starý worker položky `wanted` nezpracuje (čekají). Nový worker

@@ -2633,7 +2633,7 @@ $f3EvReset();
 echo "Reels na X: složka Pro X (ReelsX, x_pending, x_ready)\n";
 // sloupce reel_queue.x_* a set_id/variant (v produkci je přidá schema_reels.sql služby reels/)
 foreach (['set_id' => 'BIGINT', 'variant' => 'SMALLINT', 'x_status' => 'VARCHAR(20)', 'x_requested_at' => $rjTs,
-          'x_ready_at' => $rjTs, 'x_msg_id' => 'BIGINT'] as $rxCol => $rxType) {
+          'x_ready_at' => $rjTs, 'x_msg_id' => 'BIGINT', 'x_path' => 'TEXT'] as $rxCol => $rxType) {
     if (db()->driver === 'pgsql') {
         db()->run("ALTER TABLE reel_queue ADD COLUMN IF NOT EXISTS $rxCol $rxType");
     } else {
@@ -2672,8 +2672,13 @@ check('x_pending: čekající ke kopii a vyřízené ke smazání (jen 14 dní)'
 check('GET x_ready → 400', $rxApi->handle('GET', 'x_ready', [], '', $raH())[0], 400);
 check('x_ready s neplatným výsledkem → 400', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxW, 'result' => 'done']), $raH())[0], 400);
 check('x_ready bez id → 400', $rxApi->handle('POST', 'x_ready', [], $raJson(['result' => 'ready']), $raH())[0], 400);
-check('x_ready ready', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxW, 'result' => 'ready']), $raH()), [200, ['ok' => true, 'updated' => true]]);
-check('x_ready missing', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxM, 'result' => 'missing']), $raH())[1]['updated'] ?? null, true);
+check('x_ready ready', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxW, 'result' => 'ready', 'path' => 'C:\Users\uzivatel\Videos\Pro X\0001-tisk221.mp4']), $raH()), [200, ['ok' => true, 'updated' => true]]);
+check('x_ready missing', $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxM, 'result' => 'missing', 'path' => 'C:\x.mp4']), $raH())[1]['updated'] ?? null, true);
+check('x_ready: cesta jen u ready', array_column(db()->all('SELECT x_path FROM reel_queue WHERE id IN (?, ?) ORDER BY id', [$rxW, $rxM]), 'x_path'),
+    ['C:\Users\uzivatel\Videos\Pro X\0001-tisk221.mp4', null]);
+check('cleanPath: řídicí znaky, délka, typ', [Hlidac\ReelsX::cleanPath("C:\\a\nb.mp4"), Hlidac\ReelsX::cleanPath(str_repeat('a', 401)),
+    Hlidac\ReelsX::cleanPath(['x']), Hlidac\ReelsX::cleanPath('  '), Hlidac\ReelsX::cleanPath(' C:\Pro X\a.mp4 ')],
+    [null, null, null, null, 'C:\Pro X\a.mp4']);
 check('x_ready nečekající položky nic nezmění', [
     $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxD, 'result' => 'ready']), $raH())[1]['updated'] ?? null,
     $rxApi->handle('POST', 'x_ready', [], $raJson(['id' => $rxR, 'result' => 'missing']), $raH())[1]['updated'] ?? null,

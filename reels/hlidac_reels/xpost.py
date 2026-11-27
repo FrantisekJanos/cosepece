@@ -8,6 +8,7 @@ Tlačítko Na X má jen položka ze sady generátoru (set_id): ručně nahraná 
 """
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -25,6 +26,7 @@ class XItem:
     ct: int | None
     caption: str
     x_status: str
+    x_path: str | None = None  # cesta k videu na PC (hlásí worker; starší worker ji neposílá)
 
 
 def file_name(reel_id: int, ct: int | None) -> str:
@@ -37,7 +39,7 @@ def want(conn, reel_id: int, now: datetime) -> str:
     čeká na PC, 'ready', 'done'), 'gone' = položka není zveřejněná nebo není ze sady generátoru."""
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE reel_queue SET x_status='wanted', x_requested_at=%s, x_ready_at=NULL, x_msg_id=NULL "
+            "UPDATE reel_queue SET x_status='wanted', x_requested_at=%s, x_ready_at=NULL, x_msg_id=NULL, x_path=NULL "
             "WHERE id=%s AND status='published' AND set_id IS NOT NULL "
             "AND (x_status IS NULL OR x_status = ANY(%s)) RETURNING id",
             (now, reel_id, list(WANT_FROM)))
@@ -69,7 +71,7 @@ def finish(conn, reel_id: int, status: str) -> bool:
 def to_notify(conn, limit: int = 20) -> list[XItem]:
     """Položky, které worker nahlásil (ready, missing) a o kterých bot ještě nenapsal."""
     with conn.cursor() as cur:
-        cur.execute("SELECT id, ct, caption, x_status FROM reel_queue "
+        cur.execute("SELECT id, ct, caption, x_status, x_path FROM reel_queue "
                     "WHERE x_status IN ('ready','missing') AND x_msg_id IS NULL ORDER BY id LIMIT %s", (limit,))
         rows = cur.fetchall()
     conn.commit()
@@ -97,10 +99,18 @@ def wanted_text(reel_id: int) -> str:
 
 
 def ready_message(item: XItem) -> tuple[str, str]:
-    """Text zprávy Pro X (s celým textem příspěvku ke zkopírování) a odkaz intent X."""
+    """Text zprávy Pro X v HTML (parse_mode HTML) s celým textem příspěvku ke zkopírování a odkaz intent X.
+
+    Cesta k videu (nebo jen jméno, když ji worker neposlal) je <code>: klepnutím se zkopíruje do schránky
+    a Telegram z „….mp4“ neudělá odkaz na doménu .mp."""
     post = x_text(item.caption, item.ct)
     head = f"Pro X: #{item.id:04d}" + (f" · tisk {item.ct}" if item.ct is not None else "")
-    text = f"{head}\nVideo: {file_name(item.id, item.ct)} (složka {X_FOLDER})\n\n{post}"
+    if item.x_path:
+        video = (f"Video: <code>{html.escape(item.x_path)}</code>\n"
+                 "Složka se otevřela na PC, cestu zkopíruješ klepnutím.")
+    else:
+        video = f"Video: <code>{html.escape(file_name(item.id, item.ct))}</code> (složka {X_FOLDER})"
+    text = f"{html.escape(head)}\n{video}\n\n{html.escape(post)}"
     return text, x_intent_url(post)
 
 

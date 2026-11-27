@@ -665,7 +665,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     handlers = _setup_logging(args.root)
     # videa pro X do složky Pro X: vlastní vlákno vedle generování (xsync.py), při --once ne
-    xs = None if args.once else xsync.XSync(api, root=args.root, x_dir=xsync.default_dir(env))
+    xs = None if args.once else xsync.XSync(api, root=args.root, x_dir=xsync.default_dir(env),
+                                            opener=xsync.reveal if xsync.open_enabled(env) else None)
     try:
         model = env.get("REELS_MODEL") or DEFAULT_MODEL
         log.info("worker start: API %s, model %s", getattr(api, "host", "?"), model)

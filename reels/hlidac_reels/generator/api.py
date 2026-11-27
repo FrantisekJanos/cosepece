@@ -141,6 +141,10 @@ class ReelsApi:
         return {"wanted": [w for w in wanted if isinstance(w, dict)],
                 "remove": [i for i in remove if isinstance(i, int) and not isinstance(i, bool)]}
 
-    def x_ready(self, reel_id: int, result: str) -> None:
-        """Výsledek kopie videa do složky Pro X: "ready" nebo "missing" (video na PC není)."""
-        self._request("POST", "x_ready", payload={"id": reel_id, "result": result})
+    def x_ready(self, reel_id: int, result: str, path: str | None = None) -> None:
+        """Výsledek kopie videa do složky Pro X: "ready" nebo "missing" (video na PC není). path = celá cesta
+        ke zkopírovanému videu, bot ji vypíše ve zprávě Pro X (starší server pole ignoruje)."""
+        payload: dict = {"id": reel_id, "result": result}
+        if path:
+            payload["path"] = path
+        self._request("POST", "x_ready", payload=payload)

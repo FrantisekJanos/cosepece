@@ -1063,14 +1063,15 @@ class Bot:
             else:
                 text, url = xpost.ready_message(item)
                 try:
-                    msg_id = self.tg.send_text(self.chat_id, text, xpost.ready_buttons(item.id, url))
+                    msg_id = self.tg.send_text(self.chat_id, text, xpost.ready_buttons(item.id, url),
+                                               parse_mode="HTML")
                 except TelegramError as e:
                     if not e.rejected:
                         raise
                     # Telegram odmítl tlačítko s odkazem (např. délka): odkaz do textu, tlačítka jen Hotovo / Zrušit
                     log.warning("Pro X #%s: tlačítko s odkazem odmítnuto: %s", item.id, self._safe(e))
-                    msg_id = self.tg.send_text(self.chat_id, f"{text}\n\nOtevřít X: {url}",
-                                               xpost.ready_buttons(item.id, None))
+                    msg_id = self.tg.send_text(self.chat_id, f"{text}\n\nOtevřít X: {html.escape(url)}",
+                                               xpost.ready_buttons(item.id, None), parse_mode="HTML")
             xpost.mark_notified(self.conn, item.id, item.x_status, msg_id)
 
     def _update_status_messages(self) -> None:

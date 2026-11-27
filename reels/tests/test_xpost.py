@@ -96,6 +96,7 @@ def test_to_notify_a_mark(conn, media_dir):  # noqa: F811
     _set(conn, b, x_status="missing")
     items = xpost.to_notify(conn)
     assert [(i.id, i.ct, i.x_status) for i in items] == [(a, 221, "ready"), (b, None, "missing")]
+    assert items[0].x_path is None
     assert items[0].caption == "Text.\n\nDruhý."
     assert xpost.mark_notified(conn, a, "ready", 501)
     assert not xpost.mark_notified(conn, a, "ready", 502)  # už odeslaná
@@ -109,9 +110,15 @@ def test_jmeno_souboru_a_zpravy():
     assert xpost.publish_buttons(12) == [("Na X", "x:12")]
     item = xpost.XItem(12, 221, "Krátký text.\n\nDruhý.", "ready")
     text, url = xpost.ready_message(item)
-    assert text.startswith("Pro X: #0012 · tisk 221\nVideo: 0012-tisk221.mp4 (složka Pro X)\n\n")
+    assert text.startswith("Pro X: #0012 · tisk 221\nVideo: <code>0012-tisk221.mp4</code> (složka Pro X)\n\n")
     assert "Krátký text.\n\nCelý rozbor: https://cosepece.cz/tisk/221" in text
     assert url.startswith("https://x.com/intent/post?text=Kr%C3%A1tk%C3%BD")
     assert xpost.ready_buttons(12, url) == [("Otevřít X", url), ("Hotovo na X", "xdone:12"), ("Zrušit", "xskip:12")]
+    # s cestou od workeru: celá cesta jako kód; text příspěvku escapovaný pro parse_mode HTML
+    item = xpost.XItem(12, 221, "A < B & C.", "ready", r"C:\Users\uzivatel\Videos\Pro X\0012-tisk221.mp4")
+    text, url = xpost.ready_message(item)
+    assert text.startswith("Pro X: #0012 · tisk 221\nVideo: <code>C:\\Users\\uzivatel\\Videos\\Pro X\\0012-tisk221.mp4</code>\n"
+                           "Složka se otevřela na PC, cestu zkopíruješ klepnutím.\n\nA &lt; B &amp; C.")
+    assert "A%20%3C%20B%20%26%20C." in url or "A+%3C+B+%26+C." in url  # odkaz X nese text bez escapování HTML
     assert xpost.missing_text(12) == "Video #0012 na PC není (ručně nahrané video, nebo složka sady chybí)."
     assert xpost.missing_buttons(12) == [("Zkusit znovu", "x:12")]

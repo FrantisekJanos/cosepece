@@ -3107,7 +3107,8 @@ $htRoute = static function (string $path) use ($htRules): ?array {
     return null;
 };
 $htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
-    'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx'];
+    'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx',
+    'sitemap.xml', 'sitemap.xml/', 'sitemap', 'xsitemap.xml'];
 $htDiff = [];
 foreach ($htSamples as $sample) {
     if ($htRoute($sample) !== Hlidac\Url::route($sample)) {
@@ -3470,6 +3471,30 @@ check('v praxi: nová kontrola uložených vysvětlení vrátí nevyhovující d
 db()->run('DELETE FROM pn_text WHERE ct = 9960');
 db()->run('DELETE FROM pn WHERE ct = 9960');
 $dropBill(9960);
+
+// --- mapa webu pro vyhledávače (/sitemap.xml) ---
+echo "Mapa webu\n";
+$smEntries = Hlidac\Sitemap::entries(db());
+$smLocs = array_column($smEntries, 'lastmod', 'loc');
+$smBill = db()->one('SELECT ct, posledni, pn_last FROM tisky WHERE ct = 311');
+check('mapa webu: hlavní stránky, tisky a zákony s absolutní adresou', [array_key_exists(absUrl('index'), $smLocs), array_key_exists(absUrl('tisky'), $smLocs), array_key_exists(absUrl('metodika'), $smLocs),
+    array_key_exists(absUrl('tisk', ['ct' => 311]), $smLocs), array_key_exists(absUrl('zakon', ['z' => '586/1992']), $smLocs),
+    array_key_exists(absUrl('hledat'), $smLocs), array_key_exists(absUrl('revize'), $smLocs), count(array_filter(array_keys($smLocs), fn(string $u): bool => !str_starts_with($u, rtrim((string)config('site_url'), '/') . '/')))],
+    [true, true, true, true, true, false, false, 0]);
+check('mapa webu: každý tisk jednou', count(array_filter(array_keys($smLocs), fn(string $u): bool => (bool)preg_match('~/tisk(/|\.php\?ct=)\d+$~', $u))), (int)db()->value('SELECT COUNT(*) FROM tisky'));
+check('mapa webu: datum změny tisku je den posledního kroku nebo PN', $smLocs[absUrl('tisk', ['ct' => 311])], substr(max((string)$smBill['posledni'], (string)$smBill['pn_last']), 0, 10));
+check('mapa webu: zákon má datum podle tisku, který ho mění', $smLocs[absUrl('zakon', ['z' => '586/1992'])], $smLocs[absUrl('tisk', ['ct' => 311])]);
+ob_start();
+(function (string $file): void {
+    require $file;
+})(APP_ROOT . '/sitemap.php');
+$smXml = (string)ob_get_clean();
+$smDoc = @simplexml_load_string($smXml);
+check('mapa webu: platné XML se všemi položkami', [$smDoc !== false, $smDoc !== false ? count($smDoc->url) : 0, str_starts_with($smXml, '<?xml version="1.0" encoding="UTF-8"?>'),
+    (bool)preg_match('~<url><loc>[^<]+/tisk/311</loc><lastmod>\d{4}-\d{2}-\d{2}</lastmod></url>~', $smXml)], [true, count($smEntries), true, true]);
+check('mapa webu: adresa se znaky & a < se v XML ošetří', Hlidac\Sitemap::xml([['loc' => 'https://x.cz/?a=1&b=<2>', 'lastmod' => null]]),
+    '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n" . '  <url><loc>https://x.cz/?a=1&amp;b=&lt;2&gt;</loc></url>' . "\n</urlset>\n");
+check('mapa webu: adresa /sitemap.xml vede na sitemap.php', Hlidac\Url::route('sitemap.xml'), ['sitemap.php', []]);
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

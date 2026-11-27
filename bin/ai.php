@@ -6,7 +6,8 @@
 //   --verify       druhé kolo silnějším modelem (ai.verify_model) nad nálezy se závažností ≥ ai.verify_min
 //   --praxe        vysvětlení PN „v praxi“ (app/PnPractice.php) místo procedurálního rozboru; s --verify druhé
 //                  kolo silnějším modelem u PN s nálezem. Skóre se nemění.
-//   --resanitize   znovu použije pojistky na uložené rozbory (bez volání modelu) a přepočítá skóre
+//   --resanitize   znovu použije pojistky na uložené rozbory (bez volání modelu) a přepočítá skóre;
+//                  s --praxe na uložená vysvětlení „v praxi“ (co neprojde, vrátí se do fronty)
 
 declare(strict_types=1);
 
@@ -35,6 +36,11 @@ $reviewer = new AiReviewer(db(), $config);
 
 try {
     // --resanitize model nevolá, jde tedy spustit i bez claude CLI (např. v kontejneru na serveru)
+    if (isset($opt['resanitize']) && $praxe) {
+        // --praxe --resanitize: pojistky znovu na uložená vysvětlení „v praxi“; co neprojde, vrátí se do fronty
+        echo json_encode((new PnPractice(db(), $config))->resanitizeStored(), JSON_UNESCAPED_UNICODE), "\n";
+        exit(0);
+    }
     if (isset($opt['resanitize'])) {
         $n = $reviewer->resanitizeStored();
         $scorer = new Hlidac\Scorer(db(), config());

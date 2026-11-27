@@ -321,6 +321,8 @@ final class Db
         $this->addColumn('pn_text', 'praxe_tries', 'INTEGER');
         // výpadky modelu nebo spojení u vysvětlení „v praxi“ (zvlášť od odmítnutí pojistkou v praxe_tries)
         $this->addColumn('pn_text', 'praxe_fails', 'INTEGER');
+        // verze promptu a pojistek, ke které počitadla praxe_tries a praxe_fails patří (po zvýšení verze se nepoužijí)
+        $this->addColumn('pn_text', 'praxe_try_v', 'INTEGER');
         // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, v pořadí jmen v navrhovateli
         // a oddělené čárkou (Importer::proposerClub); jen se zobrazují, do skóre nevstupují
         $this->addColumn('tisky', 'navrhovatel_klub', 'VARCHAR(120)');

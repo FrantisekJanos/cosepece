@@ -115,6 +115,24 @@ function asset(string $file): string
     return Hlidac\Url::base() . '/' . ltrim($file, '/');
 }
 
+/**
+ * Parametry z adresy v bezpečné podobě: vždy jednoduchý text (pole ?q[]=x by v kódu dělala chyby a varování)
+ * a žádné číslo mimo rozsah sloupce INTEGER, které by skončilo chybou databáze (500); tak velké číslo tisku
+ * ani stránky není. Porovnává se hodnota, kterou z textu udělá přetypování na číslo, tedy i zápisy „1e12“,
+ * „+99999999999“ nebo „1e12abc“ (PHP bere číselný začátek). Hledaný výraz (q) je volný text a nemění se.
+ */
+function normalizeQuery(array $query): array
+{
+    foreach ($query as $key => $value) {
+        if (!is_string($value)) {
+            unset($query[$key]);
+        } elseif ($key !== 'q' && abs((float)$value) > 999999999) {
+            $query[$key] = '999999999';
+        }
+    }
+    return $query;
+}
+
 // hlášení chyb do Sentry (prázdný klíč sentry.dsn = vypnuto, nic se neodesílá)
 \Hlidac\Sentry::init((array)config('sentry', []), PHP_SAPI === 'cli' ? 'sync' : 'web');
 
@@ -136,15 +154,7 @@ if (PHP_SAPI !== 'cli') {
         header('Allow: ' . implode(', ', $allowed));
         exit;
     }
-    // parametry v adrese jsou vždy jednoduchý text; pole (?q[]=x) by v kódu dělala chyby a varování
-    foreach ($_GET as $key => $value) {
-        if (!is_string($value)) {
-            unset($_GET[$key]);
-        } elseif (preg_match('~^-?\d{10,}$~', $value)) {
-            // číslo mimo rozsah sloupce INTEGER by skončilo chybou databáze (500); tak velké číslo tisku ani stránky není
-            $_GET[$key] = '999999999';
-        }
-    }
+    $_GET = normalizeQuery($_GET);
     // staré adresy stránek s .php (i lomítko na konci nebo číslo tisku v dotazu) přesměrujeme na hezké;
     // jen při čtení a jen u stránek z tabulky Url::PAGES, strojové adresy (api.php, rss.php…) se nemění
     if (in_array($method, ['GET', 'HEAD'], true)) {

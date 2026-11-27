@@ -113,6 +113,7 @@ TXT;
     /**
      * PN čekající na vysvětlení (bez tisků, které už jsou zákonem), od nejzávažnějších tisků a nejnovějších návrhů;
      * PN, u kterých poslední pokus skončil chybou, až za ostatními (výpadek tak nezdržuje zbytek fronty).
+     * Vyčerpané pokusy platí jen pro verzi, ve které vznikly (praxe_try_v): po zvýšení VERSION se PN zkusí znovu.
      * $verify = druhé kolo: silnější model přepíše vysvětlení u PN s nálezem (závažnost ≥ praxe_verify_min nebo
      * příznak pravidel) a smí přidat modelový příklad.
      *
@@ -141,8 +142,9 @@ TXT;
             "SELECT x.id_dokument, x.ct, x.text, t.uplny_nazev, t.nazev FROM pn_text x
              JOIN pn p ON p.id_dokument = x.id_dokument
              JOIN tisky t ON t.ct = x.ct
-             WHERE $where AND x.chars > 0 AND COALESCE(x.praxe_tries, 0) < " . $s['tries'] . " AND COALESCE(x.praxe_fails, 0) < " . $s['fails'] . "
-                AND t.faze <> 'Vyhlášeno'
+             WHERE $where AND x.chars > 0 AND t.faze <> 'Vyhlášeno'
+                AND (COALESCE(x.praxe_try_v, 0) < " . self::VERSION . "
+                    OR (COALESCE(x.praxe_tries, 0) < " . $s['tries'] . " AND COALESCE(x.praxe_fails, 0) < " . $s['fails'] . "))
              ORDER BY CASE WHEN x.praxe_error IS NULL THEN 0 ELSE 1 END, t.score DESC, p.cas DESC, x.id_dokument DESC LIMIT " . $limit,
             $params
         );
@@ -195,9 +197,57 @@ TXT;
      */
     public function saveError(int $id, string $message, bool $rejected = false): void
     {
+        // počitadla patří k verzi promptu a pojistek: první neúspěch v nové verzi je začíná od nuly
+        $this->db->run('UPDATE pn_text SET praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ? AND COALESCE(praxe_try_v, 0) < ' . self::VERSION, [$id]);
         $counter = $rejected ? 'praxe_tries' : 'praxe_fails';
-        $this->db->run("UPDATE pn_text SET praxe_error = ?, $counter = COALESCE($counter, 0) + 1 WHERE id_dokument = ?",
-            [mb_substr(Http::redact($message), 0, 500), $id]);
+        $this->db->run("UPDATE pn_text SET praxe_error = ?, $counter = COALESCE($counter, 0) + 1, praxe_try_v = ? WHERE id_dokument = ?",
+            [mb_substr(Http::redact($message), 0, 500), self::VERSION, $id]);
+    }
+
+    /**
+     * Znovu použije pojistky na uložená vysvětlení (bez volání modelu), typicky po jejich zpřísnění. Vysvětlení,
+     * které novými pojistkami neprojde, se smaže a PN se vrátí do fronty; které projde jinak, se přepíše.
+     *
+     * @return array{zkontrolovano: int, upraveno: int, vraceno_do_fronty: int}
+     */
+    public function resanitizeStored(): array
+    {
+        $stats = ['zkontrolovano' => 0, 'upraveno' => 0, 'vraceno_do_fronty' => 0];
+        $s = self::settings($this->config);
+        $verifier = AiReviewer::verifyModel($this->config);
+        $bills = [];
+        $rows = $this->db->all('SELECT x.id_dokument, x.ct, x.text, x.praxe_json, x.praxe_model, p.osoba FROM pn_text x
+            LEFT JOIN pn p ON p.id_dokument = x.id_dokument WHERE x.praxe_json IS NOT NULL');
+        foreach ($rows as $row) {
+            $stored = json_decode((string)$row['praxe_json'], true);
+            if (!is_array($stored)) {
+                continue;
+            }
+            $stats['zkontrolovano']++;
+            $ct = (int)$row['ct'];
+            $bills[$ct] ??= PnText::normativePart((string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [$ct]));
+            $context = self::billContext($bills[$ct], PnText::normativePart((string)$row['text']), $s['bill_max']);
+            try {
+                $clean = self::sanitize($stored, (string)$row['text'], $context, (string)$row['osoba'], (string)$row['praxe_model'] === $verifier);
+            } catch (\DomainException $ex) {
+                $this->db->run('UPDATE pn_text SET praxe_json = NULL, praxe_model = NULL, praxe_at = NULL, praxe_error = ? WHERE id_dokument = ?',
+                    [mb_substr('Pojistka (nová kontrola uloženého vysvětlení): ' . $ex->getMessage(), 0, 500), (int)$row['id_dokument']]);
+                $stats['vraceno_do_fronty']++;
+                continue;
+            }
+            // dřívější poznámky o zásazích zůstávají, nové se přidají
+            $notes = array_values(array_unique(array_merge((array)($stored['upravy'] ?? []), (array)($clean['upravy'] ?? []))));
+            unset($clean['upravy']);
+            if ($notes !== []) {
+                $clean['upravy'] = $notes;
+            }
+            $json = json_encode($clean, JSON_UNESCAPED_UNICODE);
+            if ($json !== (string)$row['praxe_json']) {
+                $this->db->run('UPDATE pn_text SET praxe_json = ? WHERE id_dokument = ?', [$json, (int)$row['id_dokument']]);
+                $stats['upraveno']++;
+            }
+        }
+        return $stats;
     }
 
     /** Prompt pro jeden PN: text změn, odůvodnění zvlášť a dotčená část projednávaného návrhu. */
@@ -322,7 +372,8 @@ TXT;
         $out['podle_predkladatele'] = $claim === '' ? '' : mb_strtoupper(mb_substr($claim, 0, 1)) . mb_substr($claim, 1);
 
         [$normative] = self::split($pnText);
-        $out['citace'] = array_slice(AiReviewer::verifyQuotes(is_array($in['citace'] ?? null) ? $in['citace'] : [], $normative), 0, 2);
+        $quotes = array_slice(array_values(array_filter(is_array($in['citace'] ?? null) ? $in['citace'] : [], 'is_string')), 0, 10);
+        $out['citace'] = array_slice(AiReviewer::verifyQuotes($quotes, $normative), 0, 2);
         if ($out['citace'] === []) {
             throw new \DomainException('žádná citace není doslova v textu změn');
         }
@@ -354,12 +405,8 @@ TXT;
         if (preg_match(self::JUDGING, $facts, $m)) {
             throw new \DomainException('hodnoticí slovo „' . $m[0] . '“');
         }
-        foreach (array_slice(preg_split('~\s+~u', trim($author), -1, PREG_SPLIT_NO_EMPTY) ?: [], 1) as $surname) {
-            // skloňované tvary: stačí shoda kmene (příjmení bez posledních dvou znaků, aspoň 4 znaky), velké písmeno na začátku
-            $stem = mb_substr($surname, 0, max(4, mb_strlen($surname) - 2));
-            if (mb_strlen($surname) >= 4 && preg_match('~(?<![\p{L}])' . preg_quote($stem, '~') . '~u', $facts . "\n" . $out['podle_predkladatele'])) {
-                throw new \DomainException('jméno předkladatele ve vysvětlení');
-            }
+        if (self::mentionsAuthor($facts . "\n" . $out['podle_predkladatele'], $author)) {
+            throw new \DomainException('jméno předkladatele ve vysvětlení');
         }
         foreach (['pred', 'priklad', 'podle_predkladatele', 'nejiste'] as $key) {
             if ($out[$key] === '') {
@@ -373,32 +420,43 @@ TXT;
     }
 
     /**
-     * Čísla v textu jako množina hodnot: „17 000 000“, „17 mil.“ i „17 milionů“ dávají 17000000, desetinná
-     * čísla bez jednotky zůstávají textem („13,5“). Malá čísla do 12 a letopočty se neověřují (pořadí bodů,
-     * data, počty) a v množině nejsou.
+     * Čísla v textu: hodnota => smí být sčítancem. „17 000 000“, „17 mil.“ i „17 milionů“ dávají 17000000,
+     * desetinná čísla bez jednotky zůstávají textem („13,5“). Malá čísla do 12 a letopočty (čtyřmístné číslo
+     * 1990–2100 bez mezery a bez měny) se neověřují a v mapě nejsou; „2 000 Kč“ letopočet není a ověřuje se.
+     * Sčítancem (viz unsupported) smí být jen číslo, které se v textu aspoň jednou vyskytuje jinak než jako
+     * odkaz: číslo paragrafu, článku, bodu, kapitoly nebo zákona („§ 44a“, „č. 218/2000 Sb.“) hodnotou není.
      *
-     * @return array<string, true>
+     * @return array<string, bool>
      */
     public static function numbers(string $text): array
     {
         $out = [];
-        $pattern = '~(?<![\d,])(\d{1,3}(?:[ \x{00a0}\x{202f}]\d{3})+|\d+)(?:,(\d+))?(?:[ \x{00a0}\x{202f}]?(tis\.|tisíc\w*|mil\.|mili[oó]n\w*|mld\.|miliard\w*))?~u';
-        if (!preg_match_all($pattern, $text, $matches, PREG_SET_ORDER)) {
+        $pattern = '~(?<![\d,.])(\d{1,3}(?:\.\d{3})+(?=[ \x{00a0}\x{202f}]?(?:Kč|korun))|\d{1,3}(?:[ \x{00a0}\x{202f}]\d{3})+|\d+)(?:,(\d+))?'
+            . '(?:[ \x{00a0}\x{202f}]?(tis\.|tisíc\w*|mil\.|mili[oó]n\w*|mld\.|miliard\w*|(?:tis|mil|mld)(?![\p{L}.])))?~u';
+        if (!preg_match_all($pattern, $text, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
             return $out;
         }
         foreach ($matches as $m) {
-            $int = (string)preg_replace('~\D~u', '', $m[1]);
-            $dec = $m[2] ?? '';
-            $unit = mb_strtolower($m[3] ?? '');
+            $raw = $m[1][0];
+            $int = (string)preg_replace('~\D~u', '', $raw);
+            $dec = isset($m[2]) && $m[2][1] >= 0 ? $m[2][0] : '';
+            $unit = isset($m[3]) && $m[3][1] >= 0 ? mb_strtolower($m[3][0]) : '';
             $power = $unit === '' ? 0 : (str_starts_with($unit, 'tis') ? 3 : (str_starts_with($unit, 'mld') || str_starts_with($unit, 'miliard') ? 9 : 6));
+            $end = $m[0][1] + strlen($m[0][0]);
+            // odkaz na ustanovení nebo předpis: před číslem „§“, „č.“, „čl.“, „odst.“, „bod…“, „kapitol…“, za ním „/rok“
+            $before = substr($text, max(0, $m[0][1] - 24), min(24, $m[0][1]));
+            $reference = $power === 0 && $dec === ''
+                && (preg_match('~(§|\bč\.|\bčl\.|\bodst\.|\bodstav\w*|\bbod\w*|\bkapitol\w*|\bpísm\.)\s*$~ui', $before) || preg_match('~^/\d{2,4}~', substr($text, $end, 6)));
             if ($power > 0) {
-                // 102,8 mil. → 102800000
                 if (strlen($dec) > $power) {
+                    // víc desetinných míst, než jednotka unese („1,2345 tis.“): hodnotu nejde spočítat, ověří se jen doslovná shoda
+                    $out[$int . ',' . $dec . ' ' . $unit] = ($out[$int . ',' . $dec . ' ' . $unit] ?? false);
                     continue;
                 }
                 $value = ltrim($int . str_pad($dec, $power, '0'), '0');
             } elseif ($dec !== '') {
-                $out[ltrim($int, '0') . ',' . $dec] = true;
+                $key = ltrim($int, '0') . ',' . $dec;
+                $out[$key] = ($out[$key] ?? false) || !$reference;
                 continue;
             } else {
                 $value = ltrim($int, '0');
@@ -407,26 +465,31 @@ TXT;
                 continue;
             }
             $n = (int)$value;
-            if ($n <= 12 || ($power === 0 && $n >= 1990 && $n <= 2100)) {
+            // letopočet: čtyřmístné číslo psané bez mezery, za kterým není měna ani procenta
+            $year = $power === 0 && $raw === $value && $n >= 1990 && $n <= 2100
+                && !preg_match('~^[ \x{00a0}\x{202f}]?(Kč|korun|%|EUR|eur)~u', substr($text, $end, 12));
+            if ($n <= 12 || $year) {
                 continue;
             }
-            $out[$value] = true;
+            $out[$value] = ($out[$value] ?? false) || !$reference;
         }
         return $out;
     }
 
     /**
-     * Čísla z výstupu modelu, která nejsou v podkladech ani nejsou součtem či rozdílem dvou čísel z podkladů.
+     * Čísla z výstupu modelu, která nejsou v podkladech ani nejsou součtem či rozdílem dvou hodnot z podkladů.
+     * Sčítat a odčítat se smí jen čísla, která numbers() označila jako hodnotu (true): čísla paragrafů a zákonů
+     * jen jako odkaz by jinak „podložila“ skoro jakékoli menší číslo.
      *
-     * @param array<string, true> $source výstup numbers() nad podklady
+     * @param array<string, bool> $source výstup numbers() nad podklady
      * @return list<string>
      */
     public static function unsupported(string $output, array $source): array
     {
-        $ints = [];
-        foreach (array_keys($source) as $value) {
-            if (ctype_digit((string)$value)) {
-                $ints[(int)$value] = true;
+        $operands = [];
+        foreach ($source as $value => $operand) {
+            if ($operand && ctype_digit((string)$value)) {
+                $operands[(int)$value] = true;
             }
         }
         $missing = [];
@@ -438,9 +501,9 @@ TXT;
             $ok = false;
             if (ctype_digit($value)) {
                 $n = (int)$value;
-                foreach ($ints as $a => $_) {
-                    // n = a − b nebo n = a + b pro dvě čísla a, b z podkladů
-                    if (isset($ints[$a - $n]) || isset($ints[$n - $a])) {
+                foreach ($operands as $a => $_) {
+                    // n = a − b nebo n = a + b pro dvě hodnoty a, b z podkladů
+                    if (isset($operands[$a - $n]) || isset($operands[$n - $a])) {
                         $ok = true;
                         break;
                     }
@@ -451,6 +514,37 @@ TXT;
             }
         }
         return $missing;
+    }
+
+    /**
+     * Je ve věcném textu jméno předkladatele? Hledá se celé jméno („Karel Vzorný“ v libovolném pádě) kdekoli
+     * a samotné příjmení jen uprostřed věty, kde velké písmeno znamená vlastní jméno. Na začátku věty se samotné
+     * příjmení nehledá: „Nová pravidla“ nebo „Výbor by rozhodoval“ nejsou poslanec Novák ani Výborný.
+     */
+    public static function mentionsAuthor(string $text, string $author): bool
+    {
+        $words = preg_split('~\s+~u', trim($author), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if (count($words) < 2) {
+            return false;
+        }
+        // kmen pro skloňování: příjmení na souhlásku celé („Novák“ → Nováka, Novákem), jinak bez koncové samohlásky
+        $stem = function (string $word): string {
+            $base = preg_match('~[aáeéěiíoóuúůyý]$~ui', $word) ? mb_substr($word, 0, -1) : $word;
+            return mb_strlen($base) >= 3 ? $base : $word;
+        };
+        $first = preg_quote($stem($words[0]), '~');
+        foreach (array_slice($words, 1) as $surname) {
+            if (mb_strlen($surname) < 3) {
+                continue;
+            }
+            $s = preg_quote($stem($surname), '~') . '\p{L}{0,4}(?![\p{L}])';
+            // jméno a příjmení vedle sebe, nebo příjmení s velkým písmenem po malém slově či čárce (ne na začátku věty)
+            if (preg_match('~(?<![\p{L}])' . $first . '\p{L}{0,4}\s+' . $s . '~u', $text)
+                || preg_match('~[\p{Ll}\d,;)]\s+' . $s . '~u', $text)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function shorten(string $text, int $max): string

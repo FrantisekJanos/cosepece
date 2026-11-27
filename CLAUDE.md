@@ -63,6 +63,7 @@ HLIDAC_TOKEN=… php bin/ai.php --remote=https://web.cz   # fronta z hostingu (a
 php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.verify_min znovu posoudí Sonnet
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
+php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
 ```
@@ -103,7 +104,9 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
                    (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele; odmítnutý výsledek
                    se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
-                   v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní). Po změně promptu zvyš PnPractice::VERSION
+                   v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní; počitadla patří
+                   k verzi praxe_try_v, po zvýšení VERSION se nepoužijí). Čísla paragrafů a zákonů nejsou hodnoty
+                   ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Po změně promptu zvyš PnPractice::VERSION
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),

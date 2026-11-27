@@ -274,7 +274,9 @@ TXT;
                 return;
             }
         }
-        $result['citace'] = self::verifyQuotes((array)($result['citace'] ?? []), PnText::normativePart((string)$text));
+        // nejvýš 10 citací a jen text: delší seznam nebo jiný typ by jen stál čas, případně skončil chybou typu
+        $quotes = array_slice(array_values(array_filter(is_array($result['citace'] ?? null) ? $result['citace'] : [], 'is_string')), 0, 10);
+        $result['citace'] = self::verifyQuotes($quotes, PnText::normativePart((string)$text));
         $result = self::sanitize($result);
         // opakovaný běh rychlého modelu u hraničního hodnocení: platí medián běhů a rozbor z běhu,
         // jehož závažnost je mediánu nejblíž (#7 bod 7)
@@ -337,6 +339,18 @@ TXT;
         // - titulek a perex pro homepage držíme krátké.
         // Každý zásah zapíšeme do „upravy“, aby byl na webu dohledatelný.
         $notes = [];
+        // textová pole musí být text: pole nebo číslo od modelu (nebo od klienta s tokenem) by na stránce tisku
+        // skončilo chybou typu; cokoli jiného než text se zahodí, délka má strop
+        foreach (['titulek' => 400, 'perex' => 600, 'shrnuti' => 600, 'duvod' => 500, 'zpetnost_smer' => 60] as $field => $max) {
+            if (array_key_exists($field, $result)) {
+                $result[$field] = is_string($result[$field]) ? mb_substr($result[$field], 0, $max) : '';
+            }
+        }
+        foreach (['citace', 'jine_zakony', 'upravy'] as $field) {
+            if (array_key_exists($field, $result)) {
+                $result[$field] = array_values(array_filter(is_array($result[$field]) ? $result[$field] : [], 'is_string'));
+            }
+        }
         $direction = (string)($result['zpetnost_smer'] ?? 'neni');
         $score = max(0, min(10, (int)($result['zavaznost'] ?? 0)));
         if ($direction === 've_prospech_verejnosti' && $score > 3) {

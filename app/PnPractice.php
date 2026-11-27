@@ -9,7 +9,9 @@
 //
 // Pojistky (sanitize): citace musí být doslova v textu změn, čísla musí být v podkladech (povolen je jen součet
 // nebo rozdíl dvou čísel z textu), žádná hodnoticí slova, žádné jméno předkladatele. Co pojistkou neprojde,
-// se neuloží a zkusí se znovu (nejvýš praxe_tries pokusů). Modelový příklad smí napsat jen silnější model.
+// se neuloží a zkusí se znovu (nejvýš praxe_tries pokusů). Výpadek modelu nebo spojení (vyčerpaný limit
+// předplatného, časový limit) se mezi tyto pokusy nepočítá: má vlastní počitadlo praxe_fails s vyšším stropem
+// a PN s chybou jdou ve frontě až za ty, které chybu nemají. Modelový příklad smí napsat jen silnější model.
 
 declare(strict_types=1);
 
@@ -81,6 +83,8 @@ TXT;
             // silnější model přepíše vysvětlení u PN se závažností od této hodnoty nebo s příznakem pravidel
             'verify_min' => (int)($cfg['praxe_verify_min'] ?? 4),
             'tries' => max(1, (int)($cfg['praxe_tries'] ?? 3)),
+            // kolikrát smí selhat volání modelu nebo spojení, než se PN z fronty vyřadí (výpadek není chyba návrhu)
+            'fails' => max(1, (int)($cfg['praxe_fails'] ?? 10)),
         ];
     }
 
@@ -97,6 +101,7 @@ TXT;
             try {
                 $ok = $this->saveResult($item['id'], $reviewer->callModel($item['prompt'], $model), $model);
             } catch (\Throwable $ex) {
+                // model nebo spojení selhalo: nepočítá se mezi pokusy odmítnuté pojistkou
                 $this->saveError($item['id'], $ex->getMessage());
                 $ok = false;
             }
@@ -106,7 +111,8 @@ TXT;
     }
 
     /**
-     * PN čekající na vysvětlení (bez tisků, které už jsou zákonem), od nejzávažnějších tisků a nejnovějších návrhů.
+     * PN čekající na vysvětlení (bez tisků, které už jsou zákonem), od nejzávažnějších tisků a nejnovějších návrhů;
+     * PN, u kterých poslední pokus skončil chybou, až za ostatními (výpadek tak nezdržuje zbytek fronty).
      * $verify = druhé kolo: silnější model přepíše vysvětlení u PN s nálezem (závažnost ≥ praxe_verify_min nebo
      * příznak pravidel) a smí přidat modelový příklad.
      *
@@ -135,8 +141,9 @@ TXT;
             "SELECT x.id_dokument, x.ct, x.text, t.uplny_nazev, t.nazev FROM pn_text x
              JOIN pn p ON p.id_dokument = x.id_dokument
              JOIN tisky t ON t.ct = x.ct
-             WHERE $where AND x.chars > 0 AND COALESCE(x.praxe_tries, 0) < " . $s['tries'] . " AND t.faze <> 'Vyhlášeno'
-             ORDER BY t.score DESC, p.cas DESC, x.id_dokument DESC LIMIT " . $limit,
+             WHERE $where AND x.chars > 0 AND COALESCE(x.praxe_tries, 0) < " . $s['tries'] . " AND COALESCE(x.praxe_fails, 0) < " . $s['fails'] . "
+                AND t.faze <> 'Vyhlášeno'
+             ORDER BY CASE WHEN x.praxe_error IS NULL THEN 0 ELSE 1 END, t.score DESC, p.cas DESC, x.id_dokument DESC LIMIT " . $limit,
             $params
         );
         $items = [];
@@ -173,18 +180,23 @@ TXT;
         try {
             $clean = self::sanitize($result, (string)$row['text'], $context, (string)$row['osoba'], $model === $verifier);
         } catch (\DomainException $ex) {
-            $this->saveError($id, 'Pojistka: ' . $ex->getMessage());
+            $this->saveError($id, 'Pojistka: ' . $ex->getMessage(), true);
             return false;
         }
-        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0 WHERE id_dokument = ?',
+        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ?',
             [json_encode($clean, JSON_UNESCAPED_UNICODE), $model, date('Y-m-d H:i:s'), self::VERSION, $id]);
         return true;
     }
 
-    public function saveError(int $id, string $message): void
+    /**
+     * Zapíše neúspěšný pokus; dosavadní vysvětlení zůstává. $rejected = výsledek odmítly pojistky (počitadlo
+     * praxe_tries, po praxe_tries odmítnutích se PN z fronty vyřadí). Jinak jde o výpadek modelu nebo spojení
+     * (počitadlo praxe_fails se stropem praxe_fails): ten o návrhu nic neříká, proto má vlastní, vyšší strop.
+     */
+    public function saveError(int $id, string $message, bool $rejected = false): void
     {
-        // dosavadní vysvětlení zůstává; po praxe_tries neúspěších se PN z fronty vyřadí
-        $this->db->run('UPDATE pn_text SET praxe_error = ?, praxe_tries = COALESCE(praxe_tries, 0) + 1 WHERE id_dokument = ?',
+        $counter = $rejected ? 'praxe_tries' : 'praxe_fails';
+        $this->db->run("UPDATE pn_text SET praxe_error = ?, $counter = COALESCE($counter, 0) + 1 WHERE id_dokument = ?",
             [mb_substr(Http::redact($message), 0, 500), $id]);
     }
 

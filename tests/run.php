@@ -3240,6 +3240,35 @@ check('v praxi: silnější model přepíše vysvětlení a smí přidat příkl
 check('v praxi: opožděný výsledek rychlého modelu vysvětlení silnějšího modelu nepřepíše',
     [$practice->saveResult(99951, array_replace($pxResult, ['v_praxi' => 'Pozdní výsledek s 5 000 000 Kč.']), 'claude-haiku-5-5'), $pxRow(99951)['praxe_model']], [true, 'claude-sonnet-5-5']);
 check('v praxi: skóre tisku se nemění', (int)db()->value('SELECT score FROM tisky WHERE ct = 9950'), $pxScore);
+// výpadek modelu nebo spojení (limit předplatného, časový limit) se nepočítá mezi odmítnutí pojistkou: má vlastní
+// počitadlo praxe_fails s vyšším stropem a PN s chybou jde ve frontě až za ostatní
+db()->run('UPDATE pn_text SET praxe_tries = 0, praxe_error = NULL WHERE id_dokument = 99952');
+db()->run('UPDATE pn_text SET praxe_at = NULL WHERE id_dokument = 99951');
+$pxFails = fn(int $id): array => array_map('intval', db()->one('SELECT COALESCE(praxe_tries, 0) AS t, COALESCE(praxe_fails, 0) AS f FROM pn_text WHERE id_dokument = ?', [$id]));
+check('v praxi: fronta před výpadkem', array_column($practice->queue(10, 9950), 'id'), [99952, 99951]);
+$practice->saveError(99952, 'claude CLI nedoběhlo včas');
+check('v praxi: výpadek modelu se nepočítá mezi pokusy a PN jde na konec fronty', [$pxFails(99952), array_column($practice->queue(10, 9950), 'id'), db()->value('SELECT praxe_error FROM pn_text WHERE id_dokument = 99952')],
+    [['t' => 0, 'f' => 1], [99951, 99952], 'claude CLI nedoběhlo včas']);
+// běh, ve kterém model nevrátí JSON (např. hláška o vyčerpaném limitu): chyba běhu, počitadlo výpadků
+$pxBadCli = $tmp . '/claude-limit.php';
+file_put_contents($pxBadCli, '#!' . PHP_BINARY . "\n<?php\necho json_encode(['type' => 'result', 'is_error' => false, 'result' => 'Usage limit reached']);\n");
+chmod($pxBadCli, 0755);
+$pxLimited = new Hlidac\PnPractice(db(), ['ai' => ['cli_path' => $pxBadCli] + $pxConfig['ai']] + $pxConfig);
+check('v praxi: běh při výpadku modelu', [$pxLimited->run(10, 9950), $pxFails(99951), $pxFails(99952)], [['reviewed' => 0, 'errors' => 2], ['t' => 0, 'f' => 1], ['t' => 0, 'f' => 2]]);
+for ($i = 0; $i < 8; $i++) {
+    $practice->saveError(99952, 'výpadek');
+}
+check('v praxi: po deseti výpadcích se PN z fronty vyřadí (strop praxe_fails)', [$pxFails(99952), array_column($practice->queue(10, 9950), 'id'),
+    array_column((new Hlidac\PnPractice(db(), ['ai' => ['praxe_fails' => 20] + $pxConfig['ai']] + $pxConfig))->queue(10, 9950), 'id')],
+    [['t' => 0, 'f' => 10], [99951], [99952, 99951]]);
+$pxOk6 = array_replace($pxResult, ['po' => 'Kauce by byla 6 000 000 Kč.', 'v_praxi' => 'Agentura by složila 6 000 000 Kč.', 'pred' => null, 'priklad' => null,
+    'citace' => ['V čl. I bodě 3 se částka „1 000 000 Kč“ nahrazuje částkou „6 000 000 Kč“.']]);
+check('v praxi: úspěšné uložení obě počitadla vynuluje', [$practice->saveResult(99952, $pxOk6, 'claude-haiku-5-5'), $pxFails(99952), db()->value('SELECT praxe_error FROM pn_text WHERE id_dokument = 99952')],
+    [true, ['t' => 0, 'f' => 0], null]);
+check('v praxi: odmítnutí pojistkou dál počítá praxe_tries', [$practice->saveResult(99952, array_replace($pxOk6, ['v_praxi' => 'Agentura by platila 77 777 Kč.']), 'claude-haiku-5-5'), $pxFails(99952)],
+    [false, ['t' => 1, 'f' => 0]]);
+db()->run('UPDATE pn_text SET praxe_json = NULL, praxe_model = NULL, praxe_at = NULL, praxe_error = NULL, praxe_fails = 0, praxe_tries = 0 WHERE id_dokument = 99952');
+db()->run('UPDATE pn_text SET praxe_fails = 0, praxe_error = NULL WHERE id_dokument = 99951');
 db()->run("UPDATE pn_text SET praxe_at = NULL, praxe_tries = 0 WHERE ct = 9950");
 db()->run("UPDATE tisky SET faze = 'Vyhlášeno' WHERE ct = 9950");
 check('v praxi: vyhlášené zákony se nevysvětlují, vypnutý průchod frontu nemá', [$practice->queue(10, 9950),

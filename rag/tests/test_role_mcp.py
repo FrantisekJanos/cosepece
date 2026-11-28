@@ -369,13 +369,30 @@ def test_opravneni_na_tabulky_odpovidaji_vyctu(superuser_conn):
         """SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
            WHERE c.relkind IN ('r', 'v', 'm', 'p') AND n.nspname IN ('public', 'mcp')
              AND has_table_privilege('mcp_ro', c.oid, 'SELECT')""")}
-    ocekavane = {t if "." in t else f"public.{t}" for t in role.TABULKY_CTENI + role.MCP_NAVIC}
+    ocekavane = {t if "." in t else f"public.{t}" for t in role.TABULKY_CTENI + role.MCP_NAVIC
+                 if t not in role.MCP_SLOUPCE}   # tabulky jen s vybranými sloupci nemají SELECT na celou tabulku
     assert citelne == ocekavane
     necitelne = superuser_conn.execute(
         """SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
            WHERE c.relkind IN ('r', 'v', 'm', 'p') AND n.nspname = ANY(%s)
              AND NOT has_table_privilege('mcp_ro', c.oid, 'SELECT')""", (list(role.SCHEMATA_CTENI),)).fetchall()
     assert necitelne == []
+
+
+def test_sync_beh_jen_vybrane_sloupce(superuser_conn, mcp_ro_conn):
+    sloupce = {r[0]: r[1] for r in superuser_conn.execute(
+        """SELECT column_name, has_column_privilege('mcp_ro', 'public.sync_beh', column_name, 'SELECT')
+           FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sync_beh'""")}
+    assert {c for c, smi in sloupce.items() if smi} == {"id", "zacatek", "konec", "ok"}
+    assert sloupce["chyba"] is False and sloupce["vysledek"] is False
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        mcp_ro_conn.execute("SELECT chyba FROM sync_beh")
+
+
+def test_pohledy_jsou_security_barrier(superuser_conn):
+    for v in ("mcp.meta_verejne", "mcp.reel_state_verejne"):
+        moznosti = _jedna(superuser_conn, "SELECT reloptions FROM pg_class WHERE oid = %s::regclass", v)
+        assert "security_barrier=true" in (moznosti or []), v
 
 
 # ---------------------------------------------------------------- funkce SECURITY DEFINER
@@ -395,17 +412,36 @@ def test_zapis_a_pocet_volani(mcp_ro_conn, prostredi):
     assert rw(mcp_ro_conn, "SELECT mcp.volani_od(%s, now() + interval '1 minute')", prostredi["platny"]) == 0
 
 
+def test_zapis_volani_jen_pro_platny_token_nebo_null(mcp_ro_conn, superuser_conn, prostredi):
+    """Neexistující ani zrušený token se nezapíše a volani_od pro něj vrací 0; NULL (bez tokenu) se zapíše."""
+    neexistuje = _jedna(superuser_conn, "SELECT coalesce(max(id), 0) + 1000 FROM mcp.token")
+    superuser_conn.commit()
+    pocet = "SELECT count(*) FROM mcp.volani WHERE token_id = %s"
+    pred_zruseny = _jedna(superuser_conn, pocet, prostredi["zruseny"])
+    pred_null = _jedna(superuser_conn, "SELECT count(*) FROM mcp.volani WHERE token_id IS NULL AND nastroj = 'test8b'")
+    superuser_conn.commit()
+    for tid in (neexistuje, prostredi["zruseny"], None):
+        rw(mcp_ro_conn, "SELECT mcp.zapis_volani(%s, 'test8b', 1, false)", tid)
+    assert _jedna(superuser_conn, pocet, neexistuje) == 0
+    assert _jedna(superuser_conn, pocet, prostredi["zruseny"]) == pred_zruseny
+    assert _jedna(superuser_conn, "SELECT count(*) FROM mcp.volani WHERE token_id IS NULL AND nastroj = 'test8b'")         == pred_null + 1
+    superuser_conn.execute("INSERT INTO mcp.volani (token_id, nastroj, ms) VALUES (%s, 'test8b', 1)",
+                           (prostredi["zruseny"],))
+    superuser_conn.commit()
+    assert rw(mcp_ro_conn, "SELECT mcp.volani_od(%s, now() - interval '1 minute')", prostredi["zruseny"]) == 0
+
+
 def test_funkce_jsou_zamcene(superuser_conn):
     for f in ("mcp.over_token(text)", "mcp.zapis_volani(int,text,int,boolean)", "mcp.volani_od(int,timestamptz)",
               "rag.pricti_dotaz()"):
         r = superuser_conn.execute("SELECT prosecdef, proconfig FROM pg_proc WHERE oid = %s::regprocedure",
                                    (f,)).fetchone()
-        assert r[0] is True and r[1][0].startswith("search_path=pg_catalog, "), f
+        assert r[0] is True and r[1][0].startswith("search_path=pg_catalog, ") and r[1][0].endswith(", pg_temp"), f
         assert _jedna(superuser_conn, "SELECT has_function_privilege('public', %s, 'EXECUTE')", f) is False, f
         assert _jedna(superuser_conn, "SELECT has_function_privilege('mcp_ro', %s, 'EXECUTE')", f) is True, f
     for f in ("mcp.over_token(text)", "mcp.zapis_volani(int,text,int,boolean)", "mcp.volani_od(int,timestamptz)"):
         r = superuser_conn.execute("SELECT proconfig FROM pg_proc WHERE oid = %s::regprocedure", (f,)).fetchone()
-        assert "search_path=pg_catalog, mcp" in r[0], f
+        assert "search_path=pg_catalog, mcp, pg_temp" in r[0], f
 
 
 # ---------------------------------------------------------------- role

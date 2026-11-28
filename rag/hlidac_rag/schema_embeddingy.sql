@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS rag.dotazy_den (
 );
 
 CREATE OR REPLACE FUNCTION rag.pricti_dotaz() RETURNS int
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, rag AS $$
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, rag, pg_temp AS $$
   INSERT INTO rag.dotazy_den (den, pocet) VALUES ((now() AT TIME ZONE 'utc')::date, 1)
   ON CONFLICT (den) DO UPDATE SET pocet = dotazy_den.pocet + 1
   RETURNING pocet

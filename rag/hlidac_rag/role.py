@@ -39,10 +39,12 @@ TABULKY_CTENI: tuple[str, ...] = (
 SCHEMATA_CTENI: tuple[str, ...] = ("steno", "texty", "rag")
 # co čte jen MCP (nástroj stav_dat); meta a reel_state obsahují tajemství, proto jen pohledy z schema.sql
 MCP_NAVIC: tuple[str, ...] = (
-    "sync_beh",                # stav_dat (historie běhů synchronizace)
+    "sync_beh",                # stav_dat (historie běhů synchronizace); jen sloupce z MCP_SLOUPCE
     "mcp.meta_verejne",        # stav_dat: klíče steno_last_result, last_sync, ai_queue_seen_at
     "mcp.reel_state_verejne",  # stav_dat: klíč hlidani_vystrahy
 )
+# tabulky, ze kterých role smí číst jen některé sloupce (sync_beh.vysledek a .chyba mají texty chyb s adresami)
+MCP_SLOUPCE: dict[str, tuple[str, ...]] = {"sync_beh": ("id", "zacatek", "konec", "ok")}
 # funkce SECURITY DEFINER (schema.sql, schema_embeddingy.sql), které MCP volá
 MCP_FUNKCE: tuple[str, ...] = (
     "mcp.over_token(text)",
@@ -62,6 +64,7 @@ class Role:
     promenna_hesla: str
     spojeni: int
     tabulky: tuple[str, ...]
+    sloupce: dict[str, tuple[str, ...]]
     schemata: tuple[str, ...]
     funkce: tuple[str, ...]
     nastaveni: dict[str, str] = field(default_factory=dict)
@@ -70,7 +73,7 @@ class Role:
 ROLE: dict[str, Role] = {
     "mcp_ro": Role(
         jmeno="mcp_ro", promenna_hesla="MCP_DB_PASSWORD", spojeni=MCP_SPOJENI,
-        tabulky=TABULKY_CTENI + MCP_NAVIC, schemata=SCHEMATA_CTENI, funkce=MCP_FUNKCE,
+        tabulky=TABULKY_CTENI + MCP_NAVIC, sloupce=MCP_SLOUPCE, schemata=SCHEMATA_CTENI, funkce=MCP_FUNKCE,
         # na úrovni role, ne SET LOCAL: rollback po chybě by nastavení transakce zrušil
         nastaveni={"default_transaction_read_only": "on", "statement_timeout": "15s",
                    "idle_in_transaction_session_timeout": "30s"},
@@ -141,7 +144,11 @@ def _nastav_roli(conn: psycopg.Connection, r: Role, heslo: str) -> list[str]:
         if conn.execute("SELECT to_regclass(%s)", (t if "." in t else f"public.{t}",)).fetchone()[0] is None:
             prikazy.append(f"-- přeskočeno: {t} neexistuje (po jejím založení spusťte znovu)")
             continue
-        ex(sql.SQL("GRANT SELECT ON {} TO {}").format(_tabulka(t), ident))
+        if t in r.sloupce:
+            sl = sql.SQL(", ").join(sql.Identifier(c) for c in r.sloupce[t])
+            ex(sql.SQL("GRANT SELECT ({}) ON {} TO {}").format(sl, _tabulka(t), ident))
+        else:
+            ex(sql.SQL("GRANT SELECT ON {} TO {}").format(_tabulka(t), ident))
     jen_data = sql.SQL(", ").join(sql.Identifier(s) for s in r.schemata)
     ex(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(jen_data, ident))
     ex(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA {} GRANT SELECT ON TABLES TO {}").format(jen_data, ident))

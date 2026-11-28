@@ -896,3 +896,36 @@ def test_r5_text_zakona_s_institucemi_projde():
     for t in (f"Zákon říká: „{X}“ [3].", f"Paragraf 1 zákona č. 218/2000 Sb. stanoví: „{X}“ [3].",
               f"Ústava České republiky v čl. 1 stanoví: „{X}“ [3]."):
         assert over_odstavec(t, CEL, lambda n: f"§ 1 {X}.", jm).citaty[0]["shoda"] == "presne", t
+
+
+# --- final review I5: mluvčí mimo DB, obměny parkovaného nálezu úlohy 13 ---------------------------
+# Server tvrdí jen „zaznělo v projevu X“; při pochybnosti, kdo výrok řekl, platí „neověřeno“.
+
+@pytest.mark.parametrize("t", [
+    f"Kříž: „{X}“ [1]",                                                  # 1 jméno a dvojtečka bez slovesa
+    f"Kříž pak na schůzi k tomu řekl: „{X}“ [1]",                        # 2 sloveso dál než tři slova
+    f"Kříži, řekl jste: „{X}“ [1]",                                      # 3 oslovení (vokativ + čárka)
+    f"KŘÍŽ ŘEKL: „{X}“ [1]",                                             # 4 velkými písmeny
+    # obměny stejného druhu
+    f"Kříž k tomu: „{X}“ [1].",                                          # pár slov bez slovesa
+    f"Kříž, ministr zemědělství: „{X}“ [1].",
+    f"Kříž včera v rozpravě ke státnímu rozpočtu na příští rok řekl: „{X}“ [1].",
+    f"Kříži, vy jste tvrdil: „{X}“ [1].",
+    f"PAVEL KŘÍŽ: „{X}“ [1]",
+    f"KŘÍŽ PAK NA SCHŮZI ŘEKL: „{X}“ [1]",
+    f"Kříž stejně jako Novák řekl: „{X}“ [1].",
+])
+def test_i5_mluvci_mimo_db_obmeny_jsou_neovereno(t):
+    v = over_odstavec(t, NOVAK, lambda n: VLASTNI, jm_g)
+    assert [c["shoda"] for c in v.citaty] == ["neovereno"], t
+    assert ZNACKA_NEOVERENO in v.text and v.citaty[0]["zaznelo_v"] is None
+
+
+@pytest.mark.parametrize("t", [
+    f"Novák: „{X}“ [1]",                                                 # řečník sám
+    f"NOVÁK ŘEKL: „{X}“ [1]",
+    f"Novák pak na schůzi k tomu řekl: „{X}“ [1]",
+    f"Novák, ministr financí: „{X}“ [1].",
+])
+def test_i5_recnik_v_tychz_tvarech_projde(t):
+    assert shoda(t) == ["presne"], t

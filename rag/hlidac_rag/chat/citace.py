@@ -814,21 +814,46 @@ class _Kontext:
     def _nezname_jmeno(self, k: int, o: _Osoba | None) -> bool:
         """Úsek jmenuje osobu, kterou jmena_osob nezná (ministr mimo Sněmovnu, zahraniční politik): slovo
         s velkým písmenem uprostřed věty, dvě taková slova za sebou (i na začátku věty), nebo u řečníka o první
-        slovo věty, za kterým do tří slov stojí sloveso mluvení („Kříž řekl“, „Trump prohlásil“, „Kříž said“).
-        Nepočítají se běžná slova, instituce, tituly, role, zkratky, iniciály a jméno řečníka o."""
+        slovo věty, za kterým v úseku stojí sloveso mluvení („Kříž řekl“, „Kříž pak na schůzi řekl“, „Kříž said“),
+        hned čárka nebo dvojtečka („Kříž: …“, oslovení „Kříži, řekl jste“) nebo nejvýš pár slov a dvojtečka
+        („Kříž k tomu: …“). Slovo VELKÝMI PÍSMENY se posuzuje stejně, jen na začátku věty (uprostřed věty je
+        to zkratka: DPH, ČNB). Nepočítají se běžná slova, instituce, tituly, role, zkratky, iniciály a jméno
+        řečníka o. Při pochybnosti platí „neověřeno“ (server tvrdí jen, že znění v projevu řečníka zaznělo)."""
         t = self._tokeny_useku(k)
         nezname = [self._nezname(w, o) for w in t]
         for j, w in enumerate(t):
-            if not nezname[j]:
+            velke = o is not None and self._nezname_velke(w, o)
+            if not (nezname[j] or velke):
                 continue
             if not self._na_zacatku_vety(k, w):
+                if velke and not nezname[j]:
+                    continue        # zkratka uprostřed věty
                 return True
             dalsi = j + 1 if j + 1 < len(t) and self.s[w.do:t[j + 1].od].isspace() else None
-            if dalsi is not None and nezname[dalsi]:
-                return True         # „Pavel Kříž řekl“
-            if o is not None and self._mluveni_za(t, j):
-                return True         # „Kříž řekl“ (u textu zákona hlídá sloveso už _OSOBA_SLOVA)
+            if dalsi is not None and (nezname[dalsi] or (velke and self._nezname_velke(t[dalsi], o))):
+                return True         # „Pavel Kříž řekl“, „PAVEL KŘÍŽ“
+            if o is not None and self._mluvci_na_zacatku(k, t, j, o):
+                return True
         return False
+
+    def _nezname_velke(self, w: _Token, o: _Osoba) -> bool:
+        """Slovo VELKÝMI PÍSMENY, které po převodu na malá vypadá jako neznámé jméno („KŘÍŽ“, ne „NOVÁK“, „ANO“)."""
+        p = w.puvodni
+        if len(p) < 2 or not p.isupper() or p in _STRANY or p in o.klub:
+            return False
+        return self._nezname(_Token(p.capitalize(), w.male, w.holy, w.od, w.do), o)
+
+    def _mluvci_na_zacatku(self, k: int, t: list[_Token], j: int, o: _Osoba) -> bool:
+        """Slovo j na začátku věty je mluvčí: hned za ním čárka nebo dvojtečka; nebo úsek za ním nejmenuje
+        řečníka o a má sloveso mluvení, případně končí dvojtečkou do čtyř slov („Řečeno slovy Nováka:“ projde)."""
+        if self.s[t[j].do:t[j + 1].od if j + 1 < len(t) else self.useky[k][1]].strip()[:1] in (",", ":"):
+            return True
+        if any(x.puvodni[0].isupper() and o.tvar(x.male) not in (None, "1") for x in t[j + 1:]):
+            return False        # řečník v rámci jiného pádu: „Řečeno slovy Nováka:“ (předmět hlídá _rozbor_useku)
+        if any(_MLUVENI.fullmatch(x.holy) or x.holy in _MLUVENI_BEZ_RODU for x in t[j + 1:]):
+            return True
+        konec = self.s[t[-1].do:self.useky[k][1]].strip()
+        return konec.startswith(":") and len(t) - j <= 4
 
     def _nezname(self, w: _Token, o: _Osoba | None) -> bool:
         p, h = w.puvodni, w.holy

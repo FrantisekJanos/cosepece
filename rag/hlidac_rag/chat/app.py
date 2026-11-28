@@ -166,6 +166,7 @@ class _Priprava:
     messages: list[dict]
     registr: RegistrTahu
     model: str
+    je_eval: bool = False
 
 
 class Sluzba:
@@ -645,7 +646,7 @@ class Sluzba:
         zid, kod = await self._u("zaloz_odpoved", kid, d["text"].strip(), {"znacka": zn, **dataclasses.asdict(k)})
         beh = BehTahu(secrets.token_urlsafe(16), rid, self.odpojeni_s)
         self.tahy[beh.id] = beh
-        return _Priprava(beh, rid, token, otisk, kid, zid, kod, messages, registr, rozpocet.vyber_model(n, u))
+        return _Priprava(beh, rid, token, otisk, kid, zid, kod, messages, registr, rozpocet.vyber_model(n, u), je_eval)
 
     # --- běh tahu ---
 
@@ -676,6 +677,7 @@ class Sluzba:
         vystup = Vystup(p.registr, over)
         llm = _LLMVTahu(self.llm, time.monotonic() + LIMIT_TAHU_S, lambda r: self._zapis_odhad(p, r))
         konec: dict = {"stav": "chyba", "model": p.model, "text": ""}
+        nastroje: list[str] = []      # jen pro eval (konec.eval)
         mekky = asyncio.get_running_loop().call_later(MEKKY_LIMIT_S, beh.prerusit.set)
         try:
             beh.pridej("start", {"konverzace_id": p.konverzace_id, "zprava_id": p.zprava_id, "tah_id": beh.id})
@@ -697,6 +699,7 @@ class Sluzba:
                             elif u.typ == "volani_llm":
                                 await self._zapis_llm(p, u.data)
                             elif u.typ == "volani_nastroje":
+                                nastroje.append(u.data["nazev"] or "")
                                 await self._u("zapis_volani_nastroje", zprava_id=p.zprava_id,
                                               nastroj=u.data["nazev"] or "", argumenty=u.data["argumenty"],
                                               ms=u.data["ms"], znaku=round(u.data["tokenu"] * ZNAKU_NA_TOKEN),
@@ -710,7 +713,7 @@ class Sluzba:
                 konec = {**konec, "stav": "chyba"}
                 if llm.rozbehnute is not None:      # zrušené volání mohlo být účtováno
                     await self._zapis_odhad(p, llm.rozbehnute)
-            await self._dokonci(p, vystup, konec)
+            await self._dokonci(p, vystup, konec, nastroje)
         except Exception:
             log.exception("tah %s selhal", beh.id)
             try:
@@ -743,7 +746,7 @@ class Sluzba:
                       model=r["model"], vstup=0, vystup=r["vystup"], cache_cteni=0, cache_zapis=r["vstup"],
                       cena_usd=cena, ms=int((time.monotonic() - r["start"]) * 1000), stop_reason=STOP_ODHAD)
 
-    async def _dokonci(self, p: _Priprava, vystup: Vystup, konec: dict) -> None:
+    async def _dokonci(self, p: _Priprava, vystup: Vystup, konec: dict, nastroje: list[str]) -> None:
         beh, stav = p.beh, konec["stav"]
         if stav == "odmitnuto":
             # už odeslaný text se stahuje (widget ho nahradí systémovou hláškou) a do historie nic nejde
@@ -769,7 +772,10 @@ class Sluzba:
         ted = self.hodiny()
         u = await self._u("utrata", p.relace_id, p.otisk, ted)
         self._hlid_rozpocet(u, ted)
-        beh.pridej("konec", {"kod": p.kod, "stav": stav, "zbyva_otazek": rozpocet.zbyva_otazek(self.n, u)})
+        zaver = {"kod": p.kod, "stav": stav, "zbyva_otazek": rozpocet.zbyva_otazek(self.n, u)}
+        if p.je_eval:       # chat-eval (úloha 19) potřebuje cenu a volané nástroje; veřejnému widgetu je nedáváme
+            zaver["eval"] = {"cena_usd": konec.get("cena_usd", 0.0), "nastroje": nastroje}
+        beh.pridej("konec", zaver)
 
 
 class _LLMVTahu:

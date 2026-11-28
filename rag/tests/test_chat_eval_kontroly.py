@@ -74,6 +74,8 @@ ZAKLAD = {"id": "X1", "sada": "zaklad", "kontext": None, "tahy": [{"text": "Otá
 def test_validace_prijme_nepovinne_klice(tmp_path):
     s = dict(ZAKLAD, jen_endpoint=True, kour=True, kontext={"typ": "tisk", "ct": 221})
     assert nacti_scenare(_zapis(tmp_path, [s]))[0]["kour"] is True
+    t = dict(ZAKLAD, tahy=[{"text": "x", "kour": True}])
+    assert nacti_scenare(_zapis(tmp_path, [t]))[0]["tahy"][0]["kour"] is True
 
 
 @pytest.mark.parametrize("zmena, hlaska", [
@@ -87,6 +89,7 @@ def test_validace_prijme_nepovinne_klice(tmp_path):
     ({"tahy": [{"text": "x", "neznamy": 1}]}, "neznamy"),
     ({"kontext": {"ct": 221}}, "typ"),
     ({"kour": "ano"}, "kour"),
+    ({"tahy": [{"text": "x", "kour": "ano"}]}, "kour"),
     ({"navic": 1}, "navic"),
 ])
 def test_validace_odmitne_chybny_format(tmp_path, zmena, hlaska):

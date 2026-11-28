@@ -1,7 +1,9 @@
 """Programové kontroly odpovědí chatu a načtení eval scénářů (F0 i chat-eval přes endpoint).
 
 Scénář: {"id", "sada", "kontext": {...}|null, "tahy": [tah, ...], "rucne", nepovinně "jen_endpoint", "kour"}.
-Tah: {"text", nepovinně "kontext", "must", "must_not", "must_re", "nastroje_any", "cituje", "max_cena_usd"}.
+Tah: {"text", nepovinně "kontext", "must", "must_not", "must_re", "nastroje_any", "cituje", "max_cena_usd", "kour"}.
+`kour: true` na tahu = tah patří do kouřového evalu přes endpoint (chat_eval --sada kour); scénář se pustí do posledního
+takového tahu (dřívější tahy nesou kontext konverzace).
 
 - must / must_not: podřetězec bez ohledu na diakritiku a velikost písmen.
 - must_re: regulární výraz, stačí shoda v původním textu nebo v textu bez diakritiky (malými písmeny).
@@ -40,7 +42,7 @@ _ODKAZ = re.compile(r"\[\d+\]")
 _KLICE_SCENARE = {"id", "sada", "kontext", "tahy", "rucne", "jen_endpoint", "kour"}
 _POVINNE_SCENARE = {"id", "sada", "kontext", "tahy", "rucne"}
 _KLICE_TAHU = {"text", "kontext", "must", "must_not", "must_re", "must_not_re", "nastroje_any", "cituje",
-               "max_cena_usd"}
+               "max_cena_usd", "kour"}
 
 
 @dataclass
@@ -137,6 +139,8 @@ def _over_tah(kde: str, tah) -> None:
     cena = tah.get("max_cena_usd")
     if cena is not None and (isinstance(cena, bool) or not isinstance(cena, (int, float)) or cena <= 0):
         raise _chyba(kde, "max_cena_usd musí být kladné číslo nebo null")
+    if "kour" in tah and not isinstance(tah["kour"], bool):
+        raise _chyba(kde, "kour tahu musí být true nebo false")
 
 
 def _over_scenar(s) -> None:

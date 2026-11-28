@@ -107,14 +107,15 @@ def test_before_send_heslo_v_promennych_framu():
     assert "SECRETPW123" not in repr(out)
 
 
-def test_init_vypina_lokalni_promenne(monkeypatch):
+@pytest.mark.parametrize("komponenta", ["mcp", "chat"])     # chat: text dotazu v lokálních proměnných _zprava
+def test_init_vypina_lokalni_promenne(monkeypatch, komponenta):
     import sentry_sdk
 
     zachyceno = {}
     monkeypatch.setenv("SENTRY_DSN", "https://abc123@o1.ingest.de.sentry.io/456")
     monkeypatch.setattr(sentry_sdk, "init", lambda **kw: zachyceno.update(kw))
     monkeypatch.setattr(sentry_sdk, "set_tag", lambda *a, **k: None)
-    assert sentry.init("mcp") is True
+    assert sentry.init(komponenta) is True
     assert zachyceno["include_local_variables"] is False
     assert zachyceno["send_default_pii"] is False
 

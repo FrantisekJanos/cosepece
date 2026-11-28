@@ -43,6 +43,36 @@ def test_zapnuto_a_enumy():
         nacti({"CHAT_ZAPNUTO": "mozna"})
 
 
+@pytest.mark.parametrize("hodnota", ["nan", "inf", "-inf", "-0.01"])
+def test_float_odmitne_nan_inf_a_zaporne(hodnota):
+    for jmeno in ("CHAT_ROZPOCET_DEN_USD", "CHAT_STROP_TAHU_USD", "CHAT_PODIL_HODINA", "CHAT_TURNSTILE_HODIN"):
+        with pytest.raises(ValueError, match=jmeno):
+            nacti({jmeno: hodnota})
+
+
+def test_pocty_kol_a_tahu_alespon_jedna_ostatni_int_nezaporne():
+    for jmeno in ("CHAT_MAX_KOL", "CHAT_MAX_TAHU_KONVERZACE"):
+        with pytest.raises(ValueError, match=jmeno):
+            nacti({jmeno: "0"})
+    with pytest.raises(ValueError, match="CHAT_ZPRAV_RELACE_DEN"):
+        nacti({"CHAT_ZPRAV_RELACE_DEN": "-1"})
+    assert nacti({"CHAT_MAX_KOL": "1", "CHAT_STROP_TAHU_USD": "0"}).max_kol == 1
+
+
+def test_effort_jen_ze_seznamu():
+    assert nacti({"CHAT_EFFORT": "xhigh"}).effort == "xhigh"
+    with pytest.raises(ValueError, match="CHAT_EFFORT"):
+        nacti({"CHAT_EFFORT": "vysoky"})
+
+
+def test_hlaska_boolu_vypisuje_prijimane_hodnoty():
+    with pytest.raises(ValueError) as e:
+        nacti({"CHAT_ZAPNUTO": "mozna"})
+    zprava = str(e.value)
+    assert "CHAT_ZAPNUTO" in zprava
+    assert all(h in zprava for h in ("1", "true", "ano", "0", "false", "ne", "off"))
+
+
 def test_cena_sonnet():
     assert cena_usd("claude-sonnet-5-5", vstup=1000, vystup=100) == pytest.approx(0.003)
     assert cena_usd("claude-sonnet-5-5", 0, 0, cache_cteni=10000, cache_zapis=4000) == pytest.approx(0.011)

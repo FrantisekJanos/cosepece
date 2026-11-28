@@ -5,8 +5,13 @@ Neplatná hodnota shodí službu už při startu (`ValueError` se jménem promě
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+_PRAVDA = frozenset({"1", "true", "ano", "yes", "on"})
+_NEPRAVDA = frozenset({"0", "false", "ne", "no", "off"})
+EFFORTY = ("low", "medium", "high", "xhigh", "max")
 
 MODEL_VYCHOZI = "claude-sonnet-5-5"
 
@@ -92,23 +97,32 @@ class Nastaveni:
     karta_jako: str  # tool_result | blok
 
 
-def _hodnota(env: Mapping[str, str], jmeno: str, vychozi, typ):
-    """Přečte proměnnou `jmeno` a převede ji na `typ`; prázdná = výchozí."""
+def _hodnota(env: Mapping[str, str], jmeno: str, vychozi, typ, minimum=0):
+    """Přečte proměnnou `jmeno` a převede ji na `typ`; prázdná = výchozí.
+
+    Čísla musí být konečná a nejméně `minimum` (výchozí 0), jinak by záporný
+    nebo nekonečný strop vypnul ochranu rozpočtu.
+    """
     surove = env.get(jmeno)
     if surove is None or surove.strip() == "":
         return vychozi
     surove = surove.strip()
     try:
         if typ is bool:
-            if surove.lower() in ("1", "true", "ano", "yes", "on"):
+            if surove.lower() in _PRAVDA:
                 return True
-            if surove.lower() in ("0", "false", "ne", "no", "off"):
+            if surove.lower() in _NEPRAVDA:
                 return False
-            raise ValueError("očekáváno 0 nebo 1")
-        if typ is int:
-            return int(surove)
-        if typ is float:
-            return float(surove)
+            raise ValueError(
+                "očekáváno " + ", ".join(sorted(_PRAVDA | _NEPRAVDA))
+            )
+        if typ in (int, float):
+            cislo = typ(surove)
+            if typ is float and not math.isfinite(cislo):
+                raise ValueError("očekáváno konečné číslo")
+            if cislo < minimum:
+                raise ValueError(f"očekáváno alespoň {minimum}")
+            return cislo
         return surove
     except ValueError as e:
         raise ValueError(f"{jmeno}: neplatná hodnota {surove!r} ({e})") from e
@@ -130,7 +144,7 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
         zapnuto=_hodnota(env, "CHAT_ZAPNUTO", False, bool),
         rezim=_vyber(env, "CHAT_REZIM", "skryte", ("skryte", "verejne")),
         model=model,
-        effort=_hodnota(env, "CHAT_EFFORT", p["effort"], str),
+        effort=_vyber(env, "CHAT_EFFORT", p["effort"], EFFORTY),
         model_nouzovy=_hodnota(env, "CHAT_MODEL_NOUZOVY", "", str),
         prah_nouze=_hodnota(env, "CHAT_PRAH_NOUZE", s["prah_nouze"], float),
         rozpocet_den=_hodnota(env, "CHAT_ROZPOCET_DEN_USD", s["rozpocet_den"], float),
@@ -141,7 +155,7 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
         strop_ip=_hodnota(env, "CHAT_STROP_IP_USD", p["strop_ip"], float),
         zprav_relace_min=_hodnota(env, "CHAT_ZPRAV_RELACE_MIN", p["zprav_relace_min"], int),
         zprav_relace_den=_hodnota(env, "CHAT_ZPRAV_RELACE_DEN", p["zprav_relace_den"], int),
-        max_kol=_hodnota(env, "CHAT_MAX_KOL", p["max_kol"], int),
+        max_kol=_hodnota(env, "CHAT_MAX_KOL", p["max_kol"], int, 1),
         rozpocet_vysledku_tokenu=_hodnota(
             env, "CHAT_ROZPOCET_VYSLEDKU_TOKENU", p["rozpocet_vysledku_tokenu"], int
         ),
@@ -152,7 +166,7 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
             env, "CHAT_HISTORIE_MAX_TOKENU", p["historie_max_tokenu"], int
         ),
         max_tahu_konverzace=_hodnota(
-            env, "CHAT_MAX_TAHU_KONVERZACE", p["max_tahu_konverzace"], int
+            env, "CHAT_MAX_TAHU_KONVERZACE", p["max_tahu_konverzace"], int, 1
         ),
         max_znaku_zpravy=_hodnota(env, "CHAT_MAX_ZNAKU_ZPRAVY", s["max_znaku_zpravy"], int),
         karta_max_tokenu=_hodnota(env, "CHAT_KARTA_MAX_TOKENU", s["karta_max_tokenu"], int),

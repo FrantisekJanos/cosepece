@@ -180,7 +180,7 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
             env, "CHAT_MAX_TAHU_KONVERZACE", p["max_tahu_konverzace"], int, 1
         ),
         max_znaku_zpravy=_hodnota(env, "CHAT_MAX_ZNAKU_ZPRAVY", s["max_znaku_zpravy"], int),
-        karta_max_tokenu=_hodnota(env, "CHAT_KARTA_MAX_TOKENU", s["karta_max_tokenu"], int),
+        karta_max_tokenu=_hodnota(env, "CHAT_KARTA_MAX_TOKENU", s["karta_max_tokenu"], int, 1),
         soubeh_celkem=_hodnota(env, "CHAT_SOUBEH_CELKEM", p["soubeh_celkem"], int),
         soubeh_ip=_hodnota(env, "CHAT_SOUBEH_IP", p["soubeh_ip"], int),
         turnstile_zprav=_hodnota(env, "CHAT_TURNSTILE_ZPRAV", p["turnstile_zprav"], int),

@@ -8,6 +8,7 @@ Historie jde jako čistý text (bez bloků tool_use, tool_result a přemýšlen�
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from .registr import Registr
@@ -43,9 +44,19 @@ def _bot(tah: Tah) -> str:
     return text
 
 
+def _bez_znacky(text: str, jmeno: str) -> str:
+    """Text bez otevírací i zavírací značky `jmeno` (bez ohledu na velikost písmen a mezery). Maže se, dokud se text
+    mění: jinak by z vnořené `</data_</data_stranky>stranky>` po jednom průchodu znovu vznikla značka."""
+    vzor = re.compile(rf"<\s*/?\s*{re.escape(jmeno)}\s*>", re.IGNORECASE)
+    while True:
+        cisty = vzor.sub("", text)
+        if cisty == text:
+            return cisty
+        text = cisty
+
+
 def _ohranic(karta: str) -> str:
-    cista = karta.replace("<data_stranky>", "").replace("</data_stranky>", "")
-    return f"<data_stranky>\n{cista}\n</data_stranky>"
+    return f"<data_stranky>\n{_bez_znacky(karta, 'data_stranky')}\n</data_stranky>"
 
 
 def _veta(vynechano: int) -> str:
@@ -91,7 +102,7 @@ def sestav(tahy: list[Tah], otazka: str, znacka: str, karta: str | None, registr
         zpravy.append({"role": "assistant", "content": b})
 
     aktualni = _uzivatel(znacka, otazka)
-    radky = registr.radky()
+    radky = _bez_znacky(registr.radky(), "zdroje_konverzace")   # titulky zdrojů jsou z dat
     if radky:
         aktualni = ("<zdroje_konverzace>\n" + radky + "\n</zdroje_konverzace>\n\n") + aktualni
     if karta is not None and karta_jako == "blok":

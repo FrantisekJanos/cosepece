@@ -100,8 +100,8 @@ def over(conn, k: Kontext) -> Kontext:
 
     Každý typ si nechá jen svá pole (ct, PN a hlasování jen tisk, z jen zákon, pid jen připravované). PN a hlasování,
     které k tisku nepatří nebo neexistují, se zahodí; neexistující tisk = `jina`; pid, který v tabulce připravovaných
-    není, se zahodí. Číslo zákona se jen kontroluje tvarem (stránka zákona existuje i bez tisků). Chyba databáze =
-    `jina`: neověřené číslo do modelu nejde."""
+    není, se zahodí. Číslo zákona se jen kontroluje tvarem (stránka zákona existuje i bez tisků). Jakákoli chyba
+    (databáze, spojení) = `jina`: neověřené číslo do modelu nejde."""
     try:
         if k.typ == "tisk":
             return _over_tisk(conn, k)
@@ -117,6 +117,10 @@ def over(conn, k: Kontext) -> Kontext:
     except psycopg.Error:
         _rollback(conn)
         log.warning("ověření kontextu obrazovky selhalo na chybě databáze", exc_info=True)
+        return Kontext("jina", uzke=k.uzke)
+    except Exception:      # cokoli jiného (rozbité spojení, chyba v kódu): tah pokračuje bez kontextu
+        _rollback(conn)
+        log.exception("ověření kontextu obrazovky selhalo")
         return Kontext("jina", uzke=k.uzke)
 
 

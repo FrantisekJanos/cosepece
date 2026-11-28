@@ -32,10 +32,14 @@ VYSLEDEK_NEZNAMY = "údaj teď nemám"
 # výsledek hlasování v pn_vysledek.hlasovani (app/PnOutcome.php): A přijato, jinak nepřijato
 VYSLEDEK_HLASOVANI = {"A": "přijato", "N": "nepřijato", "R": "nepřijato"}
 
-NAZVY_STRANEK = {
-    "prehled": "přehled (titulní stránka)", "seznam_tisku": "seznam tisků", "zakony": "přehled zákonů",
-    "hledani": "hledání", "upozorneni": "upozornění", "pripravovane": "připravované zákony",
-    "staticka": "informační stránka webu",
+VETY_STRANEK = {
+    "prehled": "Uživatel je na titulní stránce (přehled nálezů).",
+    "seznam_tisku": "Uživatel je na stránce se seznamem tisků.",
+    "zakony": "Uživatel je na stránce s přehledem zákonů.",
+    "hledani": "Uživatel je na stránce hledání.",
+    "upozorneni": "Uživatel je na stránce upozornění.",
+    "pripravovane": "Uživatel je na stránce připravovaných zákonů.",
+    "staticka": "Uživatel je na informační stránce webu.",
 }
 
 
@@ -78,23 +82,43 @@ def _z(n: int) -> str:
 
 
 def _sloz(hlavni: list[str], seznam: list[str], hlavicka: Callable[[int], str] | None,
-          max_tokenu: int) -> tuple[str, int]:
-    """Text karty do max_tokenu a počet ukázaných položek seznamu. Zkracuje se seznam od konce; když se karta
-    nevejde ani bez něj, odříznou se poslední řádky a karta to řekne."""
+          max_tokenu: int) -> tuple[str, int, int]:
+    """Text karty do max_tokenu (>= 1), počet ukázaných položek seznamu a počet zachovaných řádků `hlavni`.
+    Zkracuje se seznam od konce; když se karta nevejde ani bez něj, odříznou se poslední řádky a karta to řekne."""
     for k in range(len(seznam), -1, -1):
         radky = hlavni + ([hlavicka(k)] if hlavicka else []) + seznam[:k]
         text = "\n".join(radky)
         if odhad_tokenu(text) <= max_tokenu:
-            return text, k
-    radky = hlavni + ([hlavicka(0)] if hlavicka else [])
+            return text, k, len(hlavni)
+    radky = list(hlavni)
     while len(radky) > 1 and odhad_tokenu("\n".join(radky + [ZKRACENO])) > max_tokenu:
         radky.pop()
+    zachovano = len(radky)
     text = "\n".join(radky + [ZKRACENO])
     if odhad_tokenu(text) > max_tokenu:   # jediný řádek delší než celá karta (malý strop)
-        text = text[:int(max_tokenu * ZNAKU_NA_TOKEN) - 1] + "…"
-        while odhad_tokenu(text) > max_tokenu:
+        text = text[:max(int(max_tokenu * ZNAKU_NA_TOKEN) - 1, 0)] + "…"
+        while len(text) > 1 and odhad_tokenu(text) > max_tokenu:
             text = text[:-2] + "…"
-    return text, 0
+    return text, 0, zachovano
+
+
+def _sloz_sekce(sekce: list[tuple[list[str], list[Polozka]]], seznam: list[str],
+                hlavicka: Callable[[int], str] | None, max_tokenu: int) -> tuple[str, int, list[Polozka]]:
+    """Jako _sloz nad částmi karty (řádky, položky). Položky části, z níž ořez nenechal ani první řádek, vypadnou:
+    do registru jde jen to, co model v kartě vidí."""
+    hlavni = [r for radky, _ in sekce for r in radky]
+    text, ukazano, zachovano = _sloz(hlavni, seznam, hlavicka, max_tokenu)
+    polozky, od = [], 0
+    for radky, p in sekce:
+        if radky and od < zachovano:
+            polozky += p
+        od += len(radky)
+    return text, ukazano, polozky
+
+
+def _t(hodnota, n: int = 40) -> str:
+    """Pole z databáze na jeden řádek a nejvýš n znaků (i čísla a krátké kódy: data nejsou pod kontrolou karty)."""
+    return _jednoradkove("" if hodnota is None else str(hodnota), n)   # 0 je číslo, ne prázdná hodnota
 
 
 def _hlavicka_seznamu(celkem: int, co: str, jednotka: str, nastroj: str, prazdne: str) -> Callable[[int], str]:
@@ -119,16 +143,17 @@ def _veta(casti: list[str]) -> str:
 def _vysledek_pn(v: dict | None, detail: bool) -> str:
     if not v:
         return VYSLEDEK_NEZNAMY
-    out = f"{v['stav']} ({v.get('popis') or v['stav']})"
-    pismena = [p["pismeno"] for p in v.get("pismena") or [] if p.get("pismeno")]
+    out = f"{_t(v.get('stav'), 20)} ({_t(v.get('popis') or v.get('stav'), 60)})"
+    pismena = [_t(p.get("pismeno"), 10) for p in v.get("pismena") or [] if isinstance(p, dict) and p.get("pismeno")]
     if pismena:
-        out += f"; písmena v souhrnu: {', '.join(pismena)}"
+        out += f"; písmena v souhrnu: {', '.join(pismena[:20])}"
     if detail:
-        hl = [f"č. {h.get('cislo')} ({VYSLEDEK_HLASOVANI.get(h.get('vysledek'), h.get('vysledek'))})" for h in v.get("hlasovani") or [] if isinstance(h, dict)]
+        hl = [f"č. {_t(h.get('cislo'), 10)} ({_t(VYSLEDEK_HLASOVANI.get(h.get('vysledek'), h.get('vysledek')), 20)})"
+              for h in v.get("hlasovani") or [] if isinstance(h, dict)]
         if hl:
-            out += f"; hlasování: {', '.join(hl)}"
+            out += f"; hlasování: {', '.join(hl[:10])}"
         if v.get("stanovisko"):
-            out += f"; stanovisko výboru: {v['stanovisko']}"
+            out += f"; stanovisko výboru: {_t(v['stanovisko'])}"
     return out
 
 
@@ -140,7 +165,7 @@ def _radky_tisku(conn, ct: int) -> tuple[list[str], list[Polozka]]:
              f"Tisk {ct}: {_jednoradkove(t.get('nazev'), 200)}"]
     if t.get("poznamka"):
         radky.append(_jednoradkove(t["poznamka"]))
-    zaklad = [f"typ návrhu {t['typ_navrhu']}" if t.get("typ_navrhu") else "",
+    zaklad = [f"typ návrhu {_t(t['typ_navrhu'])}" if t.get("typ_navrhu") else "",
               f"předkladatel {_jednoradkove(t['navrhovatel'], 120)}" if t.get("navrhovatel") else "",
               f"předloženo {_datum(t['predlozeno'])}" if t.get("predlozeno") else ""]
     if any(zaklad):
@@ -156,17 +181,17 @@ def _radky_tisku(conn, ct: int) -> tuple[list[str], list[Polozka]]:
     if t.get("score") is not None:
         duvody = sorted((d for d in t.get("reasons") or [] if isinstance(d, dict)),
                         key=lambda d: -(d.get("points") or 0))[:DUVODU_SKORE]
-        skore = f"Skóre webu {t['score']}/100 (hodnotí postup, ne obsah)"
+        skore = f"Skóre webu {_t(t['score'], 5)}/100 (hodnotí postup, ne obsah)"
         if duvody:
-            skore += "; důvody: " + "; ".join(f"{_jednoradkove(d.get('label'), 90)} (+{d.get('points')})" for d in duvody)
+            skore += "; důvody: " + "; ".join(f"{_jednoradkove(d.get('label'), 90)} (+{_t(d.get('points'), 5)})" for d in duvody)
         radky.append(skore + ".")
     zakony = t.get("zakony") or []
     z_pn = [z for z in t.get("zakony_z_pn") or [] if z not in zakony]
     if zakony or z_pn:
-        radky.append(_veta(["Mění zákony: " + ", ".join(f"{z} Sb." for z in zakony) if zakony else "",
-                            "PN mění i: " + ", ".join(f"{z} Sb." for z in z_pn[:10]) if z_pn else ""]))
+        radky.append(_veta(["Mění zákony: " + ", ".join(f"{_t(z, 15)} Sb." for z in zakony[:15]) if zakony else "",
+                            "PN mění i: " + ", ".join(f"{_t(z, 15)} Sb." for z in z_pn[:10]) if z_pn else ""]))
     if t.get("sbirka"):
-        radky.append(f"Vyhlášen ve Sbírce zákonů jako {t['sbirka']}.")
+        radky.append(f"Vyhlášen ve Sbírce zákonů jako {_t(t['sbirka'], 20)}.")
     if "upozorneni" in t:
         radky.append(f"Upozornění webu k tisku: {len(t['upozorneni'])}.")
     return radky, [_tisk(t)]
@@ -180,8 +205,9 @@ def _radky_posledniho_hlasovani(conn, ct: int) -> tuple[list[str], list[Polozka]
         h = _FUNKCE["hlasovani_k_tisku"](conn, ct, limit=1, offset=celkem - 1)["hlasovani"][0]
     except (ValueError, IndexError, KeyError):
         return [], []     # tabulky hlasování chybí (čitelná ValueError) nebo neúplná odpověď
-    radek = (f"Hlasování k tisku: {celkem}; poslední č. {h.get('cislo')} ({_datum(h.get('datum'))}): "
-             f"{h.get('vysledek')}, pro {h.get('pro')}, proti {h.get('proti')}, zdrželo se {h.get('zdrzel')}")
+    radek = (f"Hlasování k tisku: {_t(celkem, 10)}; poslední č. {_t(h.get('cislo'), 10)} "
+             f"({_t(_datum(h.get('datum')), 20)}): {_t(h.get('vysledek'), 20)}, pro {_t(h.get('pro'), 5)}, "
+             f"proti {_t(h.get('proti'), 5)}, zdrželo se {_t(h.get('zdrzel'), 5)}")
     if h.get("krok"):
         radek += f"; krok: {_jednoradkove(h['krok'], 100)}"
     return [radek + ". Přehled přes `hlasovani_k_tisku`."], [_hlas({**h, "ct": ct})]
@@ -189,18 +215,18 @@ def _radky_posledniho_hlasovani(conn, ct: int) -> tuple[list[str], list[Polozka]
 
 def _radky_pn(conn, pn: int) -> tuple[list[str], list[Polozka]]:
     d = _FUNKCE["get_pn"](conn, pn)
-    autor = _jednoradkove(d.get("osoba"), 80) + (f" ({d['klub']})" if d.get("klub") else "")
-    radky = [f"Zaostřeno na PN {d['cislo']} k tisku {d.get('ct')}: předkladatel {autor}"
-             + (f", podán {_datum(d['cas'])}" if d.get("cas") else "") + ".",
+    autor = _jednoradkove(d.get("osoba"), 80) + (f" ({_t(d['klub'], 20)})" if d.get("klub") else "")
+    radky = [f"Zaostřeno na PN {_t(d['cislo'], 10)} k tisku {_t(d.get('ct'), 10)}: předkladatel {autor}"
+             + (f", podán {_t(_datum(d['cas']), 20)}" if d.get("cas") else "") + ".",
              f"Výsledek ve 3. čtení: {_vysledek_pn(d.get('vysledek'), detail=True)}."]
     if d.get("laws"):
-        radky.append(_veta(["PN mění zákony: " + ", ".join(f"{z} Sb." for z in str(d["laws"]).split(",") if z)]))
+        radky.append(_veta(["PN mění zákony: " + ", ".join(f"{_t(z, 15)} Sb." for z in str(d["laws"]).split(",")[:15] if z)]))
     polozky = [_pn(d, text_dostupny=bool(d.get("osnova_dostupna")))]
     ai = d.get("ai")
     if isinstance(ai, dict) and (ai.get("titulek") or ai.get("shrnuti")):
         rozbor = ". ".join(_jednoradkove(x, 220) for x in (ai.get("titulek"), ai.get("shrnuti")) if x)
         if d.get("ai_score") is not None:
-            rozbor += f" Závažnost {d['ai_score']}/10."
+            rozbor += f" Závažnost {_t(d['ai_score'], 5)}/10."
         radky.append(f"Rozbor PN (odvozený text AI, ne fakt; ověřuj v textu PN): {rozbor}")
         polozky.append(_rozbor("pn", d["cislo"]))
     praxe = d.get("v_praxi")
@@ -210,7 +236,7 @@ def _radky_pn(conn, pn: int) -> tuple[list[str], list[Polozka]]:
         try:
             o = _FUNKCE["osnova_textu"](conn, pn=pn, limit=OSNOVA_NA_KARTE)
             celky = [_jednoradkove(c.get("oznaceni") or c.get("cesta"), 40) for c in o.get("celky") or []]
-            radky.append(f"Osnova textu PN ({o.get('celkem')} celků; celé přes `osnova_textu` a `get_cel`): "
+            radky.append(f"Osnova textu PN ({_t(o.get('celkem'), 10)} celků; celé přes `osnova_textu` a `get_cel`): "
                          + "; ".join(c for c in celky if c) + ".")
         except ValueError:
             pass
@@ -226,40 +252,37 @@ def _radky_hlasovani(conn, id_hlasovani: int) -> tuple[list[str], list[Polozka]]
         h = _FUNKCE["get_hlasovani"](conn, id_hlasovani)
     except ValueError:
         return [], []
-    radky = [f"Zaostřeno na hlasování č. {h.get('cislo')} ({h.get('schuze')}. schůze, {_datum(h.get('datum'))}): "
-             f"{h.get('vysledek')}; pro {h.get('pro')}, proti {h.get('proti')}, zdrželo se {h.get('zdrzel')}, "
-             f"nehlasovalo {h.get('nehlasoval')}; přihlášeno {h.get('prihlaseno')}, kvórum {h.get('kvorum')}."]
+    pole = {k: _t(h.get(k), 10) for k in ("cislo", "schuze", "pro", "proti", "zdrzel", "nehlasoval", "prihlaseno",
+                                          "kvorum")}
+    radky = [f"Zaostřeno na hlasování č. {pole['cislo']} ({pole['schuze']}. schůze, {_t(_datum(h.get('datum')), 20)}): "
+             f"{_t(h.get('vysledek'), 20)}; pro {pole['pro']}, proti {pole['proti']}, zdrželo se {pole['zdrzel']}, "
+             f"nehlasovalo {pole['nehlasoval']}; přihlášeno {pole['prihlaseno']}, kvórum {pole['kvorum']}."]
     if h.get("krok"):
         radky.append(f"Krok historie tisku: {_jednoradkove(h['krok'], 100)}.")
     kluby = [k for k in h.get("kluby") or [] if isinstance(k, dict)]
     if kluby:
         radky.append("Kluby (pro/proti/zdržel se/nepřítomen): " + ", ".join(
-            f"{_jednoradkove(k.get('klub'), 20)} {k.get('pro')}/{k.get('proti')}/{k.get('zdrzel')}/{k.get('nepritomen')}"
-            for k in kluby) + ".")
+            f"{_t(k.get('klub'), 20)} " + "/".join(_t(k.get(s), 5) for s in ("pro", "proti", "zdrzel", "nepritomen"))
+            for k in kluby[:20]) + ".")
     return radky, [_hlas(h)]
 
 
 # ---------------------------------------------------------------- karty podle typu stránky
 
 def _karta_tisku(conn, k: Kontext, max_tokenu: int) -> tuple[str, list[Polozka]]:
-    hlavni, polozky = _radky_tisku(conn, k.ct)
+    sekce = [_radky_tisku(conn, k.ct)]
     if k.pn:
-        r, p = _radky_pn(conn, k.pn)
-        hlavni, polozky = hlavni + r, polozky + p
-    if k.hlasovani:
-        r, p = _radky_hlasovani(conn, k.hlasovani)
-        hlavni, polozky = hlavni + r, polozky + p
-    else:
-        r, p = _radky_posledniho_hlasovani(conn, k.ct)
-        hlavni, polozky = hlavni + r, polozky + p
+        sekce.append(_radky_pn(conn, k.pn))
+    sekce.append(_radky_hlasovani(conn, k.hlasovani) if k.hlasovani else _radky_posledniho_hlasovani(conn, k.ct))
     d = _FUNKCE["pn_k_tisku"](conn, k.ct, limit=PN_NA_KARTE)
     pn = d.get("pn") or []
-    seznam = [f"- PN {r['cislo']} · {_jednoradkove(r.get('osoba'), 60)}" + (f" ({r['klub']})" if r.get("klub") else "")
+    seznam = [f"- PN {_t(r['cislo'], 10)} · {_jednoradkove(r.get('osoba'), 60)}"
+              + (f" ({_t(r['klub'], 20)})" if r.get("klub") else "")
               + f" · výsledek: {_vysledek_pn(r.get('vysledek'), detail=False)}"
               + (f" · titulek AI: {_jednoradkove(r['titulek'], 90)}" if r.get("titulek") else "") for r in pn]
     hlavicka = _hlavicka_seznamu(d.get("celkem") or 0, "Pozměňovací návrhy", " PN", "pn_k_tisku",
                                  "Pozměňovací návrhy: žádné v datech.")
-    text, ukazano = _sloz(hlavni, seznam, hlavicka, max_tokenu)
+    text, ukazano, polozky = _sloz_sekce(sekce, seznam, hlavicka, max_tokenu)
     return text, polozky + [_pn(r, ct=k.ct) for r in pn[:ukazano]]
 
 
@@ -267,26 +290,27 @@ def _karta_zakona(conn, k: Kontext, max_tokenu: int) -> tuple[str, list[Polozka]
     d = _FUNKCE["tisky_menici_zakon"](conn, k.z, limit=TISKU_NA_KARTE)
     tisky = d.get("tisky") or []
     hlavni = [f"Kontext obrazovky: uživatel je na stránce zákona {k.z} Sb. na cosepece.cz."]
-    seznam = [f"- tisk {r['ct']}: {_jednoradkove(r.get('nazev'), 140)}" + (f" · fáze {r['faze']}" if r.get("faze") else "")
-              + (f" · skóre {r['score']}" if r.get("score") is not None else "") for r in tisky]
+    seznam = [f"- tisk {_t(r['ct'], 10)}: {_jednoradkove(r.get('nazev'), 140)}"
+              + (f" · fáze {_t(r['faze'], 60)}" if r.get("faze") else "")
+              + (f" · skóre {_t(r['score'], 5)}" if r.get("score") is not None else "") for r in tisky]
     hlavicka = _hlavicka_seznamu(d.get("celkem") or 0, "Tisky, které zákon mění", "", "tisky_menici_zakon",
                                  f"Žádný tisk 10. období, který web sleduje, zákon {k.z} Sb. podle dat nemění.")
-    text, ukazano = _sloz(hlavni, seznam, hlavicka, max_tokenu)
+    text, ukazano, _ = _sloz(hlavni, seznam, hlavicka, max_tokenu)
     return text, [_zakon(k.z)] + [_tisk(r) for r in tisky[:ukazano]]
 
 
 def _karta_pripravovaneho(conn, k: Kontext, max_tokenu: int) -> tuple[str, list[Polozka]]:
     materialy = _FUNKCE["pripravovane"](conn, pid=k.pid, limit=1).get("materialy") or []
     if not materialy:
-        return f"Uživatel je na stránce {NAZVY_STRANEK['pripravovane']}.", []
+        return VETY_STRANEK["pripravovane"], []
     r = materialy[0]
     udaje = [f"resort {_jednoradkove(r['resort'], 80)}" if r.get("resort") else "",
-             f"fáze {r['faze']}" if r.get("faze") else "", f"stav {_jednoradkove(r['stav'], 80)}" if r.get("stav") else "",
+             f"fáze {_t(r['faze'], 20)}" if r.get("faze") else "", f"stav {_jednoradkove(r['stav'], 80)}" if r.get("stav") else "",
              f"připomínky do {_datum(r['pripominky_do'])}" if r.get("pripominky_do") else ""]
-    hlavni = [f"Kontext obrazovky: uživatel je na stránce připravovaných zákonů u materiálu {r['pid']}.",
+    hlavni = [f"Kontext obrazovky: uživatel je na stránce připravovaných zákonů u materiálu {_t(r['pid'], 40)}.",
               f"Připravovaný zákon (u vlády, ještě ne ve Sněmovně): {_jednoradkove(r.get('nazev'), 200)}.",
               _veta(udaje)]
-    text, _ = _sloz([r for r in hlavni if r], [], None, max_tokenu)
+    text, _, _ = _sloz([r for r in hlavni if r], [], None, max_tokenu)
     polozka = Polozka(f"prip:{r['pid']}", "pripravovane", f"Připravovaný zákon: {_jednoradkove(r.get('nazev'), 80)}", None,
                       {"url": r.get("url"), "faze": r.get("faze")})
     return text, [polozka]
@@ -296,11 +320,13 @@ def karta_kontextu(conn, k: Kontext, max_tokenu: int) -> tuple[str | None, list[
     """Karta ověřeného kontextu (kontext.over) a její položky pro registr; nikdy nevyhodí.
 
     Neznámá stránka (`jina`) = bez karty. Seznamy a statické stránky = jen název stránky (bez databáze). Tisk,
-    zákon a připravovaný materiál z databáze, cache 5 minut. Chyba databáze nebo neexistující entita = (None, [])."""
-    if k.typ == "jina":
+    zákon a připravovaný materiál z databáze, cache 5 minut. Chyba databáze, neexistující entita nebo strop
+    max_tokenu <= 0 = (None, [])."""
+    if k.typ == "jina" or max_tokenu <= 0:
         return None, []
     if k.typ not in ("tisk", "zakon") and not (k.typ == "pripravovane" and k.pid):
-        return f"Uživatel je na stránce {NAZVY_STRANEK.get(k.typ, k.typ)}.", []
+        veta = VETY_STRANEK.get(k.typ)
+        return (veta, []) if veta and odhad_tokenu(veta) <= max_tokenu else (None, [])
     klic = (Kontext(k.typ, ct=k.ct, pn=k.pn, hlasovani=k.hlasovani, z=k.z, pid=k.pid), max_tokenu)
     ted = _cas()
     ulozeno = _cache.get(klic)
@@ -323,6 +349,9 @@ def karta_kontextu(conn, k: Kontext, max_tokenu: int) -> tuple[str | None, list[
         except (psycopg.Error, AttributeError):
             pass
         log.warning("karta kontextu %s selhala na chybě databáze", k, exc_info=True)
+        return None, []
+    except Exception:      # rozbité spojení nebo nečekaný tvar dat: tah pokračuje bez karty
+        log.exception("karta kontextu %s selhala", k)
         return None, []
     if len(_cache) >= MAX_CACHE:
         for kl in [kl for kl, v in _cache.items() if ted - v[0] >= CACHE_S]:

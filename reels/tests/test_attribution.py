@@ -159,7 +159,7 @@ def test_r5_neautorizovany_bez_znacky():
 @pytest.mark.parametrize("text", [
     "Poslanci lhůtu obešli.",
     "Novela prošla potichu.",
-    "PN podal Jan Novák, aby zachránil rozpočet.",
+    "Poslanci chtějí lhůtu zkrátit.",
     "Vláda chce zdanit marže rafinerií.",
     "Poslanci se snaží změnu protlačit.",
 ])
@@ -305,8 +305,12 @@ def test_vzory_popisku_bez_nalezu(path):
 
 
 # skutečné karty generátoru z doby před kontrolou; nálezy jsou správné a čekané (proto pravidla vznikla)
+# R8: karty z doby, kdy model směl jmenovat autory a spolupodepsané volným textem
 REGRESE_EXPECTED = {
-    "job7-v3-zmena.json": {"R2"},
+    "job7-v3-zmena.json": {"R2", "R8"},
+    "job11-v2-pn.json": {"R8"},
+    "job12-v2-pn.json": {"R8"},
+    "job12-v3-zmena.json": {"R8"},
 }
 
 
@@ -323,3 +327,133 @@ def test_r3_dvojtecka_bez_uvozovek():
     assert "R3" in _codes(_errs("Ministryně financí: marže rafinerií vyrostly kvůli krizi."))
     assert "R3" in _codes(_errs("Schillerová: marže vyrostly."))
     assert "R3" not in _codes(_errs("Autor podle evidence psp.cz: Jan Novák (ANO)."))
+
+
+
+# ---------- sondy z recenze PR #130 (pozitivní pravidlo: osoby jen strukturovaně) ----------
+
+PROBE_PEOPLE = ["Jan Novák", "Alena Schillerová"]
+
+
+def _probe(text: str, people=PROBE_PEOPLE) -> set[str]:
+    return _codes(at.attribution_errors(text, where="x", people=people, docs=[], speeches=[]))
+
+
+@pytest.mark.parametrize("text", [
+    # p1: přisouzení výroku nebo hodnocení
+    "Novák to označuje za nutnost.", "Schillerová míní, že daň je nízká.", "Novák se domnívá, že návrh pomůže.",
+    "Ministryně financí to vidí jako chybu.", "Podle ministryně jde o krok správným směrem.",
+    "Podle slov ministryně jde o chybu.", "Dle Nováka je to nutné.", "Novák píše, že návrh je špatný.",
+    "Novák věří, že návrh projde.", "Novák mluvil o podvodu na voliče.",
+    "Novák hovořil o tom, že daň zaplatí jedna firma.", "Novák zmínil, že jde o podvod.",
+    "Novák odmítá, že by šlo o přílepek.", "Slovy Nováka jde o podvod.", "Novákovými slovy: tohle je podvod.",
+    "Jan Novák (ANO): „Tohle je podvod na voliče.“", "Jan Novák (ANO) – „Tohle je podvod na voliče.“",
+    "„Tohle je podvod,“ řekl Novák.", "„Tohle je podvod,“ zaznělo od Nováka.",
+    "Z úst Nováka zaznělo, že jde o podvod.", "Opozice kritizuje novelu.",
+    "Pirátský poslanec to odmítl jako nesmysl.", "Šéf klubu ANO to nazval skandálem.",
+    "Novák: daň zaplatí jedna firma.", "V projevu J. Nováka 12. 11. zaznělo, že jde o podvod.",
+    "Hrnčíř řekl, že návrh je protiústavní.", "Novák vzkazuje voličům, že daň klesne.", "Novák chválí návrh.",
+    "Podle mluvčího ministerstva jde o chybu.", "Podle europoslance jde o chybu.", "Podle expertů jde o chybu.",
+    "Podle opozičních poslanců jde o chybu.", "Ministerstvo financí tvrdí, že výnos bude 5 mld.",
+    "Návrh ministryně tvrdí, že výnos bude 5 mld.", "Novela podle Nováka zdraží energie.",
+    "Zákon, jak tvrdí Novák, zdraží energie.", "Text PN, který Novák hájí, ruší lhůtu.",
+    # p3: výjimka pro dokument jen na začátku věty, věta i za číslem, jména mimo kartu
+    "Babiš k návrhu řekl, že je to podvod.", "Hrnčíř o PN uvedl, že je protiústavní.",
+    "Okamura k zákonu tvrdí, že daň zaplatí jedna firma.",
+    "Lhůta začne v roce 2027. Hrnčíř řekl, že je protiústavní.", "Rakušan označil novelu za chybu.",
+    "Novelu Rakušan označil za chybu.", "Ve Sněmovně zaznělo, že daň zaplatí jedna firma.",
+    "Šebelová: tohle je chyba.", "Tom Philipp PN obhajoval.", "Philipp PN obhajoval.",
+    # osoby z karty mimo strukturovaný tvar (R8)
+    "Ministryně Schillerová PN podepsala.", "Jde o PN poslance Nováka.", "Novák navrhuje zrušit poplatek.",
+])
+def test_sondy_chyba(text):
+    assert _probe(text), text
+
+
+@pytest.mark.parametrize("text", [
+    # p1: věcný text bez osoby
+    "Sněmovna návrh zamítla 95 hlasy.", "Návrh ruší poplatek za vodu pro obce do 500 obyvatel.",
+    "Vládní návrh zavádí daň z neočekávaných zisků.", "Daň se týká bank a energetických firem.",
+    "Garanční výbor doporučil PN přijmout.", "Zpravodaj doporučil PN zamítnout.",
+    "Výbor pro zdravotnictví PN podpořil.", "Ministerstvo vydá vyhlášku do 30 dnů.",
+    "Poslanci ANO hlasovali pro, ODS proti.", "Hlasovalo 180 poslanců, pro bylo 95.",
+    "Vláda návrh schválila 12. 10.", "Koalice má ve Sněmovně 108 hlasů.", "Zákon chce zrušit poplatky.",
+    "Cílem změny je, aby obce platily méně.", "Návrh mění lhůtu, aby úřady stihly rozhodnout.",
+    "Firmy budou muset uvádět cenu, aby ji zákazník viděl.", "Obce s rozšířenou působností budou mít nové úkoly.",
+    "Zákon obchází dosavadní pravidla pro tendry.", "Kdo chce dávku, musí podat žádost do 30 dnů.",
+    "Ministr zdravotnictví dostane nové pravomoci.",
+    "Ministr musí do 3 měsíců vydat vyhlášku a uvést v ní seznam léků.", "Úřad musí do 30 dnů oznámit výsledek.",
+    "Banka musí klienta upozornit na změnu poplatku.", "Prodejce musí uvádět původ masa.",
+    "Zaměstnavatel musí zaměstnance upozornit na riziko.", "Senát návrh vrátil s pozměňovacími návrhy.",
+    "Pacienti dostanou recept elektronicky, lékař jim ho vysvětlí.", "Obec pak oznámí termín voleb.",
+    "Návrh v Senátu podpořili senátoři ODS.", "Lékárník musí pacienta upozornit na generikum.",
+    "Exekutor dlužníkovi oznámí zahájení exekuce.", "Správce daně poplatníka vyzve k doplnění.",
+    "Úprava přichází po kritice Ústavního soudu.",
+    "Ústavní soud loni zrušil část zákona a uvedl, že je protiústavní.",
+    "Nejvyšší kontrolní úřad upozornil na chyby v dotacích.", "ČNB varuje před inflací.",
+    "Evropská komise požaduje změnu do roku 2027.",
+    # p2: falešné nálezy z recenze
+    "Změna reaguje na rozsudek Ústavního soudu.", "Úprava reaguje na loňskou inflaci.",
+    "Firmy, které mají přerušené dodávky plynu, dostanou kompenzaci.", "Ceny dodávek elektřiny se zastropují.",
+    "Návrh vlády uvádí, že výnos bude 5 mld. Kč.", "Důvodová zpráva vlády uvádí odhad 5 mld. Kč.",
+    "PN ukládá vládě, aby do roku 2027 předložila zprávu.", "Sněmovna žádá vládu, aby připravila novelu.",
+    "Ministr musí zajistit, aby lékárny měly zásoby.", "Novela má zabránit obcházení zákona.",
+    "Cílem je zamezit obcházení pravidel přes švarcsystém.", "Úřad oznámil výsledek tendru.",
+    "Banky budou muset klienty upozornit na poplatky.", "Pojišťovna musí klienta upozorňovat na změny.",
+    "Podle ČSÚ je inflace 3 %.", "Podle NKÚ chybí 2 mld. Kč.", "Podle Eurostatu je dluh nízký.",
+    "Podle návrhu se lhůta prodlouží na 60 dnů.", "Podle nové úpravy platí lhůta 60 dnů.",
+    "Podle PN 2376 platí lhůta 60 dnů.", "Podle všeho PN projde.", "Podle Sněmovny je to v pořádku.",
+    "Co to znamená pro poslance: nic.", "Hlasování: 95 pro, 40 proti.",
+    "Zákon o DPH tvrdě dopadne na malé firmy.", "Novela zpřísňuje tresty, které soud uloží za krádež.",
+    # reálné texty generátoru (měření 2026-11-28)
+    "Podle odůvodnění návrh reaguje na požadavek ministerstva školství.",
+    "K důchodům odůvodnění uvádí, že výdaje rostou o 23,3 miliardy.",
+    "PN 2575 chce Technologické agentuře přidat 381 milionů korun.",
+    "Ta určuje, která osoba poskytující službu se považuje za platformu.",
+    "Platformová práce: PN 2570 zvyšuje horní hranice pokut.",
+    "Celkové výdaje ani schodek rozpočtu se podle něj nemění.",
+])
+def test_sondy_bez_chyby(text):
+    assert not _probe(text, people=["Jan Novák"]), (text, at.attribution_errors(
+        text, where="x", people=["Jan Novák"], docs=[], speeches=[]))
+
+
+def test_sonda_nazev_tisku_v_uvozovkach():
+    card = {"nazev": "Vládní návrh zákona o dani z neočekávaných zisků",
+            "pn_autor": [{"cislo": 2376, "jmeno": "Jan Novák", "klub": "ANO", "spolu": 0}]}
+    cap = "PN 2376 k návrhu „zákona o dani z neočekávaných zisků“ podal Jan Novák (ANO).\n\nShrnutí AI."
+    assert at.public_text_errors(card, cap, 311) == []
+
+
+@pytest.mark.parametrize("cap,ok", [
+    ("PN 2376 podal Jan Novák (ANO) a 3 další poslanci. Shrnutí AI.", True),
+    ("PN 2376 podali Jan Novák (ANO) se 3 dalšími poslanci. AI.", True),
+    ("PN 2376 podal Jan Novák (ANO) s dalšími 3 poslanci. AI.", True),
+    ("PN Jana Nováka a 3 dalších poslanců ruší poplatek. AI.", True),
+    ("PN 2376 podal Jan Novák (ANO), spolu s ním 3 další poslanci. AI.", False),
+    ("Jan Novák (ANO) a 3 další poslanci podali PN 2376. Novák ho hájí. AI.", False),
+    ("PN 2376 podal Jan Novák (ANO) a 3 další poslanci.\n\nNovákův PN ruší poplatek. AI.", False),
+])
+def test_sondy_strukturovane_jmeno(cap, ok):
+    card = {"pn_autor": [{"cislo": 2376, "jmeno": "Jan Novák", "klub": "ANO", "spolu": 3}]}
+    assert (at.public_text_errors(card, cap, 311) == []) is ok
+
+
+def test_sonda_vicedilne_jmeno_autora():
+    card = {"pn_autor": [{"cislo": 2571, "jmeno": "Irena Ferčíková Konečná", "klub": "Piráti", "spolu": 0}]}
+    assert at.public_text_errors(card, "PN 2571 podala Irena Ferčíková Konečná (Piráti). AI.", 311) == []
+    errs = at.public_text_errors(card, "PN 2571 podala Irena Ferčíková Konečná (Piráti) spolu s Gabrielou "
+                                       "Svárovskou. AI.", 311)
+    assert any("Gabrielou" in e for e in errs)
+
+
+def test_sonda_pipeline_jina_osoba_v_popisku():
+    card = {"pn_autor": [{"jmeno": "Jan Novák", "klub": "ANO", "spolu": 0}], "pribeh": {"titulek": "x"}}
+    cap = "PN 2376 podal Jan Novák (ANO). Babiš k návrhu řekl, že jde o podvod.\n\nShrnutí AI."
+    assert any(e.startswith("R1 popisek") for e in at.public_text_errors(card, cap, 311))
+
+
+def test_vety_za_cislem():
+    assert [s for _, s in at._sentences("Lhůta začne v roce 2027. Hrnčíř řekl ne.")] == [
+        "Lhůta začne v roce 2027.", "Hrnčíř řekl ne."]
+    assert len(at._sentences("V projevu J. Nováka 12. 11. zaznělo, že ne.")) == 1

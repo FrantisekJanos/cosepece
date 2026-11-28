@@ -42,7 +42,7 @@ class IngestResult:
     attribution: dict[int, list[str]] = field(default_factory=dict)
 
 
-# reel_state card:<reel_id> = JSON karty varianty autopilota (z manifestu); brána před zveřejněním
+# reel_state card:<reel_id> = JSON karty varianty (z manifestu); brána před zveřejněním
 # (Bot._publish) podle ní hlídá i „a N dalších“ a citace projevů, nejen popisek
 CARD_KEY = "card:"
 
@@ -259,10 +259,10 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict, autopilot: bool) -
                 raise
             res.ok = True
             res.autopilot = autopilot
-            if autopilot:
-                for (v, *_), rid in zip(rows, res.reel_ids):
-                    if isinstance(v.get("card"), dict):
-                        queue.set_state(conn, f"{CARD_KEY}{rid}", json.dumps(v["card"], ensure_ascii=False))
+            # karta každé varianty (i té ke schválení): brána před zveřejněním podle ní hlídá „a N dalších“
+            for (v, *_), rid in zip(rows, res.reel_ids):
+                if isinstance(v.get("card"), dict):
+                    queue.set_state(conn, f"{CARD_KEY}{rid}", json.dumps(v["card"], ensure_ascii=False))
         except Exception as e:  # noqa: BLE001 - sada se nesmí uložit napůl
             log.exception("převzetí sady %s selhalo", job_id)
             res.reel_ids.clear()

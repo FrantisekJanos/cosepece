@@ -187,7 +187,8 @@ def _caption(text: str) -> str:
 
 def _author_errs(card: dict, text: str) -> list[str]:
     nums = [a["cislo"] for a in card["pn_autor"]]
-    return [e for e in _check(card, _caption(text), focus_pn=nums) if "autor" in e]
+    # jen kontrola autora a klubu (validate); jména mimo strukturovaný tvar hlídá attribution (R8, test_attribution)
+    return [e for e in _check(card, _caption(text), focus_pn=nums) if "autor" in e and not e.startswith("R8")]
 
 
 POSLANEC = {"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"}

@@ -5703,3 +5703,15 @@ def test_audit_atribuce_fronty(conn, media_dir):
     assert queue.transition(conn, done, "queued", "published")
     assert [r[0] for r in audit_atribuce.audit(conn)] == [bad]
     assert [r[0] for r in audit_atribuce.audit(conn, audit_atribuce.WAITING + ("published",))] == [bad, done]
+
+
+@pg
+def test_rucne_schvaleny_kontroluje_dalsi_navrhovatele(bot, conn, api, meta, media_dir):
+    from hlidac_reels import inbox, queue
+    rid = _add(conn, media_dir, 65, caption="PN 2376 podal Jan Novák (ANO).")
+    queue.set_state(conn, f"{inbox.CARD_KEY}{rid}",
+                    json.dumps({"pn_autor": [{"cislo": 2376, "jmeno": "Jan Novák", "klub": "ANO", "spolu": 2}]}))
+    assert queue.transition(conn, rid, "queued", "pending")
+    bot.handle(_cb(f"ok:{rid}"))
+    assert _get(conn, rid).status == "pending" and meta.calls["ig_create"] == 0
+    assert "a 2 další poslanci" in api.sent()[-1]["text"]

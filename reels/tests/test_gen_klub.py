@@ -46,8 +46,10 @@ def _novak_card() -> dict:
 
 
 def _errs(card: dict, caption: str, focus_pn: tuple[int, ...] = (2376,)) -> list[str]:
-    return validate_variant(card, caption, template="template_v3", ct=311,
-                            reason_keys=[r["key"] for r in card["reasons"]], fmt="pn", focus_pn=list(focus_pn))
+    # jen kontrola klubu; jméno jiné osoby v popisku („PN 2377 Jana Malá“) hlídá attribution (R8)
+    return [e for e in validate_variant(card, caption, template="template_v3", ct=311,
+                                        reason_keys=[r["key"] for r in card["reasons"]], fmt="pn",
+                                        focus_pn=list(focus_pn)) if not e.startswith("R8")]
 
 
 def _name_in_paren(text: str, jmeno: str = "Jan Novák") -> str | None:

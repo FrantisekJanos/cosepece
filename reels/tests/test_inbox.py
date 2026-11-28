@@ -450,3 +450,17 @@ def test_ingest_autopilot_ulozi_kartu(conn, tmp_path):
     assert res[0].autopilot is True
     rid = res[0].reel_ids[0]
     assert json.loads(queue.get_state(conn, f"{inbox.CARD_KEY}{rid}"))["title"] == "T"
+
+
+def test_ingest_ulozi_kartu_i_ke_schvaleni(conn, tmp_path):
+    # brána před zveřejněním hlídá „a N dalších“ i u ručně schválené položky: karta se uloží vždy
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["variants"][0]["card"] = {"ct": 311, "pn_autor": [{"cislo": 1, "jmeno": "Jan Novák", "spolu": 2}]}
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    rid = res[0].reel_ids[0]
+    assert res[0].autopilot is False
+    assert json.loads(queue.get_state(conn, f"{inbox.CARD_KEY}{rid}"))["pn_autor"][0]["spolu"] == 2

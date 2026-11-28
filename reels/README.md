@@ -167,7 +167,8 @@ dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se 
 
 **Citace a autorství (`hlidac_reels/attribution.py`):**
 
-- Výrok se osobě nepřisuzuje. Kontrola odmítne sloveso mluvení u osoby, role nebo klubu („Novák řekl“, „opozice
+- Osoby jen strukturovaně (R8): volný text nesmí jmenovat osobu; výjimka je autor PN nebo předkladatel celým jménem se značkou „a N dalších“ podle serveru a řečník v úvodu projevu s `citace_projevu`. Za jméno se bere slovo s velkým písmenem mimo začátek věty, které není zkratka, instituce, místo ani dokument.
+- Výrok se osobě nepřisuzuje. Sloveso mluvení nebo hodnocení smí jen s dokumentem či institucí jako podmětem na začátku věty a bez osoby ve větě. Kontrola odmítne sloveso mluvení u osoby, role nebo klubu („Novák řekl“, „opozice
   tvrdí“; R1), „podle X“ u osoby (R2), „Jméno: …“ (R3), uvozovky, které nejsou doslovnou citací dokumentu z karty
   (R4), a motiv („obešli“, „potichu“, „vláda chce“; R7). Text z projevu jen ve tvaru „V projevu J. Nováka 12. 11.
   zaznělo: „…““ nebo „…, že …“ s položkou v poli karty `citace_projevu` (`klic`, `recnik`, `datum`, `url`

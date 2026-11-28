@@ -26,6 +26,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from . import db, sentry, tools
+from .embed import hledani
 
 INSTRUCTIONS = """Hlídač zákonů (cosepece.cz): data Poslanecké sněmovny, 10. volební období (od 3. 11. 2025).
 Hlavní entita je sněmovní tisk (číslo ct). Z tisku vedou cesty na pozměňovací návrhy (PN), projevy ve stenoprotokolech,
@@ -387,6 +388,8 @@ def build_app():
     # check: spojení ukončené restartem DB se před použitím zahodí a nahradí novým
     pool = ConnectionPool(db.dsn(), min_size=1, max_size=int(os.environ.get("MCP_POOL", "4")), open=True,
                           check=ConnectionPool.check_connection, timeout=POOL_TIMEOUT_S)
+    # čítač embeddingů dotazů: vlastní krátké spojení (ne z poolu, který drží transakce nástrojů)
+    hledani.nastav_citac(db.connect)
     hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*").split(",") if h.strip()]
     app = server.streamable_http_app(
         streamable_http_path="/mcp",

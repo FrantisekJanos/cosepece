@@ -309,7 +309,8 @@ async def test_hodnoceni():
 async def test_nahlaseni_dlouhy_duvod_413():
     s = Svet()
     videno = []
-    s.ulozit.nahlas = lambda kod, duvod: videno.append((kod, duvod)) or kod == "abcd2345"
+    s.ulozit.pocet_nahlaseni_dne = lambda ted: 0
+    s.ulozit.nahlas = lambda kod, duvod, otisk: videno.append((kod, duvod)) or kod == "abcd2345"
     r = await asgi(s.app, "POST", "/chat-api/nahlasit", j(kod="abcd2345", duvod="x" * 1001), hl())
     assert (r.status_code, r.json()["kod"]) == (413, "prilis_dlouhy_duvod") and videno == []
     r = await asgi(s.app, "POST", "/chat-api/nahlasit", j(kod="abcd2345", duvod="č" * 1000), hl())
@@ -640,4 +641,77 @@ def test_uloziste_zpravy_pro_obnovu_panelu():
         c.execute("DELETE FROM chat.relace WHERE id = %s", (rid,))
         c.execute("DELETE FROM chat.zprava_log WHERE relace_id = %s", (rid,))
         c.execute("DELETE FROM chat.otisk_odpovedi WHERE kod = ANY(%s)", (kody,))
+        c.close()
+
+
+async def test_nahlaseni_denni_strop_vraci_429():
+    s = Svet(n=N(CHAT_MAX_NAHLASENI_DEN="2"))
+    videno = []
+    pocet = [1]
+    s.ulozit.pocet_nahlaseni_dne = lambda ted: pocet[0]
+    s.ulozit.nahlas = lambda kod, duvod, otisk: videno.append(otisk) or True
+    r = await asgi(s.app, "POST", "/chat-api/nahlasit", j(kod="abcd2345", duvod="x"), hl())
+    assert r.status_code == 204 and videno == ["otisk-198.51.100.7"]     # otisk IP jde do úložiště
+    pocet[0] = 2
+    r = await asgi(s.app, "POST", "/chat-api/nahlasit", j(kod="abcd2345", duvod="x"), hl())
+    assert (r.status_code, r.json()["kod"]) == (429, "limit_nahlaseni") and len(videno) == 1
+    assert nacti({}).max_nahlaseni_den == 200
+
+
+async def test_ipv6_sit_64_sdili_okno_limitu():
+    s = svet_s_nahledem({"typ": "tisk"})
+    for i in range(60):
+        r = await asgi(s.app, "GET", "/chat-api/nahled?k=tisk:221", hlavicky=hl(f"2001:db8:1:2::{i + 1:x}", post=False))
+        assert r.status_code == 200
+    assert (await asgi(s.app, "GET", "/chat-api/nahled?k=tisk:221",
+                       hlavicky=hl("2001:db8:1:2:ffff::9", post=False))).status_code == 429
+    assert (await asgi(s.app, "GET", "/chat-api/nahled?k=tisk:221",
+                       hlavicky=hl("2001:db8:1:3::1", post=False))).status_code == 200
+
+
+async def test_klic_zdroje_je_null_bez_nahledu():
+    assert _zdroj_pro_widget(Zdroj(1, "upoz:senate:221:2026", "upozorneni", "U", {}))["klic"] is None
+    assert _zdroj_pro_widget(Zdroj(1, "prip:123", "pripravovane", "P", {}))["klic"] is None
+    assert _zdroj_pro_widget(Zdroj(1, "tisk:221", "tisk", "T", {}))["klic"] == "tisk:221"
+
+
+@pg
+def test_nahled_rozboru_tisku(conn):
+    conn.execute("INSERT INTO tisk_text (ct, ai_json) VALUES (221, %s)",
+                 (json.dumps({"titulek": "Zkrácení lhůty", "shrnuti": "Návrh zkracuje lhůtu."}),))
+    r = nahled(conn, "rozbor:tisk:221", None)
+    assert r["typ"] == "rozbor" and r["znacky"] == ["odvozeny_ai"] and r["titulek"] == "Rozbor AI, tisk 221"
+    assert r["text"] == "Zkrácení lhůty\nNávrh zkracuje lhůtu."
+    assert r["odkazy"]["web"] == "/tisk/221" and r["odkazy"]["psp"].endswith("historie.sqw?o=10&t=221")
+    assert nahled(conn, "rozbor:tisk:222", None) is None
+
+
+@pg
+def test_nahlaseni_stejneho_kodu_z_jednoho_otisku_je_jeden_radek():
+    from hlidac_rag import db
+    from hlidac_rag.chat import uloziste
+
+    c = db.connect(autocommit=True)
+    db.migrate(c)
+    rid = uloziste.zaloz_relaci(c)
+    try:
+        kid = uloziste.zaloz_konverzaci(c, rid)
+        z, kod = uloziste.zaloz_odpoved(c, kid, "Otázka", {})
+        uloziste.dokonci(c, z, "Odpověď", "ok", "m", [], {})
+        ted = datetime.now(timezone.utc)
+        before = uloziste.pocet_nahlaseni_dne(c, ted)
+        for duvod in ("a", "b", "c"):
+            assert uloziste.nahlas(c, kod, duvod, "otisk1") is True
+        assert uloziste.nahlas(c, kod, "d", "otisk2") is True
+        radky = c.execute("SELECT otisk_ip, duvod FROM chat.nahlaseni WHERE kod = %s ORDER BY otisk_ip", (kod,)).fetchall()
+        assert radky == [("otisk1", "c"), ("otisk2", "d")]
+        assert uloziste.pocet_nahlaseni_dne(c, ted) == before + 2
+        uloziste.uklid(c, ted + timedelta(hours=49))
+        assert c.execute("SELECT count(*) FROM chat.nahlaseni WHERE kod = %s AND otisk_ip IS NOT NULL", (kod,)
+                         ).fetchone()[0] == 0
+    finally:
+        c.execute("DELETE FROM chat.nahlaseni WHERE kod = %s", (kod,))
+        c.execute("DELETE FROM chat.relace WHERE id = %s", (rid,))
+        c.execute("DELETE FROM chat.zprava_log WHERE relace_id = %s", (rid,))
+        c.execute("DELETE FROM chat.otisk_odpovedi WHERE kod = %s", (kod,))
         c.close()

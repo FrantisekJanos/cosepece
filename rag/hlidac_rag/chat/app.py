@@ -187,6 +187,7 @@ class Sluzba:
         self._ulohy: set[asyncio.Task] = set()
         self._klic_limitu = secrets.token_bytes(32)
         self._okna_limitu: dict[str, deque] = {}
+        self._uklid_limitu = 0.0
         self._vlakna = ThreadPoolExecutor(max_workers=SOUBEH_NASTROJU_DB, thread_name_prefix="chat-nastroj")
 
     # --- pomocné ---
@@ -333,7 +334,8 @@ class Sluzba:
             znovu = max(1, math.ceil(okno[0] + OKNO_LIMITU_S - ted))
             return _chyba(429, "limit_pozadavku", hlavicky={"Retry-After": str(znovu)})
         okno.append(ted)
-        if len(okna) > MAX_KLICU_LIMITU:
+        if len(okna) > MAX_KLICU_LIMITU and ted - self._uklid_limitu >= OKNO_LIMITU_S:    # jednou za okno
+            self._uklid_limitu = ted
             for k in [k for k, o in okna.items() if o[-1] <= ted - OKNO_LIMITU_S]:
                 del okna[k]
         return None
@@ -392,7 +394,14 @@ class Sluzba:
             return _chyba(400, "spatny_pozadavek")
         if len(duvod) > MAX_DUVOD:
             return _chyba(413, "prilis_dlouhy_duvod")
-        if not await self._u("nahlas", kod, duvod.strip()):
+        ted = self.hodiny()
+        if await self._u("pocet_nahlaseni_dne", ted) >= self.n.max_nahlaseni_den:
+            return _chyba(429, "limit_nahlaseni")
+        try:
+            otisk = await self._u("otisk_ip", ip_z_hlavicky(request.headers.get("x-forwarded-for")), den_prahy(ted))
+        except ChybiIP:
+            return _chyba(400, "spatny_pozadavek")
+        if not await self._u("nahlas", kod, duvod.strip(), otisk):
             return _chyba(404, "nenalezeno")
         return Response(status_code=204)
 
@@ -793,7 +802,7 @@ def _zdroj_pro_widget(z) -> dict:
     if z.meta.get("odvozeny"):
         znacky.append("odvozeny_ai")
     # klic = klíč pro GET /chat-api/nahled (adresy od modelu se nepřebírají, odkazy staví server z klíče a dat)
-    return {"n": z.n, "typ": z.typ, "titulek": z.titulek, "znacky": znacky, "klic": nahled.klic_nahledu(z.klic, z.meta)}
+    return {"n": z.n, "typ": z.typ, "titulek": z.titulek, "znacky": znacky, "klic": nahled.klic_nahledu(z.klic, z.meta) if nahled.platny_klic(z.klic) else None}
 
 
 class SkrytyRezim:

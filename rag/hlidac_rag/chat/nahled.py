@@ -10,11 +10,13 @@ Texty z DB se vracejí beze změny jako data (JSON, klient je vykreslí přes `t
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from .. import tools
 from ..nastroje.hlasovani import SELECT_HLASOVANI, VYSLEDEK, _kluby_radky, _over_tabulky
 
+log = logging.getLogger("hlidac_rag.chat.nahled")
 OBDOBI = tools.OBDOBI
 PSP = tools.PSP
 ZDROJ = "Poslanecká sněmovna PČR, psp.cz"
@@ -326,4 +328,5 @@ def nahled(conn, klic: str, zv: tuple[int, int] | None = None) -> dict | None:
     try:
         return _STAVBY[r["typ"]](conn, r, zv)
     except ValueError:      # nástroje hlásí chybějící dokument, text nebo tabulky čitelnou ValueError
+        log.debug("náhled %s: zdroj nebo jeho text není v datech", klic, exc_info=True)
         return None

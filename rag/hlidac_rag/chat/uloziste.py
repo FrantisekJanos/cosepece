@@ -325,17 +325,28 @@ def hodnoceni(conn: psycopg.Connection, kod: str, palec: int) -> bool:
                         (palec, kod)).rowcount > 0
 
 
-def nahlas(conn: psycopg.Connection, kod: str, duvod: str) -> bool:
+def nahlas(conn: psycopg.Connection, kod: str, duvod: str, otisk_ip: str | None = None) -> bool:
     """Uloží nahlášení odpovědi s kopií otázky a odpovědi (konverzace se po 30 dnech smaže, nahlášení se drží
-    do vyřízení). False = neznámý kód."""
+    do vyřízení). Opakované nahlášení téhož kódu z téhož otisku IP přepíše důvod, řádek je jeden.
+    False = neznámý kód."""
     if existuje_kod(conn, kod) is None:
         return False
     r = _jeden(conn, """SELECT u.text, b.text FROM chat.zprava b LEFT JOIN chat.zprava u ON u.id = b.otazka_id
                         WHERE b.kod = %s""", (kod,))
     otazka, odpoved = r if r else (None, None)
-    conn.execute("INSERT INTO chat.nahlaseni (kod, duvod, text_otazky, text_odpovedi) VALUES (%s, %s, %s, %s)",
-                 (kod, duvod, otazka, odpoved))
+    conn.execute("""INSERT INTO chat.nahlaseni (kod, duvod, text_otazky, text_odpovedi, otisk_ip)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (kod, otisk_ip) DO UPDATE SET duvod = excluded.duvod, cas = now()""",
+                 (kod, duvod, otazka, odpoved, otisk_ip))
     return True
+
+
+def pocet_nahlaseni_dne(conn: psycopg.Connection, ted: datetime) -> int:
+    """Počet nahlášení za pražský den `ted` (globální denní strop)."""
+    _vyzaduj_cas(ted)
+    return _jeden(conn, """SELECT count(*) FROM chat.nahlaseni
+                           WHERE (cas AT TIME ZONE %(tz)s)::date = (%(ted)s AT TIME ZONE %(tz)s)::date""",
+                  {"ted": ted, "tz": TZ})[0]
 
 
 # --- úklid ---
@@ -357,6 +368,8 @@ def uklid(conn: psycopg.Connection, ted: datetime) -> dict:
         ip = conn.execute("UPDATE chat.volani_llm SET otisk_ip = NULL WHERE otisk_ip IS NOT NULL AND cas < %s",
                           (ted - UKLID_IP,)).rowcount
         ip += conn.execute("UPDATE chat.relace SET otisk_ip = NULL WHERE otisk_ip IS NOT NULL AND overeni_cas < %s",
+                           (ted - UKLID_IP,)).rowcount
+        ip += conn.execute("UPDATE chat.nahlaseni SET otisk_ip = NULL WHERE otisk_ip IS NOT NULL AND cas < %s",
                            (ted - UKLID_IP,)).rowcount
         s["otisky_ip"] = ip
         # sůl dne D se používá do půlnoci D, smaže se v D+2 (zůstává dnešní a včerejší)

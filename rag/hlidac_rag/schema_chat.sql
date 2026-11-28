@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS chat.nahlaseni (
   vyrizeno      timestamptz
 );
 CREATE INDEX IF NOT EXISTS nahlaseni_kod_idx ON chat.nahlaseni (kod);
+-- jedno nahlášení kódu od jednoho otisku IP (opakované jen přepíše důvod); otisk se po 48 h maže jako jinde
+ALTER TABLE chat.nahlaseni ADD COLUMN IF NOT EXISTS otisk_ip text;
+CREATE UNIQUE INDEX IF NOT EXISTS nahlaseni_kod_ip_uniq ON chat.nahlaseni (kod, otisk_ip);
 
 -- Náhodná sůl pro otisk IP, jedna na pražský den (spec 11.1). Vzniká při prvním použití dne, úklid ji maže po 48 h:
 -- bez ní nejde otisk ani výčtem adres zpětně přepočítat.

@@ -102,6 +102,7 @@ class Nastaveni:
     karta_jako: str  # tool_result | blok
     drzeni_tahu_s: int = 300
     turnstile_hostname: str = TURNSTILE_HOSTNAME   # CHAT_TURNSTILE_HOSTNAME jen pro lokální vývoj
+    max_nahlaseni_den: int = 200   # CHAT_MAX_NAHLASENI_DEN: globální denní strop nahlášení odpovědí
     provozovatel: str = ""   # CHAT_PROVOZOVATEL: provozovatel a kontakt na stránce zásad (do repa žádné osobní údaje)
 
 
@@ -192,5 +193,6 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
         karta_jako=_vyber(env, "CHAT_KARTA_JAKO", "tool_result", ("tool_result", "blok")),
         drzeni_tahu_s=_hodnota(env, "CHAT_DRZENI_TAHU_S", s["drzeni_tahu_s"], int, 30),
         turnstile_hostname=hostname,
+        max_nahlaseni_den=_hodnota(env, "CHAT_MAX_NAHLASENI_DEN", 200, int),
         provozovatel=_hodnota(env, "CHAT_PROVOZOVATEL", "", str),
     )

@@ -43,6 +43,7 @@ _FUNKCE_ULOZISTE = (
     "zaloz_relaci", "relace", "zapis_overeni", "pricti_zpravu_od_overeni", "zahaj_tah", "skonci_tah", "utrata",
     "zaloz_konverzaci", "konverzace", "tahy", "zaloz_odpoved", "prubezne", "dokonci", "zapis_volani_llm",
     "zapis_volani_nastroje", "uloz_zdroje", "zdroje", "zpravy", "smaz_konverzaci", "existuje_kod", "hodnoceni", "nahlas",
+    "pocet_nahlaseni_dne",
 )
 
 

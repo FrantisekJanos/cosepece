@@ -381,9 +381,11 @@ final class View
      * a dopad jsou vidět hned, stav před a po, dotčené skupiny, příklad a tvrzení předkladatele se rozbalují.
      * Nadpis se řídí výsledkem hlasování ve 3. čtení ($outcome z PnOutcome), text sám zůstává podmiňovací.
      * Nad nadpisem je doslovná citace z textu PN ($quote: citace z rozboru, jinak první citace vysvětlení),
-     * aby čtenář viděl znění návrhu a hned pod ním, co znamená. Vrací hotové HTML; bez vysvětlení prázdný řetězec.
+     * aby čtenář viděl znění návrhu a hned pod ním, co znamená. $report (id_dokument, cislo, ct) přidá do rohu
+     * praporek pro nahlášení chyby (app/Reports.php); jeho klíč check (kontrola, at) přidá větu o kontrole
+     * po hlášení čtenáře. Vrací hotové HTML; bez vysvětlení prázdný řetězec.
      */
-    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null): string
+    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null, ?array $report = null): string
     {
         if (!is_array($p) || trim((string)($p['co_se_meni'] ?? '')) === '') {
             return '';
@@ -395,7 +397,7 @@ final class View
             'zamitnut' => 'Co by se změnilo v praxi <span class="muted">(návrh neprošel)</span>',
             default => 'Co by se změnilo v praxi',
         };
-        $html = '<div class="pn-praxe">' . ($quote !== '' ? '<blockquote class="quote small">' . e($quote) . '</blockquote>' : '')
+        $html = '<div class="pn-praxe' . ($report !== null ? ' has-report' : '') . '">' . ($quote !== '' ? '<blockquote class="quote small">' . e($quote) . '</blockquote>' : '')
             . '<span class="pn-praxe-head">' . $head . '</span>'
             . '<span class="pn-praxe-what">' . e((string)$p['co_se_meni']) . '</span>'
             . '<span class="small">' . e((string)($p['v_praxi'] ?? '')) . '</span>';
@@ -429,7 +431,90 @@ final class View
             $html .= '<details class="pn-praxe-more"><summary>' . ($technical ? 'Co uvádí předkladatel' : 'Před a po, koho se to týká') . '</summary>' . $more . '</details>';
         }
         return $html . '<span class="muted small">Vysvětlení připravil jazykový model' . ($model !== null && $model !== '' ? ' (' . e($model) . ')' : '')
-            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.</span></div>';
+            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.' . self::reportCheckNote($report['check'] ?? null) . '</span>'
+            . ($report !== null ? self::reportLink((int)$report['id_dokument'], (int)$report['cislo'], (int)$report['ct']) : '') . '</div>';
+    }
+
+    /** Věta u vysvětlení, které po hlášení čtenáře prošlo kontrolou silnějším modelem ($check: kontrola, at). */
+    public static function reportCheckNote(?array $check): string
+    {
+        $when = e(formatDate((string)($check['at'] ?? '')));
+        return match ($check['kontrola'] ?? null) {
+            'opraveno' => ' Po hlášení čtenáře opraveno ' . $when . '.',
+            'potvrzeno' => ' Po hlášení čtenáře zkontrolováno ' . $when . ', beze změny.',
+            default => '',
+        };
+    }
+
+    /**
+     * Praporek „Nahlásit chybu ve vysvětlení“ v rohu bloku vysvětlení. Je to obyčejný odkaz na stránku
+     * s formulářem (hlaseni.php); s JavaScriptem ho assets/report.js otevře jako vrstvu nad stránkou.
+     */
+    public static function reportLink(int $id, int $cislo, int $ct): string
+    {
+        $title = 'Nahlásit chybu ve vysvětlení';
+        return '<a class="report-link" href="' . e(url('hlaseni', ['d' => $id])) . '" rel="nofollow" title="' . $title . '" aria-label="' . $title
+            . ' návrhu č. ' . $cislo . '" data-report="' . $id . '" data-report-label="' . e(Reports::label($cislo, $ct)) . '">'
+            . '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            . '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg></a>';
+    }
+
+    /**
+     * Formulář hlášení chyby ve vysvětlení: stejný ve vrstvě na stránce tisku i na samostatné stránce
+     * (hlaseni.php, bez JavaScriptu). $id = 0 a prázdný $label vyplní až assets/report.js podle praporku,
+     * na který čtenář klikl. $old = dříve odeslané hodnoty (cast, poznamka) při chybě. $publishes = zda se platná
+     * hlášení zveřejňují na GitHubu (null = podle config.php); formulář na to pak upozorní.
+     */
+    public static function reportForm(int $id, string $label, string $cancel, string $error = '', array $old = [], ?bool $publishes = null): string
+    {
+        $max = Reports::settings(config())['max_note'];
+        // se zapnutým zveřejňováním formulář čtenáře upozorní a pošle s hlášením, že upozornění viděl
+        $publishes ??= (new Reports(db(), config()))->publishes();
+        $html = '<form class="report-form" method="post" action="' . e(url('hlaseni')) . '">'
+            . '<p class="report-context muted small" data-report-context>' . e($label) . '</p>'
+            . '<input type="hidden" name="d" value="' . ($id > 0 ? $id : '') . '">'
+            . ($publishes ? '<input type="hidden" name="zverejneni" value="1">' : '')
+            . '<fieldset><legend>Která část nesedí</legend>';
+        foreach (Reports::PARTS as $key => $name) {
+            $html .= '<label class="report-option"><input type="radio" name="cast" value="' . e($key) . '" required'
+                . (($old['cast'] ?? '') === $key ? ' checked' : '') . '> ' . e($name) . '</label>';
+        }
+        return $html . '</fieldset>'
+            . '<label class="report-note"><span>Co je podle vás správně <span class="muted">(nepovinné)</span></span>'
+            . '<textarea name="poznamka" rows="4" maxlength="' . $max . '" placeholder="Lhůta v § 12 odst. 3 se prodlužuje na 60 dnů, ne na 90.">'
+            . e((string)($old['poznamka'] ?? '')) . '</textarea></label>'
+            . '<p class="report-help small"><strong>Nejvíc nám pomůže, když napíšete:</strong> co přesně je špatně, kde to v textu návrhu najdeme (paragraf, odstavec, bod) a jak to má být správně.</p>'
+            // past na roboty: pole je skryté stylem, člověk ho nevyplní
+            . '<label class="report-web" aria-hidden="true">Web <input type="text" name="web" tabindex="-1" autocomplete="off"></label>'
+            . '<p class="report-error small" role="alert"' . ($error === '' ? ' hidden' : '') . '>' . e($error) . '</p>'
+            . '<p class="muted small">Hlášení slouží jen k opravě vysvětlení: zajímá nás, zda odpovídá textu návrhu, ne názor na návrh samotný. Nepište osobní údaje. Hlášení nejdřív roztřídí jazykový model a neodpovídáme na ně.'
+            . ($publishes ? ' <strong>Hlášení, které třídění označí jako platné, zveřejníme i s vaší poznámkou jako podnět na GitHubu projektu, bez údajů o vás.</strong>' : '') . '</p>'
+            . '<div class="report-actions">' . $cancel . '<button type="submit" class="btn">Odeslat hlášení</button></div>'
+            . '</form>';
+    }
+
+    /** Poděkování po odeslání hlášení (ve vrstvě i na samostatné stránce). */
+    public static function reportThanks(): string
+    {
+        return '<p><strong>Děkujeme, hlášení jsme přijali.</strong></p>'
+            . '<p class="small">Vysvětlení podle něj prověříme proti textu návrhu. Když se potvrdí chyba, opravíme ho.</p>';
+    }
+
+    /**
+     * Vrstva s formulářem hlášení (prvek dialog) a její skript; na stránce jednou. Bez JavaScriptu nebo
+     * v prohlížeči bez prvku dialog zůstane skrytá a praporek vede na stránku hlaseni.php.
+     */
+    public static function reportDialog(): string
+    {
+        $js = asset('assets/report.js') . '?v=' . (int)@filemtime(APP_ROOT . '/assets/report.js');
+        return '<dialog class="report-dialog" id="report-dialog" aria-labelledby="report-title">'
+            . '<h2 id="report-title">Nahlásit chybu ve vysvětlení</h2>'
+            . '<div data-report-body>' . self::reportForm(0, '', '<button type="button" class="btn btn-ghost" data-report-close>Zrušit</button>') . '</div>'
+            . '<div data-report-done hidden>' . self::reportThanks()
+            . '<div class="report-actions"><button type="button" class="btn" data-report-close>Zavřít</button></div></div>'
+            . '</dialog>' . "
+" . '<script src="' . e($js) . '" defer></script>' . "
+";
     }
 
     public static function isPastPeriod(array $alert): bool
@@ -543,5 +628,203 @@ final class View
             </div>
           </article>
         <?php endforeach;
+    }
+
+    /** Skóre jen číslem v barvě úrovně: do řádků, kde by slovo „Závažné“ překáželo. */
+    public static function scoreMini(int $score): string
+    {
+        $labels = [Scorer::LEVEL_MAJOR => 'závažné', Scorer::LEVEL_WATCH => 'pozor', Scorer::LEVEL_NORMAL => 'běžné'];
+        $level = Scorer::level($score, config());
+        return '<span class="score score-' . $level . '" title="Skóre závažnosti ' . $score . ' ze 100 (' . $labels[$level] . ')"><b>' . $score . '</b></span>';
+    }
+
+    /**
+     * Souhrn jedné aktualizace (Updates::withEvents) do řádku: co se stalo a odkazy na tisky se skóre,
+     * např. „Zkrácená lhůta (26. 11.): 300 · Novela z. - zákoník práce 78, 301 · Vl. n. z. o platformové práci 31“.
+     * Datum v závorce je den události, když se liší ode dne, kdy ji web zaznamenal (na stránce tisku je krok
+     * pod tímto datem). Co se do řádku nevejde, je za odkazem na časovou osu.
+     */
+    public static function updateSummary(array $update): string
+    {
+        $summary = Updates::summary($update['events']);
+        $parts = [];
+        foreach ($summary['parts'] as $part) {
+            $links = [];
+            foreach ($part['events'] as $event) {
+                // tisk aktuálního období číslem a názvem (nedělitelná mezera, ať číslo nezůstane na konci řádku samo),
+                // ostatní (připravovaný zákon, minulé období) jen názvem
+                $label = (int)$event['ct'] > 0 && !self::isPastPeriod($event)
+                    ? (int)$event['ct'] . "\u{00A0}· " . Updates::shorten((string)$event['name'], 60)
+                    : Updates::shorten((string)$event['name']);
+                $links[] = '<a href="' . e(self::alertUrl($event)) . '">' . e($label) . '</a> ' . self::scoreMini((int)$event['score']);
+            }
+            $note = Updates::dayNote((string)$part['day'], (string)$update['from']);
+            $head = trim(e($part['what']) . ($note !== '' ? ' <span class="muted" title="Kdy se událost stala">(' . e($note) . ')</span>' : ''));
+            $parts[] = ($head !== '' ? $head . ': ' : '') . implode(', ', $links);
+        }
+        $out = implode(' <span class="muted">·</span> ', $parts);
+        if ($summary['rest'] > 0) {
+            $rest = $summary['rest'];
+            $out .= ' a <a href="' . e(url('aktualizace', ['vse' => 1], (string)$update['id'])) . '">' . $rest . ' '
+                . ($rest >= 5 ? 'dalších' : 'další') . '</a>';
+        }
+        return $out;
+    }
+
+    /**
+     * Adresa aktualizace na časové ose (kotva u jejího času). Aktualizace jen s běžnou agendou ve výchozím
+     * pohledu není, proto odkaz vede do pohledu s běžnou agendou.
+     */
+    public static function updateUrl(array $update): string
+    {
+        return url('aktualizace', (int)($update['important'] ?? 0) > 0 ? [] : ['vse' => 1], (string)$update['id']);
+    }
+
+    /**
+     * Řádek „Poslední aktualizace“ na přehledu: nejnovější aktualizace je vidět hned, po rozbalení (bez JavaScriptu,
+     * prvek details) předchozí aktualizace a odkaz na časovou osu. Čas říká, kdy web změnu zaznamenal, a vede
+     * na tutéž aktualizaci na časové ose. Bez upozornění v databázi se nevypíše nic.
+     *
+     * @param list<array> $updates aktualizace od nejnovější (Updates::latest)
+     */
+    public static function updatesBar(array $updates, ?string $lastSync): void
+    {
+        if ($updates === []) {
+            return;
+        }
+        $first = array_shift($updates);
+        $hint = 'Kdy web změnu zaznamenal. Datum v závorce říká, kdy se stala.';
+        ?>
+<details class="card updates">
+  <summary>
+    <span class="updates-line"><strong>Poslední aktualizace <a href="<?= e(self::updateUrl($first)) ?>" title="<?= e($hint) ?>"><?= e(Updates::when((string)$first['from'], true)) ?></a></strong> <span class="muted">·</span> <?= self::updateSummary($first) ?></span>
+  </summary>
+  <?php if ($updates !== []): ?>
+  <ol class="updates-list" aria-label="Předchozí aktualizace">
+    <?php foreach ($updates as $update): ?>
+    <li><a class="updates-time" href="<?= e(self::updateUrl($update)) ?>" title="<?= e($hint) ?>"><time datetime="<?= e(date('Y-m-d\TH:i', (int)strtotime((string)$update['from']))) ?>"><?= e(Updates::when((string)$update['from'])) ?></time></a><span><?= self::updateSummary($update) ?></span></li>
+    <?php endforeach; ?>
+  </ol>
+  <?php endif; ?>
+  <div class="updates-foot">
+    <span class="muted small"><?php if ($lastSync !== null && $lastSync !== ''): ?>Data naposledy kontrolována <?= e(Updates::when($lastSync, true)) ?><?php endif; ?></span>
+    <a href="<?= e(url('aktualizace')) ?>">Zobrazit všechny aktualizace →</a>
+  </div>
+</details>
+        <?php
+    }
+
+    /** Štítky pozměňovacího návrhu z řádku Repo::pnTexts(): přílepek, lhůta se zpětným použitím, rozsáhlý, AI N/10. */
+    public static function pnChips(array $x): string
+    {
+        $out = '';
+        if (!empty($x['signals']['other_laws'])) {
+            $out .= '<span class="chip chip-cut">Přílepek: ' . e(implode(', ', $x['signals']['other_laws'])) . '</span>';
+        }
+        if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])) {
+            $out .= '<span class="chip chip-cut">Lhůta a zpětné použití</span>';
+        }
+        if (!empty($x['signals']['large'])) {
+            $out .= '<span class="chip chip-surge">Rozsáhlý</span>';
+        }
+        if (($x['ai_score'] ?? null) !== null) {
+            $out .= '<span class="chip ' . ((int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge') . '">AI ' . (int)$x['ai_score'] . '/10</span>';
+        }
+        return $out;
+    }
+
+    /**
+     * Jedna změna tisku (položka z BillUpdates::days) jako HTML s odkazem na místo na stránce tisku: krok vede
+     * do průběhu projednávání (kotva krok-N), pozměňovací návrhy na své záznamy (pn-N), souhrn na psp.cz.
+     * $short je podoba do jednoho řádku: u pozměňovacích návrhů jen prvních pár čísel, bez doplňků.
+     */
+    public static function billUpdateItem(array $item, int $ct, bool $short): string
+    {
+        $title = e((string)$item['title']);
+        if ($item['type'] === 'pn') {
+            // jediné číslo navíc se vypíše, „a 1 další“ by místo neušetřilo
+            $limit = count($item['pn']) <= BillUpdates::PN_LINKS + 1 ? count($item['pn']) : BillUpdates::PN_LINKS;
+            $list = $short ? array_slice($item['pn'], 0, $limit) : [];
+            $links = [];
+            foreach ($list as $p) {
+                $links[] = '<a href="' . e(url('tisk', ['ct' => $ct], 'pn-' . (int)$p['cislo'])) . '">' . (int)$p['cislo'] . '</a>';
+            }
+            $rest = count($item['pn']) - count($list);
+            return $short
+                ? $title . ': č.' . "\u{00A0}" . implode(', ', $links) . ($rest > 0 ? ' a ' . $rest . ' ' . ($rest >= 5 ? 'dalších' : 'další') : '')
+                : '<strong>' . $title . '</strong>';
+        }
+        if ($item['type'] === 'summary') {
+            $link = (string)$item['url'] !== '' ? '<a href="' . e((string)$item['url']) . '">' . $title . '</a>' : $title;
+            return $short ? $link : $link . ' <span class="muted">(' . e((string)$item['detail']) . ')</span>';
+        }
+        // krok projednávání nebo vyhlášení: výrazné kroky jako štítek ve stejných barvách jako tečky v průběhu
+        $href = url('tisk', ['ct' => $ct], (int)$item['id'] > 0 ? 'krok-' . (int)$item['id'] : 'prubeh');
+        $chip = ['cut' => 'chip-cut', 'fast' => 'chip-fast', 'main' => 'chip-mp'][$item['flag']] ?? '';
+        $link = '<a' . ($chip !== '' ? ' class="chip ' . $chip . '"' : '') . ' href="' . e($href) . '">' . $title . '</a>';
+        if ($short) {
+            return $link;
+        }
+        $extra = (string)$item['detail'] !== '' ? ' <span class="muted">' . e((string)$item['detail']) . '</span>' : '';
+        if ((int)$item['vote'] > 0) {
+            $extra .= ' <a class="small" href="https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$item['vote'] . '">hlasování na psp.cz</a>';
+        }
+        return $link . $extra;
+    }
+
+    /**
+     * Souhrn jednoho dne změn tisku do řádku, např. „Zkrácená lhůta · Podán 1 pozměňovací návrh: č. 2589 ·
+     * Rozeslán souhrn pozměňovacích návrhů a 4 další“. Co se nevejde, je za odkazem na časovou osu tisku.
+     */
+    public static function billUpdateSummary(array $day, int $ct): string
+    {
+        $summary = BillUpdates::summary($day);
+        $parts = [];
+        foreach ($summary['items'] as $item) {
+            $parts[] = self::billUpdateItem($item, $ct, true);
+        }
+        $out = implode(' <span class="muted">·</span> ', $parts);
+        if ($summary['rest'] > 0) {
+            $rest = $summary['rest'];
+            $out .= ' a <a href="' . e(url('tisk-aktualizace', ['ct' => $ct], BillUpdates::anchor((string)$day['day']))) . '">' . $rest . ' '
+                . ($rest >= 5 ? 'dalších' : 'další') . '</a>';
+        }
+        return $out;
+    }
+
+    /**
+     * Řádek „Poslední změna“ na stránce tisku: nejnovější den se změnami je vidět hned, po rozbalení (bez
+     * JavaScriptu, prvek details) předchozí dny a odkaz na časovou osu tisku. Datum je den, kdy se změna stala,
+     * a vede na tentýž den na časové ose. Bez změn se nevypíše nic.
+     *
+     * @param list<array> $days dny od nejnovějšího (BillUpdates::days)
+     */
+    public static function billUpdatesBar(array $days, int $ct): void
+    {
+        if ($days === []) {
+            return;
+        }
+        $total = count($days);
+        $first = array_shift($days);
+        $hint = 'Den, kdy se změna stala. Krok se v otevřených datech Sněmovny může objevit se zpožděním.';
+        $dayUrl = static fn(array $day): string => url('tisk-aktualizace', ['ct' => $ct], BillUpdates::anchor((string)$day['day']));
+        ?>
+<details class="card updates">
+  <summary>
+    <span class="updates-line"><strong>Poslední změna <a href="<?= e($dayUrl($first)) ?>" title="<?= e($hint) ?>"><?= e(BillUpdates::dayWhen((string)$first['day'])) ?></a></strong> <span class="muted">·</span> <?= self::billUpdateSummary($first, $ct) ?></span>
+  </summary>
+  <?php if ($days !== []): ?>
+  <ol class="updates-list" aria-label="Předchozí změny">
+    <?php foreach (array_slice($days, 0, BillUpdates::ROW_DAYS) as $day): ?>
+    <li><a class="updates-time" href="<?= e($dayUrl($day)) ?>" title="<?= e($hint) ?>"><time datetime="<?= e((string)$day['day']) ?>"><?= e(BillUpdates::dayWhen((string)$day['day'])) ?></time></a><span><?= self::billUpdateSummary($day, $ct) ?></span></li>
+    <?php endforeach; ?>
+  </ol>
+  <?php endif; ?>
+  <div class="updates-foot">
+    <span class="muted small">Celkem <?= e(BillUpdates::daysLabel($total)) ?></span>
+    <a href="<?= e(url('tisk-aktualizace', ['ct' => $ct])) ?>">Zobrazit všechny změny tisku →</a>
+  </div>
+</details>
+        <?php
     }
 }

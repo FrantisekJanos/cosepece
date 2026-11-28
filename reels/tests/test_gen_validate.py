@@ -13,7 +13,7 @@ from hlidac_reels.generator.validate import caption_authors, check_layout, club_
 
 CAPTION_OK = (
     "Na mimořádnou daň pro rafinerie dostaly sněmovní výbory 30 dní. Běžná lhůta je 60.\n\n"
-    "Zkrátit lhůtu pro výbory až o 30 dní jednací řád Sněmovně dovoluje (§ 91 odst. 2).\n\n"
+    "Zkrátit lhůtu pro výbory až o 30 dní jednací řád Sněmovně dovoluje (§ 91 odst. 2). Titulky: shrnutí AI.\n\n"
     "Hodnotíme postup, ne politický obsah.\n\n#snemovna #zakony #cosepece"
 )
 V3 = ["v3-cesta-311.json", "v3-pn-115.json", "v3-zmena-221.json", "v3-cesta-174.json"]
@@ -187,7 +187,8 @@ def _caption(text: str) -> str:
 
 def _author_errs(card: dict, text: str) -> list[str]:
     nums = [a["cislo"] for a in card["pn_autor"]]
-    return [e for e in _check(card, _caption(text), focus_pn=nums) if "autor" in e]
+    # jen kontrola autora a klubu (validate); jména mimo strukturovaný tvar hlídá attribution (R8, test_attribution)
+    return [e for e in _check(card, _caption(text), focus_pn=nums) if "autor" in e and not e.startswith("R8")]
 
 
 POSLANEC = {"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"}
@@ -248,7 +249,7 @@ def test_popisek_sklonovane_jmeno_bez_klubu():
     info = json.loads(contract.read_text(encoding="utf-8"))
     card = load_fixture("v3-pn-311.json")
     card["pn"]["top"][0] = dict(card["pn"]["top"][0], cislo=9801)
-    caption = _caption("Návrh poslance Testa Poslance, PN 9801. PN 9802 podal ministr Test Ministr.")
+    caption = _caption("Návrh poslance Testa Poslance, PN 9801. PN 9802 podal ministr Test Ministr (podle evidence psp.cz).")
     new, cap, _ = normalize(card, caption, fmt="pn", focus_info=info)
     assert cap == caption
     errs = [e for e in _check(new, cap, focus_pn=[9801, 9802]) if "autor" in e]

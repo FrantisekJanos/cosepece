@@ -5,7 +5,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/app/bootstrap.php';
 
-use Hlidac\Analyzer;
+use Hlidac\BillUpdates;
 use Hlidac\OgCard;
 use Hlidac\Repo;
 use Hlidac\Revisions;
@@ -33,6 +33,8 @@ $pnOutcomes = $repo->pnOutcomes($ct);
 $billText = $repo->billText($ct);
 $votes = $repo->votes($ct);
 $prep = $repo->prep($ct);
+// změny tisku den po dni (kroky, pozměňovací návrhy, souhrn, vyhlášení) pro řádek „Poslední změna“
+$billDays = BillUpdates::days($t, $steps, $pn, $obdobi);
 // hlasování, kterým skončil krok projednávání (popis kroku místo obecného názvu)
 $stepByVote = [];
 foreach ($steps as $k) {
@@ -47,6 +49,10 @@ $pnRev = Revisions::counts(db(), 'pn', null, $ct);
 // na ně vedou odkazy, od nejzávažnějšího (nejvýš 10). Seznam sám zůstává od nejnovějšího, aby byly nové návrhy
 // vidět hned; prvních 10 je vidět rovnou, zbytek je pod odkazem „Další pozměňovací návrhy“. Skóre se tím nemění.
 $pnVisible = 10;
+// praporek pro nahlášení chyby u vysvětlení PN „v praxi“ (app/Reports.php)
+$reportsOn = Hlidac\Reports::settings(config())['enabled'];
+// vysvětlení, která po hlášení čtenáře prošla kontrolou (věta pod vysvětlením)
+$reportChecks = $reportsOn ? (new Hlidac\Reports(db(), config()))->checksForBill($ct) : [];
 $pnFlagged = [];
 foreach ($pn as $p) {
     $x = $texts[(int)$p['id_dokument']] ?? null;
@@ -75,19 +81,10 @@ if ($t['predlozeno'] && $t['posledni']) {
     $days = (int)round((strtotime($t['posledni']) - strtotime($t['predlozeno'])) / 86400);
 }
 
-// barevné rozlišení důležitých kroků na časové ose
-$dotClass = function (array $k): string {
-    $typ = (int)$k['typ_stavu'];
-    if (in_array($typ, Analyzer::STAV_P90, true)) {
-        return 'dot-fast';
-    }
-    if (in_array((int)$k['akce_id'], Analyzer::AKCE_ZKRACENI, true)) {
-        return 'dot-cut';
-    }
-    if (in_array($typ, [64, 11, 8, 12], true)) {
-        return 'dot-main';
-    }
-    return '';
+// barevné rozlišení důležitých kroků na časové ose (stejné jako štítky v řádku „Poslední změna“)
+$dotClass = static function (array $k): string {
+    $flag = BillUpdates::stepFlag($k);
+    return $flag !== '' ? 'dot-' . $flag : '';
 };
 
 // náhled pro sociální sítě: obrázek s aktuálním skóre (v = otisk obsahu, ať sítě po změně skóre stáhnou nový)
@@ -109,6 +106,8 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     <a class="btn" href="<?= e(View::pspTiskUrl($ct, $obdobi)) ?>">Otevřít na psp.cz</a>
   </div>
 </section>
+
+<?php View::billUpdatesBar($billDays, $ct); ?>
 
 <section class="kpis" aria-label="Klíčová čísla">
   <div class="card kpi">
@@ -175,19 +174,15 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
           <span><a href="<?= e(View::pspSdUrl((int)$p['cislo'], $obdobi)) ?>">Návrh č. <?= (int)$p['cislo'] ?></a> <span class="muted small"><?= View::person($p['osoba'], $p['klub'] ?? null) ?> · <?= e(formatDate($p['cas'], true)) ?></span></span>
           <?php if (isset($pnOutcomes[(int)$p['cislo']])): ?><span class="pn-outcome"><?= View::pnOutcome($pnOutcomes[(int)$p['cislo']]) ?></span><?php endif; ?>
           <?php if ($x !== null): ?>
-            <span class="chips">
-              <?php if (!empty($x['signals']['other_laws'])): ?><span class="chip chip-cut">Přílepek: <?= e(implode(', ', $x['signals']['other_laws'])) ?></span><?php endif; ?>
-              <?php if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])): ?><span class="chip chip-cut">Lhůta a zpětné použití</span><?php endif; ?>
-              <?php if (!empty($x['signals']['large'])): ?><span class="chip chip-surge">Rozsáhlý</span><?php endif; ?>
-              <?php if ($x['ai_score'] !== null): ?><span class="chip <?= (int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge' ?>">AI <?= (int)$x['ai_score'] ?>/10</span><?php endif; ?>
-            </span>
+            <span class="chips"><?= View::pnChips($x) ?></span>
             <?php if (is_string($x['ai']['shrnuti'] ?? null) && $x['ai']['shrnuti'] !== ''): ?><span class="small pn-summary"><?= e($x['ai']['shrnuti']) ?></span><?php endif; ?>
             <?= View::aiRounds($x) ?>
             <?php $rev = $pnRev[(int)$p['id_dokument']] ?? []; ?>
             <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
             <?php // citace z textu PN: s vysvětlením „v praxi“ je uvnitř jeho rámečku nad nadpisem, jinak samostatně ?>
             <?php $pnQuote = trim((string)(($x['ai']['citace'] ?? [])[0] ?? '')); ?>
-            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote); ?>
+            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote,
+                $reportsOn ? ['id_dokument' => (int)$p['id_dokument'], 'cislo' => (int)$p['cislo'], 'ct' => $ct, 'check' => $reportChecks[(int)$p['id_dokument']] ?? null] : null); ?>
             <?php if ($pnPractice === '' && $pnQuote !== ''): ?><blockquote class="quote small"><?= e($pnQuote) ?></blockquote><?php endif; ?>
             <?= $pnPractice ?>
           <?php endif; ?>
@@ -209,6 +204,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     })();
     </script>
     <?php endif; ?>
+    <?php if ($reportsOn): ?><?= View::reportDialog() ?><?php endif; ?>
   </section>
 
   <aside class="side-col">
@@ -296,12 +292,12 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
 </section>
 <?php endif; ?>
 
-<section class="card pad" aria-label="Průběh projednávání">
+<section class="card pad" id="prubeh" aria-label="Průběh projednávání">
   <h2>Průběh projednávání</h2>
   <?php if ($steps === []): ?><p class="muted">Historie zatím není k dispozici.</p><?php endif; ?>
   <ol class="timeline">
     <?php foreach ($steps as $k): ?>
-      <li>
+      <li id="krok-<?= (int)$k['id_hist'] ?>">
         <span class="tl-date"><?= e(formatDate($k['datum'])) ?></span>
         <span class="tl-dot <?= $dotClass($k) ?>" aria-hidden="true"></span>
         <span class="tl-text"><strong><?= e($k['stav']) ?></strong><?= $k['akce'] !== '' ? ' – ' . e($k['akce']) : '' ?></span>

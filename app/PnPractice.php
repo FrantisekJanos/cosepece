@@ -4,14 +4,20 @@
 // do skóre nevstupuje a dosavadní rozbor ani jeho prompt nemění.
 //
 // Model dostane zvlášť text změn, zvlášť odůvodnění předkladatele (jeho tvrzení patří jen do pole
-// „podle_predkladatele“) a jako kontext dotčenou část projednávaného návrhu zákona. Dnešní znění zákonů
-// v datech není, proto se „před“ opírá jen o to, co je v poskytnutých textech.
+// „podle_predkladatele“), zvlášť znění s vyznačením změn, pokud ho předkladatel přiložil za odůvodnění (jen
+// pomůcka: po převodu z Wordu v něm staré a nové znění stojí za sebou, proto se z něj necituje), a jako kontext
+// dotčenou část projednávaného návrhu zákona. Dnešní znění zákonů v datech není, proto se „před“ opírá jen o to,
+// co je v poskytnutých textech.
 //
 // Pojistky (sanitize): citace musí být doslova v textu změn, čísla musí být v podkladech (povolen je jen součet
-// nebo rozdíl dvou čísel z textu), žádná hodnoticí slova, žádné jméno předkladatele. Co pojistkou neprojde,
-// se neuloží a zkusí se znovu (nejvýš praxe_tries pokusů). Výpadek modelu nebo spojení (vyčerpaný limit
+// nebo rozdíl dvou čísel z textu a rozdíl dnů dvou dat téhož měsíce), žádná hodnoticí slova, žádné jméno
+// předkladatele. Co pojistkou neprojde, se neuloží a zkusí se znovu (nejvýš praxe_tries pokusů); opakovaný pokus
+// dostane v zadání důvod minulého odmítnutí. Výpadek modelu nebo spojení (vyčerpaný limit
 // předplatného, časový limit) se mezi tyto pokusy nepočítá: má vlastní počitadlo praxe_fails s vyšším stropem
 // a PN s chybou jdou ve frontě až za ty, které chybu nemají. Modelový příklad smí napsat jen silnější model.
+//
+// Druhé kolo (silnější model) dostane PN s nálezem a všechny věcné změny (praxe_verify_types): procedurální
+// závažnost neříká, jak těžké je změnu vysvětlit. Přesuny peněz v rozpočtu a vypuštění částí zůstávají rychlému modelu.
 
 declare(strict_types=1);
 
@@ -46,8 +52,8 @@ Odpověz pouze JSON objektem bez dalšího textu:
 "po": stav, kdyby byl PN přijat, 1–3 věty.
 "v_praxi": 2–3 věty, co by to konkrétně znamenalo pro dotčené, s částkami a lhůtami z textu změn.
 {EXAMPLE_RULE}"podle_predkladatele": jedna věta, jaký cíl nebo dopad uvádí odůvodnění předkladatele, bez úvodu „Předkladatel uvádí, že“; null, když odůvodnění chybí.
-"nejiste": většinou null. Jedna věta jen tehdy, když bez chybějícího údaje nejde pochopit, co se mění (např. PN odkazuje na ustanovení, které v poskytnutých textech není). Nepiš sem, že texty neuvádějí datum účinnosti, dnešní znění zákona, počty dotčených, celkové dopady nebo podrobnosti provádění; to je běžné.
-"citace": 1–2 věty zkopírované z textu změn (ne z odůvodnění) přesně znak po znaku, které dokládají "po".
+"nejiste": většinou null. Jedna věta jen tehdy, když bez chybějícího údaje nejde pochopit, co se mění (např. PN odkazuje na ustanovení, které v poskytnutých textech není). Nepiš sem, že texty neuvádějí datum účinnosti, dnešní znění zákona, počty dotčených, celkové dopady nebo podrobnosti provádění; to je běžné. Nepiš sem ani nic o tom, jak jsou podklady uspořádané nebo z čeho jsi vycházel (úryvek, blok, vyznačení změn, platné znění přiložené k PN), a nepiš v první osobě.
+"citace": 1–2 věty zkopírované z bloku „Text změn“ (ne z odůvodnění ani z přiloženého znění s vyznačením změn) přesně znak po znaku, které dokládají "po". Když je text změn jen pokyn typu „za slova … se vkládají slova …“, zkopíruj ten pokyn tak, jak je; nepřepisuj ho na výsledné znění.
 Pravidla:
 - Piš česky, krátkými větami, bez právnických obratů. PN ještě není schválen, proto piš v podmiňovacím způsobu („by musel“, „by platilo“).
 - Piš jen to, co plyne z poskytnutých textů. Dnešní znění zákona neznáš, pokud v textech není: nedoplňuj ho z paměti.
@@ -66,6 +72,21 @@ TXT;
     // hodnoticí slova, která do věcného popisu nepatří (v tvrzení předkladatele se nekontrolují)
     private const JUDGING = '~\b(bohužel|naštěstí|konečně|skand[aá]l\w*|absurdn\w*|nesmysl\w*|nespravedliv\w*|lepší\w*|horší\w*)\b~ui';
 
+    // poznámka o podkladech místo o návrhu: jak jsou texty uspořádané („úryvek“, „blok“, „platné znění už obsahuje“)
+    // nebo z čeho model vycházel (první osoba). Čtenáři nic neříká, pole nejistoty se pak vypustí.
+    // Odkaz na ustanovení, které v textech chybí („§ 30a v poskytnutých textech není“), sem nepatří a zůstává.
+    private const WORKING_NOTE = '~\b(úryv\w*|blok(?:u|em|y|ů|ech)?|platn\w+\s+zněn\w+|vyznačen\w*|zobrazen\w+\s+zněn\w+'
+        . '|vycházím|vycházel\w*\s+jsem|předpokládám|usuzuji|domnívám|nemohu|nevím|nemám|beru|používám|počítám)\b~ui';
+
+    // nadpis znění s vyznačením změn, které předkladatel přikládá za odůvodnění („Platné znění … s vyznačením
+    // navrhovaných změn“, „Úplné znění s vyznačenými změnami“, „Vyznačení navrhovaných změn a doplnění“):
+    // řádek se slovem „vyznačen…“, za kterým nejvýš o dvě slova dál následuje „změn…“, „úprav…“ nebo „doplněn…“,
+    // a který nekončí tečkou (věta v odůvodnění typu „Tučně jsou vyznačeny navrhované změny.“ nadpis není)
+    private const ATTACHMENT_HEAD = '~^[^\n]{0,400}?\bvyznačen\w*\s+(?:\w+\s+){0,2}(?:změn|úprav|doplněn)[^\n]*$~mui';
+
+    private const MONTHS = ['ledna' => 1, 'února' => 2, 'března' => 3, 'dubna' => 4, 'května' => 5, 'června' => 6,
+        'července' => 7, 'srpna' => 8, 'září' => 9, 'října' => 10, 'listopadu' => 11, 'prosince' => 12];
+
     public function __construct(private Db $db, private array $config)
     {
     }
@@ -82,6 +103,8 @@ TXT;
             'justification_max' => max(0, (int)($cfg['praxe_justification_max'] ?? 20000)),
             // silnější model přepíše vysvětlení u PN se závažností od této hodnoty nebo s příznakem pravidel
             'verify_min' => (int)($cfg['praxe_verify_min'] ?? 4),
+            // typy změn, které silnější model přepíše vždy, bez ohledu na závažnost (prázdné pole = žádné)
+            'verify_types' => array_values(array_intersect(self::TYPES, (array)($cfg['praxe_verify_types'] ?? ['vecna_zmena']))),
             'tries' => max(1, (int)($cfg['praxe_tries'] ?? 3)),
             // kolikrát smí selhat volání modelu nebo spojení, než se PN z fronty vyřadí (výpadek není chyba návrhu)
             'fails' => max(1, (int)($cfg['praxe_fails'] ?? 10)),
@@ -115,7 +138,7 @@ TXT;
      * PN, u kterých poslední pokus skončil chybou, až za ostatními (výpadek tak nezdržuje zbytek fronty).
      * Vyčerpané pokusy platí jen pro verzi, ve které vznikly (praxe_try_v): po zvýšení VERSION se PN zkusí znovu.
      * $verify = druhé kolo: silnější model přepíše vysvětlení u PN s nálezem (závažnost ≥ praxe_verify_min nebo
-     * příznak pravidel) a smí přidat modelový příklad.
+     * příznak pravidel) a u typů změn z praxe_verify_types (výchozí věcná změna) a smí přidat modelový příklad.
      *
      * @return list<array{kind: string, id: int, ct: int, prompt: string}>
      */
@@ -127,9 +150,16 @@ TXT;
         }
         // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
         if ($verify) {
-            $where = 'x.praxe_at IS NOT NULL AND x.praxe_v = ' . self::VERSION . ' AND (x.praxe_model IS NULL OR x.praxe_model <> ?)'
-                . ' AND (x.ai_score >= ' . $s['verify_min'] . ' OR x.rule_score > 0)';
+            // nález (závažnost nebo příznak pravidel), nebo typ změny, který silnější model přepisuje vždy
+            $reasons = ['x.ai_score >= ' . $s['verify_min'], 'x.rule_score > 0'];
             $params = [AiReviewer::verifyModel($this->config)];
+            foreach ($s['verify_types'] as $type) {
+                // typ je v uloženém JSON (json_encode bez mezer); podtržítko v LIKE zastupuje jeden znak, shodě nevadí
+                $reasons[] = 'x.praxe_json LIKE ?';
+                $params[] = '%"typ":"' . $type . '"%';
+            }
+            $where = 'x.praxe_at IS NOT NULL AND x.praxe_v = ' . self::VERSION . ' AND (x.praxe_model IS NULL OR x.praxe_model <> ?)'
+                . ' AND (' . implode(' OR ', $reasons) . ')';
         } else {
             $where = '(x.praxe_at IS NULL OR x.praxe_v IS NULL OR x.praxe_v < ' . self::VERSION . ')';
             $params = [];
@@ -139,7 +169,7 @@ TXT;
             $params[] = $onlyCt;
         }
         $rows = $this->db->all(
-            "SELECT x.id_dokument, x.ct, x.text, t.uplny_nazev, t.nazev FROM pn_text x
+            "SELECT x.id_dokument, x.ct, x.text, x.praxe_error, x.praxe_try_v, t.uplny_nazev, t.nazev FROM pn_text x
              JOIN pn p ON p.id_dokument = x.id_dokument
              JOIN tisky t ON t.ct = x.ct
              WHERE $where AND x.chars > 0 AND t.faze <> 'Vyhlášeno'
@@ -153,10 +183,34 @@ TXT;
         foreach ($rows as $row) {
             $ct = (int)$row['ct'];
             $bills[$ct] ??= (string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [$ct]);
+            // opakovaný pokus v téže verzi: model se dozví, proč minulá odpověď neprošla pojistkami (důvod píše
+            // aplikace, ne model); chyba spojení nebo modelu („claude CLI: …“) se do zadání nedává. Na počitadle
+            // pokusů nezáleží: po retryRejected() je nulové, důvod ale platí dál (úspěšné uložení ho smaže)
+            $error = (string)$row['praxe_error'];
+            $rejected = (int)$row['praxe_try_v'] === self::VERSION && str_starts_with($error, 'Pojistka: ')
+                ? substr($error, strlen('Pojistka: ')) : '';
             $items[] = ['kind' => 'praxe', 'id' => (int)$row['id_dokument'], 'ct' => $ct,
-                'prompt' => self::prompt((string)($row['uplny_nazev'] ?: $row['nazev']), (string)$row['text'], $bills[$ct], $s, $verify)];
+                'prompt' => self::prompt((string)($row['uplny_nazev'] ?: $row['nazev']), (string)$row['text'], $bills[$ct], $s, $verify, $rejected)];
         }
         return $items;
+    }
+
+    /**
+     * Vrátí do fronty PN, které pojistky odmítly tolikrát, že se už samy nezkusí (vynuluje počitadlo pokusů;
+     * důvod posledního odmítnutí zůstává a další pokus ho dostane v zadání). Dosavadní vysvětlení se nemění.
+     * Typicky po úpravě promptu nebo pojistek, která nestojí za zvýšení VERSION (to by přepsalo všechna vysvětlení).
+     *
+     * @return int počet vrácených PN
+     */
+    public function retryRejected(): int
+    {
+        $s = self::settings($this->config);
+        $where = 'praxe_try_v = ' . self::VERSION . ' AND COALESCE(praxe_tries, 0) >= ' . $s['tries'] . " AND praxe_error LIKE 'Pojistka:%'";
+        $count = (int)$this->db->value("SELECT COUNT(*) FROM pn_text WHERE $where");
+        if ($count > 0) {
+            $this->db->run("UPDATE pn_text SET praxe_tries = 0 WHERE $where");
+        }
+        return $count;
     }
 
     /**
@@ -176,18 +230,37 @@ TXT;
         if ($model !== $verifier && $row['praxe_at'] !== null && (string)$row['praxe_model'] === $verifier && (int)$row['praxe_v'] === self::VERSION) {
             return true;
         }
-        $s = self::settings($this->config);
-        $context = self::billContext(PnText::normativePart((string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [(int)$row['ct']])),
-            PnText::normativePart((string)$row['text']), $s['bill_max']);
         try {
-            $clean = self::sanitize($result, (string)$row['text'], $context, (string)$row['osoba'], $model === $verifier);
+            $clean = $this->clean($id, $result, $model === $verifier);
         } catch (\DomainException $ex) {
             $this->saveError($id, 'Pojistka: ' . $ex->getMessage(), true);
             return false;
         }
-        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ?',
-            [json_encode($clean, JSON_UNESCAPED_UNICODE), $model, date('Y-m-d H:i:s'), self::VERSION, $id]);
+        $this->store($id, $clean, $model);
         return true;
+    }
+
+    /**
+     * Vysvětlení PN $id po pojistkách (sanitize nad textem PN a dotčenou částí návrhu zákona); nic neukládá.
+     * DomainException, když výsledek pojistkami neprojde; RuntimeException u neznámého PN.
+     */
+    public function clean(int $id, array $result, bool $allowExample): array
+    {
+        $row = $this->db->one('SELECT x.ct, x.text, p.osoba FROM pn_text x LEFT JOIN pn p ON p.id_dokument = x.id_dokument WHERE x.id_dokument = ?', [$id]);
+        if ($row === null) {
+            throw new \RuntimeException('Neznámý text PN ' . $id);
+        }
+        $s = self::settings($this->config);
+        $context = self::billContext(PnText::normativePart((string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [(int)$row['ct']])),
+            PnText::normativePart((string)$row['text']), $s['bill_max']);
+        return self::sanitize($result, (string)$row['text'], $context, (string)$row['osoba'], $allowExample);
+    }
+
+    /** Uloží vysvětlení, které prošlo pojistkami (clean()), a vynuluje počitadla pokusů. $at = čas uložení. */
+    public function store(int $id, array $clean, string $model, ?string $at = null): void
+    {
+        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ?',
+            [json_encode($clean, JSON_UNESCAPED_UNICODE), mb_substr($model, 0, 60), $at ?? date('Y-m-d H:i:s'), self::VERSION, $id]);
     }
 
     /**
@@ -250,10 +323,14 @@ TXT;
         return $stats;
     }
 
-    /** Prompt pro jeden PN: text změn, odůvodnění zvlášť a dotčená část projednávaného návrhu. */
-    public static function prompt(string $billTitle, string $pnText, string $billText, array $s, bool $withExample): string
+    /**
+     * Prompt pro jeden PN: text změn, odůvodnění zvlášť, přiložené znění s vyznačením změn zvlášť a dotčená část
+     * projednávaného návrhu. $rejected = důvod, proč pojistky odmítly minulou odpověď (opakovaný pokus).
+     */
+    public static function prompt(string $billTitle, string $pnText, string $billText, array $s, bool $withExample, string $rejected = ''): string
     {
         [$normative, $justification] = self::split($pnText);
+        [$justification, $attachment] = self::attachment($justification);
         $clip = fn(string $text, int $max): array => mb_strlen($text) > $max ? [mb_substr($text, 0, $max), ' (zkráceno)'] : [$text, ''];
         [$body, $truncated] = $clip($normative, $s['text_max']);
         $blocks = '';
@@ -261,10 +338,16 @@ TXT;
             [$j, $jt] = $clip($justification, $s['justification_max']);
             $blocks .= "\nOdůvodnění předkladatele (jeho vlastní tvrzení, ne ověřená fakta)$jt:\n<<<\n$j\n>>>\n";
         }
+        if ($attachment !== '' && $s['justification_max'] > 0) {
+            [$a, $at] = $clip($attachment, $s['justification_max']);
+            $blocks .= "\nZnění s vyznačením změn, které předkladatel přiložil (jen pomůcka: vypouštěná a doplňovaná slova v něm stojí"
+                . " za sebou bez rozlišení; není to text změn a necituje se z něj)$at:\n<<<\n$a\n>>>\n";
+        }
         $context = self::billContext(PnText::normativePart($billText), $normative, $s['bill_max']);
         if ($context !== '') {
             $blocks .= "\nDotčená část projednávaného návrhu zákona (jen kontext: co PN mění; nevysvětluj ji celou):\n<<<\n$context\n>>>\n";
         }
+        $rejected = self::shorten($rejected, 300);
         return strtr(self::PROMPT, [
             '{BILL}' => $billTitle,
             '{TRUNCATED}' => $truncated,
@@ -272,7 +355,7 @@ TXT;
             '{JUSTIFICATION}{CONTEXT}' => $blocks,
             '{EXAMPLE_KEY}' => $withExample ? '"priklad": "…", ' : '',
             '{EXAMPLE_RULE}' => $withExample ? self::EXAMPLE_RULE : '',
-        ]);
+        ]) . ($rejected === '' ? '' : "\n- Tvou předchozí odpověď na tento PN kontrola odmítla s důvodem: " . $rejected . ". Tuto chybu neopakuj.");
     }
 
     /**
@@ -287,6 +370,29 @@ TXT;
         // první řádek zbytku je nadpis odůvodnění
         $rest = (string)preg_replace('~^[^\n]*\n?~u', '', ltrim($rest, "\n"), 1);
         return [trim($normative), trim($rest)];
+    }
+
+    /**
+     * Oddělí od odůvodnění znění s vyznačením změn, které předkladatel přiložil za něj (od nadpisu do konce).
+     * Není to tvrzení předkladatele ani text změn: po převodu z Wordu se ztratí přeškrtnutí a tučné písmo, takže
+     * vypouštěná a doplňovaná slova stojí za sebou („dnem 1. ledna 2028 1. července 2027“).
+     *
+     * @return array{0: string, 1: string} odůvodnění bez přílohy, příloha (prázdná, když nadpis chybí)
+     */
+    public static function attachment(string $justification): array
+    {
+        if (!preg_match_all(self::ATTACHMENT_HEAD, $justification, $heads, PREG_OFFSET_CAPTURE)) {
+            return [$justification, ''];
+        }
+        foreach ($heads[0] as [$line, $offset]) {
+            $line = rtrim($line);
+            // věta odůvodnění, ne nadpis: končí tečkou nebo je to dlouhý odstavec
+            if (str_ends_with($line, '.') || mb_strlen($line) > 500) {
+                continue;
+            }
+            return [trim(substr($justification, 0, $offset)), trim(substr($justification, $offset))];
+        }
+        return [$justification, ''];
     }
 
     /**
@@ -378,16 +484,17 @@ TXT;
             throw new \DomainException('žádná citace není doslova v textu změn');
         }
 
-        // čísla: jen ta, která jsou v podkladech, nebo součet či rozdíl dvou z nich
+        // čísla: jen ta, která jsou v podkladech, nebo součet či rozdíl dvou z nich; počet dnů i jako rozdíl dvou dat
         $source = self::numbers($pnText . "\n" . $context);
+        $days = self::dayDifferences($pnText . "\n" . $context);
         foreach (['co_se_meni', 'po', 'v_praxi'] as $key) {
-            $missing = self::unsupported($out[$key], $source);
+            $missing = self::unsupported($out[$key], $source, $days);
             if ($missing !== []) {
                 throw new \DomainException('pole ' . $key . ' uvádí číslo, které v textech není: ' . implode(', ', $missing));
             }
         }
         foreach (['pred' => 'stav před (číslo mimo text)', 'priklad' => 'příklad (číslo mimo text)', 'podle_predkladatele' => 'tvrzení předkladatele (číslo mimo text)'] as $key => $note) {
-            if ($out[$key] !== '' && self::unsupported($out[$key], $source) !== []) {
+            if ($out[$key] !== '' && self::unsupported($out[$key], $source, $days) !== []) {
                 $out[$key] = '';
                 $out['upravy'][] = 'vypuštěno: ' . $note;
             }
@@ -398,6 +505,12 @@ TXT;
         }
         if ($out['pred'] === '') {
             $out['pred_zdroj'] = null;
+        }
+
+        // pole nejistoty říká, co o návrhu nejde zjistit; poznámka o podkladech nebo o postupu modelu se vypustí
+        if ($out['nejiste'] !== '' && preg_match(self::WORKING_NOTE, $out['nejiste'])) {
+            $out['nejiste'] = '';
+            $out['upravy'][] = 'vypuštěno: poznámka o podkladech v poli nejistoty';
         }
 
         // hodnoticí slova a jméno předkladatele ve věcných polích
@@ -481,10 +594,14 @@ TXT;
      * Sčítat a odčítat se smí jen čísla, která numbers() označila jako hodnotu (true): čísla paragrafů a zákonů
      * jen jako odkaz by jinak „podložila“ skoro jakékoli menší číslo.
      *
+     * Počet dnů („o 16 dnů později“) projde i jako rozdíl dvou dat téhož měsíce z podkladů ($days): čísla do 12
+     * se neověřují, takže posun z 1. na 17. října by jinak podložit nešel.
+     *
      * @param array<string, bool> $source výstup numbers() nad podklady
+     * @param list<int> $days výstup dayDifferences() nad podklady
      * @return list<string>
      */
-    public static function unsupported(string $output, array $source): array
+    public static function unsupported(string $output, array $source, array $days = []): array
     {
         $operands = [];
         foreach ($source as $value => $operand) {
@@ -508,12 +625,51 @@ TXT;
                         break;
                     }
                 }
+                // jen jako počet dnů („16 dnů“, „16denní“), ne jako částka nebo procento
+                if (!$ok && in_array($n, $days, true) && preg_match('~(?<![\d,.])' . $value . '\h?(?:dn|den)~u', $output)) {
+                    $ok = true;
+                }
             }
             if (!$ok) {
                 $missing[] = $value;
             }
         }
         return $missing;
+    }
+
+    /**
+     * Rozdíly dnů mezi daty téhož měsíce a roku v textu: „1. října 2027“ a „17. října 2027“ dávají 16.
+     * Data v různých měsících se nepočítají (délku měsíců pojistka neřeší).
+     *
+     * @return list<int>
+     */
+    public static function dayDifferences(string $text): array
+    {
+        $names = implode('|', array_keys(self::MONTHS));
+        if (!preg_match_all('~(?<![\d.])(\d{1,2})\.\h*(?:(' . $names . ')|(\d{1,2})\.)\h*(\d{4})(?!\d)~ui', $text, $matches, PREG_SET_ORDER)) {
+            return [];
+        }
+        $byMonth = [];
+        foreach ($matches as $m) {
+            $day = (int)$m[1];
+            $month = $m[2] !== '' ? self::MONTHS[mb_strtolower($m[2])] : (int)$m[3];
+            if ($day < 1 || $day > 31 || $month < 1 || $month > 12) {
+                continue;
+            }
+            $byMonth[$m[4] . '-' . $month][$day] = true;
+        }
+        $out = [];
+        foreach ($byMonth as $set) {
+            $list = array_keys($set);
+            foreach ($list as $a) {
+                foreach ($list as $b) {
+                    if ($a > $b) {
+                        $out[$a - $b] = true;
+                    }
+                }
+            }
+        }
+        return array_keys($out);
     }
 
     /**

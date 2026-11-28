@@ -114,12 +114,29 @@ return [
         'repeat_runs' => 3, 'repeat_min' => 3, 'repeat_max' => 7, 'sample_every' => 10, 'sample_below' => 4,
         // vysvětlení PN „v praxi“ (app/PnPractice.php, bin/ai.php --praxe): samostatný průchod, do skóre nevstupuje.
         // praxe_bill_max = do kolika znaků se text návrhu zákona přiloží celý (u delších jen články, které PN zmiňuje);
-        // praxe_verify_min = od jaké závažnosti (nebo s příznakem pravidel) vysvětlení přepíše silnější model
+        // praxe_verify_min = od jaké závažnosti (nebo s příznakem pravidel) vysvětlení přepíše silnější model;
+        // praxe_verify_types = typy změn, které přepíše vždy (výchozí ['vecna_zmena']; [] = jen podle závažnosti)
         // praxe_tries = kolikrát smí pojistky výsledek odmítnout; praxe_fails = kolikrát smí selhat model nebo spojení
-        'praxe_enabled' => true, 'praxe_bill_max' => 40000, 'praxe_verify_min' => 4, 'praxe_tries' => 3, 'praxe_fails' => 10,
+        'praxe_enabled' => true, 'praxe_bill_max' => 40000, 'praxe_verify_min' => 4, 'praxe_verify_types' => ['vecna_zmena'], 'praxe_tries' => 3, 'praxe_fails' => 10,
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI
+    ],
+
+    // hlášení chyb ve vysvětlení PN „v praxi“ od čtenářů (praporek u vysvětlení, app/Reports.php). Třídí je rychlý
+    // model při běhu AI (bin/ai.php --hlaseni); přehled: php bin/hlaseni.php. per_hour = hlášení z jedné adresy
+    // za hodinu, per_day = všech za den, open_per_pn = kolik nevyřízených smí čekat u jednoho vysvětlení,
+    // keep_days = po kolika dnech se vyřazená hlášení smažou, tries = kolikrát smí třídění selhat
+    'hlaseni' => ['enabled' => true, 'per_hour' => 5, 'per_day' => 200, 'max_note' => 500, 'open_per_pn' => 10, 'keep_days' => 30, 'tries' => 3,
+        // kontrola vysvětlení, ke kterému přišlo platné hlášení, silnějším modelem (bin/ai.php --hlaseni --verify):
+        // check_per_day = strop zkontrolovaných hlášení za 24 h, check_tries = kolikrát smí oprava neprojít pojistkami
+        'check' => true, 'check_per_day' => 40, 'check_tries' => 3,
+        // zveřejnění platných hlášení s poznámkou jako podnětů na GitHubu (jedno vysvětlení = jeden podnět, další
+        // hlášení jako komentář). Prázdný repo = vypnuto. S vyplněným repo formulář čtenáře upozorní, že se poznámka
+        // zveřejní, a zveřejní se jen hlášení podaná s tímto upozorněním. dry_run = true jen zapisuje do
+        // data/hlaseni-github.log (po vypnutí se zapsaná hlášení odešlou). token = fine-grained token jen s právem
+        // „Issues: Read and write“ pro tento repozitář; patří jen do config.php na serveru. per_day = strop za 24 h.
+        'github' => ['repo' => '', 'token' => '', 'dry_run' => true, 'per_day' => 20, 'label' => 'hlaseni-ctenaru'],
     ],
 
     // profily na sociálních sítích (ikony v hlavičce webu); výchozí jsou v app/View.php (View::SOCIAL),

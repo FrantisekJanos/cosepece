@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from .. import attribution
 from ..card import Card
 from ..enqueue import CAPTION_LIMIT
 
@@ -38,11 +39,58 @@ def _v3_block(card: dict, fmt: str) -> list[str]:
         for i, b in enumerate(body, 1):
             if _empty(b.get("zdroj")):
                 errs.append(f"zmena: bod {i} nemá zdroj")
+        proc = block.get("proc")
+        if isinstance(proc, dict) and not _empty(proc.get("text")):
+            # „Co uvádí důvodová zpráva“: jen obsah důvodové zprávy, ne úvodní slovo ani „podle předkladatelů“
+            if not str(proc.get("zdroj") or "").strip().lower().startswith("důvodová zpráva"):
+                errs.append("zmena: proc smí vycházet jen z důvodové zprávy (zdroj „důvodová zpráva k tisku N“); "
+                            "jinak blok proc vynech")
     if fmt == "rozprava":
         for side in ("pro", "namitky", "odpovedi"):
             for i, b in enumerate((block.get(side) or {}).get("body") or [], 1):
                 if _empty(b.get("url")):
                     errs.append(f"rozprava: {side} bod {i} nemá url")
+                for key in ("klic", "recnik", "datum"):
+                    if _empty(b.get(key)):
+                        errs.append(f"rozprava: {side} bod {i} nemá {key} (projev, ze kterého bod je)")
+                if not _empty(b.get("datum")) and not DAY.match(str(b.get("datum"))):
+                    errs.append(f"rozprava: {side} bod {i} má datum {b.get('datum')!r}, má být RRRR-MM-DD")
+    return errs
+
+
+DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+STENO_URL = re.compile(r"^https://www\.psp\.cz/eknih/\d{4}ps/stenprot/\d{3}schuz/s\d+\.htm(#r\d+)?$")
+
+
+def _speech_errors(card: dict, autopilot: bool = False) -> list[str]:
+    """Pole `citace_projevu` (projevy, ze kterých vychází text karty nebo popisku): povinná pole, odkaz na
+    stenozáznam psp.cz, datum RRRR-MM-DD, u doslovné citace text. Autopilot smí citovat jen autorizovaný projev
+    (rozhodnutí majitele 2026-11-28: neautorizovaný záznam se po autorizaci může změnit)."""
+    rows = card.get("citace_projevu")
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        return ["citace_projevu musí být seznam"]
+    errs: list[str] = []
+    for i, sp in enumerate(rows, 1):
+        if not isinstance(sp, dict):
+            errs.append(f"citace_projevu {i}: není objekt")
+            continue
+        for key in ("klic", "recnik", "datum", "url"):
+            if _empty(sp.get(key)):
+                errs.append(f"citace_projevu {i}: chybí {key}")
+        if not _empty(sp.get("url")) and not STENO_URL.match(str(sp["url"])):
+            errs.append(f"citace_projevu {i}: url {sp['url']!r} není odkaz na stenozáznam psp.cz")
+        if not _empty(sp.get("datum")) and not DAY.match(str(sp["datum"])):
+            errs.append(f"citace_projevu {i}: datum {sp['datum']!r}, má být RRRR-MM-DD")
+        for key in ("autorizovano", "doslovne"):
+            if not isinstance(sp.get(key), bool):
+                errs.append(f"citace_projevu {i}: {key} musí být true nebo false")
+        if sp.get("doslovne") is True and _empty(sp.get("text")):
+            errs.append(f"citace_projevu {i}: doslovná citace bez textu (cituj nalezeny_text z over_citaci)")
+        if autopilot and sp.get("autorizovano") is not True:
+            errs.append(f"citace_projevu {i}: autopilot smí citovat jen autorizovaný projev; neautorizovaný "
+                        "projev a text z něj z karty i popisku vynech")
     return errs
 
 
@@ -303,9 +351,13 @@ def _author_errors(card: dict, caption: str) -> list[str]:
 
 def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason_keys: list[str],
                      fmt: str | None, focus_pn: list[int] | None = None,
-                     focus_info: list[dict] | None = None) -> list[str]:
+                     focus_info: list[dict] | None = None, autopilot: bool = False) -> list[str]:
     """Chyby karty a popisku česky; prázdný seznam = v pořádku. focus_pn = video k vybraným PN (/pn),
-    focus_info = jejich údaje z claimu (u formátu pribeh výsledek hlasování ze serveru)."""
+    focus_info = jejich údaje z claimu (u formátu pribeh výsledek hlasování ze serveru), autopilot = úloha
+    autopilota (zveřejní se bez schválení; citace jen autorizovaných projevů).
+
+    Na konci kontrola atribuce (attribution.public_text_errors): výrok ani motiv nepřisouzený osobě, citace
+    projevu jen v kanonickém tvaru, „a N dalších“ u navrhovatelů, označení AI; i v textech pro Threads a X."""
     errs: list[str] = []
     is_v3 = template == "template_v3"
     is_pribeh = template == "template_pn_v1"
@@ -338,6 +390,8 @@ def validate_variant(card: dict, caption: str, *, template: str, ct: int, reason
         errs += _focus_errors(card, caption, focus_pn)
     if card.get("pn_autor"):  # doplňuje normalizace z údajů serveru o zadaných PN
         errs += _author_errors(card, caption)
+    errs += _speech_errors(card, autopilot)
+    errs += attribution.public_text_errors(card, caption, ct)
     return errs
 
 

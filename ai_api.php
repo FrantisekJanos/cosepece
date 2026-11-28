@@ -5,6 +5,8 @@
 //   GET  ai_api.php?action=queue&limit=10[&ct=221][&verify=1]  → {"items": [{kind, id, ct, prompt}]}
 //        verify=1: nejzávažnější nálezy k ověření silnějším modelem
 //        praxe=1: fronta vysvětlení PN „v praxi“ (kind = praxe; s verify=1 druhé kolo silnějším modelem)
+//        hlaseni=1: fronta hlášení čtenářů k roztřídění (kind = hlaseni, app/Reports.php); s verify=1 fronta
+//        kontrol nahlášených vysvětlení silnějším modelem (kind = kontrola, id = id dokumentu PN)
 //   POST ai_api.php?action=result  {"kind","id","result","model"} nebo {"kind","id","error"}
 //        u kind = praxe odpověď {"ok": true, "accepted": false}, když výsledek neprošel pojistkami
 //   POST ai_api.php?action=done    → přepočet skóre
@@ -15,6 +17,7 @@ require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\AiReviewer;
 use Hlidac\PnPractice;
+use Hlidac\Reports;
 use Hlidac\Scorer;
 
 header('Content-Type: application/json; charset=utf-8');
@@ -45,6 +48,7 @@ if (empty(config('ai.enabled'))) {
 
 $reviewer = new AiReviewer(db(), config());
 $practice = new PnPractice(db(), config());
+$reports = new Reports(db(), config());
 $action = (string)($_GET['action'] ?? '');
 
 try {
@@ -53,6 +57,9 @@ try {
         $ct = isset($_GET['ct']) ? (int)$_GET['ct'] : null;
         // známka života klienta AI i při prázdné frontě (hlídání dat v botovi reels)
         $reviewer->markPolled();
+        if (!empty($_GET['hlaseni'])) {
+            aiApiReply(['items' => !empty($_GET['verify']) ? $reports->checkQueue($limit) : $reports->queue($limit)]);
+        }
         if (!empty($_GET['praxe'])) {
             aiApiReply(['items' => $practice->queue($limit, $ct, !empty($_GET['verify']))]);
         }
@@ -67,13 +74,27 @@ try {
             aiApiReply(['error' => 'Chybí kind a id'], 400);
         }
         $isPractice = (string)$body['kind'] === 'praxe';
+        $isReport = (string)$body['kind'] === 'hlaseni';
+        $isCheck = (string)$body['kind'] === 'kontrola';
         if (isset($body['result']) && is_array($body['result'])) {
             $model = isset($body['model']) && is_string($body['model']) && preg_match('~^[a-z0-9.\-]{1,60}$~', $body['model']) ? $body['model'] : null;
+            if ($isCheck) {
+                // kontrola nahlášeného vysvětlení: oprava, která neprojde pojistkami, se neuloží a zkusí se znovu
+                aiApiReply(['ok' => true, 'accepted' => $reports->saveCheck((int)$body['id'], $body['result'], $model)]);
+            }
+            if ($isReport) {
+                // třídění hlášení čtenáře: verdikt mimo pevný seznam hlášení neschválí ani nevyřadí
+                aiApiReply(['ok' => true, 'accepted' => $reports->saveResult((int)$body['id'], $body['result'], $model)]);
+            }
             if ($isPractice) {
                 // vysvětlení PN „v praxi“: výsledek, který neprojde pojistkami, se neuloží a zkusí se znovu
                 aiApiReply(['ok' => true, 'accepted' => $practice->saveResult((int)$body['id'], $body['result'], $model)]);
             }
             $reviewer->saveResult((string)$body['kind'], (int)$body['id'], $body['result'], $model);
+        } elseif ($isCheck) {
+            $reports->saveCheckError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
+        } elseif ($isReport) {
+            $reports->saveError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         } elseif ($isPractice) {
             // klient hlásí výpadek modelu (limit předplatného, časový limit): nepočítá se mezi odmítnutí pojistkou
             $practice->saveError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));

@@ -25,7 +25,7 @@ View::header('Upozornění', 'upozorneni');
 <section class="hero">
   <div>
     <h1>Upozornění</h1>
-    <p class="lead"><?= $total ?> událostí · odebírat můžete přes <a href="<?= e(url('rss')) ?>">RSS</a> nebo na sociálních sítích</p>
+    <p class="lead"><?= $total ?> událostí podle data, kdy se staly · odebírat můžete přes <a href="<?= e(url('rss')) ?>">RSS</a> nebo na sociálních sítích · kdy jsme je zaznamenali, ukazuje <a href="<?= e(url('aktualizace')) ?>">časová osa aktualizací</a></p>
   </div>
 </section>
 <section class="card">

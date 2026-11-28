@@ -140,13 +140,14 @@ if (PHP_SAPI !== 'cli') {
     // chyby jen do logu, nikdy do stránky (vypsaná cesta a kód pomáhají útočníkovi)
     ini_set('display_errors', '0');
     ini_set('log_errors', '1');
-    // jen čtení: GET a HEAD; POST přijímá jen formulář tokenů (mcp.php) a rozhraní AI (ai_api.php),
+    // jen čtení: GET a HEAD; POST přijímá jen formulář tokenů (mcp.php), hlášení chyb ve vysvětlení
+    // (hlaseni.php) a rozhraní AI (ai_api.php),
     // PUT (nahrání videa) a POST jen rozhraní workeru Reels (reels_api.php)
     $script = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
     $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
     $allowed = match (true) {
         $script === 'reels_api.php' => ['GET', 'HEAD', 'POST', 'PUT'],
-        in_array($script, ['mcp.php', 'ai_api.php'], true) => ['GET', 'HEAD', 'POST'],
+        in_array($script, ['mcp.php', 'hlaseni.php', 'ai_api.php'], true) => ['GET', 'HEAD', 'POST'],
         default => ['GET', 'HEAD'],
     };
     if (!in_array($method, $allowed, true)) {

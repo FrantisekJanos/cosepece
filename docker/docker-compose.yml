@@ -69,6 +69,8 @@ services:
       PGUSER: mcp_ro
       PGPASSWORD: ${MCP_DB_PASSWORD}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:*,127.0.0.1:*}
+      MCP_RATE_PER_DAY: ${MCP_RATE_PER_DAY:-20000}
+      MCP_RATE_PER_MINUTE: ${MCP_RATE_PER_MINUTE:-120}
     ports:
       - "${MCP_BIND:-127.0.0.1:8102}:8000"
     read_only: true

@@ -10,9 +10,9 @@ namespace Hlidac;
 final class Sitemap
 {
     // stránky z tabulky Url::PAGES, které do mapy patří (hledání a revize jsou výsledky dotazu, ne obsah)
-    private const PAGES = ['index', 'tisky', 'zakon', 'upozorneni', 'pripravovane', 'metodika', 'data', 'mcp', 'zmeny'];
+    private const PAGES = ['index', 'tisky', 'zakon', 'upozorneni', 'aktualizace', 'pripravovane', 'metodika', 'data', 'mcp', 'zmeny'];
     // stránky, které se mění s každou synchronizací
-    private const LIVE = ['index', 'tisky', 'zakon', 'upozorneni', 'pripravovane'];
+    private const LIVE = ['index', 'tisky', 'zakon', 'upozorneni', 'aktualizace', 'pripravovane'];
 
     /**
      * Položky mapy: absolutní adresa a den poslední změny (YYYY-MM-DD) nebo null, když ho neznáme.
@@ -54,5 +54,19 @@ final class Sitemap
                 . ($entry['lastmod'] !== null ? '<lastmod>' . $entry['lastmod'] . '</lastmod>' : '') . "</url>\n";
         }
         return $xml . "</urlset>\n";
+    }
+
+    /**
+     * Text souboru robots.txt: procházet se smí vše a řádek Sitemap ukazuje na mapu webu.
+     * Řádek Sitemap musí mít celou adresu s https://; bez ní (nenastavené site_url) se vynechá.
+     */
+    public static function robots(?string $sitemapUrl): string
+    {
+        $text = "User-agent: *\nAllow: /\n";
+        // adresa na jednom řádku, jinak by šlo do souboru vložit další pokyn
+        if ($sitemapUrl !== null && preg_match('~^https?://[^\s]+$~D', $sitemapUrl)) {
+            $text .= "\nSitemap: " . $sitemapUrl . "\n";
+        }
+        return $text;
     }
 }

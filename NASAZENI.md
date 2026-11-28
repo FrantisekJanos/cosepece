@@ -175,10 +175,23 @@ Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým pob�
    jeho výsledek nahradí první rozbor (na webu „ověřeno druhým modelem“).
 3. Po každé dávce web přepočítá skóre.
 4. `php bin/ai.php --remote=… --praxe` a totéž s `--verify` – vysvětlení pozměňovacích návrhů „v praxi“
-   (Haiku všechny, Sonnet znovu ty s nálezem), jedna dávka za běh (`AI_PRAXE_LIMIT`, výchozí 20), aby dohánění
+   (Haiku všechny, Sonnet znovu věcné změny a návrhy s nálezem), jedna dávka za běh (`AI_PRAXE_LIMIT`, výchozí 20), aby dohánění
    starších návrhů neblokovalo rozbor nových. Jednorázově lze dohnat ručně s `--all`. Web výsledek uloží jen
    tehdy, když projde pojistkami (citace a čísla musí být v textu); odmítnutý se v logu ukáže jako `ODMÍTNUTO`
    a zkusí se příště. Skóre se nemění.
+5. `php bin/ai.php --remote=… --hlaseni` – hlášení čtenářů k vysvětlením (praporek u vysvětlení) roztřídí Haiku:
+   platné, spam, nesmysl, pokus o manipulaci, mimo téma (`AI_HLASENI_LIMIT`, výchozí 20). Web přijme jen verdikt
+   z tohoto seznamu, jinak hlášení počká na ruční posouzení. Přehled hlášení: `php bin/hlaseni.php` na serveru
+   (v Dockeru `docker exec docker-web-1 php bin/hlaseni.php`).
+6. `php bin/ai.php --remote=… --hlaseni --verify` – vysvětlení, ke kterému přišlo platné hlášení, zkontroluje **Sonnet**.
+   Dostane označenou část a ustanovení ověřená v textu návrhu, ne text čtenáře. Potvrdí vysvětlení beze změny, nebo ho
+   opraví; opravu web uloží jen tehdy, když projde pojistkami (v logu jinak `ODMÍTNUTO`, po třech pokusech hlášení
+   počká na ruční posouzení). Výsledek je v `php bin/hlaseni.php` a u vysvětlení na webu.
+   Zveřejnění platných hlášení jako podnětů na GitHubu je ve výchozím stavu vypnuté. Zapíná se v `config.php`:
+   `hlaseni.github.repo` (např. `vlastnik/repozitar`), nejdřív s `dry_run = true` (zápis do
+   `data/hlaseni-github.log`), potom `token` (fine-grained token jen s právem „Issues: Read and write“ pro ten
+   repozitář) a `dry_run = false`. Odesílá synchronizace, nejvýš `per_day` (20) za den. Od vyplnění `repo`
+   formulář čtenáře upozorňuje, že se poznámka zveřejní; starší hlášení se nezveřejní.
 
 Limit předplatného: při běžném provozu (desítky nových textů denně) se nepozná. Když se limit při prvním
 dohánění vyčerpá, rozbory skončí chybou a doženou se v dalších hodinách.

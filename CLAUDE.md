@@ -65,6 +65,10 @@ php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.ver
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
 php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
+php bin/ai.php --praxe --retry    # PN s vyčerpanými pokusy (odmítnuté pojistkami) zpět do fronty, bez modelu
+php bin/ai.php --hlaseni          # roztřídí hlášení čtenářů k vysvětlením (Reports); s --remote fronta z hostingu
+php bin/ai.php --hlaseni --verify # silnější model zkontroluje vysvětlení s platným hlášením (oprava jen přes pojistky)
+php bin/hlaseni.php [--vse]       # přehled hlášení čtenářů; --rozhodnout=ID --jako=platne|spam|… ruční rozhodnutí
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
 ```
@@ -101,13 +105,42 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
   6b. PnPractice   vysvětlení PN „v praxi“ (co by se změnilo, kdyby prošel): samostatný průchod s vlastním promptem,
                    sloupce pn_text.praxe_*, do skóre nevstupuje. Model dostane zvlášť text změn, odůvodnění
                    předkladatele a dotčenou část návrhu zákona (billContext). Fronta ai_api.php?praxe=1 (kind praxe),
-                   klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem (smí přidat
-                   modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
-                   (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele; odmítnutý výsledek
+                   klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem a všechny věcné
+                   změny (ai.praxe_verify_types; smí přidat modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
+                   (nebo součet/rozdíl dvou z nich, počet dnů i jako rozdíl dvou dat téhož měsíce), bez hodnoticích slov a jména předkladatele, pole „nejiste“ bez
+                   poznámek o podkladech a první osoby (vypustí se); odmítnutý výsledek
                    se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
                    v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní; počitadla patří
                    k verzi praxe_try_v, po zvýšení VERSION se nepoužijí). Čísla paragrafů a zákonů nejsou hodnoty
-                   ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Po změně promptu zvyš PnPractice::VERSION
+                   ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Znění s vyznačením změn přiložené
+                   za odůvodněním jde modelu jako samostatný blok (PnPractice::attachment), necituje se z něj. Opakovaný pokus
+                   dostane v zadání důvod minulého odmítnutí; `--praxe --retry` vrátí do fronty PN s vyčerpanými pokusy.
+                   Po změně promptu zvyš PnPractice::VERSION (přepíše všechna vysvětlení; u drobného zpřesnění stačí --retry)
+  6c. Reports     hlášení chyb ve vysvětlení „v praxi“ od čtenářů (app/Reports.php, tabulka hlaseni): praporek
+                   v rohu bloku vysvětlení (View::reportLink) otevře vrstvu s formulářem (View::reportDialog,
+                   assets/report.js; bez JavaScriptu stránka hlaseni.php). submit(): stejný původ, past na roboty,
+                   limit z adresy a denní strop, levné filtry (bez poznámky = platné, víc odkazů = spam).
+                   Ostatní třídí Haiku (fronta ai_api.php?hlaseni=1, kind hlaseni, klient bin/ai.php --hlaseni):
+                   poznámka čtenáře je cizí text mezi náhodnými značkami, model běží bez nástrojů a smí vrátit
+                   jen verdikt v_poradku / spam / nesmysl / manipulace / mimo_tema; cokoli jiného = stav rucne
+                   (počká na člověka). Odkazy na ustanovení se uloží, jen když doslova stojí v poznámce i v textu PN
+                   (verifyRefs). Vyřazená hlášení se po hlaseni.keep_days dnech mažou (Sync → purge). Poznámka
+                   se nesmí předávat dalšímu modelu jako pokyn. Skóre se nemění.
+                   Zveřejnění na GitHubu (hlaseni.github, výchozí vypnuto; Sync → publish, ručně bin/hlaseni.php
+                   --odeslat): platná hlášení s poznámkou a se souhlasem (sloupec souhlas = formulář upozornil
+                   na zveřejnění) jdou jako podnět, další k témuž vysvětlení jako komentář (gh_issue), nejvýš
+                   github.per_day za 24 h. Poznámka je v bloku kódu s ohraničením delším než nejdelší řada
+                   zpětných apostrofů v ní (Reports::fence). dry_run jen zapisuje do data/hlaseni-github.log
+                   (gh_zkouska) a po vypnutí se hlášení odešlou. 401/403 běh ukončí bez počítání pokusu.
+                   Kontrola nahlášeného vysvětlení (hlaseni.check; fronta ai_api.php?hlaseni=1&verify=1, kind kontrola,
+                   id = id dokumentu PN; klient bin/ai.php --hlaseni --verify): Sonnet dostane běžné zadání
+                   vysvětlení (PnPractice::prompt) a dodatek Reports::checkPrompt s dosavadním vysvětlením, označenými
+                   částmi a ověřenými ustanoveními; text čtenáře nikdy. Výsledek "kontrola": beze_zmeny = vysvětlení
+                   se nepřepisuje; jinak oprava musí projít PnPractice::clean (stejné pojistky), pak ji uloží
+                   PnPractice::store a původní znění zůstane v hlaseni.kontrola_puvodni. Neprojde-li check_tries×,
+                   výsledek je neproslo a vysvětlení zůstává. Opakované hlášení téže části bez nových ustanovení
+                   převezme výsledek bez volání modelu (inheritChecks), strop check_per_day. Web u vysvětlení
+                   ukáže větu o kontrole (View::reportCheckNote), na GitHub jde výsledek jako komentář k podnětu
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),
@@ -209,7 +242,7 @@ za kalendářní den podle času podání, ne za běh synchronizace.
 
 Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `pripravovane`,
 `text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období), `sync_beh`
-(historie běhů synchronizace, 90 dní), `html_kroky`, `html_pn` (záznamy ze stránek historie tisků), `hlasovani_poslanci`.
+(historie běhů synchronizace, 90 dní), `html_kroky`, `html_pn` (záznamy ze stránek historie tisků), `hlasovani_poslanci`, `hlaseni` (hlášení čtenářů k vysvětlením).
 
 ## Zdroj dat (psp.cz open data)
 

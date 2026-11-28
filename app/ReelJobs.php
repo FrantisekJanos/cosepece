@@ -226,7 +226,8 @@ final class ReelJobs
     /**
      * Údaje vybraných PN tisku pro zadání generátoru: číslo, autor, čas podání, titulek rozboru AI, odkaz na psp.cz,
      * id osoby autora, klub autora ke dni podání (pn.klub z Importeru v podobě Clubs::label; bez údaje null, nic
-     * se neodhaduje), den, ke kterému klub platí, zda je stažený text PN a výsledek ve 3. čtení (`vysledek`,
+     * se neodhaduje), den, ke kterému klub platí, zda je stažený text PN, počet spolupodepsaných z hlavičky textu
+     * (`spolu`, Proposers::pnCosigners; null = nejde určit) a výsledek ve 3. čtení (`vysledek`,
      * PnOutcome; null = výsledek zatím není). Tvar drží tests/contract/focus-pn-info.json (čte ho i test generátoru
      * v Pythonu). Starší worker nová pole ignoruje; nový worker podle klíče `vysledek` pozná server, který přijme
      * šablonu template_pn_v1.
@@ -237,7 +238,7 @@ final class ReelJobs
         $obdobi = (new Repo($this->db))->obdobi();
         $marks = implode(', ', array_fill(0, count($pns), '?'));
         $rows = $this->db->all(
-            "SELECT p.cislo, p.osoba, p.cas, p.id_osoba, p.klub, x.ai_json,
+            "SELECT p.cislo, p.osoba, p.cas, p.id_osoba, p.klub, x.ai_json, SUBSTR(x.text, 1, 1000) AS hlavicka,
                     CASE WHEN x.text IS NOT NULL AND x.text <> '' THEN 1 ELSE 0 END AS has_text
                FROM pn p LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument
               WHERE p.ct = ? AND p.cislo IN ($marks) ORDER BY p.cislo",
@@ -258,6 +259,9 @@ final class ReelJobs
                 'klub' => $club !== '' ? $club : null,
                 'klub_ke_dni' => $club !== '' && $cas !== null ? substr($cas, 0, 10) : null,
                 'has_text' => (int)$r['has_text'] === 1,
+                // spolupodepsaní z hlavičky textu PN (bez autora); null = nejde určit (video: „podle evidence psp.cz“)
+                'spolu' => Proposers::pnCosigners($r['hlavicka'] !== null ? (string)$r['hlavicka'] : null,
+                    $r['osoba'] !== null ? (string)$r['osoba'] : null),
                 'vysledek' => $outcomes[(int)$r['cislo']] ?? null,
             ];
         }, $rows);
@@ -537,7 +541,41 @@ final class ReelJobs
                 }
             }
         }
+        $card['prijmeni_osob'] = $this->personSurnames();
         return $card;
+    }
+
+    /**
+     * Příjmení osob, které video nesmí jmenovat volným textem (kontrola atribuce generátoru, reels/attribution.py):
+     * autoři PN (pn.osoba) a ze schématu steno služby rag/ poslanci, kteří v tomto období hlasovali
+     * (hlasovani_poslanci), a řečníci ve stenozáznamech (mezi nimi členové vlády). Bez schématu steno (SQLite,
+     * hosting) jen autoři PN. Seřazené, bez duplicit; jen se předává generátoru, nikde se nezobrazuje.
+     *
+     * @return list<string>
+     */
+    public function personSurnames(): array
+    {
+        $names = [];
+        foreach ($this->db->all('SELECT DISTINCT osoba FROM pn WHERE osoba IS NOT NULL') as $r) {
+            $parts = preg_split('~\s+~u', trim((string)$r['osoba']), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            if (count($parts) >= 2) {
+                $names[] = end($parts);
+            }
+        }
+        if ((new PnOutcome($this->db, []))->stenoAvailable()) {
+            try {
+                foreach ($this->db->all('SELECT DISTINCT o.prijmeni FROM steno.osoba o
+                        WHERE o.id_osoba IN (SELECT id_osoba FROM hlasovani_poslanci)
+                           OR o.id_osoba IN (SELECT id_osoba FROM steno.projev WHERE id_osoba IS NOT NULL)') as $r) {
+                    $names[] = trim((string)$r['prijmeni']);
+                }
+            } catch (\Throwable) {
+                // starší schéma steno bez tabulky osoba: zůstanou autoři PN
+            }
+        }
+        $names = array_values(array_unique(array_filter($names, fn(string $n): bool => mb_strlen($n) >= 3)));
+        sort($names);
+        return $names;
     }
 
     /**
@@ -596,6 +634,8 @@ final class ReelJobs
         $who = ['typ' => 'Poslanecký návrh', 'jmeno' => $name];
         if ($count !== null && $count > 1) {
             $who['funkce'] = $female ? 'první podepsaná' : 'první podepsaný';
+            // „a N dalších“ u jména (videa Reels: nikdy jen první jméno)
+            $who += ['vice' => true, 'dalsi' => $count - 1, 'dalsi_text' => Proposers::othersText($count - 1)];
             $group = ['count' => $count];
             if (is_array($data['kluby'] ?? null) && array_sum($data['kluby']) === $count) {
                 $kluby = [];
@@ -610,6 +650,7 @@ final class ReelJobs
         } elseif ($rest !== '' || count($parts) > 1) {
             // počet neznámý (název končí „a dalších“): jen že jich je víc
             $who['funkce'] = 'a další poslanci';
+            $who += ['vice' => true, 'dalsi' => null, 'dalsi_text' => Proposers::othersText(null)];
         } elseif ($first !== null && ($first['pohlavi'] ?? null) !== null) {
             $who['funkce'] = $female ? 'poslankyně' : 'poslanec';
         }
@@ -621,7 +662,8 @@ final class ReelJobs
 
     /**
      * Autor PN, ze kterého je titulek karty (zdroj „pozměňovací návrh č. N“ z Repo::headline nebo pnHeadline),
-     * s klubem ke dni podání (pn.klub z Importeru, Clubs::label): [{cislo, jmeno, klub}] jako pn_autor u /pn.
+     * s klubem ke dni podání (pn.klub z Importeru, Clubs::label) a počtem spolupodepsaných z hlavičky textu PN
+     * (Proposers::pnCosigners, null = nejde určit): [{cislo, jmeno, klub, spolu}] jako pn_autor u /pn.
      * Titulek z textu návrhu nebo PN bez autora = [].
      */
     private function headlineAuthor(int $ct, string $source): array
@@ -629,13 +671,15 @@ final class ReelJobs
         if (!preg_match('~^pozměňovací návrh č\. (\d+)$~u', $source, $m)) {
             return [];
         }
-        $row = $this->db->one('SELECT cislo, osoba, klub FROM pn WHERE ct = ? AND cislo = ? ORDER BY id_dokument LIMIT 1', [$ct, (int)$m[1]]);
+        $row = $this->db->one('SELECT p.cislo, p.osoba, p.klub, SUBSTR(x.text, 1, 1000) AS hlavicka FROM pn p
+            LEFT JOIN pn_text x ON x.id_dokument = p.id_dokument WHERE p.ct = ? AND p.cislo = ? ORDER BY p.id_dokument LIMIT 1', [$ct, (int)$m[1]]);
         $name = $row !== null ? trim((string)$row['osoba']) : '';
         if ($name === '') {
             return [];
         }
         $club = Clubs::label($row['klub'] !== null ? (string)$row['klub'] : null);
-        return [['cislo' => (int)$row['cislo'], 'jmeno' => $name, 'klub' => $club !== '' ? $club : null]];
+        return [['cislo' => (int)$row['cislo'], 'jmeno' => $name, 'klub' => $club !== '' ? $club : null,
+            'spolu' => Proposers::pnCosigners($row['hlavicka'] !== null ? (string)$row['hlavicka'] : null, $name)]];
     }
 
     /**

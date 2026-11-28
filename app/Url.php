@@ -1,9 +1,10 @@
 <?php
-// Adresy stránek webu bez přípony .php: /tisk/221, /zakon/159/2006, /tisky, /metodika…
+// Adresy stránek webu bez přípony .php: /tisk/221, /tisk/221/aktualizace, /zakon/159/2006, /tisky, /metodika…
 // Jedna tabulka pro všechny směry: skládání odkazů (path, to), rozpoznání příchozí adresy (route; na Apachi
 // dělá totéž .htaccess, při místním náhledu bin/router.php) a přesměrování starých adres (redirectTarget).
 // Strojové adresy (api.php, rss.php, og.php, ai_api.php, reels_api.php, cron.php) zůstávají beze změny,
-// aby se nerozbily čtečky RSS a cizí nástroje. Mapa webu je na /sitemap.xml (sitemap.php).
+// aby se nerozbily čtečky RSS a cizí nástroje. Mapa webu je na /sitemap.xml (sitemap.php),
+// pokyny pro vyhledávače na /robots.txt (robots.php).
 
 declare(strict_types=1);
 
@@ -19,8 +20,10 @@ final class Url
         'index' => '',
         'tisky' => 'tisky',
         'tisk' => 'tisk',
+        'tisk-aktualizace' => 'tisk-aktualizace',
         'zakon' => 'zakony',
         'upozorneni' => 'upozorneni',
+        'aktualizace' => 'aktualizace',
         'pripravovane' => 'pripravovane',
         'metodika' => 'metodika',
         'data' => 'data-a-api',
@@ -28,6 +31,7 @@ final class Url
         'zmeny' => 'zmeny',
         'hledat' => 'hledat',
         'revize' => 'revize',
+        'hlaseni' => 'hlaseni',
     ];
 
     /** null = podle config.php → pretty_urls (výchozí zapnuto); testy si hodnotu přepínají */
@@ -54,8 +58,9 @@ final class Url
             $path = self::PAGES[$page];
             $ct = $query['ct'] ?? null;
             $law = $query['z'] ?? null;
-            if ($page === 'tisk' && (is_int($ct) || is_string($ct)) && preg_match('~^\d{1,9}$~', (string)$ct) && (int)$ct > 0) {
-                $path = 'tisk/' . (int)$ct;
+            if (in_array($page, ['tisk', 'tisk-aktualizace'], true) && (is_int($ct) || is_string($ct)) && preg_match('~^\d{1,9}$~', (string)$ct) && (int)$ct > 0) {
+                // časová osa změn tisku je pod adresou tisku: tisk/221/aktualizace
+                $path = 'tisk/' . (int)$ct . ($page === 'tisk' ? '' : '/aktualizace');
                 unset($query['ct']);
             } elseif ($page === 'zakon' && is_string($law) && Laws::valid($law)) {
                 $path = 'zakon/' . $law;
@@ -99,12 +104,19 @@ final class Url
             // mapa webu pro vyhledávače (strojová adresa, bez tolerance lomítka na konci)
             return ['sitemap.php', []];
         }
+        if (ltrim($path, '/') === 'robots.txt') {
+            // pokyny pro vyhledávače s odkazem na mapu webu (strojová adresa, bez tolerance lomítka na konci)
+            return ['robots.php', []];
+        }
         $path = preg_replace('~/$~', '', ltrim($path, '/')) ?? '';
         if ($path === '') {
             return ['index.php', []];
         }
         if (preg_match('~^tisk/(\d+)$~', $path, $m)) {
             return ['tisk.php', ['ct' => $m[1]]];
+        }
+        if (preg_match('~^tisk/(\d+)/aktualizace$~', $path, $m)) {
+            return ['tisk-aktualizace.php', ['ct' => $m[1]]];
         }
         if (preg_match('~^zakon/(\d{1,4})/(\d{4})$~', $path, $m)) {
             return ['zakon.php', ['z' => $m[1] . '/' . $m[2]]];

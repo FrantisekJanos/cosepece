@@ -11,11 +11,14 @@ proti textu zdroje N z registru:
   nepřisoudí. Krátký pojem v uvozovkách bez [N] zůstane, jen když u něj (od předchozího citátu do konce
   věty) není jméno osoby ani uvozovací slovo („Babiš řekl: „zloději“.“, „podle premiéra „zloději““ = citát).
 
-Přisouzení u projevu: jména osob z DB v úseku před citátem (od konce předchozího citátu) a za ním do konce
-věty, a do konce další věty, když v ní už není jiný citát („„…“ [1]. Tak to řekl Petr Malý.“); když tam
-žádné není, platí jména z nejbližšího dřívějšího úseku. Jakékoli jméno jiné osoby než řečníka zdroje =
-`neovereno` (spec 9.2), i když je jmenovaný i řečník („Schillerová citovala Hrnčíře: „…““). Výjimka
-„B cituje A“ se nedělá: chybné přisouzení je horší než neověřená citace.
+Přisouzení (pozitivní pravidlo, rozhodnutí controlleru r3): `presne`/`priblizne` jen když
+a) zdroj je projev; u textu zákona nebo PN (`cel:`) citát, který odstavec přisuzuje osobě (jméno, role,
+   zájmeno nebo sloveso mluvení před citátem nebo za ním do konce věty), = `neovereno`;
+b) věta s citátem (před ním a za ním do konce věty) jmenuje příjmení řečníka zdroje (i skloňované)
+   a nikoho jiného; jméno jiné osoby v dalších větách až po další citát se počítá taky;
+c) nalezené místo ve zdroji neleží v uvozovkách, 200 znaků před ním není „cituji / citace / citoval /
+   jak řekl / podle“ ani jméno jiné osoby (řečník v projevu může citovat jiného).
+Jinak `neovereno`: chybné přisouzení je horší než neověřená citace.
 
 Znění s výpustkou je nejvýš `priblizne`, stejně jako místo, kterému ve zdroji těsně předchází zápor nebo
 popření („Netvrdím, že …“). Zápor nebo slovo obracející smysl v textu přeskočeném výpustkou = `nenalezeno`.
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import re
 import string
+from bisect import bisect_right
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,6 +42,8 @@ KUS = 1_000             # délka kusu dlouhé části
 MEZERA_KUSU = 100       # nejvýš tolik znaků zdroje mezi sousedními kusy dlouhé části
 MEZERA_VYPUSTKY = 300   # nejvýš tolik znaků zdroje přeskočí výpustka mezi částmi citace
 OKNO_ZAPORU = 60        # zápor nebo popření těsně před nalezeným místem ve zdroji (ve stejné větě)
+OKNO_ZDROJE = 200       # okno zdroje před nalezeným místem: citování jiného („cituji“, jiné jméno)
+OKNO_UVOZOVEK = 300     # okno zdroje kolem nalezeného místa pro kontrolu, že neleží v uvozovkách
 
 # ` ´ jsou značky markdownu a akcent, ″ ′ palce a minuty
 _ZNAKY_UVOZOVEK = "".join(c for c in UVOZOVKY if c not in "`´″′")
@@ -55,6 +61,7 @@ _KONEC_VETY = re.compile(r"[.!?](?=\s|$)")
 _ZKRATKY = {"posl", "ing", "mgr", "mudr", "judr", "phdr", "rndr", "bc", "doc", "prof", "p", "pi", "c", "odst",
             "pism", "cl", "tzv", "napr", "resp", "atd", "sb", "mil", "mld", "tis", "kc", "min", "max"}
 _SLOVO_PRED = re.compile(r"(\w+)$")
+_OKNO_ZKRATKY = 40      # jak daleko před tečkou se hledá slovo (zkratka, číslo)
 _OKRAJ_ZACATEK = string.whitespace + "…."
 _OKRAJ_KONEC = string.whitespace + "….,;:!?"
 _VYPUSTKA = re.compile(r"\[…\]|\(…\)|\[\.\.\.\]|\(\.\.\.\)|…|\.\.\.")
@@ -65,6 +72,15 @@ _UVOZOVACI = re.compile(r"(?<!\w)(rekl|rekla|rekli|rika|rikal|rikala|uvedl|uvedl
                         r"|cituje|napsal|napsala|prohlasil|prohlasila|tvrdil|tvrdila|tvrdi|dodal|dodala|nazval"
                         r"|nazvala|nazyva|oznacil|oznacila|oznacuje|povazuje|povazuji|povazoval|povazovala|podle"
                         r"|slovy)(?!\w)")
+# přisouzení osobě u textu zákona nebo PN: sloveso mluvení v minulém čase, role, zájmeno
+_OSOBA_SLOVA = re.compile(
+    r"(?<!\w)(rekl|rekla|rekli|prohlasil\w*|uvedl\w*|napsal\w*|tvrdil\w*|dodal\w*|citoval\w*|nazval\w*"
+    r"|oznacil\w*|odpovedel\w*|reagoval\w*|zduraznil\w*|vyjadril\w*|rikal\w*|cituje|cituji|slovy|podle"
+    r"|premier\w*|ministr\w*|poslan\w*|predsed\w*|mistopredsed\w*|zpravodaj\w*|navrhovatel\w*"
+    r"|predkladatel\w*|recnik\w*|recnic\w*|mluvci|prezident\w*|senator\w*|hejtman\w*|starost[ak]\w*"
+    r"|kolega|kolegu|kolegy|kolegyne|kolegyni|on|ona|oni|ony|jeho|jeji|jejich)(?!\w)")
+# citování jiného ve zdroji před nalezeným místem
+_CITUJE_JINEHO = re.compile(r"(?<!\w)(cituj\w*|citac\w*|citoval\w*|jak\s+rekl\w*|podle)(?!\w)")
 # zápor: samostatná záporná slova a sloveso s předponou ne- (kromě běžných slov, která záporem nejsou)
 _ZAPOR_SLOVA = _ZAPORNA | {"nikdy", "nic", "nikdo", "nikoho", "nicim", "zadny", "zadna", "zadne", "zadneho",
                             "ani", "proti", "lez", "lzi", "lhal", "lhala", "ohradil", "ohradila", "ohrazuji"}
@@ -120,20 +136,10 @@ def over_odstavec(odstavec: str, registr: Registr, text_zdroje: Callable[[int], 
     {n, shoda, od, do, recnik, neautorizovano} v pořadí v odstavci (od/do = offsety v textu zdroje)."""
     bloky = _bloky(odstavec)
     pary, nesparovane = _uvozovky(odstavec, [(b.od, b.do) for b in bloky])
-    citaty = sorted(bloky + _inline(odstavec, pary, jmena_osob), key=lambda c: c.od)
-    useky = _useky_jmen(odstavec, citaty)
-    jmena_useku: dict[int, list[str]] = {}
-
-    def jmena_k(i: int) -> list[str]:
-        """Jména u citátu i (před ním a za ním do konce věty); bez nich jména nejbližšího dřívějšího úseku."""
-        for k in range(i, -1, -1):
-            if k not in jmena_useku:
-                jmena_useku[k] = [j for u in useky[k] if u for j in jmena_osob(u)]
-            if jmena_useku[k]:
-                return jmena_useku[k]
-        return []
-
-    vysledky = [(c.od, _over_citat(c, registr, text_zdroje, lambda i=i: jmena_k(i))) for i, c in enumerate(citaty)]
+    vety = _Vety(odstavec)
+    citaty = sorted(bloky + _inline(odstavec, pary, jmena_osob, vety), key=lambda c: c.od)
+    okoli = _okoli(odstavec, citaty, vety)
+    vysledky = [(c.od, _over_citat(c, registr, text_zdroje, o, jmena_osob)) for c, o in zip(citaty, okoli)]
 
     # úpravy textu: (začátek, konec, náhrada)
     upravy: list[tuple[int, int, str]] = []
@@ -209,24 +215,33 @@ def _konce_vet(s: str, od: int, do: int):
     """Konce vět v s[od:do]: .!? před mezerou nebo koncem; tečka za zkratkou, iniciálou nebo číslem ne."""
     for m in _KONEC_VETY.finditer(s, od, do):
         if m.group() == ".":
-            slovo = _SLOVO_PRED.search(s, 0, m.start())
+            slovo = _SLOVO_PRED.search(s, max(0, m.start() - _OKNO_ZKRATKY), m.start())
             w = _bez_diakritiky(slovo.group(1)) if slovo else ""
             if w in _ZKRATKY or w.isdigit() or (len(w) == 1 and w.isalpha()):
                 continue
         yield m.end()
 
 
-def _zacatek_vety(s: str, p: int, od: int) -> int:
-    """Začátek věty, ve které je pozice p (ne dřív než od)."""
-    konce = list(_konce_vet(s, od, p))
-    return konce[-1] if konce else od
+class _Vety:
+    """Konce vět odstavce spočítané jednou (bisect místo procházení od začátku pro každý citát)."""
+
+    def __init__(self, s: str):
+        self.konce = list(_konce_vet(s, 0, len(s)))
+        self.delka = len(s)
+
+    def zacatek(self, p: int, od: int = 0) -> int:
+        """Začátek věty, ve které je pozice p (ne dřív než od)."""
+        k = bisect_right(self.konce, p) - 1
+        return max(od, self.konce[k]) if k >= 0 else od
+
+    def konec(self, p: int) -> int:
+        """Konec věty, ve které je pozice p (první konec za p)."""
+        k = bisect_right(self.konce, p)
+        return self.konce[k] if k < len(self.konce) else self.delka
 
 
-def _konec_vety(s: str, p: int) -> int:
-    return next(_konce_vet(s, p, len(s)), len(s))
-
-
-def _inline(s: str, pary: list[tuple[int, int]], jmena_osob: Callable[[str], list[str]]) -> list[_Citat]:
+def _inline(s: str, pary: list[tuple[int, int]], jmena_osob: Callable[[str], list[str]], vety: _Vety
+            ) -> list[_Citat]:
     out: list[_Citat] = []
     predchozi = 0
     for o, z in pary:
@@ -238,7 +253,7 @@ def _inline(s: str, pary: list[tuple[int, int]], jmena_osob: Callable[[str], lis
         konec = odkaz.end() if odkaz else z + 1
         if n is None and len(_SLOVO.findall(vnitrek)) < MIN_SLOV:
             # krátký pojem v uvozovkách bez odkazu je citát, jen když ho věta přisuzuje osobě
-            okoli = [s[predchozi:o], s[z + 1:_konec_vety(s, z + 1)]]
+            okoli = [s[predchozi:o], s[z + 1:vety.konec(z + 1)]]
             if not any(_UVOZOVACI.search(_bez_diakritiky(u)) or jmena_osob(u) for u in okoli if u.strip()):
                 continue
         out.append(_Citat(o, z + 1, vnitrek, n, konec, False))
@@ -271,24 +286,24 @@ def _bloky(odstavec: str) -> list[_Citat]:
     return out
 
 
-def _useky_jmen(s: str, citaty: list[_Citat]) -> list[tuple[str, str]]:
-    """Úseky odstavce, ve kterých se hledají jména k citátu: před ním (od konce předchozího úseku)
-    a za ním do konce věty, pokud věta skončí dřív, než začne další citát."""
-    out: list[tuple[str, str]] = []
-    zacatek = 0
+@dataclass
+class _Okoli:
+    veta: str          # věta s citátem bez citátu samotného: před ním (od začátku věty) a za ním do konce věty
+    dal: str           # další věty až po větu s dalším citátem (jméno v nich se počítá jako jiné jméno)
+
+
+def _okoli(s: str, citaty: list[_Citat], vety: _Vety) -> list[_Okoli]:
+    out: list[_Okoli] = []
     for i, c in enumerate(citaty):
-        pred = s[zacatek:c.od]
-        konec = _konec_vety(s, c.konec)
         dalsi = citaty[i + 1].od if i + 1 < len(citaty) else len(s)
-        if konec <= dalsi:
-            # i další věta, když v ní žádný citát nezačíná („„…“ [1]. Tak to řekl Petr Malý.“)
-            dalsi_konec = _konec_vety(s, konec)
-            konec = dalsi_konec if dalsi_konec <= dalsi else konec
-            out.append((pred, s[c.konec:konec]))
-            zacatek = konec
-        else:
-            out.append((pred, ""))
-            zacatek = c.konec
+        predchozi = citaty[i - 1].konec if i else 0
+        zacatek = vety.zacatek(c.od)
+        # předchozí citát v téže větě: jeho text se nepočítá, okolí před ním ano
+        pred = s[zacatek:c.od] if zacatek >= predchozi else s[zacatek:citaty[i - 1].od] + " " + s[predchozi:c.od]
+        konec = min(vety.konec(c.konec), dalsi)
+        # další věty až po větu s dalším citátem (ta patří k němu)
+        konec_dal = vety.zacatek(dalsi, konec) if i + 1 < len(citaty) else len(s)
+        out.append(_Okoli(pred + " " + s[c.konec:konec], s[konec:konec_dal]))
     return out
 
 
@@ -298,8 +313,8 @@ def _bez_uvozovek(c: _Citat) -> str:
 
 # --- ověření jednoho citátu --------------------------------------------------------------------
 
-def _over_citat(c: _Citat, registr: Registr, text_zdroje: Callable[[int], str | None],
-                jmena: Callable[[], list[str]]) -> dict:
+def _over_citat(c: _Citat, registr: Registr, text_zdroje: Callable[[int], str | None], okoli: _Okoli,
+                jmena_osob: Callable[[str], list[str]]) -> dict:
     vysledek = {"n": c.n, "shoda": "neovereno", "od": None, "do": None, "recnik": None, "neautorizovano": False}
     zdroj = registr.podle_n(c.n) if c.n is not None else None
     if zdroj is None:
@@ -317,9 +332,11 @@ def _over_citat(c: _Citat, registr: Registr, text_zdroje: Callable[[int], str | 
         shoda = "priblizne"     # ve zdroji „Netvrdím, že …“: znění se nepodává jako přesné
     recnik = None
     if zdroj.typ == "projev":
-        recnik = _prisouzeni(zdroj, jmena())
+        recnik = _prisouzeni(zdroj, okoli, text, od, do, jmena_osob)
         if recnik is None:
             return vysledek
+    elif _prisuzuje_osobe(okoli.veta, jmena_osob):
+        return vysledek         # text zákona nebo PN přisouzený osobě (K2)
     return {**vysledek, "shoda": shoda, "od": od, "do": do, "recnik": recnik}
 
 
@@ -423,7 +440,56 @@ def _popreno_pred(text: str, od: int) -> bool:
     return _zapor(pred[konce[-1]:] if konce else pred)
 
 
-def _prisouzeni(zdroj: Zdroj, jmena: list[str]) -> str | None:
-    """Řečník zdroje, nebo None, když odstavec výrok přisuzuje i jiné osobě (citát je neověřený)."""
+def _prijmeni(recnik: str) -> str:
+    slova = _slova_jmena(_ZAVORKA.sub("", recnik))
+    return slova[-1] if slova else ""
+
+
+def _tvar_prijmeni(slovo: str, prijmeni: str) -> bool:
+    """Slovo je příjmení v některém pádě (Novák, Nováka; Schillerová, Schillerové; Dušek, Duška;
+    Svoboda, Svobody). Obojí malými písmeny bez diakritiky."""
+    if len(prijmeni) < 2:
+        return False
+    if slovo.startswith(prijmeni):
+        return len(slovo) - len(prijmeni) <= 3
+    for kmen in (prijmeni[:-1] if prijmeni.endswith(("a", "e", "y")) else None,
+                 prijmeni[:-2] + prijmeni[-1] if re.search(r"e[kclnr]$", prijmeni) else None):
+        if kmen and len(kmen) >= 3 and slovo.startswith(kmen) and len(slovo) - len(kmen) <= 4:
+            return True
+    return False
+
+
+def _jmenuje(usek: str, recnik: str) -> bool:
+    """Úsek jmenuje řečníka příjmením (i skloňovaným)."""
+    prijmeni = _prijmeni(recnik)
+    return any(_tvar_prijmeni(w, prijmeni) for w in _SLOVO.findall(_bez_diakritiky(usek)))
+
+
+def _v_uvozovkach_zdroje(text: str, od: int, do: int) -> bool:
+    """Místo ve zdroji leží uvnitř páru uvozovek nebo za nespárovanou uvozovkou (v okně OKNO_UVOZOVEK)."""
+    a = max(0, od - OKNO_UVOZOVEK)
+    okno = text[a:min(len(text), do + OKNO_UVOZOVEK)]
+    pary, nesparovane = _uvozovky(okno, [])
+    return (any(o < od - a and z >= do - a for o, z in pary)
+            or any(p < od - a for p in nesparovane))
+
+
+def _prisouzeni(zdroj: Zdroj, okoli: _Okoli, text: str, od: int, do: int,
+                jmena_osob: Callable[[str], list[str]]) -> str | None:
+    """Řečník zdroje, nebo None (citát je neověřený), když neplatí všechny podmínky b) a c) z popisu modulu."""
     recnik = _recnik(zdroj)
-    return None if any(not _je_osoba(j, recnik) for j in jmena) else recnik
+    if not _jmenuje(okoli.veta, recnik):
+        return None             # role, zájmeno nebo nic: přisouzení není doložené (K4)
+    jmena = jmena_osob(okoli.veta) + (jmena_osob(okoli.dal) if okoli.dal.strip() else [])
+    if any(not _je_osoba(j, recnik) for j in jmena):
+        return None             # jiná osoba ve větě s citátem nebo v dalších větách (K3)
+    pred = text[max(0, od - OKNO_ZDROJE):od]
+    if (_v_uvozovkach_zdroje(text, od, do) or _CITUJE_JINEHO.search(_bez_diakritiky(pred))
+            or any(not _je_osoba(j, recnik) for j in jmena_osob(pred))):
+        return None             # řečník ve zdroji cituje jiného (K1)
+    return recnik
+
+
+def _prisuzuje_osobe(veta: str, jmena_osob: Callable[[str], list[str]]) -> bool:
+    """Věta s citátem ho přisuzuje osobě: jméno, role, zájmeno nebo sloveso mluvení."""
+    return bool(_OSOBA_SLOVA.search(_bez_diakritiky(veta)) or jmena_osob(veta))

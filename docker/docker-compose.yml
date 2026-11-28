@@ -57,12 +57,17 @@ services:
     depends_on: [db]
 
   # MCP server (Streamable HTTP na /mcp). Tokeny: docker compose exec rag-ingest python -m hlidac_rag.tokens add <jméno>
+  # (MCP sám do mcp.token zapisovat nesmí). Běží pod rolí mcp_ro jen pro čtení (rag/hlidac_rag/role.py, spec chatbota 21):
+  # roli založí/obnoví docker compose exec -e MCP_DB_PASSWORD rag-ingest python -m hlidac_rag.role
   mcp:
     build:
       context: ../rag
     restart: unless-stopped
     environment:
       <<: *ragenv
+      # přepíše PGUSER a PGPASSWORD z *ragenv: heslo superuseru hlidac do kontejneru nejde
+      PGUSER: mcp_ro
+      PGPASSWORD: ${MCP_DB_PASSWORD}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:*,127.0.0.1:*}
     ports:
       - "${MCP_BIND:-127.0.0.1:8102}:8000"

@@ -10,8 +10,11 @@ COMPOSE = KOREN / "docker/docker-compose.yml"
 SLUZBY = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
 
 
-def test_mcp_je_utvrzeny():
+def test_mcp_nebezi_jako_superuser_a_je_utvrzeny():
     m = SLUZBY["mcp"]
+    env = m["environment"]
+    assert env["PGUSER"] == "mcp_ro" and env["PGPASSWORD"] == "${MCP_DB_PASSWORD}"
+    assert "DB_PASSWORD" not in env and "${DB_PASSWORD}" not in [str(v) for v in env.values()]
     assert m["read_only"] is True and m["tmpfs"] == ["/tmp"]
     assert m["cap_drop"] == ["ALL"] and "no-new-privileges:true" in m["security_opt"]
     assert m["pids_limit"] == 128 and "volumes" not in m and not m.get("privileged")

@@ -66,6 +66,7 @@ php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); 
 php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
 php bin/ai.php --praxe --retry    # PN s vyčerpanými pokusy (odmítnuté pojistkami) zpět do fronty, bez modelu
 php bin/ai.php --hlaseni          # roztřídí hlášení čtenářů k vysvětlením (Reports); s --remote fronta z hostingu
+php bin/ai.php --hlaseni --verify # silnější model zkontroluje vysvětlení s platným hlášením (oprava jen přes pojistky)
 php bin/hlaseni.php [--vse]       # přehled hlášení čtenářů; --rozhodnout=ID --jako=platne|spam|… ruční rozhodnutí
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
@@ -129,7 +130,16 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    na zveřejnění) jdou jako podnět, další k témuž vysvětlení jako komentář (gh_issue), nejvýš
                    github.per_day za 24 h. Poznámka je v bloku kódu s ohraničením delším než nejdelší řada
                    zpětných apostrofů v ní (Reports::fence). dry_run jen zapisuje do data/hlaseni-github.log
-                   (gh_zkouska) a po vypnutí se hlášení odešlou. 401/403 běh ukončí bez počítání pokusu
+                   (gh_zkouska) a po vypnutí se hlášení odešlou. 401/403 běh ukončí bez počítání pokusu.
+                   Kontrola nahlášeného vysvětlení (hlaseni.check; fronta ai_api.php?hlaseni=1&verify=1, kind kontrola,
+                   id = id dokumentu PN; klient bin/ai.php --hlaseni --verify): Sonnet dostane běžné zadání
+                   vysvětlení (PnPractice::prompt) a dodatek Reports::checkPrompt s dosavadním vysvětlením, označenými
+                   částmi a ověřenými ustanoveními; text čtenáře nikdy. Výsledek "kontrola": beze_zmeny = vysvětlení
+                   se nepřepisuje; jinak oprava musí projít PnPractice::clean (stejné pojistky), pak ji uloží
+                   PnPractice::store a původní znění zůstane v hlaseni.kontrola_puvodni. Neprojde-li check_tries×,
+                   výsledek je neproslo a vysvětlení zůstává. Opakované hlášení téže části bez nových ustanovení
+                   převezme výsledek bez volání modelu (inheritChecks), strop check_per_day. Web u vysvětlení
+                   ukáže větu o kontrole (View::reportCheckNote), na GitHub jde výsledek jako komentář k podnětu
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),

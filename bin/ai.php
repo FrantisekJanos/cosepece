@@ -7,7 +7,8 @@
 //   --praxe        vysvětlení PN „v praxi“ (app/PnPractice.php) místo procedurálního rozboru; s --verify druhé
 //                  kolo silnějším modelem u PN s nálezem. Skóre se nemění.
 //   --hlaseni      roztřídí hlášení čtenářů k vysvětlením „v praxi“ (app/Reports.php): platné, spam, nesmysl,
-//                  pokus o manipulaci, mimo téma. Rychlým modelem, bez --verify. Skóre se nemění.
+//                  pokus o manipulaci, mimo téma. Rychlým modelem. S --verify silnější model zkontroluje
+//                  vysvětlení, ke kterým přišlo platné hlášení (oprava musí projít pojistkami). Skóre se nemění.
 //   --resanitize   znovu použije pojistky na uložené rozbory (bez volání modelu) a přepočítá skóre;
 //                  s --praxe na uložená vysvětlení „v praxi“ (co neprojde, vrátí se do fronty)
 //   --praxe --retry  vrátí do fronty PN, jejichž vysvětlení pojistky odmítly tolikrát, že se už samy nezkusí
@@ -69,12 +70,12 @@ try {
         exit(1);
     }
     if ($hlaseni && !isset($opt['remote'])) {
-        // třídění hlášení čtenářů nad místní databází: jedna dávka, skóre se nemění
-        $stats = (new Reports(db(), $config))->run($limit);
-        echo date('H:i:s') . ' hlášení ' . json_encode($stats, JSON_UNESCAPED_UNICODE), "\n";
+        // třídění hlášení čtenářů (s --verify kontrola nahlášených vysvětlení) nad místní databází: jedna dávka
+        $stats = $verify ? (new Reports(db(), $config))->runChecks($limit) : (new Reports(db(), $config))->run($limit);
+        echo date('H:i:s') . ' hlášení ' . ($verify ? 'kontrola ' : '') . json_encode($stats, JSON_UNESCAPED_UNICODE), "\n";
         exit($stats['errors'] > 0 ? 1 : 0);
     }
-    if ($verify && !$hlaseni) {
+    if ($verify) {
         echo 'Ověření modelem ' . AiReviewer::verifyModel($config) . "\n";
     }
     if (!isset($opt['remote'])) {
@@ -104,21 +105,22 @@ try {
     // z proměnné HLIDAC_TOKEN, aby nebyl vidět v argumentech procesu (--token zůstává pro ruční spuštění)
     $tokenHeader = ['X-Hlidac-Token: ' . (string)($opt['token'] ?? getenv('HLIDAC_TOKEN') ?: '')];
     $base = rtrim((string)$opt['remote'], '/') . '/ai_api.php?v=2';
-    // hlášení třídí vždy rychlý model
-    $model = $verify && !$hlaseni ? AiReviewer::verifyModel($config) : AiReviewer::model($config);
+    // hlášení třídí rychlý model, nahlášená vysvětlení kontroluje silnější (--hlaseni --verify)
+    $model = $verify ? AiReviewer::verifyModel($config) : AiReviewer::model($config);
+    $reportKind = $verify ? 'kontrola' : 'hlaseni';
     $total = ['reviewed' => 0, 'errors' => 0];
     // pauzy před opakováním odeslání při výpadku webu (celkem do 2 minut)
     $retry = [5, 15, 40, 60];
     do {
-        $queue = json_decode(Http::get($base . '&action=queue&limit=' . $limit . ($ct !== null ? '&ct=' . $ct : '') . ($hlaseni ? '&hlaseni=1' : ($verify ? '&verify=1' : '') . ($praxe ? '&praxe=1' : '')), 20_000_000, $tokenHeader), true);
+        $queue = json_decode(Http::get($base . '&action=queue&limit=' . $limit . ($ct !== null ? '&ct=' . $ct : '') . ($hlaseni ? '&hlaseni=1' . ($verify ? '&verify=1' : '') : ($verify ? '&verify=1' : '') . ($praxe ? '&praxe=1' : '')), 20_000_000, $tokenHeader), true);
         if (!is_array($queue) || !isset($queue['items'])) {
             throw new RuntimeException('Neplatná odpověď fronty: ' . json_encode($queue, JSON_UNESCAPED_UNICODE));
         }
         $stats = ['reviewed' => 0, 'errors' => 0];
         foreach ($queue['items'] as $item) {
-            if ($hlaseni && ($item['kind'] ?? '') !== 'hlaseni') {
-                // starší verze webu parametr hlaseni=1 nezná a vrací běžnou frontu rozboru
-                throw new RuntimeException('Web zatím hlášení čtenářů neumí (ai_api.php vrátil běžnou frontu)');
+            if ($hlaseni && ($item['kind'] ?? '') !== $reportKind) {
+                // starší verze webu parametr hlaseni=1 (nebo jeho spojení s verify=1) nezná a vrací jinou frontu
+                throw new RuntimeException('Web zatím ' . ($verify ? 'kontrolu nahlášených vysvětlení' : 'hlášení čtenářů') . ' neumí (ai_api.php vrátil jinou frontu)');
             }
             if (!$hlaseni && $praxe && ($item['kind'] ?? '') !== 'praxe') {
                 // starší verze webu parametr praxe=1 nezná a vrací běžnou frontu rozboru
@@ -145,7 +147,7 @@ try {
                     // vysvětlení „v praxi“ neprošlo pojistkami na hostingu: důvod je zapsaný u PN, další běh to zkusí
                     // znovu. Není to chyba běhu (pojistky jsou od toho), proto se nepočítá do návratového kódu.
                     $total['rejected'] = ($total['rejected'] ?? 0) + 1;
-                    echo date('H:i:s') . " ODMÍTNUTO $label: " . ($hlaseni ? 'hlášení už je roztříděné' : 'neprošlo pojistkami') . "\n";
+                    echo date('H:i:s') . " ODMÍTNUTO $label: " . ($hlaseni && !$verify ? 'hlášení už je roztříděné' : 'neprošlo pojistkami') . "\n";
                     continue;
                 }
                 $stats['reviewed']++;
@@ -164,7 +166,7 @@ try {
         $total['errors'] += $stats['errors'];
         // dávka bez jediného úspěchu = zbývají jen chybové texty, dál nepokračujeme
     } while (isset($opt['all']) && $stats['reviewed'] > 0);
-    echo date('H:i:s') . ' ' . ($hlaseni ? 'hlášení ' : ($praxe ? 'v praxi ' : '') . ($verify ? 'ověření ' : 'rozbor ')) . json_encode($total, JSON_UNESCAPED_UNICODE), "\n";
+    echo date('H:i:s') . ' ' . ($hlaseni ? 'hlášení ' . ($verify ? 'kontrola ' : '') : ($praxe ? 'v praxi ' : '') . ($verify ? 'ověření ' : 'rozbor ')) . json_encode($total, JSON_UNESCAPED_UNICODE), "\n";
     exit($total['errors'] > 0 ? 1 : 0);
 } catch (Throwable $ex) {
     fwrite(STDERR, 'Chyba: ' . $ex->getMessage() . "\n");

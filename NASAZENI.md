@@ -183,6 +183,10 @@ Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým pob�
    platné, spam, nesmysl, pokus o manipulaci, mimo téma (`AI_HLASENI_LIMIT`, výchozí 20). Web přijme jen verdikt
    z tohoto seznamu, jinak hlášení počká na ruční posouzení. Přehled hlášení: `php bin/hlaseni.php` na serveru
    (v Dockeru `docker exec docker-web-1 php bin/hlaseni.php`).
+6. `php bin/ai.php --remote=… --hlaseni --verify` – vysvětlení, ke kterému přišlo platné hlášení, zkontroluje **Sonnet**.
+   Dostane označenou část a ustanovení ověřená v textu návrhu, ne text čtenáře. Potvrdí vysvětlení beze změny, nebo ho
+   opraví; opravu web uloží jen tehdy, když projde pojistkami (v logu jinak `ODMÍTNUTO`, po třech pokusech hlášení
+   počká na ruční posouzení). Výsledek je v `php bin/hlaseni.php` a u vysvětlení na webu.
    Zveřejnění platných hlášení jako podnětů na GitHubu je ve výchozím stavu vypnuté. Zapíná se v `config.php`:
    `hlaseni.github.repo` (např. `vlastnik/repozitar`), nejdřív s `dry_run = true` (zápis do
    `data/hlaseni-github.log`), potom `token` (fine-grained token jen s právem „Issues: Read and write“ pro ten

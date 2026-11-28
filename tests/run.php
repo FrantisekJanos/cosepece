@@ -4045,6 +4045,98 @@ check('hlášení na GitHub: po vypnutí zkušebního režimu se zapsaná hláš
 $ghForm = fn(?bool $on): string => Hlidac\View::reportForm(990001, 'Pozměňovací návrh č. 9901 k tisku 311', '', '', [], $on);
 check('hlášení na GitHub: formulář upozorní na zveřejnění jen při zapnutém zveřejňování', [str_contains($ghForm(null), 'name="zverejneni"'), str_contains($ghForm(null), 'zveřejníme i s vaší poznámkou'),
     str_contains($ghForm(true), '<input type="hidden" name="zverejneni" value="1">'), str_contains($ghForm(true), 'zveřejníme i s vaší poznámkou jako podnět na GitHubu projektu')], [false, false, true, true]);
+
+// kontrola nahlášeného vysvětlení silnějším modelem (vysvětlení v testu tvrdí 90 dnů, text návrhu 60)
+db()->run('DELETE FROM hlaseni');
+$chkCfg = config();
+$chkCfg['hlaseni'] = ['per_hour' => 50, 'check_per_day' => 50];
+$chk = new Hlidac\Reports(db(), $chkCfg);
+$chkSubmit = function (string $part, string $note, array $refs = []) use ($chk, $repSame, $repDir): int {
+    static $n = 60;
+    $chk->submit(['d' => '990001', 'cast' => $part, 'poznamka' => $note], '192.0.2.' . $n++, $repSame, $repDir);
+    $id = (int)db()->value('SELECT MAX(id) FROM hlaseni');
+    $chk->saveResult($id, ['verdikt' => 'v_poradku', 'odkazy' => $refs], 'claude-haiku-5-5');
+    return $id;
+};
+$chkPraxe = fn(): array => (array)json_decode((string)db()->value('SELECT praxe_json FROM pn_text WHERE id_dokument = 990001'), true);
+$chkRow = fn(int $id): array => db()->one('SELECT kontrola, kontrola_model, kontrola_zmeny, kontrola_tries FROM hlaseni WHERE id = ?', [$id]);
+$chkFixed = ['typ' => 'vecna_zmena', 'koho_se_tyka' => ['žadatelé o dotaci'], 'co_se_meni' => 'Lhůta pro podání žádosti by se prodloužila z 30 na 60 dnů.', 'pred' => 'Lhůta je 30 dnů.',
+    'po' => 'Lhůta by byla 60 dnů.', 'v_praxi' => 'Žadatelé by měli na podání žádosti 60 dnů místo 30.', 'citace' => ['V § 12 odst. 3 se číslo „30“ nahrazuje číslem „60“.'], 'kontrola' => 'opraveno'];
+check('kontrola hlášení: bez platného hlášení je fronta prázdná', $chk->checkQueue(10), []);
+$chkA = $chkSubmit('cisla', 'TAJNA-POZNAMKA-CTENARE: lhůta v § 12 odst. 3 je 60 dnů, ne 90.', ['§ 12 odst. 3']);
+$chkQueue = $chk->checkQueue(10);
+$chkPrompt = (string)($chkQueue[0]['prompt'] ?? '');
+check('kontrola hlášení: fronta má jednu položku na pozměňovací návrh', array_map(fn(array $i): array => [$i['kind'], $i['id'], $i['ct']], $chkQueue), [['kontrola', 990001, 311]]);
+check('kontrola hlášení: zadání má podklady, dosavadní vysvětlení, označenou část a ověřená ustanovení, ne text čtenáře', [
+    str_contains($chkPrompt, 'V § 12 odst. 3 se číslo „30“ nahrazuje číslem „60“.'), str_contains($chkPrompt, 'KONTROLA NA PODNĚT ČTENÁŘE'),
+    str_contains($chkPrompt, '"co_se_meni": "Lhůta pro podání žádosti by se prodloužila z 30 na 90 dnů."'), str_contains($chkPrompt, '„Čísla, částky nebo lhůty“: zkontroluj všechna čísla'),
+    str_contains($chkPrompt, 'která jsou v textu změn: § 12 odst. 3.'), str_contains($chkPrompt, '"kontrola": "beze_zmeny"'), str_contains($chkPrompt, 'opiš z dosavadního vysvětlení znak po znaku') && str_contains($chkPrompt, '"priklad": "…"'),
+    str_contains($chkPrompt, 'TAJNA-POZNAMKA'), str_contains($chkPrompt, 'ne 90'), str_contains($chkPrompt, '"citace": [')], [true, true, true, true, true, true, true, false, false, true]);
+check('kontrola hlášení: beze změny vysvětlení nepřepíše a hlášení dostane výsledek potvrzeno', [$chk->saveCheck(990001, ['kontrola' => 'beze_zmeny'], 'claude-sonnet-5-5'),
+    $chkRow($chkA), $chkPraxe()['co_se_meni'], db()->value('SELECT praxe_at FROM pn_text WHERE id_dokument = 990001'), $chk->checkQueue(10), $chk->saveCheck(990001, $chkFixed)],
+    [true, ['kontrola' => 'potvrzeno', 'kontrola_model' => 'claude-sonnet-5-5', 'kontrola_zmeny' => null, 'kontrola_tries' => 0], 'Lhůta pro podání žádosti by se prodloužila z 30 na 90 dnů.', '2031-03-01 10:00:00', [], false]);
+// vysvětlení se pro další kroky tváří jako starší než první kontrola (jinak mají obě stejnou sekundu)
+db()->run("UPDATE hlaseni SET kontrola_at = '2031-03-02 09:00:00' WHERE id = ?", [$chkA]);
+$chkB = $chkSubmit('cisla', 'Znovu: čísla nesedí.');
+check('kontrola hlášení: opakované hlášení téže části bez nových ustanovení převezme výsledek bez volání modelu', [$chk->checkQueue(10), $chkRow($chkB)],
+    [[], ['kontrola' => 'potvrzeno', 'kontrola_model' => null, 'kontrola_zmeny' => null, 'kontrola_tries' => 0]]);
+$chkC = $chkSubmit('cisla', 'Viz čl. II bod 3.', ['čl. II bod 3']);
+$chkD = $chkSubmit('koho', 'Týká se to i obcí.');
+$chkQueue = $chk->checkQueue(10);
+check('kontrola hlášení: nové ustanovení nebo jiná část spustí novou kontrolu, obě hlášení v jedné položce', [count($chkQueue),
+    str_contains((string)$chkQueue[0]['prompt'], '„Koho se změna týká“: zkontroluj pole "koho_se_tyka"'), str_contains((string)$chkQueue[0]['prompt'], '„Čísla, částky nebo lhůty“'),
+    str_contains((string)$chkQueue[0]['prompt'], 'která jsou v textu změn: čl. II bod 3.')], [1, true, true, true]);
+check('kontrola hlášení: oprava s číslem mimo text neprojde pojistkami, vysvětlení zůstane a další zadání dostane důvod', [
+    $chk->saveCheck(990001, ['po' => 'Lhůta by byla 777 dnů.'] + $chkFixed, 'claude-sonnet-5-5'), $chkRow($chkC)['kontrola_tries'], $chkRow($chkD)['kontrola'],
+    db()->value('SELECT kontrola_error FROM hlaseni WHERE id = ?', [$chkC]), $chkPraxe()['po'],
+    str_contains((string)($chk->checkQueue(10)[0]['prompt'] ?? ''), 'kontrola odmítla s důvodem: pole po uvádí číslo, které v textech není: 777')],
+    [false, 1, null, 'Pojistka: pole po uvádí číslo, které v textech není: 777', 'Lhůta je 90 dnů.', true]);
+check('kontrola hlášení: oprava, která projde pojistkami, nahradí vysvětlení a původní zůstane u hlášení', [$chk->saveCheck(990001, $chkFixed, 'claude-sonnet-5-5'),
+    $chkPraxe()['co_se_meni'], $chkPraxe()['po'], array_key_exists('kontrola', $chkPraxe()), db()->value('SELECT praxe_model FROM pn_text WHERE id_dokument = 990001'),
+    $chkRow($chkC), $chkRow($chkD)['kontrola'], str_contains((string)db()->value('SELECT kontrola_puvodni FROM hlaseni WHERE id = ?', [$chkD]), 'z 30 na 90 dnů'),
+    db()->value('SELECT kontrola_at FROM hlaseni WHERE id = ?', [$chkC]) === db()->value('SELECT praxe_at FROM pn_text WHERE id_dokument = 990001')],
+    [true, 'Lhůta pro podání žádosti by se prodloužila z 30 na 60 dnů.', 'Lhůta by byla 60 dnů.', false, 'claude-sonnet-5-5',
+        ['kontrola' => 'opraveno', 'kontrola_model' => 'claude-sonnet-5-5', 'kontrola_zmeny' => '["co_se_meni","po","v_praxi"]', 'kontrola_tries' => 1], 'opraveno', true, true]);
+check('kontrola hlášení: porovnání polí nehledí na mezery, velikost písmen ani citace', [Hlidac\Reports::changedFields(['po' => 'Lhůta  je 60 dnů.', 'koho_se_tyka' => ['a', 'b'], 'citace' => ['x']],
+    ['po' => 'lhůta je 60 dnů.', 'koho_se_tyka' => ['a', 'b'], 'citace' => ['y'], 'priklad' => null]), Hlidac\Reports::changedFields(['podle_predkladatele' => 'Předkladatel uvádí, že cílem je úspora.'], ['podle_predkladatele' => 'Cílem je úspora.']), Hlidac\Reports::changedFields(['koho_se_tyka' => ['a']], ['koho_se_tyka' => ['a', 'b'], 'typ' => 'presun_penez'])],
+    [[], [], ['typ', 'koho_se_tyka']]);
+$chkE = $chkSubmit('nejasne', 'Věta je nesrozumitelná.');
+check('kontrola hlášení: ohlášená oprava se stejným obsahem vysvětlení nepřepíše', [$chk->saveCheck(990001, $chkFixed, 'claude-sonnet-5-5'), $chkRow($chkE)['kontrola'],
+    db()->value('SELECT kontrola_puvodni FROM hlaseni WHERE id = ?', [$chkE])], [true, 'potvrzeno', null]);
+db()->run("UPDATE hlaseni SET kontrola_at = '2020-01-01 00:00:00' WHERE id = ?", [$chkE]);
+$chkF = $chkSubmit('nejasne', 'Pořád nesrozumitelné.');
+$chk->saveCheckError(990001, 'claude CLI nedoběhlo včas');
+$chk->saveCheck(990001, ['po' => 'Lhůta by byla 500 dnů.'] + $chkFixed);
+$chkAfter2 = $chkRow($chkF);
+$chk->saveCheck(990001, ['po' => 'Lhůta by byla 500 dnů.'] + $chkFixed);
+check('kontrola hlášení: po třech nezdarech zůstane vysvětlení a hlášení počká na člověka', [$chkAfter2['kontrola'], $chkAfter2['kontrola_tries'], $chkRow($chkF)['kontrola'], $chk->checkQueue(10), $chkPraxe()['po']],
+    [null, 2, 'neproslo', [], 'Lhůta by byla 60 dnů.']);
+$chkBill = $chk->checksForBill(311);
+check('kontrola hlášení: věta o kontrole u vysvětlení na webu', [$chkBill[990001]['kontrola'] ?? null, Hlidac\View::reportCheckNote($chkBill[990001] ?? null) === ' Po hlášení čtenáře opraveno ' . e(formatDate((string)$chkBill[990001]['at'])) . '.',
+    Hlidac\View::reportCheckNote(['kontrola' => 'potvrzeno', 'at' => '2031-03-05 10:00:00']), Hlidac\View::reportCheckNote(['kontrola' => 'neproslo', 'at' => '2031-03-05 10:00:00']), Hlidac\View::reportCheckNote(null),
+    str_contains(Hlidac\View::pnPractice($chkPraxe(), 'claude-sonnet-5-5', null, null, ['id_dokument' => 990001, 'cislo' => 9901, 'ct' => 311, 'check' => $chkBill[990001]]), 'Skóre neovlivňuje. Po hlášení čtenáře opraveno ')],
+    ['opraveno', true, ' Po hlášení čtenáře zkontrolováno ' . e(formatDate('2031-03-05 10:00:00')) . ', beze změny.', '', '', true]);
+$chkG = $chkSubmit('pred_po', 'Stav před je popsaný špatně.');
+$chkCapCfg = $chkCfg;
+$chkCapCfg['hlaseni']['check_per_day'] = 1;
+$chkOffCfg = $chkCfg;
+$chkOffCfg['hlaseni']['check'] = false;
+check('kontrola hlášení: denní strop a vypnutí', [count($chk->checkQueue(10)), (new Hlidac\Reports(db(), $chkCapCfg))->checkQueue(10), (new Hlidac\Reports(db(), $chkOffCfg))->checkQueue(10)], [1, [], []]);
+// výsledek kontroly jako komentář k podnětu na GitHubu
+db()->run('UPDATE hlaseni SET gh_issue = 900, gh_at = ?, souhlas = 1 WHERE id IN (?, ?, ?)', [date('Y-m-d H:i:s'), $chkA, $chkC, $chkD]);
+$ghCalls = [];
+$ghFail = null;
+$chkGh = new Hlidac\Reports(db(), ['hlaseni' => ['github' => ['repo' => 'vlastnik/repozitar', 'token' => 'tajny-token-testu', 'dry_run' => false, 'per_day' => 20]]] + config(), $ghSend);
+$chkSent = $chkGh->publish();
+check('kontrola hlášení: výsledek jde na GitHub jako jeden komentář za kontrolu', [$chkSent['sent'], array_map(fn(array $c): string => $c[0], $ghCalls),
+    str_starts_with((string)$ghCalls[0][2]['body'], '**Výsledek kontroly: vysvětlení potvrzeno beze změny.**'), str_contains((string)$ghCalls[0][2]['body'], 'Silnější model (claude-sonnet-5-5)'),
+    str_contains((string)$ghCalls[1][2]['body'], '**Výsledek kontroly: vysvětlení opraveno.**'), str_contains((string)$ghCalls[1][2]['body'], 'Změněné části: co se mění, stav s návrhem, dopad v praxi.'),
+    str_contains((string)$ghCalls[1][2]['body'], absUrl('tisk', ['ct' => 311], 'pn-9901')), str_contains(json_encode($ghCalls, JSON_UNESCAPED_UNICODE), 'TAJNA-POZNAMKA'),
+    $chkGh->publish()['sent'], count($ghCalls)],
+    [2, ['https://api.github.com/repos/vlastnik/repozitar/issues/900/comments', 'https://api.github.com/repos/vlastnik/repozitar/issues/900/comments'], true, true, true, true, true, false, 0, 2]);
+check('kontrola hlášení: komentář u převzatého výsledku a u opravy, která neprošla', [
+    str_contains(Hlidac\Reports::githubCheckBody(['kontrola' => 'potvrzeno', 'kontrola_model' => null, 'ct' => 311, 'cislo' => 9901]), 'Stejnou část vysvětlení už kontrola prošla'),
+    str_contains(Hlidac\Reports::githubCheckBody(['kontrola' => 'neproslo', 'kontrola_model' => null, 'ct' => 311, 'cislo' => 9901]), 'čeká na ruční posouzení')], [true, true]);
 $_GET = [];
 Hlidac\View::$noAnalytics = false;
 db()->run('DELETE FROM hlaseni');

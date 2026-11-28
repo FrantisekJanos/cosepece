@@ -51,6 +51,8 @@ $pnRev = Revisions::counts(db(), 'pn', null, $ct);
 $pnVisible = 10;
 // praporek pro nahlášení chyby u vysvětlení PN „v praxi“ (app/Reports.php)
 $reportsOn = Hlidac\Reports::settings(config())['enabled'];
+// vysvětlení, která po hlášení čtenáře prošla kontrolou (věta pod vysvětlením)
+$reportChecks = $reportsOn ? (new Hlidac\Reports(db(), config()))->checksForBill($ct) : [];
 $pnFlagged = [];
 foreach ($pn as $p) {
     $x = $texts[(int)$p['id_dokument']] ?? null;
@@ -180,7 +182,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <?php // citace z textu PN: s vysvětlením „v praxi“ je uvnitř jeho rámečku nad nadpisem, jinak samostatně ?>
             <?php $pnQuote = trim((string)(($x['ai']['citace'] ?? [])[0] ?? '')); ?>
             <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote,
-                $reportsOn ? ['id_dokument' => (int)$p['id_dokument'], 'cislo' => (int)$p['cislo'], 'ct' => $ct] : null); ?>
+                $reportsOn ? ['id_dokument' => (int)$p['id_dokument'], 'cislo' => (int)$p['cislo'], 'ct' => $ct, 'check' => $reportChecks[(int)$p['id_dokument']] ?? null] : null); ?>
             <?php if ($pnPractice === '' && $pnQuote !== ''): ?><blockquote class="quote small"><?= e($pnQuote) ?></blockquote><?php endif; ?>
             <?= $pnPractice ?>
           <?php endif; ?>

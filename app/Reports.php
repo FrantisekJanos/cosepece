@@ -7,6 +7,10 @@
 // vrátit jen verdikt z pevného seznamu; cokoli jiného znamená, že hlášení počká na člověka. Odkazy na
 // ustanovení z poznámky se uloží jen tehdy, když doslova stojí v poznámce i v textu návrhu.
 // IP adresa se neukládá (jen dočasný otisk pro limit počtu hlášení, viz RateLimit). Skóre se nemění.
+// Platné hlášení spustí kontrolu vysvětlení silnějším modelem (checkQueue, saveCheck): model dostane podklady
+// jako při běžném vysvětlení, dosavadní vysvětlení, označenou část a ustanovení ověřená v textu návrhu.
+// Poznámku čtenáře nedostane. Oprava musí projít stejnými pojistkami jako každé vysvětlení (PnPractice);
+// když neprojde, dosavadní vysvětlení zůstane a hlášení počká na člověka.
 // Volitelně (config.php → hlaseni.github) se platná hlášení s poznámkou zveřejní jako podněty na GitHubu:
 // jedno vysvětlení = jeden podnět, další hlášení k němu jako komentář. Jen hlášení, u kterých čtenář
 // viděl upozornění na zveřejnění (sloupec souhlas). Poznámka je v podnětu v bloku kódu, takže v ní
@@ -33,6 +37,35 @@ final class Reports
     public const REJECTED = ['spam', 'nesmysl', 'manipulace', 'mimo_tema'];
 
     /** popisky stavů pro přehled (bin/hlaseni.php) */
+    /** výsledky kontroly vysvětlení: klíč => popisek pro přehled */
+    public const CHECK_LABELS = [
+        'potvrzeno' => 'vysvětlení potvrzeno beze změny',
+        'opraveno' => 'vysvětlení opraveno',
+        'neproslo' => 'oprava neprošla pojistkami, čeká na ruční posouzení',
+    ];
+
+    /** pole vysvětlení, která se při kontrole porovnávají: klíč => popisek pro přehled a komentář */
+    public const CHECK_FIELDS = [
+        'typ' => 'typ změny',
+        'koho_se_tyka' => 'koho se to týká',
+        'co_se_meni' => 'co se mění',
+        'pred' => 'stav bez návrhu',
+        'pred_zdroj' => 'zdroj stavu bez návrhu',
+        'po' => 'stav s návrhem',
+        'v_praxi' => 'dopad v praxi',
+        'priklad' => 'modelový příklad',
+        'podle_predkladatele' => 'tvrzení předkladatele',
+        'nejiste' => 'co z textu neplyne',
+    ];
+
+    /** na co se má kontrola u označené části zaměřit (do zadání pro model) */
+    private const CHECK_FOCUS = [
+        'koho' => 'pole "koho_se_tyka" a zmínky o dotčených skupinách v ostatních polích',
+        'pred_po' => 'pole "pred", "pred_zdroj" a "po"',
+        'cisla' => 'všechna čísla, částky, data a lhůty ve všech polích',
+        'nejasne' => 'srozumitelnost a přesnost polí "co_se_meni" a "v_praxi"',
+    ];
+
     public const STATE_LABELS = [
         self::STATE_NEW => 'čeká na třídění',
         self::STATE_VALID => 'platné',
@@ -69,6 +102,11 @@ final class Reports
             'keep_days' => max(1, (int)($cfg['keep_days'] ?? 30)),
             // kolikrát smí selhat třídění, než hlášení počká na člověka
             'tries' => max(1, (int)($cfg['tries'] ?? 3)),
+            // kontrola nahlášeného vysvětlení silnějším modelem: zapnutí, strop zkontrolovaných hlášení za 24 hodin
+            // a kolikrát smí oprava neprojít pojistkami (nebo selhat model), než hlášení počká na člověka
+            'check' => !array_key_exists('check', $cfg) || !empty($cfg['check']),
+            'check_per_day' => max(1, (int)($cfg['check_per_day'] ?? 40)),
+            'check_tries' => max(1, (int)($cfg['check_tries'] ?? 3)),
         ];
     }
 
@@ -380,6 +418,229 @@ final class Reports
     }
 
     /**
+     * Fronta kontrol vysvětlení pro silnější model: jedna položka na PN, ke kterému čeká aspoň jedno platné
+     * hlášení bez kontroly: [{kind: 'kontrola', id: id dokumentu PN, ct, prompt}]. Hlášení ke stejné části, kterou
+     * už kontrola prošla a vysvětlení se od té doby nezměnilo, převezme její výsledek bez volání modelu.
+     */
+    public function checkQueue(int $limit): array
+    {
+        $s = self::settings($this->config);
+        if (!$s['enabled'] || !$s['check'] || $limit <= 0) {
+            return [];
+        }
+        $this->inheritChecks();
+        $done = (int)$this->db->value('SELECT COUNT(*) FROM hlaseni WHERE kontrola_at >= ? AND kontrola_model IS NOT NULL', [date('Y-m-d H:i:s', time() - 86400)]);
+        if ($done >= $s['check_per_day']) {
+            return [];
+        }
+        // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
+        $ids = array_column($this->db->all('SELECT id_dokument, MIN(id) AS prvni FROM hlaseni WHERE stav = ? AND kontrola IS NULL AND kontrola_tries < '
+            . $s['check_tries'] . ' GROUP BY id_dokument ORDER BY prvni LIMIT ' . $limit, [self::STATE_VALID]), 'id_dokument');
+        $items = [];
+        $settings = PnPractice::settings($this->config);
+        foreach ($ids as $id) {
+            $target = $this->target((int)$id);
+            $pending = $this->pendingChecks((int)$id);
+            if ($target === null || $pending === []) {
+                continue;
+            }
+            $bill = $this->db->one('SELECT t.uplny_nazev, t.nazev, x.text FROM tisky t LEFT JOIN tisk_text x ON x.ct = t.ct WHERE t.ct = ?', [$target['ct']]);
+            // důvod, proč pojistky odmítly minulou opravu (píše ho aplikace, ne model)
+            $rejected = '';
+            foreach ($pending as $report) {
+                if (str_starts_with((string)$report['kontrola_error'], 'Pojistka: ')) {
+                    $rejected = substr((string)$report['kontrola_error'], strlen('Pojistka: '));
+                }
+            }
+            $items[] = ['kind' => 'kontrola', 'id' => (int)$id, 'ct' => $target['ct'],
+                'prompt' => PnPractice::prompt((string)(($bill['uplny_nazev'] ?? '') ?: ($bill['nazev'] ?? '')), $target['text'], (string)($bill['text'] ?? ''), $settings, true, $rejected)
+                    . self::checkPrompt($target['praxe'], array_column($pending, 'oblast'), self::pendingRefs($pending))];
+        }
+        return $items;
+    }
+
+    /** Platná hlášení k PN, která ještě nemají výsledek kontroly. */
+    private function pendingChecks(int $id): array
+    {
+        return $this->db->all('SELECT id, oblast, odkazy, kontrola_error, kontrola_tries FROM hlaseni WHERE id_dokument = ? AND stav = ? AND kontrola IS NULL ORDER BY id',
+            [$id, self::STATE_VALID]);
+    }
+
+    /** Ustanovení ověřená v textu návrhu ze všech čekajících hlášení (bez opakování). */
+    private static function pendingRefs(array $reports): array
+    {
+        $refs = [];
+        foreach ($reports as $report) {
+            foreach ((array)json_decode((string)($report['odkazy'] ?? ''), true) as $ref) {
+                if (is_string($ref)) {
+                    $refs[mb_strtolower($ref)] = $ref;
+                }
+            }
+        }
+        return array_values($refs);
+    }
+
+    /**
+     * Hlášení, které nepřináší nic nového, převezme výsledek dřívější kontroly: stejný PN, stejná označená část,
+     * žádné další ustanovení a vysvětlení se od té kontroly nezměnilo. Šetří volání modelu u opakovaných hlášení.
+     */
+    private function inheritChecks(): void
+    {
+        $pending = $this->db->all('SELECT h.id, h.id_dokument, h.oblast, h.odkazy, x.praxe_at FROM hlaseni h JOIN pn_text x ON x.id_dokument = h.id_dokument
+            WHERE h.stav = ? AND h.kontrola IS NULL', [self::STATE_VALID]);
+        foreach ($pending as $report) {
+            $earlier = $this->db->all('SELECT odkazy, kontrola, kontrola_at FROM hlaseni WHERE id_dokument = ? AND oblast = ? AND kontrola IN (?, ?) AND kontrola_at >= ? ORDER BY id DESC',
+                [(int)$report['id_dokument'], (string)$report['oblast'], 'potvrzeno', 'opraveno', (string)$report['praxe_at']]);
+            if ($earlier === []) {
+                continue;
+            }
+            $known = array_map('mb_strtolower', self::pendingRefs($earlier));
+            $new = array_diff(array_map('mb_strtolower', self::pendingRefs([$report])), $known);
+            if ($new === []) {
+                // po opravě už vysvětlení odpovídá výsledku té kontroly, pro nové hlášení tedy platí „potvrzeno“
+                $this->db->run('UPDATE hlaseni SET kontrola = ?, kontrola_at = ?, kontrola_error = NULL WHERE id = ?', ['potvrzeno', (string)$earlier[0]['kontrola_at'], (int)$report['id']]);
+            }
+        }
+    }
+
+    /**
+     * Dodatek k běžnému zadání vysvětlení (PnPractice::prompt): dosavadní vysvětlení, označené části a ověřená
+     * ustanovení. Text čtenáře v něm není. Model vrátí celé vysvětlení a klíč "kontrola".
+     */
+    public static function checkPrompt(array $practice, array $parts, array $refs): string
+    {
+        $current = array_intersect_key($practice, self::CHECK_FIELDS);
+        $focus = '';
+        foreach (array_unique($parts) as $part) {
+            if (isset(self::PARTS[$part])) {
+                $focus .= "\n- „" . self::PARTS[$part] . '“: zkontroluj ' . self::CHECK_FOCUS[$part] . '.';
+            }
+        }
+        return "\n\nKONTROLA NA PODNĚT ČTENÁŘE\n"
+            . "K tomuto PN už na webu vysvětlení je. Čtenář nahlásil, že v něm něco nesedí. Jeho text nedostáváš, víš jen, kterou část označil."
+            . " Hlášení samo není důkaz chyby: rozhodují jen poskytnuté texty.\n"
+            . "Dosavadní vysvětlení:\n<<<\n" . json_encode($current, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n>>>\n"
+            . 'Označené části:' . $focus . "\n"
+            . ($refs !== [] ? 'Ustanovení, která čtenář jmenoval a která jsou v textu změn: ' . implode('; ', $refs) . ". Porovnej s nimi vysvětlení zvlášť pečlivě.\n" : '')
+            . "Postup: porovnej označené části dosavadního vysvětlení s poskytnutými texty. Když odpovídají, vrať dosavadní vysvětlení beze změny"
+            . " a \"kontrola\": \"beze_zmeny\". Když je některá chybná, nepřesná nebo zavádějící, oprav ji a s ní vše, co na ní závisí, a vrať"
+            . " \"kontrola\": \"opraveno\". Pole, která neopravuješ, opiš z dosavadního vysvětlení znak po znaku, nepřeformulovávej je;"
+            . " přepiš je jen tehdy, když odporují textům nebo opravené části. Platí všechna pravidla výše.\n"
+            . "Do JSON objektu přidej klíč \"kontrola\" s jednou z těchto dvou hodnot.";
+    }
+
+    /**
+     * Uloží výsledek kontroly vysvětlení PN $id a zapíše ho ke všem čekajícím hlášením. Beze změny: vysvětlení
+     * zůstane, jak je. Oprava: musí projít pojistkami (PnPractice::clean), pak nahradí vysvětlení a původní se
+     * uloží k hlášení. Když pojistkami neprojde, vysvětlení zůstane a po check_tries pokusech hlášení počká
+     * na člověka. Vrací false, když nic nečeká nebo oprava neprošla.
+     */
+    public function saveCheck(int $id, array $result, ?string $model = null): bool
+    {
+        $pending = $this->pendingChecks($id);
+        $target = $this->target($id);
+        if ($pending === [] || $target === null) {
+            return false;
+        }
+        $ids = array_map('intval', array_column($pending, 'id'));
+        $marks = implode(', ', array_fill(0, count($ids), '?'));
+        $model = mb_substr($model ?? AiReviewer::verifyModel($this->config), 0, 60);
+        $now = date('Y-m-d H:i:s');
+        $verdict = is_string($result['kontrola'] ?? null) ? trim($result['kontrola']) : '';
+        if ($verdict === 'beze_zmeny') {
+            $this->db->run("UPDATE hlaseni SET kontrola = ?, kontrola_at = ?, kontrola_model = ?, kontrola_zmeny = NULL, kontrola_error = NULL WHERE id IN ($marks)",
+                ['potvrzeno', $now, $model, ...$ids]);
+            return true;
+        }
+        $practice = new PnPractice($this->db, $this->config);
+        try {
+            $clean = $practice->clean($id, $result, true);
+        } catch (\DomainException $ex) {
+            $this->saveCheckError($id, 'Pojistka: ' . $ex->getMessage());
+            return false;
+        }
+        $changed = self::changedFields($target['praxe'], $clean);
+        if ($changed === []) {
+            // model ohlásil opravu (nebo nic), ale obsah je stejný: vysvětlení se nepřepisuje
+            $this->db->run("UPDATE hlaseni SET kontrola = ?, kontrola_at = ?, kontrola_model = ?, kontrola_zmeny = NULL, kontrola_error = NULL WHERE id IN ($marks)",
+                ['potvrzeno', $now, $model, ...$ids]);
+            return true;
+        }
+        $practice->store($id, $clean, $model, $now);
+        $this->db->run("UPDATE hlaseni SET kontrola = ?, kontrola_at = ?, kontrola_model = ?, kontrola_zmeny = ?, kontrola_puvodni = ?, kontrola_error = NULL WHERE id IN ($marks)",
+            ['opraveno', $now, $model, json_encode($changed), json_encode($target['praxe'], JSON_UNESCAPED_UNICODE), ...$ids]);
+        return true;
+    }
+
+    /**
+     * Pole vysvětlení, jejichž obsah se liší; klíče z CHECK_FIELDS. Nehledí na mezery, velikost písmen, citace
+     * ani na úvod „Předkladatel uvádí, že“ u tvrzení předkladatele (starší vysvětlení ho mají, pojistky ho odstraňují).
+     */
+    public static function changedFields(array $old, array $new): array
+    {
+        $norm = function (mixed $value): string {
+            $value = is_array($value) ? implode(' | ', array_map('strval', $value)) : (string)($value ?? '');
+            $value = (string)preg_replace('~^(?:Podle předkladatel\w*|Předkladatel\w*\s+(?:uvád\w+|tvrd\w+))\s*,?\s*(?:že\s+)?~ui', '', trim($value));
+            return mb_strtolower(trim(preg_replace('~\s+~u', ' ', $value) ?? $value));
+        };
+        return array_values(array_filter(array_keys(self::CHECK_FIELDS), fn(string $key): bool => $norm($old[$key] ?? null) !== $norm($new[$key] ?? null)));
+    }
+
+    /**
+     * Kontrola se nepovedla (oprava neprošla pojistkami, výpadek modelu): pokus se zapíše k čekajícím hlášením,
+     * po check_tries pokusech dostanou výsledek „neproslo“ a počkají na člověka. Vysvětlení se nemění.
+     */
+    public function saveCheckError(int $id, string $message): void
+    {
+        $s = self::settings($this->config);
+        foreach ($this->pendingChecks($id) as $report) {
+            $tries = (int)$report['kontrola_tries'] + 1;
+            $this->db->run('UPDATE hlaseni SET kontrola_tries = ?, kontrola_error = ?, kontrola = ?, kontrola_at = ? WHERE id = ?',
+                [$tries, mb_substr(Http::redact($message), 0, 250), $tries >= $s['check_tries'] ? 'neproslo' : null, $tries >= $s['check_tries'] ? date('Y-m-d H:i:s') : null, (int)$report['id']]);
+        }
+    }
+
+    /** Zkontroluje frontu místně silnějším modelem. Vrací ['reviewed' => n, 'errors' => n]. */
+    public function runChecks(?int $limit = null): array
+    {
+        $stats = ['reviewed' => 0, 'errors' => 0];
+        $reviewer = new AiReviewer($this->db, $this->config);
+        if (!$this->enabled() || !$reviewer->available()) {
+            return $stats;
+        }
+        $model = AiReviewer::verifyModel($this->config);
+        foreach ($this->checkQueue($limit ?? (int)($this->config['ai']['per_run'] ?? 20)) as $item) {
+            try {
+                $ok = $this->saveCheck((int)$item['id'], $reviewer->callModel((string)$item['prompt'], $model), $model);
+            } catch (\Throwable $ex) {
+                $this->saveCheckError((int)$item['id'], Http::redact($ex->getMessage()));
+                $ok = false;
+            }
+            $stats[$ok ? 'reviewed' : 'errors']++;
+        }
+        return $stats;
+    }
+
+    /**
+     * Poslední kontroly po hlášení čtenáře u PN tisku $ct, které se týkají dnešního znění vysvětlení:
+     * [id_dokument => ['kontrola' => potvrzeno|opraveno, 'at' => čas]]. Pro poznámku u vysvětlení na webu.
+     */
+    public function checksForBill(int $ct): array
+    {
+        $out = [];
+        $rows = $this->db->all('SELECT h.id_dokument, h.kontrola, h.kontrola_at FROM hlaseni h JOIN pn_text x ON x.id_dokument = h.id_dokument
+            WHERE h.ct = ? AND h.kontrola IN (?, ?) AND h.kontrola_at >= x.praxe_at ORDER BY h.kontrola_at, h.id', [$ct, 'potvrzeno', 'opraveno']);
+        foreach ($rows as $row) {
+            $id = (int)$row['id_dokument'];
+            // oprava má přednost před pozdějším „potvrzeno“ (to už jen říká, že opravené znění sedí)
+            if (!isset($out[$id]) || $out[$id]['kontrola'] !== 'opraveno') {
+                $out[$id] = ['kontrola' => (string)$row['kontrola'], 'at' => (string)$row['kontrola_at']];
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Ruční rozhodnutí správce (bin/hlaseni.php --rozhodnout): hlášení označí jako platné, nebo ho vyřadí
      * jedním z verdiktů. Vrací false, když hlášení neexistuje nebo stav není povolený.
      */
@@ -449,7 +710,59 @@ final class Reports
                 $this->db->run('UPDATE hlaseni SET gh_error = ?, gh_tries = gh_tries + 1 WHERE id = ?', [mb_substr($message, 0, 250), $id]);
             }
         }
+        if (!$g['dry_run']) {
+            $stats['sent'] += $this->publishChecks($g, $used);
+        }
         return $stats;
+    }
+
+    /**
+     * Výsledek kontroly vysvětlení jako komentář k podnětu: jeden komentář za kontrolu, i když se týká víc hlášení.
+     * Chyba odeslání se nepočítá a zkusí se při dalším běhu. Vrací počet odeslaných komentářů.
+     */
+    private function publishChecks(array $g, int $used): int
+    {
+        $sent = 0;
+        $rows = $this->db->all('SELECT gh_issue, kontrola, kontrola_at, MIN(id) AS prvni FROM hlaseni
+            WHERE gh_issue IS NOT NULL AND kontrola IS NOT NULL AND gh_kontrola_at IS NULL GROUP BY gh_issue, kontrola, kontrola_at ORDER BY prvni');
+        foreach ($rows as $group) {
+            if ($used + $sent >= $g['per_day']) {
+                break;
+            }
+            $row = $this->db->one('SELECT * FROM hlaseni WHERE id = ?', [(int)$group['prvni']]);
+            try {
+                ($this->githubSend)(self::GITHUB_API . '/repos/' . $g['repo'] . '/issues/' . (int)$group['gh_issue'] . '/comments',
+                    ['Authorization: Bearer ' . $g['token'], 'Accept: application/vnd.github+json', 'X-GitHub-Api-Version: 2022-11-28'], ['body' => self::githubCheckBody($row)]);
+            } catch (\Throwable $ex) {
+                Sentry::capture($ex, ['kde' => 'Reports/publishChecks']);
+                break;
+            }
+            $this->db->run('UPDATE hlaseni SET gh_kontrola_at = ? WHERE gh_issue = ? AND kontrola = ? AND kontrola_at = ? AND gh_kontrola_at IS NULL',
+                [date('Y-m-d H:i:s'), (int)$group['gh_issue'], (string)$group['kontrola'], (string)$group['kontrola_at']]);
+            $sent++;
+        }
+        return $sent;
+    }
+
+    /** Text komentáře s výsledkem kontroly. Je celý náš: z hlášení bere jen čísla, výsledek a názvy změněných polí. */
+    public static function githubCheckBody(array $row): string
+    {
+        $model = trim((string)($row['kontrola_model'] ?? ''));
+        $by = $model !== '' ? 'Silnější model (' . $model . ')' : 'Dřívější kontrola téže části';
+        $url = absUrl('tisk', ['ct' => (int)$row['ct']], 'pn-' . (int)$row['cislo']);
+        $changed = array_intersect_key(self::CHECK_FIELDS, array_flip(array_filter((array)json_decode((string)($row['kontrola_zmeny'] ?? ''), true), 'is_string')));
+        $note = ' Text čtenáře model nedostal, jen označenou část a ustanovení ověřená v textu návrhu.';
+        return match ((string)$row['kontrola']) {
+            'opraveno' => "**Výsledek kontroly: vysvětlení opraveno.**\n\n" . $by . ' porovnal vysvětlení s textem návrhu a přepsal ho.'
+                . ($changed !== [] ? ' Změněné části: ' . implode(', ', $changed) . '.' : '') . ' Oprava prošla stejnými pojistkami jako každé vysvětlení'
+                . ' (citace doslova z textu návrhu, čísla jen z podkladů).' . $note . "\n\nNové znění: " . $url,
+            'potvrzeno' => "**Výsledek kontroly: vysvětlení potvrzeno beze změny.**\n\n"
+                . ($model !== '' ? $by . ' porovnal označenou část vysvětlení s textem návrhu a rozpor nenašel.' . $note
+                    : 'Stejnou část vysvětlení už kontrola prošla a vysvětlení se od té doby nezměnilo.')
+                . ' Pokud chyba podle vás trvá, napište sem, kde přesně.',
+            default => "**Výsledek kontroly: bez automatické opravy.**\n\nNavržená oprava neprošla pojistkami (citace doslova z textu návrhu, čísla jen z podkladů),"
+                . ' vysvětlení proto zůstává beze změny a čeká na ruční posouzení.',
+        };
     }
 
     /**

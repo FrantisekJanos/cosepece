@@ -484,6 +484,17 @@ final class Db
         $this->addColumn('hlaseni', 'gh_zkouska', 'VARCHAR(19)');
         $this->addColumn('hlaseni', 'gh_error', 'VARCHAR(255)');
         $this->addColumn('hlaseni', 'gh_tries', 'INTEGER NOT NULL DEFAULT 0');
+        // kontrola nahlášeného vysvětlení silnějším modelem (Reports::saveCheck): kontrola = potvrzeno / opraveno /
+        // neproslo (oprava neprošla pojistkami, čeká na člověka), kontrola_zmeny = změněná pole (JSON),
+        // kontrola_puvodni = vysvětlení před opravou, gh_kontrola_at = kdy šel výsledek jako komentář na GitHub
+        $this->addColumn('hlaseni', 'kontrola', 'VARCHAR(20)');
+        $this->addColumn('hlaseni', 'kontrola_at', 'VARCHAR(19)');
+        $this->addColumn('hlaseni', 'kontrola_model', 'VARCHAR(60)');
+        $this->addColumn('hlaseni', 'kontrola_zmeny', 'VARCHAR(255)');
+        $this->addColumn('hlaseni', 'kontrola_puvodni', $text);
+        $this->addColumn('hlaseni', 'kontrola_error', 'VARCHAR(255)');
+        $this->addColumn('hlaseni', 'kontrola_tries', 'INTEGER NOT NULL DEFAULT 0');
+        $this->addColumn('hlaseni', 'gh_kontrola_at', 'VARCHAR(19)');
 
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
         $this->createIndex('hlaseni', 'idx_hlaseni_stav', 'stav');

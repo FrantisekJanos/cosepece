@@ -361,7 +361,8 @@ final class View
      * Nadpis se řídí výsledkem hlasování ve 3. čtení ($outcome z PnOutcome), text sám zůstává podmiňovací.
      * Nad nadpisem je doslovná citace z textu PN ($quote: citace z rozboru, jinak první citace vysvětlení),
      * aby čtenář viděl znění návrhu a hned pod ním, co znamená. $report (id_dokument, cislo, ct) přidá do rohu
-     * praporek pro nahlášení chyby (app/Reports.php). Vrací hotové HTML; bez vysvětlení prázdný řetězec.
+     * praporek pro nahlášení chyby (app/Reports.php); jeho klíč check (kontrola, at) přidá větu o kontrole
+     * po hlášení čtenáře. Vrací hotové HTML; bez vysvětlení prázdný řetězec.
      */
     public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null, ?array $report = null): string
     {
@@ -409,8 +410,19 @@ final class View
             $html .= '<details class="pn-praxe-more"><summary>' . ($technical ? 'Co uvádí předkladatel' : 'Před a po, koho se to týká') . '</summary>' . $more . '</details>';
         }
         return $html . '<span class="muted small">Vysvětlení připravil jazykový model' . ($model !== null && $model !== '' ? ' (' . e($model) . ')' : '')
-            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.</span>'
+            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.' . self::reportCheckNote($report['check'] ?? null) . '</span>'
             . ($report !== null ? self::reportLink((int)$report['id_dokument'], (int)$report['cislo'], (int)$report['ct']) : '') . '</div>';
+    }
+
+    /** Věta u vysvětlení, které po hlášení čtenáře prošlo kontrolou silnějším modelem ($check: kontrola, at). */
+    public static function reportCheckNote(?array $check): string
+    {
+        $when = e(formatDate((string)($check['at'] ?? '')));
+        return match ($check['kontrola'] ?? null) {
+            'opraveno' => ' Po hlášení čtenáře opraveno ' . $when . '.',
+            'potvrzeno' => ' Po hlášení čtenáře zkontrolováno ' . $when . ', beze změny.',
+            default => '',
+        };
     }
 
     /**

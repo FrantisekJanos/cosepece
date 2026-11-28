@@ -122,6 +122,9 @@ return [
     // za hodinu, per_day = všech za den, open_per_pn = kolik nevyřízených smí čekat u jednoho vysvětlení,
     // keep_days = po kolika dnech se vyřazená hlášení smažou, tries = kolikrát smí třídění selhat
     'hlaseni' => ['enabled' => true, 'per_hour' => 5, 'per_day' => 200, 'max_note' => 500, 'open_per_pn' => 10, 'keep_days' => 30, 'tries' => 3,
+        // kontrola vysvětlení, ke kterému přišlo platné hlášení, silnějším modelem (bin/ai.php --hlaseni --verify):
+        // check_per_day = strop zkontrolovaných hlášení za 24 h, check_tries = kolikrát smí oprava neprojít pojistkami
+        'check' => true, 'check_per_day' => 40, 'check_tries' => 3,
         // zveřejnění platných hlášení s poznámkou jako podnětů na GitHubu (jedno vysvětlení = jeden podnět, další
         // hlášení jako komentář). Prázdný repo = vypnuto. S vyplněným repo formulář čtenáře upozorní, že se poznámka
         // zveřejní, a zveřejní se jen hlášení podaná s tímto upozorněním. dry_run = true jen zapisuje do

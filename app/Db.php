@@ -476,6 +476,15 @@ final class Db
             pokusy INTEGER NOT NULL DEFAULT 0
         )$suffix");
 
+        // zveřejnění platných hlášení jako podnětů na GitHubu (Reports::publish): souhlas = čtenář viděl upozornění
+        // na zveřejnění, gh_issue = číslo podnětu, gh_at = kdy odesláno, gh_zkouska = kdy zapsáno ve zkušebním režimu
+        $this->addColumn('hlaseni', 'souhlas', 'INTEGER NOT NULL DEFAULT 0');
+        $this->addColumn('hlaseni', 'gh_issue', 'INTEGER');
+        $this->addColumn('hlaseni', 'gh_at', 'VARCHAR(19)');
+        $this->addColumn('hlaseni', 'gh_zkouska', 'VARCHAR(19)');
+        $this->addColumn('hlaseni', 'gh_error', 'VARCHAR(255)');
+        $this->addColumn('hlaseni', 'gh_tries', 'INTEGER NOT NULL DEFAULT 0');
+
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
         $this->createIndex('hlaseni', 'idx_hlaseni_stav', 'stav');
         $this->createIndex('hlaseni', 'idx_hlaseni_dokument', 'id_dokument');

@@ -119,7 +119,13 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    jen verdikt v_poradku / spam / nesmysl / manipulace / mimo_tema; cokoli jiného = stav rucne
                    (počká na člověka). Odkazy na ustanovení se uloží, jen když doslova stojí v poznámce i v textu PN
                    (verifyRefs). Vyřazená hlášení se po hlaseni.keep_days dnech mažou (Sync → purge). Poznámka
-                   se nikde nezveřejňuje a nesmí se předávat dalšímu modelu jako pokyn. Skóre se nemění
+                   se nesmí předávat dalšímu modelu jako pokyn. Skóre se nemění.
+                   Zveřejnění na GitHubu (hlaseni.github, výchozí vypnuto; Sync → publish, ručně bin/hlaseni.php
+                   --odeslat): platná hlášení s poznámkou a se souhlasem (sloupec souhlas = formulář upozornil
+                   na zveřejnění) jdou jako podnět, další k témuž vysvětlení jako komentář (gh_issue), nejvýš
+                   github.per_day za 24 h. Poznámka je v bloku kódu s ohraničením delším než nejdelší řada
+                   zpětných apostrofů v ní (Reports::fence). dry_run jen zapisuje do data/hlaseni-github.log
+                   (gh_zkouska) a po vypnutí se hlášení odešlou. 401/403 běh ukončí bez počítání pokusu
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),

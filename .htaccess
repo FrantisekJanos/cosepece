@@ -26,6 +26,8 @@ DirectoryIndex index.php
   RewriteRule ^(tisky|tisk|upozorneni|pripravovane|metodika|mcp|zmeny|hledat|revize)/?$ $1.php [L,QSA]
   # mapa webu pro vyhledávače
   RewriteRule ^sitemap\.xml$ sitemap.php [L,QSA]
+  # pokyny pro vyhledávače s odkazem na mapu webu
+  RewriteRule ^robots\.txt$ robots.php [L,QSA]
 </IfModule>
 
 # Bezpečnostní hlavičky: web nejde vložit do cizí stránky (clickjacking), žádné pluginy ani cizí formuláře,

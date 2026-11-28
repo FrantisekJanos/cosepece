@@ -55,4 +55,18 @@ final class Sitemap
         }
         return $xml . "</urlset>\n";
     }
+
+    /**
+     * Text souboru robots.txt: procházet se smí vše a řádek Sitemap ukazuje na mapu webu.
+     * Řádek Sitemap musí mít celou adresu s https://; bez ní (nenastavené site_url) se vynechá.
+     */
+    public static function robots(?string $sitemapUrl): string
+    {
+        $text = "User-agent: *\nAllow: /\n";
+        // adresa na jednom řádku, jinak by šlo do souboru vložit další pokyn
+        if ($sitemapUrl !== null && preg_match('~^https?://[^\s]+$~D', $sitemapUrl)) {
+            $text .= "\nSitemap: " . $sitemapUrl . "\n";
+        }
+        return $text;
+    }
 }

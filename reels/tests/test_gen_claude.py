@@ -246,3 +246,17 @@ def test_opravny_prompt_zmini_edit_a_write(tmp_path):
     p = build_prompt(ct=311, formats=["cesta", "pn"], workdir=tmp_path, repair={3: ["chybí pole zdroje"]})
     assert "Soubory card.json a caption.txt oprav nástrojem Edit, nebo je přepiš celé nástrojem Write." in p
     assert "nástrojem Edit" not in build_prompt(ct=311, formats=["cesta", "pn"], workdir=tmp_path)
+
+
+def test_zadani_spolupodepsani(tmp_path):
+    from hlidac_reels.generator.claude import write_focus
+    info = [{"cislo": 1, "osoba": "Jan Novák", "klub": "ANO", "spolu": 3},
+            {"cislo": 2, "osoba": "Jana Malá", "klub": "ODS", "spolu": None},
+            {"cislo": 3, "osoba": "Petr Sám", "klub": "STAN", "spolu": 0},
+            {"cislo": 4, "osoba": "Starý Server", "klub": "SPD"}]
+    write_focus(tmp_path, [1, 2, 3, 4], info)
+    text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
+    assert "a 3 další poslanci (podle hlavičky textu PN)" in text
+    assert "počet spolupodepsaných nejde určit" in text and "podle evidence psp.cz" in text
+    assert "další spolupodepsaní nejsou" in text
+    assert "- autor: Starý Server (klub SPD ke dni podání)\n" in text

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -176,6 +177,24 @@ def _cisla(registr: Registr, polozky: list[Polozka]) -> tuple[str, list[int]]:
     return _CISLA + ", ".join(f"[{c}] {p.klic}" for c, p in zip(cisla, polozky)) + "\n", cisla
 
 
+def _v_hlavicce(klic: str, text: str) -> bool:
+    """Klíč má v ponechaném textu celý řádek hlavičky adaptéru `- klíč | titulek` (ne jen podřetězec:
+    `tisk:1` nesmí projít kvůli `tisk:10`)."""
+    return re.search(rf"(?m)^- {re.escape(klic)}(?: \||$)", text) is not None
+
+
+def _tokenu_za_zbytek(usage: Usage, cena: float, bloku: int, model: str, n: Nastaveni,
+                      cenik: dict[str, Cena] | None) -> int:
+    """Kolik tokenů výsledků nástrojů se ještě vejde do strop_tahu: strop − cena dosud − výstup posledního
+    volání (max_tokenu_odpovedi) − čtení prefixu z cache − zápis výstupu tohoto volání, pokynu a rezervy na
+    hlášku o vyčerpaném rozpočtu u každého bloku; zbytek děleno cenou zápisu do cache."""
+    prefix = usage.vstup + usage.cache_cteni + usage.cache_zapis
+    pevne = usage.vystup + odhad_tokenu(POKYN_STROP) + bloku * odhad_tokenu(ROZPOCET_VYCERPAN)
+    zbytek = n.strop_tahu - cena - _ocen(model, 0, n.max_tokenu_odpovedi, prefix, pevne, cenik)
+    zapis = _ocen(model, 0, 0, 0, 1_000_000, cenik) / 1_000_000
+    return max(0, math.floor(zbytek / zapis)) if zapis > 0 else n.rozpocet_vysledku_tokenu
+
+
 def _do_rozpoctu(registr: Registr, v: Vysledek, zbyva: int) -> tuple[str, list[int], bool]:
     """(obsah pro model, čísla zdrojů, oříznuto) do zbývajícího rozpočtu výsledků v tokenech.
 
@@ -190,7 +209,7 @@ def _do_rozpoctu(registr: Registr, v: Vysledek, zbyva: int) -> tuple[str, list[i
     if k < MIN_ZBYTEK_TOKENU * ZNAKU_NA_TOKEN:
         return ROZPOCET_VYCERPAN, [], False
     ponechano = v.text[:k]
-    hlavicka, cisla = _cisla(registr, [p for p in v.polozky if p.klic in ponechano])
+    hlavicka, cisla = _cisla(registr, [p for p in v.polozky if _v_hlavicce(p.klic, ponechano)])
     return hlavicka + ponechano + ZKRACENO_ROZPOCTEM, cisla, True
 
 
@@ -295,18 +314,24 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
         yield Udalost("stav", {"text": "Hledám v datech: " + ", ".join(
             dict.fromkeys(_POPIS.get(b.get("name"), "data") for b in bloky)) + "…"})
         hotove = await asyncio.gather(*(_proved(b, spust_nastroj, registr, sem) for b in bloky))
+        # Výsledky kola jsou omezené i penězi: poslední volání (s nimi jako zápisem do cache) proběhne vždy,
+        # musí se tedy vejít do strop_tahu.
+        zbyva_penez = _tokenu_za_zbytek(u, cena, len(bloky), model, n, cenik)
         vysledky: list[dict] = []
         for blok, (nastroj, argumenty, v, ms) in zip(bloky, hotove):
             orezano, cisla = False, []
+            limit = min(zbyva_vysledku, zbyva_penez)
             if v.chyba:
                 obsah, chyba = v.text, True
-            elif zbyva_vysledku < MIN_ZBYTEK_TOKENU:
+            elif limit < MIN_ZBYTEK_TOKENU:
                 obsah, chyba = ROZPOCET_VYCERPAN, True
             else:
-                obsah, cisla, orezano = _do_rozpoctu(registr, v, zbyva_vysledku)
+                obsah, cisla, orezano = _do_rozpoctu(registr, v, limit)
                 chyba = obsah == ROZPOCET_VYCERPAN
                 if not chyba:
                     zbyva_vysledku -= odhad_tokenu(obsah)
+            if obsah != ROZPOCET_VYCERPAN:     # jeho cenu kryje rezerva v _tokenu_za_zbytek
+                zbyva_penez -= odhad_tokenu(obsah)
             vysledek = {"type": "tool_result", "tool_use_id": blok["id"], "content": obsah}
             if chyba:
                 vysledek["is_error"] = True
@@ -323,7 +348,8 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
         # jinak by tah přetekl přes strop_tahu a den by přestal být tvrdý (spec 11.1).
         novych = sum(odhad_tokenu(b["content"]) for b in vysledky) + odhad_tokenu(POKYN_STROP)
         odhad = _odhad_volani(u, novych, model, n, cenik)
-        if kol >= n.max_kol or cena + 2 * odhad > n.strop_tahu or zbyva_vysledku < MIN_ZBYTEK_TOKENU:
+        if (kol >= n.max_kol or cena + 2 * odhad > n.strop_tahu or zbyva_vysledku < MIN_ZBYTEK_TOKENU
+                or zbyva_penez < MIN_ZBYTEK_TOKENU):
             vysledky.append({"type": "text", "text": POKYN_STROP})
             posledni = True
         zpravy.append({"role": "user", "content": vysledky})

@@ -610,3 +610,57 @@ async def test_zavreny_tah_zrusi_rozbehnute_volani_modelu():
     assert (await gen.__anext__()).data == {"text": "první "}
     await gen.aclose()
     await asyncio.wait_for(zruseno.wait(), 1)
+
+
+class RealistickyLLM:
+    """Usage každého volání podle skutečných zpráv: předchozí prefix se čte z cache, nové bloky od posledního
+    volání se zapisují do cache, výstup je plný max_tokens (nejhorší případ)."""
+
+    def __init__(self, odpovedi, prvni_usage):
+        self.odpovedi, self.prvni_usage, self.prijate = list(odpovedi), prvni_usage, []
+
+    async def volej(self, *, model, effort, system, tools, messages, max_tokens, na_text, tool_choice=None):
+        self.prijate.append((copy.deepcopy(messages), tool_choice))
+        o = self.odpovedi.pop(0)
+        if len(self.prijate) == 1:
+            return replace(o, usage=self.prvni_usage)
+        p = self.prvni_usage
+        nove = sum(odhad_tokenu(b.get("content") or b.get("text") or "") for b in messages[-1]["content"])
+        return replace(o, usage=Usage(0, max_tokens, p.vstup + p.cache_cteni + p.cache_zapis, p.vystup + nove))
+
+
+async def test_vysledky_omezene_zbyvajicimi_penezi():   # I2, čísla z recenze
+    # 1. volání 0,027 USD, nástroje vrátí ~12 000 tokenů (= výchozí rozpočet výsledků): bez omezení penězi
+    # by poslední volání stálo ~0,046 a tah ~0,073 > 0,06.
+    async def nastroj(nazev, argumenty):
+        return Vysledek("x" * 13200, [], False)     # 6 000 tokenů
+
+    f = RealistickyLLM([ODP_TOOLS(("get_tisk", {"ct": 1}), ("get_tisk", {"ct": 2})), ODP_TEXT("x")],
+                       Usage(8000, 1100, 0, 0))
+    n = replace(N, strop_tahu=0.06)
+    assert n.rozpocet_vysledku_tokenu == 12000
+    u = await sber(tah(f, nastroj, M, Registr(), n, MODEL, EV()))
+    ceny = [x.data["cena_usd"] for x in u if x.typ == "volani_llm"]
+    assert ceny[0] == pytest.approx(0.027) and len(ceny) == 2 and f.prijate[1][1] == {"type": "none"}
+    assert u[-1].data["stav"] == "strop" and u[-1].data["cena_usd"] <= n.strop_tahu
+    assert any(x.data["orezano"] for x in u if x.typ == "volani_nastroje")
+
+
+def test_klic_v_hlavicce_jen_cely():
+    from hlidac_rag.chat.smycka import _v_hlavicce
+    text = "Výsledek nástroje seznam_tisku.\nPoložky:\n- tisk:10 | Tisk 10\n- tisk:2\n{\"tisk:1\": 1}"
+    assert _v_hlavicce("tisk:10", text) and _v_hlavicce("tisk:2", text)
+    assert not _v_hlavicce("tisk:1", text)
+
+
+async def test_orezany_vysledek_neregistruje_klic_podle_podretezce():
+    text = "- tisk:10 | Tisk 10\n" + "y" * 400 + "\n- tisk:1 | Tisk 1\n" + "z" * 400
+
+    async def nastroj(nazev, argumenty):
+        return Vysledek(text, [Polozka("tisk:10", "tisk", "Tisk 10", None, {}),
+                               Polozka("tisk:1", "tisk", "Tisk 1", None, {})], False)
+
+    r = Registr()
+    f = FalesnyLLM([ODP_TOOL("seznam_tisku", {}), ODP_TEXT("x")])
+    await sber(tah(f, nastroj, M, r, replace(N, rozpocet_vysledku_tokenu=250), MODEL, EV()))
+    assert [z.klic for z in r.nove()] == ["tisk:10"]

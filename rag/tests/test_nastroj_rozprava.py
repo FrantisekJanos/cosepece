@@ -644,6 +644,8 @@ def test_pg_get_pn_projevy(pgconn):
                     "id_dokument int)")
         cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.pn_text (id_dokument int, ai_score int, ai_model text, ai_json text,
                         signals text, laws text, chars int, docx_url text, praxe_json text, praxe_model text)""")
+        cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn_vysledek (ct int, cislo int, pismena text, stav text, hlasovani text, "
+                    "stanovisko text)")
         # vysvětlení „v praxi“ jen u PN 2244; interní poznámka „upravy“ se ven nevydává
         cur.execute(f"INSERT INTO {SCHEMA_WEB}.pn_text (id_dokument, praxe_json, praxe_model) VALUES (1, %s, %s)",
                     ('{"typ": "vecna_zmena", "koho_se_tyka": ["agentury práce"], "co_se_meni": "Kauce by vzrostla.", '

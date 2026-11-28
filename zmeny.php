@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Chybu ve vysvětlení jde nahlásit',
+        'U každého vysvětlení, co by pozměňovací návrh změnil v praxi, je vpravo nahoře malý praporek. Otevře krátký formulář: označíte, která část nesedí (koho se změna týká, stav před a po, čísla a lhůty, nebo srozumitelnost), a můžete připsat, jak to má být správně a kde to v textu návrhu najdeme. Hlášení nejdřív roztřídí jazykový model, který vyřadí reklamu, nesmysly a pokusy ovlivnit jeho chování. Platná hlášení použijeme k prověření vysvětlení. Názory na návrh samotný nesbíráme, poznámky nezveřejňujeme a na hlášení neodpovídáme. Skóre se nemění.',
+        [131], false],
     ['2026-11-28', 'Složitější vysvětlení píše silnější model',
         'Vysvětlení, co by pozměňovací návrh změnil v praxi, dosud silnější model přepisoval jen u návrhů s procedurálním nálezem. Nově přepíše všechny věcné změny, protože i procedurálně čistý návrh může být věcně složitý (typicky daně). U přesunů peněz v rozpočtu a vypuštění částí návrhu zůstává vysvětlení rychlého modelu. Z části „Z textu neplyne“ zároveň mizí poznámky, které popisovaly podklady modelu místo návrhu. Děkujeme čtenáři, který na obojí upozornil.',
         [111], false],

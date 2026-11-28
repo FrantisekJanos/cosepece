@@ -3213,6 +3213,19 @@ check('ga4: bez ID žádný odkaz Nastavení cookies', Hlidac\View::cookieSettin
 $consentJs = (string)file_get_contents(APP_ROOT . '/assets/consent.js');
 check('ga4: Google signals a personalizace reklam vypnuté v gtag config',
     str_contains($consentJs, 'allow_google_signals: false') && str_contains($consentJs, 'allow_ad_personalization_signals: false'), true);
+
+// značka chatu: výchozí vypnuto, ve skrytém režimu jen s cookie nebo parametrem, hodnota se nevypisuje
+$tag = '<script defer src="/chat-api/w.js"></script>';
+check('chat: bez konfigurace nic', Hlidac\View::chatTag([], [], []), '');
+check('chat: vypnuto nic', Hlidac\View::chatTag(['rezim' => 'vypnuto'], ['chat_beta' => 'x'], []), '');
+check('chat: neznámý režim nic', Hlidac\View::chatTag(['rezim' => '"><script>'], [], []), '');
+check('chat: skrytě bez cookie nic', Hlidac\View::chatTag(['rezim' => 'skryte'], [], []), '');
+check('chat: skrytě s cookie', trim(Hlidac\View::chatTag(['rezim' => 'skryte'], ['chat_beta' => 'abc'], [])), $tag);
+check('chat: skrytě s parametrem', trim(Hlidac\View::chatTag(['rezim' => 'skryte'], [], ['chat' => 'kod'])), $tag);
+check('chat: veřejně vždy', trim(Hlidac\View::chatTag(['rezim' => 'verejne'], [], [])), $tag);
+check('chat: hodnota cookie se nevypisuje', str_contains(Hlidac\View::chatTag(['rezim' => 'skryte'], ['chat_beta' => '"><b>'], []), '<b>'), false);
+check('chat: hodnota parametru se nevypisuje', str_contains(Hlidac\View::chatTag(['rezim' => 'skryte'], [], ['chat' => 'tajnykod']), 'tajnykod'), false);
+check('chat: pole místo řetězce nestačí', Hlidac\View::chatTag(['rezim' => 'skryte'], ['chat_beta' => ['a']], ['chat' => ['b']]), '');
 $_GET = [];
 ob_start();
 (function (string $file): void {

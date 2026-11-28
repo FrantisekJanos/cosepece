@@ -42,6 +42,12 @@ return [
         'measurement_id' => '', // např. G-XXXXXXXXXX
     ],
 
+    // Chat (služba /chat-api): 'vypnuto' = nic se nevloží, 'skryte' = jen s cookie chat_beta nebo ?chat=<kód>
+    // (platnost ověřuje služba), 'verejne' = vždy
+    'chat' => [
+        'rezim' => 'vypnuto',
+    ],
+
     // odkaz na veřejné issues (podněty a chyby)
     // limity dotazů z jedné IP adresy za minutu (app/RateLimit.php; 0 = bez limitu); popis pro uživatele na data.php#limity
     'rate_limit' => ['web' => 240, 'api' => 60, 'rss' => 30, 'og' => 120],

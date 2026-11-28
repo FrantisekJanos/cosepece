@@ -171,6 +171,17 @@ PRIPADY = [
      "Ve Sněmovně to zopakovala ministryně Schillerová jako citát poslance Hrnčíře z odborného semináře "
      "16. září [1].",
      "Poslanec Jan Hrnčíř to řekl ve Sněmovně; Schillerová ho pak citovala ze semináře [1]."),
+    # doslovná citace přisouzená Hrnčířovi bez značky neověření (server ji má označit, úloha 13)
+    ("C-b-cituje-a", 0,
+     "Ve Sněmovně to zopakovala ministryně Schillerová ze semináře, citovala poslance Hrnčíře: kdyby místo toho "
+     "investoval do lihovin a děvčat (neověřeno ve zdroji) [1].",
+     "Ve Sněmovně to zopakovala ministryně Schillerová ze semináře, citovala poslance Hrnčíře: „kdyby místo toho "
+     "investoval do lihovin a děvčat“ [1]."),
+    ("C-b-cituje-a", 0,
+     "Výrok poslance Hrnčíře ze semináře zopakovala ministryně Schillerová. Řekla: „kdyby místo toho investoval "
+     "do lihovin a děvčat, pak by asi vydělal více“ [1].",
+     "Poslanec Hrnčíř na semináři prohlásil: »kdyby místo toho investoval do lihovin a děvčat« [1], "
+     "ve Sněmovně to zopakovala Schillerová."),
     ("K-dve-slova-titulni", 0,
      "Myslíte novelu zákona o střetu zájmů, tisk 221?",
      "Střet zájmů je situace, kdy osobní zájem ovlivní výkon funkce."),

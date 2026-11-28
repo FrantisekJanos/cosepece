@@ -429,14 +429,18 @@ final class View
     /**
      * Formulář hlášení chyby ve vysvětlení: stejný ve vrstvě na stránce tisku i na samostatné stránce
      * (hlaseni.php, bez JavaScriptu). $id = 0 a prázdný $label vyplní až assets/report.js podle praporku,
-     * na který čtenář klikl. $old = dříve odeslané hodnoty (cast, poznamka) při chybě.
+     * na který čtenář klikl. $old = dříve odeslané hodnoty (cast, poznamka) při chybě. $publishes = zda se platná
+     * hlášení zveřejňují na GitHubu (null = podle config.php); formulář na to pak upozorní.
      */
-    public static function reportForm(int $id, string $label, string $cancel, string $error = '', array $old = []): string
+    public static function reportForm(int $id, string $label, string $cancel, string $error = '', array $old = [], ?bool $publishes = null): string
     {
         $max = Reports::settings(config())['max_note'];
+        // se zapnutým zveřejňováním formulář čtenáře upozorní a pošle s hlášením, že upozornění viděl
+        $publishes ??= (new Reports(db(), config()))->publishes();
         $html = '<form class="report-form" method="post" action="' . e(url('hlaseni')) . '">'
             . '<p class="report-context muted small" data-report-context>' . e($label) . '</p>'
             . '<input type="hidden" name="d" value="' . ($id > 0 ? $id : '') . '">'
+            . ($publishes ? '<input type="hidden" name="zverejneni" value="1">' : '')
             . '<fieldset><legend>Která část nesedí</legend>';
         foreach (Reports::PARTS as $key => $name) {
             $html .= '<label class="report-option"><input type="radio" name="cast" value="' . e($key) . '" required'
@@ -450,7 +454,8 @@ final class View
             // past na roboty: pole je skryté stylem, člověk ho nevyplní
             . '<label class="report-web" aria-hidden="true">Web <input type="text" name="web" tabindex="-1" autocomplete="off"></label>'
             . '<p class="report-error small" role="alert"' . ($error === '' ? ' hidden' : '') . '>' . e($error) . '</p>'
-            . '<p class="muted small">Hlášení slouží jen k opravě vysvětlení: zajímá nás, zda odpovídá textu návrhu, ne názor na návrh samotný. Nepište osobní údaje. Hlášení nejdřív roztřídí jazykový model a neodpovídáme na ně.</p>'
+            . '<p class="muted small">Hlášení slouží jen k opravě vysvětlení: zajímá nás, zda odpovídá textu návrhu, ne názor na návrh samotný. Nepište osobní údaje. Hlášení nejdřív roztřídí jazykový model a neodpovídáme na ně.'
+            . ($publishes ? ' <strong>Hlášení, které třídění označí jako platné, zveřejníme i s vaší poznámkou jako podnět na GitHubu projektu, bez údajů o vás.</strong>' : '') . '</p>'
             . '<div class="report-actions">' . $cancel . '<button type="submit" class="btn">Odeslat hlášení</button></div>'
             . '</form>';
     }

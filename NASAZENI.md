@@ -183,6 +183,11 @@ Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým pob�
    platné, spam, nesmysl, pokus o manipulaci, mimo téma (`AI_HLASENI_LIMIT`, výchozí 20). Web přijme jen verdikt
    z tohoto seznamu, jinak hlášení počká na ruční posouzení. Přehled hlášení: `php bin/hlaseni.php` na serveru
    (v Dockeru `docker exec docker-web-1 php bin/hlaseni.php`).
+   Zveřejnění platných hlášení jako podnětů na GitHubu je ve výchozím stavu vypnuté. Zapíná se v `config.php`:
+   `hlaseni.github.repo` (např. `vlastnik/repozitar`), nejdřív s `dry_run = true` (zápis do
+   `data/hlaseni-github.log`), potom `token` (fine-grained token jen s právem „Issues: Read and write“ pro ten
+   repozitář) a `dry_run = false`. Odesílá synchronizace, nejvýš `per_day` (20) za den. Od vyplnění `repo`
+   formulář čtenáře upozorňuje, že se poznámka zveřejní; starší hlášení se nezveřejní.
 
 Limit předplatného: při běžném provozu (desítky nových textů denně) se nepozná. Když se limit při prvním
 dohánění vyčerpá, rozbory skončí chybou a doženou se v dalších hodinách.

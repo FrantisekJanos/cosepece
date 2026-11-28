@@ -99,9 +99,13 @@ final class Sync
         RateLimit::cleanup();
         try {
             // vyřazená hlášení čtenářů (spam, nesmysly…) po uplynutí lhůty
-            (new Reports(db(), $config))->purge();
+            $reports = new Reports(db(), $config);
+            $reports->purge();
+            // platná hlášení jako podněty na GitHub (jen když je nastavené hlaseni.github)
+            $reportsSent = $reports->publish();
         } catch (\Throwable $ex) {
             Sentry::capture($ex, ['kde' => 'Sync/Reports']);
+            $reportsSent = ['error' => Http::redact($ex->getMessage())];
         }
         try {
             $revoked = (new McpTokens(db(), $config))->revokeStale();
@@ -128,6 +132,7 @@ final class Sync
             'search_index' => $searchItems,
             'mcp_tokens_revoked' => $revoked,
             'posts' => $posts,
+            'hlaseni_github' => $reportsSent,
             'reels_snapshot' => $reels,
             'reels_bot' => $reelsBot,
             'seconds' => round(microtime(true) - $started, 1),

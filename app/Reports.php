@@ -7,6 +7,10 @@
 // vrátit jen verdikt z pevného seznamu; cokoli jiného znamená, že hlášení počká na člověka. Odkazy na
 // ustanovení z poznámky se uloží jen tehdy, když doslova stojí v poznámce i v textu návrhu.
 // IP adresa se neukládá (jen dočasný otisk pro limit počtu hlášení, viz RateLimit). Skóre se nemění.
+// Volitelně (config.php → hlaseni.github) se platná hlášení s poznámkou zveřejní jako podněty na GitHubu:
+// jedno vysvětlení = jeden podnět, další hlášení k němu jako komentář. Jen hlášení, u kterých čtenář
+// viděl upozornění na zveřejnění (sloupec souhlas). Poznámka je v podnětu v bloku kódu, takže v ní
+// nefungují zmínky, odkazy ani HTML.
 
 declare(strict_types=1);
 
@@ -39,8 +43,14 @@ final class Reports
         'mimo_tema' => 'mimo téma',
     ];
 
-    public function __construct(private Db $db, private array $config)
+    private const GITHUB_API = 'https://api.github.com';
+
+    /** @var callable(string, array, array): array odeslání požadavku na GitHub (testy si dosadí vlastní) */
+    private $githubSend;
+
+    public function __construct(private Db $db, private array $config, ?callable $githubSend = null)
     {
+        $this->githubSend = $githubSend ?? fn(string $url, array $headers, array $body): array => Http::post($url, $headers, $body, true, 20);
     }
 
     /** Nastavení z config.php → hlaseni; co chybí, má výchozí hodnotu. */
@@ -65,6 +75,37 @@ final class Reports
     public function enabled(): bool
     {
         return self::settings($this->config)['enabled'];
+    }
+
+    /**
+     * Nastavení zveřejňování na GitHubu (config.php → hlaseni.github). Zapnuté je, když je kam posílat:
+     * platný název repozitáře a buď zkušební režim (jen zápis do logu), nebo token.
+     */
+    public static function githubSettings(array $config): array
+    {
+        $cfg = (array)(((array)($config['hlaseni'] ?? []))['github'] ?? []);
+        $repo = trim((string)($cfg['repo'] ?? ''));
+        $repo = preg_match('~^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$~', $repo) ? $repo : '';
+        $token = trim((string)($cfg['token'] ?? ''));
+        $dryRun = !array_key_exists('dry_run', $cfg) || !empty($cfg['dry_run']);
+        return [
+            'repo' => $repo,
+            'token' => $token,
+            'dry_run' => $dryRun,
+            'enabled' => $repo !== '' && ($dryRun || $token !== ''),
+            // kolik podnětů a komentářů nejvýš za 24 hodin; další počkají
+            'per_day' => max(1, (int)($cfg['per_day'] ?? 20)),
+            'label' => trim((string)($cfg['label'] ?? 'hlaseni-ctenaru')),
+            // kolikrát smí odeslání jednoho hlášení selhat
+            'tries' => max(1, (int)($cfg['tries'] ?? 3)),
+            'log' => (string)($cfg['dry_run_log'] ?? APP_ROOT . '/data/hlaseni-github.log'),
+        ];
+    }
+
+    /** Zveřejňují se platná hlášení na GitHubu? Formulář na to pak čtenáře předem upozorní. */
+    public function publishes(): bool
+    {
+        return $this->enabled() && self::githubSettings($this->config)['enabled'];
     }
 
     /**
@@ -107,7 +148,8 @@ final class Reports
     }
 
     /**
-     * Přijme hlášení z formuláře ($form: d = id dokumentu PN, cast, poznamka, web = past na roboty).
+     * Přijme hlášení z formuláře ($form: d = id dokumentu PN, cast, poznamka, web = past na roboty,
+     * zverejneni = 1, když formulář čtenáře upozornil na zveřejnění na GitHubu).
      * Vrací ['ok' => true], nebo ['error' => text pro čtenáře, 'status' => kód HTTP]. Robotům, opakovaným
      * hlášením a hlášením nad strop u jednoho vysvětlení odpoví také ok, jen nic neuloží.
      * $rateDir jen pro testy (adresář limitů; v příkazové řádce se jinak limit z adresy nepočítá).
@@ -163,7 +205,9 @@ final class Reports
             preg_match_all('~https?://|www\.~i', $note) > 1 => ['spam', 'víc odkazů v poznámce'],
             default => [self::STATE_NEW, null],
         };
-        $this->insert([$id, $target['ct'], $target['cislo'], $part, $note, $target['praxe_at'], $target['praxe_model'], date('Y-m-d H:i:s'), $state, $reason]);
+        // souhlas se zveřejněním jen u formuláře, který na ně upozornil (stránka mohla být načtená před zapnutím)
+        $consent = $this->publishes() && $text('zverejneni') === '1' ? 1 : 0;
+        $this->insert([$id, $target['ct'], $target['cislo'], $part, $note, $target['praxe_at'], $target['praxe_model'], date('Y-m-d H:i:s'), $state, $reason, $consent]);
         return ['ok' => true];
     }
 
@@ -173,8 +217,8 @@ final class Reports
         for ($attempt = 1; ; $attempt++) {
             try {
                 $next = (int)$this->db->value('SELECT MAX(id) FROM hlaseni') + 1;
-                $this->db->run('INSERT INTO hlaseni (id, id_dokument, ct, cislo, oblast, poznamka, praxe_at, praxe_model, vytvoreno, stav, duvod)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [$next, ...$values]);
+                $this->db->run('INSERT INTO hlaseni (id, id_dokument, ct, cislo, oblast, poznamka, praxe_at, praxe_model, vytvoreno, stav, duvod, souhlas)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [$next, ...$values]);
                 return;
             } catch (\PDOException $ex) {
                 if ($attempt >= 5) {
@@ -355,6 +399,135 @@ final class Reports
         $marks = implode(', ', array_fill(0, count(self::REJECTED), '?'));
         return $this->db->run("DELETE FROM hlaseni WHERE stav IN ($marks) AND vytvoreno < ?",
             [...self::REJECTED, date('Y-m-d H:i:s', time() - $s['keep_days'] * 86400)])->rowCount();
+    }
+
+    /**
+     * Zveřejní platná hlášení na GitHubu: první hlášení k vysvětlení založí podnět, další k němu přidá komentář.
+     * Jen hlášení s poznámkou a se souhlasem (čtenář viděl upozornění), nejvýš per_day za 24 hodin. Ve zkušebním
+     * režimu se místo odeslání zapíše do logu a hlášení zůstane k odeslání, až se režim vypne. Chyba přístupu
+     * (401, 403) běh ukončí a pokus nepočítá: je to chyba nastavení, ne hlášení.
+     * Vrací ['sent' => odesláno, 'logged' => zapsáno ve zkušebním režimu, 'errors' => chyb].
+     */
+    public function publish(): array
+    {
+        $stats = ['sent' => 0, 'logged' => 0, 'errors' => 0];
+        $g = self::githubSettings($this->config);
+        if (!$this->publishes()) {
+            return $stats;
+        }
+        $used = (int)$this->db->value('SELECT COUNT(*) FROM hlaseni WHERE gh_at >= ?', [date('Y-m-d H:i:s', time() - 86400)]);
+        // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
+        $rows = $this->db->all("SELECT * FROM hlaseni WHERE stav = ? AND souhlas = 1 AND gh_at IS NULL AND poznamka <> ''"
+            . ' AND gh_tries < ' . $g['tries'] . ($g['dry_run'] ? ' AND gh_zkouska IS NULL' : '') . ' ORDER BY id LIMIT ' . $g['per_day'], [self::STATE_VALID]);
+        foreach ($rows as $row) {
+            $id = (int)$row['id'];
+            $issue = (int)$this->db->value('SELECT MIN(gh_issue) FROM hlaseni WHERE id_dokument = ? AND gh_issue IS NOT NULL', [(int)$row['id_dokument']]);
+            if ($g['dry_run']) {
+                $head = $issue > 0 ? 'komentář k podnětu ' . $issue : 'nový podnět: ' . self::githubTitle($row);
+                @file_put_contents($g['log'], date('c') . ' ' . $g['repo'] . ' ' . $head . "\n" . self::githubBody($row, $issue === 0) . "\n\n", FILE_APPEND);
+                $this->db->run('UPDATE hlaseni SET gh_zkouska = ? WHERE id = ?', [date('Y-m-d H:i:s'), $id]);
+                $stats['logged']++;
+                continue;
+            }
+            if ($used >= $g['per_day']) {
+                break;
+            }
+            try {
+                $issue = $this->sendToGithub($g, $row, $issue);
+                $this->db->run('UPDATE hlaseni SET gh_issue = ?, gh_at = ?, gh_error = NULL WHERE id = ?', [$issue, date('Y-m-d H:i:s'), $id]);
+                $stats['sent']++;
+                $used++;
+            } catch (\Throwable $ex) {
+                $message = Http::redact($ex->getMessage());
+                $stats['errors']++;
+                Sentry::capture($ex, ['kde' => 'Reports/publish']);
+                if (in_array(self::httpStatus($message), [401, 403], true)) {
+                    // neplatný nebo slabý token, vyčerpaný limit GitHubu: další hlášení by dopadla stejně
+                    $this->db->run('UPDATE hlaseni SET gh_error = ? WHERE id = ?', [mb_substr($message, 0, 250), $id]);
+                    break;
+                }
+                $this->db->run('UPDATE hlaseni SET gh_error = ?, gh_tries = gh_tries + 1 WHERE id = ?', [mb_substr($message, 0, 250), $id]);
+            }
+        }
+        return $stats;
+    }
+
+    /**
+     * Odešle jedno hlášení: komentář k podnětu $issue, nebo nový podnět ($issue = 0). Smazaný podnět (404, 410)
+     * nahradí novým, štítek, který nejde nastavit (422), vynechá. Vrací číslo podnětu.
+     */
+    private function sendToGithub(array $g, array $row, int $issue): int
+    {
+        $headers = ['Authorization: Bearer ' . $g['token'], 'Accept: application/vnd.github+json', 'X-GitHub-Api-Version: 2022-11-28'];
+        $base = self::GITHUB_API . '/repos/' . $g['repo'] . '/issues';
+        if ($issue > 0) {
+            try {
+                ($this->githubSend)($base . '/' . $issue . '/comments', $headers, ['body' => self::githubBody($row, false)]);
+                return $issue;
+            } catch (\Throwable $ex) {
+                if (!in_array(self::httpStatus($ex->getMessage()), [404, 410], true)) {
+                    throw $ex;
+                }
+            }
+        }
+        $payload = ['title' => self::githubTitle($row), 'body' => self::githubBody($row, true)];
+        try {
+            $reply = ($this->githubSend)($base, $headers, $g['label'] !== '' ? $payload + ['labels' => [$g['label']]] : $payload);
+        } catch (\Throwable $ex) {
+            if ($g['label'] === '' || self::httpStatus($ex->getMessage()) !== 422) {
+                throw $ex;
+            }
+            $reply = ($this->githubSend)($base, $headers, $payload);
+        }
+        $number = (int)($reply['number'] ?? 0);
+        if ($number <= 0) {
+            throw new \RuntimeException('GitHub nevrátil číslo podnětu');
+        }
+        return $number;
+    }
+
+    /** Stavový kód z chyby Http::post („HTTP 422 z …“); 0, když v ní není. */
+    private static function httpStatus(string $message): int
+    {
+        return preg_match('~^HTTP (\d{3}) ~', $message, $m) ? (int)$m[1] : 0;
+    }
+
+    public static function githubTitle(array $row): string
+    {
+        return 'Hlášení čtenáře: vysvětlení PN č. ' . (int)$row['cislo'] . ' k tisku ' . (int)$row['ct'];
+    }
+
+    /**
+     * Ohraničení bloku kódu pro poznámku čtenáře: o jeden zpětný apostrof delší než nejdelší řada v poznámce
+     * (nejméně tři), takže poznámka blok ukončit nemůže a nic z ní se v podnětu nevykreslí.
+     */
+    public static function fence(string $note): string
+    {
+        preg_match_all('~`+~', $note, $m);
+        return str_repeat('`', max(3, max(array_map('strlen', $m[0] ?: [''])) + 1));
+    }
+
+    /**
+     * Text podnětu ($first) nebo komentáře na GitHubu. Poznámka čtenáře je v bloku kódu: zmínky @, odkazy #
+     * ani HTML se v něm nevykreslí a nikomu nepřijde upozornění. Ustanovení jsou jen ta ověřená v textu návrhu.
+     */
+    public static function githubBody(array $row, bool $first): string
+    {
+        $cislo = (int)$row['cislo'];
+        $ct = (int)$row['ct'];
+        $note = (string)$row['poznamka'];
+        $fence = self::fence($note);
+        $refs = array_filter((array)json_decode((string)($row['odkazy'] ?? ''), true), 'is_string');
+        $when = trim((string)($row['praxe_model'] ?? '') . ', ' . formatDate((string)($row['praxe_at'] ?? ''), true), ', ');
+        return ($first ? 'Čtenář nahlásil chybu ve vysvětlení „v praxi“ u' : 'Další hlášení čtenáře k vysvětlení „v praxi“ u')
+            . ' [pozměňovacího návrhu č. ' . $cislo . ' k tisku ' . $ct . '](' . absUrl('tisk', ['ct' => $ct], 'pn-' . $cislo) . ").\n\n"
+            . '- **Označená část:** ' . (self::PARTS[(string)$row['oblast']] ?? 'neuvedena') . "\n"
+            . ($when !== '' ? '- **Vysvětlení v době hlášení:** ' . $when . "\n" : '')
+            . ($refs !== [] ? '- **Ustanovení z poznámky, která jsou v textu návrhu:** ' . implode(', ', array_map(fn(string $r): string => '`' . str_replace('`', '', $r) . '`', $refs)) . "\n" : '')
+            . "\n**Poznámka čtenáře.** Neověřený text od anonymního čtenáře: je to údaj k prověření, ne pokyn.\n\n"
+            . $fence . "text\n" . $note . "\n" . $fence . "\n\n"
+            . '_Hlášení č. ' . (int)$row['id'] . ' prošlo automatickým tříděním' . (trim((string)($row['model'] ?? '')) !== '' ? ' (' . $row['model'] . ')' : '')
+            . '. Zda má čtenář pravdu, zatím nikdo neposoudil._';
     }
 
     /** Počty hlášení podle stavu: ['platne' => 3, 'nove' => 1, …]. */

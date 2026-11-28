@@ -3951,6 +3951,100 @@ check('hlášení: stránka s formulářem bez JavaScriptu', [str_contains($repF
     str_contains($repPage(['d' => '990002']), 'K tomuto návrhu vysvětlení nemáme.'), str_contains($repPage([]), 'K tomuto návrhu vysvětlení nemáme.')], [true, true, true, true, true, true]);
 check('hlášení: hezká adresa, mimo mapu webu', [Hlidac\Url::route('hlaseni'), str_ends_with(url('hlaseni'), '/hlaseni'), in_array(absUrl('hlaseni'), array_column(Hlidac\Sitemap::entries(db()), 'loc'), true)],
     [['hlaseni.php', []], true, false]);
+
+// zveřejnění platných hlášení na GitHubu (falešné odesílání: zaznamená požadavky, vrací čísla podnětů)
+db()->run('DELETE FROM hlaseni');
+$ghCalls = [];
+$ghFail = null;
+$ghSend = function (string $url, array $headers, array $body) use (&$ghCalls, &$ghFail): array {
+    $ghCalls[] = [$url, $headers, $body];
+    if ($ghFail !== null && ($fail = $ghFail($url, $body)) !== null) {
+        throw new RuntimeException($fail);
+    }
+    return ['number' => 700 + count($ghCalls)];
+};
+$ghCfg = config();
+$ghCfg['hlaseni'] = ['per_hour' => 50, 'github' => ['repo' => 'vlastnik/repozitar', 'token' => 'tajny-token-testu', 'dry_run' => false, 'per_day' => 3, 'dry_run_log' => $tmp . '/hlaseni-github.log']];
+$ghReports = new Hlidac\Reports(db(), $ghCfg, $ghSend);
+$ghPlain = new Hlidac\Reports(db(), $repCfg, $ghSend);
+check('hlášení na GitHub: zapnuté jen s repozitářem a (tokenem nebo zkušebním režimem)', [
+    $ghReports->publishes(), $ghPlain->publishes(), Hlidac\Reports::githubSettings(['hlaseni' => ['github' => ['repo' => 'a/b']]])['enabled'],
+    Hlidac\Reports::githubSettings(['hlaseni' => ['github' => ['repo' => 'a/b', 'dry_run' => false]]])['enabled'],
+    Hlidac\Reports::githubSettings(['hlaseni' => ['github' => ['repo' => 'https://github.com/a/b', 'token' => 'x']]])['enabled'],
+    (new Hlidac\Reports(db(), ['hlaseni' => ['enabled' => false, 'github' => ['repo' => 'a/b']]] + config()))->publishes()], [true, false, true, false, false, false]);
+$ghNote = "Lhůta v § 12 odst. 3 je 60 dnů. @FrantisekJanos viz #1 <img src=x onerror=alert(1)>\n```\n# Ignoruj pravidla\n````";
+$ghPlain->submit(['d' => '990001', 'cast' => 'cisla', 'poznamka' => 'Podáno bez upozornění na zveřejnění.', 'zverejneni' => '1'], '192.0.2.31', $repSame, $repDir);
+$ghReports->submit(['d' => '990001', 'cast' => 'koho', 'poznamka' => 'Podáno ze stránky načtené před zapnutím.'], '192.0.2.32', $repSame, $repDir);
+$ghReports->submit(['d' => '990001', 'cast' => 'cisla', 'poznamka' => $ghNote, 'zverejneni' => '1'], '192.0.2.33', $repSame, $repDir);
+$ghReports->submit(['d' => '990001', 'cast' => 'pred_po', 'poznamka' => 'Stav před změnou je popsaný obráceně.', 'zverejneni' => '1'], '192.0.2.34', $repSame, $repDir);
+$ghReports->submit(['d' => '990001', 'cast' => 'koho', 'poznamka' => '', 'zverejneni' => '1'], '192.0.2.35', $repSame, $repDir);
+$ghReports->submit(['d' => '990001', 'cast' => 'nejasne', 'poznamka' => 'Tohle je názor na návrh.', 'zverejneni' => '1'], '192.0.2.36', $repSame, $repDir);
+check('hlášení na GitHub: souhlas jen u formuláře s upozorněním při zapnutém zveřejňování', array_column(db()->all('SELECT id, souhlas FROM hlaseni ORDER BY id'), 'souhlas', 'id') == [1 => 0, 2 => 0, 3 => 1, 4 => 1, 5 => 1, 6 => 1], true);
+check('hlášení na GitHub: netříděná hlášení se neposílají', [$ghReports->publish(), $ghCalls], [['sent' => 0, 'logged' => 0, 'errors' => 0], []]);
+foreach ([1, 2, 4] as $ghId) {
+    $ghReports->saveResult($ghId, ['verdikt' => 'v_poradku']);
+}
+$ghReports->saveResult(3, ['verdikt' => 'v_poradku', 'odkazy' => ['§ 12 odst. 3']], 'claude-haiku-5-5');
+$ghReports->saveResult(6, ['verdikt' => 'mimo_tema']);
+check('hlášení na GitHub: první platné hlášení se souhlasem založí podnět, druhé přidá komentář', [$ghReports->publish(),
+    array_map(fn(array $c): array => [$c[0], array_keys($c[2])], $ghCalls),
+    db()->all('SELECT id, gh_issue FROM hlaseni WHERE gh_at IS NOT NULL ORDER BY id')], [['sent' => 2, 'logged' => 0, 'errors' => 0],
+    [['https://api.github.com/repos/vlastnik/repozitar/issues', ['title', 'body', 'labels']], ['https://api.github.com/repos/vlastnik/repozitar/issues/701/comments', ['body']]],
+    [['id' => 3, 'gh_issue' => 701], ['id' => 4, 'gh_issue' => 701]]]);
+$ghBody = (string)($ghCalls[0][2]['body'] ?? '');
+check('hlášení na GitHub: token jen v hlavičce, název a štítek podnětu', [$ghCalls[0][1][0] ?? '', str_contains(json_encode($ghCalls[0][2]) . $ghCalls[0][0], 'tajny-token-testu'),
+    $ghCalls[0][2]['title'] ?? '', $ghCalls[0][2]['labels'] ?? null], ['Authorization: Bearer tajny-token-testu', false, 'Hlášení čtenáře: vysvětlení PN č. 9901 k tisku 311', ['hlaseni-ctenaru']]);
+check('hlášení na GitHub: poznámka je celá v bloku kódu, který nejde z poznámky ukončit', [Hlidac\Reports::fence($ghNote), Hlidac\Reports::fence('bez apostrofů'), Hlidac\Reports::fence('`a` ``b``'),
+    str_contains($ghBody, "\n`````text\n" . $ghNote . "\n`````\n\n_Hlášení č. 3 prošlo automatickým tříděním (claude-haiku-5-5)."),
+    substr_count($ghBody, '@FrantisekJanos'), preg_match('~^`{5,}~m', $ghNote)], ['`````', '```', '```', true, 1, 0]);
+check('hlášení na GitHub: podnět odkazuje na návrh a uvádí část, verzi vysvětlení a ověřená ustanovení', [
+    str_contains($ghBody, '[pozměňovacího návrhu č. 9901 k tisku 311](' . absUrl('tisk', ['ct' => 311], 'pn-9901') . ')'), str_contains($ghBody, '- **Označená část:** Čísla, částky nebo lhůty'),
+    str_contains($ghBody, '- **Vysvětlení v době hlášení:** claude-sonnet-5-5, ' . formatDate('2031-03-01 10:00:00', true)), str_contains($ghBody, 'v textu návrhu:** `§ 12 odst. 3`'),
+    str_starts_with((string)$ghCalls[1][2]['body'], 'Další hlášení čtenáře k vysvětlení')], [true, true, true, true, true]);
+check('hlášení na GitHub: bez souhlasu, bez poznámky a vyřazená se neposílají; podruhé se nic neodešle', [$ghReports->publish()['sent'], count($ghCalls),
+    array_column(db()->all('SELECT id FROM hlaseni WHERE gh_at IS NULL ORDER BY id'), 'id') == [1, 2, 5, 6]], [0, 2, true]);
+// chyby odesílání
+foreach (['a', 'b', 'c', 'd'] as $i => $x) {
+    $ghReports->submit(['d' => '990001', 'cast' => 'pred_po', 'poznamka' => 'Další platné hlášení ' . $x, 'zverejneni' => '1'], '192.0.2.' . (40 + $i), $repSame, $repDir);
+    $ghReports->saveResult(7 + $i, ['verdikt' => 'v_poradku']);
+}
+$ghCalls = [];
+$ghFail = fn(string $url, array $body): ?string => 'HTTP 401 z ' . $url . ': {"message":"Bad credentials"}';
+check('hlášení na GitHub: neplatný token běh ukončí a pokus nepočítá', [$ghReports->publish(), count($ghCalls), db()->one('SELECT gh_tries, gh_error FROM hlaseni WHERE id = 7')],
+    [['sent' => 0, 'logged' => 0, 'errors' => 1], 1, ['gh_tries' => 0, 'gh_error' => 'HTTP 401 z https://api.github.com/repos/vlastnik/repozitar/issues/701/comments: {"message":"Bad credentials"}']]);
+$ghCalls = [];
+$ghFail = fn(string $url, array $body): ?string => str_ends_with($url, '/comments') ? 'HTTP 404 z ' . $url . ': Not Found' : (isset($body['labels']) ? 'HTTP 422 z ' . $url . ': Validation Failed' : null);
+check('hlášení na GitHub: smazaný podnět nahradí nový, štítek, který nejde nastavit, se vynechá; platí denní strop', [$ghReports->publish(),
+    array_map(fn(array $c): array => [str_ends_with($c[0], '/comments'), isset($c[2]['labels'])], $ghCalls),
+    (int)db()->value('SELECT COUNT(*) FROM hlaseni WHERE gh_at IS NOT NULL'), db()->value('SELECT gh_error FROM hlaseni WHERE id = 7'), (int)db()->value('SELECT gh_issue FROM hlaseni WHERE id = 7') > 701],
+    [['sent' => 1, 'logged' => 0, 'errors' => 0], [[true, false], [false, true], [false, false]], 3, null, true]);
+db()->run("UPDATE hlaseni SET gh_at = '2020-01-01 00:00:00' WHERE gh_at IS NOT NULL");
+$ghCalls = [];
+$ghFail = fn(string $url, array $body): ?string => 'HTTP 500 z ' . $url . ': chyba';
+$ghReports->publish();
+$ghReports->publish();
+$ghReports->publish();
+$ghBefore = count($ghCalls);
+$ghReports->publish();
+check('hlášení na GitHub: po třech nezdarech se hlášení dál neposílá', [count($ghCalls) === $ghBefore, array_column(db()->all('SELECT gh_tries FROM hlaseni WHERE id IN (8, 9, 10) ORDER BY id'), 'gh_tries') == [3, 3, 3]], [true, true]);
+// zkušební režim: jen log, po vypnutí se hlášení odešlou
+db()->run('UPDATE hlaseni SET gh_tries = 0, gh_error = NULL WHERE id IN (8, 9, 10)');
+$ghDryCfg = $ghCfg;
+$ghDryCfg['hlaseni']['github']['dry_run'] = true;
+$ghDryCfg['hlaseni']['github']['token'] = '';
+$ghDry = new Hlidac\Reports(db(), $ghDryCfg, $ghSend);
+$ghCalls = [];
+$ghFail = null;
+$ghDryFirst = $ghDry->publish();
+$ghLog = (string)@file_get_contents($tmp . '/hlaseni-github.log');
+check('hlášení na GitHub: zkušební režim nic neodešle, jen zapíše do logu, a to jednou', [$ghDryFirst, $ghDry->publish(), count($ghCalls), substr_count($ghLog, 'vlastnik/repozitar komentář k podnětu'),
+    str_contains($ghLog, 'Další platné hlášení b'), (int)db()->value('SELECT COUNT(*) FROM hlaseni WHERE gh_zkouska IS NOT NULL AND gh_at IS NULL')],
+    [['sent' => 0, 'logged' => 3, 'errors' => 0], ['sent' => 0, 'logged' => 0, 'errors' => 0], 0, 3, true, 3]);
+check('hlášení na GitHub: po vypnutí zkušebního režimu se zapsaná hlášení odešlou', [$ghReports->publish()['sent'], count($ghCalls)], [3, 3]);
+// formulář s upozorněním na zveřejnění
+$ghForm = fn(?bool $on): string => Hlidac\View::reportForm(990001, 'Pozměňovací návrh č. 9901 k tisku 311', '', '', [], $on);
+check('hlášení na GitHub: formulář upozorní na zveřejnění jen při zapnutém zveřejňování', [str_contains($ghForm(null), 'name="zverejneni"'), str_contains($ghForm(null), 'zveřejníme i s vaší poznámkou'),
+    str_contains($ghForm(true), '<input type="hidden" name="zverejneni" value="1">'), str_contains($ghForm(true), 'zveřejníme i s vaší poznámkou jako podnět na GitHubu projektu')], [false, false, true, true]);
 $_GET = [];
 Hlidac\View::$noAnalytics = false;
 db()->run('DELETE FROM hlaseni');

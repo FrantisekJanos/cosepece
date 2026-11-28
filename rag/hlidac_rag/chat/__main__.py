@@ -73,8 +73,19 @@ def dsn_role(env, uzivatel: str, heslo: str) -> str:
                          dbname=env.get("PGDATABASE", "hlidac"), user=jmeno, password=env.get(heslo, ""))
 
 
-def main() -> None:
+# klientské knihovny HTTP logují na INFO celou URL požadavku; v URL API Telegramu je token bota
+TICHE_LOGGERY = ("httpx2", "httpx", "httpcore", "httpcore2")
+
+
+def nastav_logovani() -> None:
+    """INFO pro službu, klientské knihovny HTTP až od WARNING (token Telegramu nesmí do `docker compose logs`)."""
     logging.basicConfig(level=logging.INFO)
+    for jmeno in TICHE_LOGGERY:
+        logging.getLogger(jmeno).setLevel(logging.WARNING)
+
+
+def main() -> None:
+    nastav_logovani()
     sentry.init("chat")
     env = os.environ
     n = config.nacti(env)

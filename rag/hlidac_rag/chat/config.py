@@ -20,7 +20,7 @@ TURNSTILE_HOSTNAME = "cosepece.cz"   # hostname, který musí vrátit siteverify
 log = logging.getLogger(__name__)
 
 # Sloupce „Sonnet $2 (výchozí)“ a „Haiku $2“ ze spec 10.2 a 11.1.
-# Effort u Haiku spec nefixuje („podle F0, low nebo medium“); do rozhodnutí F0 je low.
+# Effort u Haiku: medium (rozhodnutí majitele po F0, 28. 11.; spec nechávala „podle F0, low nebo medium“).
 PROFILY: dict[str, dict] = {
     "claude-sonnet-5-5": {
         "effort": "low",
@@ -40,7 +40,7 @@ PROFILY: dict[str, dict] = {
         "turnstile_zprav": 5,
     },
     "claude-haiku-5-5": {
-        "effort": "low",
+        "effort": "medium",
         "max_kol": 5,
         "rozpocet_vysledku_tokenu": 40000,
         "max_tokenu_odpovedi": 2000,

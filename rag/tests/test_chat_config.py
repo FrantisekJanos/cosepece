@@ -18,6 +18,7 @@ def test_profil_haiku_se_vybere_podle_modelu():
     n = nacti({"CHAT_MODEL": "claude-haiku-5-5"})
     assert (n.strop_tahu, n.strop_relace, n.strop_ip, n.podil_hodina) == (0.02, 0.06, 0.15, 0.15)
     assert (n.max_kol, n.rozpocet_vysledku_tokenu, n.historie_max_tokenu, n.turnstile_zprav) == (5, 40000, 20000, 10)
+    assert n.effort == "medium"         # rozhodnutí majitele po F0 (28. 11.): Haiku medium
 
 
 def test_env_prebije_profil():

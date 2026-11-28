@@ -182,6 +182,16 @@ PRIPADY = [
      "do lihovin a děvčat, pak by asi vydělal více“ [1].",
      "Poslanec Hrnčíř na semináři prohlásil: »kdyby místo toho investoval do lihovin a děvčat« [1], "
      "ve Sněmovně to zopakovala Schillerová."),
+    # jméno s tečkou za zkratkou nebo s datem mezi jménem a uvozovkou (r2 N5)
+    ("C-b-cituje-a", 0,
+     "Ve Sněmovně to zopakovala ministryně Schillerová jako citát poslance Hrnčíře z odborného semináře "
+     "16. září [1].",
+     "Poslanec Hrnčíř na semináři 16. září řekl: „kdyby místo toho investoval do lihovin a děvčat“ [1], "
+     "zopakovala to Schillerová."),
+    ("C-b-cituje-a", 0,
+     "Ve Sněmovně to zopakovala ministryně Schillerová jako citát poslance Hrnčíře z odborného semináře [1].",
+     "Výrok Jana Hrnčíře (posl. za SPD) ze semináře: „kdyby místo toho investoval do lihovin a děvčat“ [1], "
+     "zopakovala ho Schillerová."),
     ("K-dve-slova-titulni", 0,
      "Myslíte novelu zákona o střetu zájmů, tisk 221?",
      "Střet zájmů je situace, kdy osobní zájem ovlivní výkon funkce."),

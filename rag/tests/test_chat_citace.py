@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from hlidac_rag.chat.citace import (POZNAMKA_CITUJE, ZNACKA_NEOVERENO, Odstavce, _konce_vet, ma_citat,
+from hlidac_rag.chat.citace import (POZNAMKA_CITUJE, POZNAMKA_POPRENO, ZNACKA_NEOVERENO, Odstavce, _konce_vet, ma_citat,
                                     over_odstavec)
 from hlidac_rag.chat.registr import Registr, Zdroj
 
@@ -800,3 +800,99 @@ def test_r4_2b_popreni_ve_zdroji_je_priblizne_v_projevu_recnika():
     c = over_odstavec("„rozpočet je vyrovnaný“ [1]", REG_PROJEV, lambda n: "Netvrdím, že rozpočet je vyrovnaný.",
                       bez_jmen).citaty[0]
     assert c["shoda"] == "priblizne" and c["zaznelo_v"]["recnik"] == "Jan Novák (ANO)"
+    assert c["poznamka"] == POZNAMKA_POPRENO          # r5 minor: proč jen přibližně
+
+
+# --- r5: mluvčí, kterého jmena_osob nezná (sondy probe13h) ------------------------------------------
+
+@pytest.mark.parametrize("t", [
+    f"Pavel Kříž řekl: „{X}“ [1].",                                      # U1 jméno mimo DB
+    f"Kříž řekl: „{X}“ [1].",                                            # U2 jen příjmení
+    f"Trump prohlásil: „{X}“ [1].",                                      # U3 zahraniční politik
+    f"Mluvčí vlády uvedl: „{X}“ [1].",                                   # U4
+    f"Hejtman kraje řekl: „{X}“ [1].",                                   # U5
+    f"Prezident republiky prohlásil: „{X}“ [1].",                        # U6
+    f"Senátor za Brno řekl: „{X}“ [1].",                                 # U7
+    f"Guvernér ČNB uvedl: „{X}“ [1].",                                   # U8
+    f"Expremiér řekl: „{X}“ [1].",                                       # U9 předpona ex-
+    f"Šéf hnutí prohlásil: „{X}“ [1].",                                  # U10
+    f"Novák citoval Kříže: „{X}“ [1].",                                  # U13 uprostřed věty
+    f"Novák ocitoval premiéra: „{X}“ [1].",                              # U14
+    f"Na otázku Pavla Kříže odpověděl Novák: „{X}“ [1].",                # U15
+    f"Pavel Kříž řekl:\n> {X}\n[1]",                                     # U17 bloková citace
+    f"„{X}“ [1], řekl Pavel Kříž.",                                      # U18 jméno za citátem
+    f"„{X}“ [1] (Pavel Kříž, STAN)",                                     # U19
+    f"Kříž said: „{X}“ [1].",                                            # U20 anglicky
+    f"Karel Novák řekl: „{X}“ [1].",                                     # U21 jmenovec
+    f"Ministr přisoudil Novákovi slova: „{X}“ [1].",                     # U22
+    f"Ocitovala Nováka: „{X}“ [1].",                                     # U23
+    f"Dle Kříže: „{X}“ [1].",                                            # U24
+    # další obejití stejného druhu
+    f"Kříž tvrdí: „{X}“ [1].",
+    f"„{X}“ [1], Kříž stated.",
+    f"Bývalý ministr řekl: „{X}“ [1].",
+    f"Exministryně uvedla: „{X}“ [1].",
+    f"Petr Malý řekl „{X}“ [1] a Pavel Kříž to zopakoval.",
+])
+def test_r5_mluvci_mimo_db_je_neovereno(t):
+    v = over_odstavec(t, NOVAK, lambda n: VLASTNI, jm_g)
+    assert [c["shoda"] for c in v.citaty] == ["neovereno"] and "„" not in v.text
+
+
+@pytest.mark.parametrize("t", [
+    f"Ten muž řekl: „{X}“ [1].",                                         # U11 nikoho nejmenuje
+    f"Novák si vyslechl: „{X}“ [1].",                                    # U12 jmenuje jen řečníka
+    f"pavel kříž řekl: „{X}“ [1].",                                      # U16 bez velkého písmene, DB nezná
+])
+def test_r5_bez_jmena_s_velkym_pismenem_tvrdi_jen_zazneni(t):
+    # zbytek nálezu U: odstavec nejmenuje jinou osobu, kterou jde poznat; výsledek tvrdí jen, že znění
+    # v projevu Nováka zaznělo (čip to řekne), ne kdo ho řekl
+    c = over_odstavec(t, NOVAK, lambda n: VLASTNI, jm_g).citaty[0]
+    assert c["shoda"] == "presne" and c["zaznelo_v"]["recnik"] == "Jan Novák (ANO)"
+
+
+@pytest.mark.parametrize("citat, zdroj, ocekavano", [
+    ("schodek rozpočtu bude 300 miliard korun", "Já říkám, že schodek rozpočtu bude 200 miliard korun.",
+     "nenalezeno"),                                                     # V1 jiné číslo
+    ("Rusko je naším spojencem v Evropě", "Já říkám, že Ukrajina je naším spojencem v Evropě.",
+     "nenalezeno"),                                                     # V2 jiné slovo
+    (X, "Já říkám, že rozpočet je vyrovnaný a zdravý.", "priblizne"),    # V3 přidané slovo: znění upraveno
+    ("my jsme rozpočet zničili", "Já říkám, že vy jste rozpočet zničili.", "nenalezeno"),     # V4
+    ("rozpočet je špatný a zbytečný", "Já říkám, že rozpočet je dobrý a užitečný.", "nenalezeno"),  # V5
+    ("vláda … zvýší daně všem občanům",
+     "vláda by nikomu nechtěla, aby se stalo, že opozice zvýší daně všem občanům", "nenalezeno"),    # V6
+])
+def test_r5_zneni_ktere_nezaznelo(citat, zdroj, ocekavano):
+    assert shoda(f"Novák řekl: „{citat}“ [1].", zdroj=zdroj) == [ocekavano]
+
+
+@pytest.mark.parametrize("t", [
+    f"Novák v Poslanecké sněmovně řekl: „{X}“ [1].",
+    f"Novák v rozhovoru pro Českou televizi řekl: „{X}“ [1].",
+    f"Novák v rozpravě k novele zákona o DPH řekl: „{X}“ [1].",
+    f"K zákonu č. 218/2000 Sb. Novák řekl: „{X}“ [1].",
+    f"K PN 2329 Novák řekl: „{X}“ [1].",
+    f"O pomoci Ukrajině Novák řekl: „{X}“ [1].",
+    f"Dle Nováka: „{X}“ [1].",
+    f"Stenozáznam uvádí, že Novák řekl: „{X}“ [1].",
+    f"Bývalý ministr Novák řekl: „{X}“ [1].",
+    f"V projevu ministra financí Jana Nováka zaznělo: „{X}“ [1].",
+])
+def test_r5_instituce_zkratky_a_jmeno_recnika_nejsou_cizi_jmeno(t):
+    assert shoda(t) == ["presne"]
+
+
+@pytest.mark.parametrize("t", [
+    f"Pavel Kříž to shrnul: „{X}“ [3].",                                 # dvě slova s velkým písmenem
+    f"Paragraf podle Kříže zní: „{X}“ [3].",                             # uprostřed věty
+    f"Dle Kříže: „{X}“ [3].",
+    f"„{X}“ [3], Kříž said.",
+])
+def test_r5_text_zakona_s_osobou_mimo_db_je_neovereno(t):
+    assert over_odstavec(t, CEL, lambda n: f"§ 1 {X}.", jm).citaty[0]["shoda"] == "neovereno"
+
+
+def test_r5_text_zakona_s_institucemi_projde():
+    for t in (f"Zákon říká: „{X}“ [3].", f"Paragraf 1 zákona č. 218/2000 Sb. stanoví: „{X}“ [3].",
+              f"Ústava České republiky v čl. 1 stanoví: „{X}“ [3]."):
+        assert over_odstavec(t, CEL, lambda n: f"§ 1 {X}.", jm).citaty[0]["shoda"] == "presne", t

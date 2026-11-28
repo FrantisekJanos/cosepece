@@ -551,3 +551,77 @@ def test_normalizace_prevezme_seznam_prijmeni():
     new, _, _ = normalize(load_fixture("v3-pn-311.json"), "x\n\nHodnotíme postup, ne politický obsah.", fmt="pn",
                           focus_info=[], server_card=server)
     assert new["prijmeni_osob"] == ["Babiš", "Okamura"]
+
+
+# ---------- sondy z třetí recenze (p5): příjmení tvaru přídavného jména, postoje u jména a role ----------
+
+P5_SN = ["Babiš", "Okamura", "Hrnčíř", "Rakušan", "Schillerová", "Nový", "Malý", "Nová", "Novák", "Šebelová",
+         "Philipp", "Fiala", "Havlíček"]
+
+
+def _p5(text: str, sn=P5_SN, where: str = "cap") -> list[str]:
+    card = {"pn_autor": [{"jmeno": "Jan Novák", "klub": "ANO", "spolu": 3}], "pribeh": {"titulek": "PN ruší poplatek"}}
+    if sn is not None:
+        card["prijmeni_osob"] = sn
+    if where == "card":
+        card["pribeh"]["co"] = {"text": text}
+        return at.public_text_errors(card, P4_BASE, 311)
+    return at.public_text_errors(card, P4_BASE + " " + text, 311)
+
+
+P5_BAD = [
+    "Návrh podal Babiš.", "Za návrhem stojí Okamura.", "Babiš je autorem návrhu.", "Babišův návrh ruší poplatek.",
+    "Okamurova SPD návrh podpořila.", "Hlasoval pro něj i Babiš.", "Proti byl i Rakušan.",
+    "Babiš tweetoval, že je to podvod.", "Ministryně financí návrh podpořila.",
+    "Poslankyně za ANO to považuje za chybu.", "Návrh podpořil senátor Vystrčil.", "Návrh kritizuje hejtman Kuba.",
+    "Europoslanec Konečná ho odmítá.", "Za návrhem stojí Vystrčil.", "Vystrčil je autorem návrhu.",
+    "Vystrčilův návrh ruší poplatek.", "Pro byl i Vystrčil.", "Kuba návrh odmítl.", "Kuba je proti.",
+    "Vystrčil s návrhem nesouhlasí.", "Nová je autorkou návrhu.", "Malý návrh podal.", "Malý je proti.",
+    "Nová ho odmítá.", "Ona je autorkou návrhu.", "Autorem je on.", "Ministr je proti.",
+    "Premiér s ním nesouhlasí.", "Celý návrh je dílem jednoho poslance.", "Šéf hnutí ANO je proti.",
+    "Předseda vlády návrh podpořil.", "Bývalý ministr financí návrh podpořil.", "Prezident zákon podepíše.",
+    "Prezident zákon nepodepíše.",
+]
+
+
+@pytest.mark.parametrize("text", P5_BAD)
+def test_p5_chyba(text):
+    assert _p5(text), text
+    assert _p5(text, where="card"), text
+
+
+@pytest.mark.parametrize("text", ["Návrh podal Babiš.", "Proti byl i Vystrčil."])
+def test_p5_prvni_odstavec(text):
+    card = {"pn_autor": [{"jmeno": "Jan Novák", "klub": "ANO", "spolu": 3}], "prijmeni_osob": P5_SN}
+    cap = "PN 2376 podal Jan Novák (ANO) a 3 další poslanci. " + text + "\n\nShrnutí AI. Víc na webu."
+    errs = at.public_text_errors(card, cap, 311)
+    assert any(e.startswith("R8 text pro X") or e.startswith("R1 text pro X") for e in errs), errs
+
+
+P5_GOOD = [
+    "Nová lhůta platí od ledna.", "Malý podnikatel zaplatí méně.", "Nový poplatek zavádí PN 2376.",
+    "Malé obce dostanou víc peněz.", "Fialová nafta zdraží.", "Havlíčkův Brod dostane obchvat.",
+    "Pro hlasovalo 102 poslanců.", "Návrh podpořil garanční výbor.", "Senát návrh vrátil.",
+    "Ministerstvo financí návrh podpořilo.", "Vláda návrh podpořila.", "Poslanci PN přijali.",
+    "Zákon podepsal prezident.", "Ministr zdravotnictví dostane nové pravomoci.",
+    "Ministr musí vydat vyhlášku do 30 dnů.", "Úprava se týká Prahy, Brna a Ostravy.",
+    "Platí to pro Českou správu sociálního zabezpečení.", "Dotace půjdou přes Státní fond podpory investic.",
+    "Návrh reaguje na rozsudek Nejvyššího správního soudu.", "Peníze dostane Národní sportovní agentura.",
+    "Firmy jako ČEZ zaplatí vyšší daň.", "Zákon o DPH se mění od 1. ledna 2027.",
+    "Týká se to i obcí jako Lidice nebo Ležáky.", "Zdraží se služby Českých drah a Pražské plynárenské.",
+    "Změna se týká Úřadu práce ČR.", "Úřad musí žadatele o změně informovat.", "Obec poplatek vybere do konce roku.",
+    "Novela míří do Senátu, ten má na ni 30 dnů.", "Lhůta se prodlužuje kvůli Evropské unii.",
+    "Peníze půjdou i do Moravskoslezského kraje.", "Platí to pro Masarykovu univerzitu.",
+    "Úprava se týká Kunratického lesa.", "Dálnice D1 vede přes Vysočinu.",
+]
+
+
+@pytest.mark.parametrize("text", P5_GOOD)
+def test_p5_bez_chyby(text):
+    assert _p5(text) == [], (text, _p5(text))
+    assert _p5(text, sn=None) == [], text
+
+
+@pytest.mark.parametrize("text", P4_GOOD)
+def test_p4_bez_chyby_se_seznamem(text):
+    assert _p5(text) == [], (text, _p5(text))

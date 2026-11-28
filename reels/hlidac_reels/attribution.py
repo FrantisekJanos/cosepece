@@ -38,19 +38,25 @@ SAY = re.compile(
     r"napsal[aiy]?\s*,?\s*že|prý\b|údajně\b|said|says|wrote|tweeted|claims?\b)\w*",
     re.IGNORECASE)
 # role osob („vládní“, „poslanecký“, „senátní“ jsou přívlastky návrhu, ne osoba; „autorizovaný“ není autor)
-ROLE = re.compile(r"(?<!\w)(?:poslan(?!eck)|europoslan|ministr|premiér|senátor(?!sk)|zpravodaj(?!stv)|předkladatel|"
+ROLE = re.compile(r"(?<!\w)(?:poslan(?!eck)|europoslan|ministr|premiér|prezident|senátor(?!sk)|zpravodaj(?!stv)|předkladatel|"
                   r"navrhovatel|opozic|opozič|koalic|koalič|mluvčí|expert|šéf|předsed|místopředsed|hejtman|starost|náměst|lídr|"
                   r"poslankyn|ministryn|autoř|"
                   r"autor(?!iz))\w*", re.IGNORECASE)
 # úkony, které o osobě vypovídají stejně jako výrok (napsal, podpořil, hlasoval, „stojí za“): chyba u osoby nebo role
 # v jednotném čísle; skupina („poslanci ANO hlasovali“) a instituce („Senát návrh odmítl“) jsou věcný údaj
 ACT = re.compile(r"(?<!\w)(?:napsal|sepsal|tweet|sdílel|sdílí|považuj|považoval|podpořil|podporuj|odmítl|odmítá|"
-                 r"hlasoval|hlasuj|stojí\s+za|stál[aiy]?\s+za|je\s+autor|byl[aiy]?\s+proti|byl[aiy]?\s+pro)\w*",
+                 r"hlasoval|hlasuj|stojí\s+za|stál[aiy]?\s+za|je\s+autor|autor\w*\s+je|je\s+dílem|"
+                 r"byl[aiy]?\s+proti|byl[aiy]?\s+pro\b|je\s+proti|je\s+pro\b|jsou\s+proti|nesouhlas|souhlasí|"
+                 r"souhlasil|nepodepíše|podepíše|vetuj|vetoval|kritizuj|kritizoval)\w*",
                  re.IGNORECASE)
+# úkon autora; jen u příjmení tvaru přídavného jména na začátku věty („Malý návrh podal.“)
+DEED = re.compile(r"(?<!\w)(?:podal|předložil|navrhl|sepsal)\w*", re.IGNORECASE)
+# zájmeno osoby jako podmět úkonu („Ona je autorkou návrhu.“, „Autorem je on.“)
+PERSON_PRONOUN = re.compile(r"(?<!\w)(?:on|ona|oni|ony)(?!\w)", re.IGNORECASE)
 ROLE_ONE = re.compile(r"(?<!\w)(?:ministr|ministryně|poslanec|poslankyně|premiér|premiérka|šéf|šéfka|předseda|"
                       r"předsedkyně|mluvčí|hejtman|hejtmanka|starosta|starostka|náměstek|náměstkyně|senátor|"
                       r"senátorka|zpravodaj|zpravodajka|lídr|lídryně|autor|autorka|předkladatel|předkladatelka|"
-                      r"europoslanec|europoslankyně|expert|expertka)(?!\w)", re.IGNORECASE)
+                      r"europoslanec|europoslankyně|expert|expertka|prezident|prezidentka)(?!\w)", re.IGNORECASE)
 POSSESSIVE = ("ův", "ova", "ovo", "ovu", "ovy", "ových", "ovým", "ovými", "ově", "ovou", "ovi", "ovo")
 SURNAME_FORMS = ("", "a", "e", "u", "y", "i", "o", "ovi", "em", "ou", "é", "ého", "ému", "ém", "ým", "ou", "á", "ý", "í", "ího", "ímu",
                  "ův", "ova", "ovo", "ovu", "ovy", "ových", "ovým", "ovými", "ově", "ovou", "ovo", "ovi", "ovic",
@@ -109,13 +115,15 @@ ALLOW_CAPS = ("ústav", "sněmovn", "senát", "parlament", "vlád", "ministerstv
               "boleslav", "hustopeč", "lipník", "přerov", "prostějov", "vsetín", "třebíč", "znojm", "břeclav",
               "hodonín", "kroměříž", "uherské", "šumperk", "trutnov", "náchod", "jičín", "semil", "jablonec",
               "česká lípa", "litoměřic", "louny", "rakovník", "beroun", "příbram", "benešov", "kutná hora",
-              "havlíčk", "pelhřimov", "strakonic", "prachatic", "klatov", "domažlic", "tachov", "sokolov", "rokycan")
+              "pelhřimov", "brod", "pražsk", "plynárensk", "drah", "kunratick", "strakonic", "prachatic", "klatov", "domažlic", "tachov", "sokolov", "rokycan")
 # podstatná jména institucí a míst: slovo s velkým písmenem před nimi je součást názvu, ne jméno osoby
 INSTITUTION_HEAD = ("agentu", "rad", "úřad", "fond", "komis", "soud", "správ", "inspekc", "nadac", "spol",
                     "památník", "univerzit", "nemocnic", "ústav", "centr", "institut", "knihovn", "muze", "divadl",
                     "nádraž", "služb", "společnost", "svaz", "komor", "výbor", "kancelář", "ministerstv", "škol",
                     "akademi", "galeri", "archiv", "park", "ředitelstv", "inspektorát", "obec", "obc", "měst", "kraj",
-                    "řek", "řec", "zákon", "program", "projekt", "strategi", "plán", "hnutí", "sektor", "operac")
+                    "řek", "řec", "zákon", "program", "projekt", "strategi", "plán", "hnutí", "sektor", "operac",
+                    "les", "rybník", "potok", "vrch", "hrad", "zámk", "zámek", "ulic", "nádrž", "přehrad", "letišt",
+                    "tunel", "obchvat", "údolí", "hor", "plynárn", "teplárn", "elektrárn", "dráh", "drah")
 PODLE = re.compile(r"(?<!\w)(?P<kw>podle|dle|slovy|z\s+úst)\s+(?P<w1>[^\s]+)(?:\s+(?P<w2>[^\s]+))?", re.IGNORECASE)
 PODLE_OK = ("§", "zákon", "jednací", "ústav", "nařízen", "čl", "ai", "dat", "histori", "psp", "důvodov", "rozbor",
             "evidenc", "text", "znění", "pravid", "směrnic", "usnesen", "předpis", "smlouv", "odst", "bod",
@@ -458,7 +466,7 @@ def _surname_re(surnames: list[str]) -> re.Pattern | None:
     Okamurovi, Schillerové); rozlišuje velikost písmen."""
     stems = set()
     for sn in surnames or []:
-        if not isinstance(sn, str) or len(sn.strip()) < 3 or _allowed_caps(sn.strip()):
+        if not isinstance(sn, str) or len(sn.strip()) < 3:
             continue
         stems.add(_surname_stem(sn.strip()))
     if not stems:
@@ -526,6 +534,16 @@ def attribution_errors(text: str, *, where: str, people: list[str], docs: list[s
                 continue
             # příjmení tvaru přídavného jména („Nová“, „Malý“) na začátku věty může být běžné slovo
             if m.start() in sentence_starts and m.group().lower().endswith(("ý", "á", "í", "é")):
+                sent = next(t for st, t in _sentences(text) if st == m.start())
+                nxt = re.match(r"\s+([^\W\d_][\w-]*)", text[m.end():])
+                if (nxt and nxt.group(1)[:1].islower() and not ACT.search(sent) and not SAY.search(sent)
+                        and not DEED.search(sent)
+                        and not nxt.group(1).lower() in ("je", "byl", "byla", "ho", "ji", "to")):
+                    continue  # „Nová lhůta…“, „Malý podnikatel…“: přídavné jméno, ne osoba
+            # přivlastňovací tvar v názvu místa („Havlíčkův Brod“)
+            after = re.match(r"\s+([^\W\d_][\w-]*)", text[m.end():])
+            if (m.group().endswith(POSSESSIVE) and after and after.group(1)[:1].isupper()
+                    and not after.group(1).isupper() and _allowed_caps(after.group(1))):
                 continue
             name_spans.append((m.start(), m.end()))
             bad_spans.append((m.start(), m.end()))
@@ -535,7 +553,11 @@ def attribution_errors(text: str, *, where: str, people: list[str], docs: list[s
         local_skip = [(s - start, e - start) for s, e in name_spans + lead_spans if e > start and s < start + len(sent)]
         candidates = _name_candidates(sent, local_skip)
         start_name = _start_name(sent, local_skip)
-        if start_name is not None and (start_name.group().endswith(POSSESSIVE) or _acts_right_after(sent, start_name)):
+        place = re.match(r"\s+([^\W\d_][\w-]*)", sent[start_name.end():]) if start_name else None
+        is_place = bool(place and place.group(1)[:1].isupper() and not place.group(1).isupper()
+                        and _allowed_caps(place.group(1)))  # „Havlíčkův Brod“, ne „Okamurova SPD“
+        if start_name is not None and not is_place and (start_name.group().endswith(POSSESSIVE)
+                                                         or _acts_right_after(sent, start_name)):
             candidates.append(start_name)  # „Babišův návrh…“, „Hrnčíř návrh odmítl.“, „Babiš je autorem…“
         for c in candidates:
             errs.append(f"R8 {where}: „{c.group()}“ vypadá jako jméno osoby („{_snippet(sent)}“). Osoby uvádí jen "
@@ -547,7 +569,9 @@ def attribution_errors(text: str, *, where: str, people: list[str], docs: list[s
         # R1b: úkon, který vypovídá o osobě (podpořil, hlasoval, napsal, stojí za…), u osoby nebo role v j. č.
         act = ACT.search(sent)
         roles_one = [r for r in ROLE_ONE.finditer(sent) if not any(a <= r.start() < b for a, b in local_skip)]
-        if act and not in_lead(act.start()) and (candidates or roles_one
+        work = act is not None and act.group().lower().startswith("je dílem") and ROLE.search(sent) is not None
+        if act and not in_lead(act.start()) and (candidates or roles_one or work
+                                                 or PERSON_PRONOUN.search(sent) is not None
                                                  or any(start <= b < start + len(sent) for b, _ in bad_spans)):
             errs.append(f"R1 {where}: úkon přisouzený osobě („{_snippet(sent)}“, „{act.group()}“). Kdo co podpořil "
                         "nebo hlasoval, ukazuje jen systém z dat (autor PN, hlasování po klubech).")

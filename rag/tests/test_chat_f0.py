@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from eval.chat.f0 import (NASTROJE_MCP, ChybaBehu, LimitPredplatneho, main, prikaz, rozeber, slepe_pary, souhrn,
-                          spust, znacka)
+from eval.chat.f0 import (NASTROJE_MCP, ZAKAZANE_PROMENNE, ChybaBehu, LimitPredplatneho, ZastaveniBehu, druh_chyby,
+                          main, over_mcp, posledni_odpoved, prikaz, rozeber, slepe_pary, souhrn, spust, znacka)
 from eval.chat.kontroly import zkontroluj
 
 BIN = "claude-test"
@@ -19,17 +19,31 @@ SCENAR_2_TAHY = {"id": "T-dva", "sada": "zaklad", "kontext": {"typ": "tisk", "ct
 @pytest.fixture(autouse=True)
 def binarka(monkeypatch):
     monkeypatch.setenv("CLAUDE_BIN", BIN)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for p in ZAKAZANE_PROMENNE:
+        monkeypatch.delenv(p, raising=False)
+
+
+def _init(status="connected", nastroje=None):
+    """Výstup sondy MCP (`stream-json`) ve tvaru ze skutečného CLI 2.1.332."""
+    init = {"type": "system", "subtype": "init", "tools": NASTROJE_MCP if nastroje is None else nastroje,
+            "mcp_servers": [{"name": "cosepece", "status": status, "source": "dynamic"}]}
+    vysledek = {"type": "result", "is_error": False, "result": "OK", "session_id": "sonda"}
+    return json.dumps(init) + "\n" + json.dumps(vysledek) + "\n"
 
 
 class FalesnyClaude:
     """Podvržené subprocess.run: vrací připravené odpovědi, po `limit_po` voláních hlásí limit předplatného."""
 
-    def __init__(self, odpovedi, limit_po=None):
-        self.odpovedi, self.limit_po = list(odpovedi), limit_po
-        self.pocet_volani, self.prikazy, self.vstupy, self.cwd = 0, [], [], []
+    def __init__(self, odpovedi, limit_po=None, chyby=(), sonda=None, kol=2):
+        self.odpovedi, self.limit_po, self.chyby, self.kol = list(odpovedi), limit_po, set(chyby), kol
+        self.sonda = _init() if sonda is None else sonda
+        self.pocet_volani, self.prikazy, self.vstupy, self.cwd, self.env, self.sondy = 0, [], [], [], [], 0
 
     def __call__(self, argv, **kw):
+        self.env.append(kw.get("env"))
+        if "stream-json" in argv:                                  # sonda MCP se do pocet_volani nepočítá
+            self.sondy += 1
+            return subprocess.CompletedProcess(argv, 0, self.sonda, "")
         self.pocet_volani += 1
         self.prikazy.append(argv)
         self.vstupy.append(kw.get("input"))
@@ -37,17 +51,19 @@ class FalesnyClaude:
         if self.limit_po is not None and self.pocet_volani > self.limit_po:
             out = json.dumps({"is_error": True, "result": "Claude AI usage limit reached|1764000000"})
             return subprocess.CompletedProcess(argv, 1, out, "")
+        if self.pocet_volani in self.chyby:
+            return subprocess.CompletedProcess(argv, 1, json.dumps({"is_error": True, "result": "API Error: 529"}), "")
         text = self.odpovedi[(self.pocet_volani - 1) % len(self.odpovedi)]
-        out = json.dumps({"result": text, "session_id": f"s{self.pocet_volani}", "num_turns": 2,
+        out = json.dumps({"result": text, "session_id": f"s{self.pocet_volani}", "num_turns": self.kol,
                           "duration_ms": 1000 * self.pocet_volani, "is_error": False,
                           "usage": {"input_tokens": 10, "output_tokens": 10, "cache_read_input_tokens": 0,
                                     "cache_creation_input_tokens": 0}})
         return subprocess.CompletedProcess(argv, 0, out, "")
 
 
-def _spust(scenare, konf, behu, tmp_path, fake):
+def _spust(scenare, konf, behu, tmp_path, fake, **kw):
     return spust(scenare, konf, behu, tmp_path / "vystup", fake, mcp_config="mcp.json",
-                 pracovni=tmp_path / "prac", pauza_s=0)
+                 pracovni=tmp_path / "prac", pauza_s=0, najdi_odpoved=lambda sid: f"u-{sid}", **kw)
 
 
 def test_prikaz_ma_predplatne_a_jen_mcp_nastroje():
@@ -130,6 +146,8 @@ def test_spust_preskoci_jen_endpoint_a_chybu_zapise(tmp_path):
     jen = dict(SCENAR_2_TAHY, id="T-endpoint", jen_endpoint=True)
 
     def spatny(argv, **kw):
+        if "stream-json" in argv:
+            return subprocess.CompletedProcess(argv, 0, _init(), "")
         return subprocess.CompletedProcess(argv, 1, "není json", "chyba")
     radky = _spust([jen, dict(SCENAR_2_TAHY, tahy=[{"text": "X"}])], [("claude-haiku-5-5", "low")], {}, tmp_path, spatny)
     assert len(radky) == 1 and radky[0]["selhani"][0].startswith("beh:") and radky[0]["id"] == "T-dva"
@@ -209,3 +227,154 @@ def test_slepe_pary_neprozradi_model():
 def test_kontroly_bez_seznamu_nastroju_preskoci_nastroje_any():
     assert zkontroluj({"nastroje_any": ["get_pn"]}, "x", None, 0.0).ok
     assert not zkontroluj({"nastroje_any": ["get_pn"]}, "x", [], 0.0).ok
+
+
+# --- nálezy recenze kolo 1 ---
+
+def test_r1_1_po_selhanem_tahu_dalsi_tahy_nebezi(tmp_path):
+    fake = FalesnyClaude(["A"], chyby={1})                          # tah 1 skončí chybou API
+    radky = _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.pocet_volani == 1                                    # tah 2 se nespustil
+    assert radky[1]["selhani"] == ["beh: navazuje na selhaný tah"] and radky[1]["odpoved"] == ""
+
+
+def test_r1_1_bez_uuid_odpovedi_se_nenavazuje(tmp_path):
+    fake = FalesnyClaude(["A"])
+    radky = spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path / "v", fake, pracovni=tmp_path / "p",
+                  pauza_s=0, najdi_odpoved=lambda sid: None)
+    assert fake.pocet_volani == 1 and radky[1]["selhani"] == ["beh: navazuje na selhaný tah"]
+
+
+def test_r1_2_opakovany_tah_navazuje_za_posledni_odpovedi(tmp_path):
+    fake = FalesnyClaude(["A", "B"], limit_po=1)
+    with pytest.raises(LimitPredplatneho):
+        _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    fake.limit_po = None
+    _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    p = fake.prikazy[-1]
+    assert p[p.index("--resume") + 1] == "s1" and p[p.index("--resume-session-at") + 1] == "u-s1"
+    assert "--resume-session-at" not in prikaz("m", "low", "S", "c", "s1")
+    assert "--resume-session-at" not in prikaz("m", "low", "S", "c", None, "u")
+
+
+def test_r1_2_posledni_odpoved_z_prepisu(tmp_path, monkeypatch):
+    sid = "e6cac6b5-deec-4686-8aad-addafcd0c91f"
+    d = tmp_path / "projects" / "C--slozka"
+    d.mkdir(parents=True)
+    zaznamy = [{"type": "user", "uuid": "u1"}, {"type": "assistant", "uuid": "a1"}, {"type": "attachment", "uuid": "x"},
+               {"type": "user", "uuid": "u2"}, {"type": "assistant", "uuid": "a-chyba", "isApiErrorMessage": True}]
+    (d / f"{sid}.jsonl").write_text("\n".join(json.dumps(z) for z in zaznamy) + "\nrozbitý řádek\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    assert posledni_odpoved(sid) == "a1"                             # syntetická chyba CLI se nepočítá
+    assert posledni_odpoved("11111111-1111-1111-1111-111111111111") is None and posledni_odpoved("../x") is None
+
+
+def test_r1_3_chyby_behu_se_zopakuji_a_tri_po_sobe_zastavi(tmp_path):
+    scen = [{"id": f"Z-{n}", "sada": "zaklad", "kontext": None, "tahy": [{"text": "?"}], "rucne": "t"} for n in range(5)]
+    fake = FalesnyClaude(["A"], chyby={1, 2, 3})
+    with pytest.raises(ZastaveniBehu, match="3 chyby"):
+        _spust(scen, [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.pocet_volani == 3
+    fake.chyby = set()
+    radky = _spust(scen, [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.pocet_volani == 8 and all(r["selhani"] == [] for r in radky)     # chybné tahy znovu
+
+
+@pytest.mark.parametrize("hlaska, druh", [
+    ("Please run /login · API Error: 401", "login"), ("OAuth token has expired", "login"),
+    ("MCP server cosepece failed", "mcp"), ("Claude AI usage limit reached|1764000000", "limit"),
+    ("You have hit your limit · resets 3pm", "limit"), ("API Error: 529 overloaded", None)])
+def test_r1_3_druh_chyby(hlaska, druh):
+    assert druh_chyby(hlaska) == druh
+
+
+def test_r1_3_login_zastavi_hned(tmp_path):
+    def odhlaseny(argv, **kw):
+        if "stream-json" in argv:
+            return subprocess.CompletedProcess(argv, 0, _init(), "")
+        return subprocess.CompletedProcess(argv, 1, json.dumps({"is_error": True, "result": "Not logged in · /login"}), "")
+    with pytest.raises(ZastaveniBehu, match="login"):
+        _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, odhlaseny)
+    assert not (tmp_path / "vystup" / "stav.jsonl").exists()
+
+
+@pytest.mark.parametrize("sonda", [_init(status="failed"), _init(nastroje=NASTROJE_MCP[:3]), "", "není json"])
+def test_r1_4_sonda_mcp_zastavi_beh_pred_prvnim_tahem(tmp_path, sonda):
+    fake = FalesnyClaude(["A"], sonda=sonda)
+    with pytest.raises(ZastaveniBehu, match="mcp"):
+        _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.sondy == 1 and fake.pocet_volani == 0
+
+
+def test_r1_4_sonda_jen_kdyz_je_co_delat_a_tah_bez_nastroju(tmp_path):
+    scen = [{"id": "Z-1", "sada": "zaklad", "kontext": None, "tahy": [{"text": "?", "nastroje_any": ["get_tisk"]}],
+             "rucne": "t"}]
+    fake = FalesnyClaude(["A"], kol=1)                               # jedno kolo = žádné volání nástroje
+    radky = _spust(scen, [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert radky[0]["selhani"] == ["nastroje_any"] and fake.sondy == 1
+    _spust(scen, [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.sondy == 1                                           # vše hotové → bez sondy
+    p = prikaz("claude-haiku-5-5", "low", "S", "c", None, format_vystupu="stream-json")
+    assert p[p.index("--output-format") + 1] == "stream-json" and "--verbose" in p
+
+
+def test_r1_4_over_mcp_prijme_spravnou_sondu(tmp_path):
+    over_mcp(FalesnyClaude([]), "mcp.json", tmp_path / "s")
+
+
+@pytest.mark.parametrize("hlaska", ["Prompt is too long: context limit exceeded", "Usage: claude [options] [prompt]",
+                                    "max tokens limit", "connection reset by peer"])
+def test_r1_5_limit_jen_podle_hlasky_limitu(hlaska):
+    with pytest.raises(ChybaBehu):
+        rozeber(json.dumps({"is_error": True, "result": hlaska}), "claude-haiku-5-5")
+
+
+def test_r1_5_stderr_jen_pri_nenulovem_kodu(tmp_path):
+    def f(argv, **kw):
+        if "stream-json" in argv:
+            return subprocess.CompletedProcess(argv, 0, _init(), "")
+        return subprocess.CompletedProcess(argv, 0, "není json", "usage limit reached")    # rc 0: stderr se nečte
+    radky = _spust([dict(SCENAR_2_TAHY, tahy=[{"text": "X"}])], [("claude-haiku-5-5", "low")], {}, tmp_path, f)
+    assert radky[0]["selhani"][0].startswith("beh:")
+
+
+@pytest.mark.parametrize("promenna", ZAKAZANE_PROMENNE)
+def test_r1_6_zakazane_promenne_i_prazdne(monkeypatch, tmp_path, promenna):
+    monkeypatch.setenv(promenna, "")
+    with pytest.raises(SystemExit, match=promenna):
+        main(["--mcp-config", "m", "--vystup", "v"])
+    fake = FalesnyClaude(["A"])
+    with pytest.raises(SystemExit, match=promenna):
+        _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.pocet_volani == 0 and fake.sondy == 0
+
+
+def test_r1_6_podproces_dostane_prostredi_bez_zakazanych(tmp_path, monkeypatch):
+    monkeypatch.setenv("NECO_JINEHO", "1")
+    fake = FalesnyClaude(["A"])
+    _spust([dict(SCENAR_2_TAHY, tahy=[{"text": "X"}])], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert all(e is not None and e.get("NECO_JINEHO") == "1" and not set(e) & set(ZAKAZANE_PROMENNE) for e in fake.env)
+
+
+@pytest.mark.parametrize("konf", [("claude-haiku-5", "low"), ("claude-haiku-5-5", "nizky")])
+def test_r1_7_neznamy_model_nebo_effort_pred_prvnim_volanim(tmp_path, konf):
+    fake = FalesnyClaude(["A"])
+    with pytest.raises(ValueError):
+        _spust([SCENAR_2_TAHY], [konf], {}, tmp_path, fake)
+    assert fake.pocet_volani == 0 and fake.sondy == 0
+    with pytest.raises(SystemExit, match="konfigurace"):
+        main(["--mcp-config", "m", "--vystup", str(tmp_path / "v"), "--konfigurace", ":".join(konf)])
+
+
+def test_r1_8_necitelny_posledni_radek_stavu(tmp_path):
+    fake = FalesnyClaude(["A [1]", "B"])
+    _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    stav = tmp_path / "vystup" / "stav.jsonl"
+    radky = stav.read_text(encoding="utf-8").splitlines()
+    stav.write_text(radky[0] + "\n" + radky[1][:20], encoding="utf-8")          # přerušený zápis 2. řádku
+    vysledek = _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)
+    assert fake.pocet_volani == 3 and [r["tah"] for r in vysledek] == [1, 2]
+    assert all(json.loads(r) for r in stav.read_text(encoding="utf-8").splitlines())
+    stav.write_text("rozbitý\n" + stav.read_text(encoding="utf-8"), encoding="utf-8")
+    with pytest.raises(ValueError, match="řádek 1"):
+        _spust([SCENAR_2_TAHY], [("claude-haiku-5-5", "low")], {}, tmp_path, fake)

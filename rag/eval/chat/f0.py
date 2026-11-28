@@ -2,20 +2,23 @@
 
 Každý tah scénáře = jeden běh Claude Code CLI se systémovým promptem chatu (`prompt.SYSTEM`), bez vestavěných nástrojů
 a jen s nástroji veřejného MCP `mcp__cosepece__*`. Další tah téže konverzace navazuje přes `--resume`. API klíč se
-nepoužívá: s `ANTHROPIC_API_KEY` v prostředí běh odmítne začít (CLI by jinak platilo API).
+nepoužívá: s `ANTHROPIC_API_KEY` a dalšími proměnnými ze `ZAKAZANE_PROMENNE` běh odmítne začít a podproces je nedostane.
 
 Cizí pokyny (CLAUDE.md, paměť, hooky uživatele) odřízne `--setting-sources ""` a pracovní složka mimo strom
 s `CLAUDE.md` (výchozí `%TEMP%/cosepece-f0`); `--bare` se nepoužívá (čte jen `ANTHROPIC_API_KEY`).
 Jedna pracovní složka na (konfigurace, scénář, běh), sdílená všemi tahy scénáře: `--resume` hledá relaci podle cwd.
 
 Cena tahu = `usage` × ceník (`cenik.cena_usd`). Je to horní odhad: CLI přidává vlastní režii a nástroje MCP nejsou
-oříznuté jako v chatu. Výstup `--output-format json` neuvádí volané nástroje, kontrola `nastroje_any` se ve F0 vynechá.
+oříznuté jako v chatu. Výstup `--output-format json` neuvádí volané nástroje; `nastroje_any` se ve F0 hodnotí jen
+přibližně: tah s `nastroje_any` a jedním kolem (žádné volání nástroje) selže. Na začátku běhu sonda MCP ověří,
+že server cosepece je připojený a model má právě NASTROJE_MCP.
 Selhání `max_cena_usd` a `cituje` se do skóre nepočítají (formát [N] dává registr zdrojů serveru, F0 ho nemá);
 souhrn je vypíše zvlášť i se způsobem citace ([N], jen URL, bez citace).
 
 Spuštění (z `rag/`):
     python -m eval.chat.f0 --mcp-config <mcp.json> --vystup <složka> [--konfigurace model:effort,…] [--jen-sada X]
-Po limitu předplatného skončí kódem 3; další spuštění stejného příkazu přeskočí tahy ze `stav.jsonl`.
+Po limitu předplatného skončí kódem 3, po odhlášení, výpadku MCP nebo 3 chybách běhu po sobě kódem 4. Další
+spuštění stejného příkazu přeskočí hotové tahy ze `stav.jsonl` a zopakuje tahy s chybou běhu.
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ import time
 from pathlib import Path
 
 from hlidac_rag.chat import prompt
-from hlidac_rag.chat.cenik import cena_usd
+from hlidac_rag.chat.cenik import CENY, cena_usd
 
 from .kontroly import SADY, nacti_scenare, zkontroluj
 
@@ -56,9 +59,20 @@ SCENARE = Path(__file__).resolve().parent / "scenare.json"
 STAV = "stav.jsonl"
 PAUZA_S = 2.0
 
-# hláška limitu předplatného: stejné vzory jako worker Reels (reels/…/generator/worker.py PAUSE_PATTERNS, důvod
-# „limit“); „usage“ bez „Usage Policy“ (odmítnutí požadavku není limit)
-_LIMIT_VZORY = (r"limit", r"usage(?! polic)", r"quota", r"rate.?limit", r"too many requests", r"\b429\b")
+EFFORTY = ("low", "medium", "high", "xhigh", "max")
+MAX_CHYB_PO_SOBE = 3  # tolik chyb běhu po sobě = systémová chyba (přepínač, výpadek API), běh se zastaví
+SONDA_MODEL = "claude-haiku-5-5"  # sonda MCP na začátku běhu: na modelu nezáleží, nejlevnější pro kvótu
+# proměnné, se kterými by CLI platilo API nebo šlo jinam než na předplatné; běh s nimi odmítne začít (i prázdnými)
+ZAKAZANE_PROMENNE = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK",
+                     "CLAUDE_CODE_USE_VERTEX")
+
+# druh chyby podle hlášky CLI. Limit úzce (jen hláška limitu předplatného, ne „context limit“ ani nápověda „Usage:“);
+# login a mcp jako worker Reels (reels/…/generator/worker.py PAUSE_PATTERNS)
+_DRUHY_CHYB: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("limit", (r"usage limit", r"limit reached", r"hit your (?:usage )?limit", r"\bresets? (?:at )?\d")),
+    ("login", (r"\blog ?in", r"logged out", r"authenticat", r"\b401\b", r"credential", r"oauth")),
+    ("mcp", (r"\bmcp\b",)),
+)
 
 
 class LimitPredplatneho(Exception):
@@ -77,14 +91,46 @@ class ChybaBehu(Exception):
         self.session_id = session_id
 
 
-def _je_limit(text: str) -> bool:
-    return any(re.search(v, text or "", re.IGNORECASE) for v in _LIMIT_VZORY)
+class ZastaveniBehu(Exception):
+    """Chyba, po které nemá smysl pokračovat: odhlášení, výpadek MCP, opakované chyby běhu. CLI vrátí kód 4."""
 
 
-def _bez_api_klice() -> None:
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        raise SystemExit("ANTHROPIC_API_KEY je v prostředí: F0 běží jen na předplatném, claude -p by platilo API. "
-                         "Odeber proměnnou a spusť znovu.")
+def druh_chyby(text: str) -> str | None:
+    """„limit“, „login“, „mcp“ podle hlášky CLI, jinak None (jednotlivá chyba tahu)."""
+    for druh, vzory in _DRUHY_CHYB:
+        if any(re.search(v, text or "", re.IGNORECASE) for v in vzory):
+            return druh
+    return None
+
+
+def _vyhod_podle_druhu(text: str, sid: str | None = None, *, status=None) -> None:
+    druh = "limit" if status == 429 else druh_chyby(text)
+    if druh == "limit":
+        raise LimitPredplatneho(text[:300])
+    if druh:
+        raise ZastaveniBehu(f"{druh}: {text[:300]}")
+    raise ChybaBehu(f"is_error: {text[:300]}", sid)
+
+
+def _over_prostredi() -> None:
+    nalezene = [p for p in ZAKAZANE_PROMENNE if p in os.environ]
+    if nalezene:
+        raise SystemExit(f"V prostředí je {', '.join(nalezene)}: F0 běží jen na předplatném, claude -p by platilo "
+                         "API nebo šlo mimo předplatné. Odeber proměnné a spusť znovu.")
+
+
+def _prostredi() -> dict[str, str]:
+    """Prostředí podprocesu bez proměnných, se kterými by CLI platilo API (pojistka k _over_prostredi)."""
+    return {k: v for k, v in os.environ.items() if k not in ZAKAZANE_PROMENNE}
+
+
+def over_konfigurace(konfigurace: list[tuple[str, str]]) -> None:
+    """Neznámý model nebo effort se má poznat před prvním voláním, ne po zaplaceném tahu."""
+    for model, effort in konfigurace:
+        if model not in CENY:
+            raise ValueError(f"neznámý model {model!r} (ceník zná {sorted(CENY)})")
+        if effort not in EFFORTY:
+            raise ValueError(f"neznámý effort {effort!r} (povolené {EFFORTY})")
 
 
 def binarka() -> str:
@@ -92,20 +138,47 @@ def binarka() -> str:
     return os.environ.get("CLAUDE_BIN") or shutil.which("claude") or "claude"
 
 
-def prikaz(model: str, effort: str, system: str, mcp_config: str, resume: str | None) -> list[str]:
-    """Argumenty jednoho běhu; prompt tahu jde na stdin. `--allowedTools` je poslední, nástroj = prvek seznamu."""
-    p = [binarka(), "-p", "--model", model, "--effort", effort, "--output-format", "json",
+def prikaz(model: str, effort: str, system: str, mcp_config: str, resume: str | None,
+           resume_at: str | None = None, *, format_vystupu: str = "json") -> list[str]:
+    """Argumenty jednoho běhu; prompt tahu jde na stdin. `--allowedTools` je poslední, nástroj = prvek seznamu.
+
+    `resume_at` = uuid poslední odpovědi asistenta v přepisu relace (`--resume-session-at`): CLI zapíše otázku do
+    přepisu dřív, než přijde odpověď, takže po přerušení (limit, timeout) by holé `--resume` poslalo otázku podruhé
+    (ověřeno na CLI 2.1.332 28. 11.). S `--resume-session-at` relace navazuje za poslední dokončenou odpovědí."""
+    p = [binarka(), "-p", "--model", model, "--effort", effort, "--output-format", format_vystupu,
+         *(["--verbose"] if format_vystupu == "stream-json" else []),
          "--system-prompt", system, "--restricted", "--tools", "",
          "--strict-mcp-config", "--mcp-config", str(mcp_config),
          "--permission-mode", "dontAsk", "--setting-sources", ""]
     if resume:
         p += ["--resume", resume]
+        if resume_at:
+            p += ["--resume-session-at", resume_at]
     return p + ["--disallowedTools", *NASTROJE_ZAKAZANE, "--allowedTools", *NASTROJE_MCP]
+
+
+def posledni_odpoved(session_id: str) -> str | None:
+    """uuid poslední odpovědi asistenta v přepisu relace (`~/.claude/projects/<cwd>/<session_id>.jsonl`);
+    None, když přepis chybí. Syntetické chybové zprávy CLI (`isApiErrorMessage`) se přeskočí."""
+    if not session_id or not re.fullmatch(r"[0-9a-fA-F-]{36}", session_id):
+        return None
+    koren = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    uuid = None
+    for prepis in koren.glob(f"*/{session_id}.jsonl"):
+        for radek in prepis.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                d = json.loads(radek)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("type") == "assistant" and not d.get("isApiErrorMessage") and d.get("uuid"):
+                uuid = d["uuid"]
+    return uuid
 
 
 def rozeber(stdout: str, model: str) -> dict:
     """Výstup `--output-format json` → odpověď, tokeny, kola, doba a cena tahu. Limit → `LimitPredplatneho`,
-    jiná chyba → `ChybaBehu`. Seznam událostí (starší CLI) se čte od konce jako ve workeru Reels."""
+    odhlášení nebo chyba MCP → `ZastaveniBehu`, jiná chyba → `ChybaBehu`. Seznam událostí (starší CLI) se čte
+    od konce jako ve workeru Reels."""
     try:
         data = json.loads((stdout or "").strip())
     except ValueError:
@@ -116,10 +189,8 @@ def rozeber(stdout: str, model: str) -> dict:
         raise ChybaBehu("výstup claude -p není objekt s výsledkem")
     sid = data.get("session_id") if isinstance(data.get("session_id"), str) else None
     if data.get("is_error") is True:
-        text = str(data.get("result") or data.get("subtype") or "")
-        if data.get("api_error_status") == 429 or _je_limit(text):
-            raise LimitPredplatneho(text[:300])
-        raise ChybaBehu(f"is_error: {text[:300]}", sid)
+        _vyhod_podle_druhu(str(data.get("result") or data.get("subtype") or ""), sid,
+                           status=data.get("api_error_status"))
     u = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     tokeny = {k: int(u.get(pole) or 0) for k, pole in (("vstup", "input_tokens"), ("vystup", "output_tokens"),
                                                          ("cache_cteni", "cache_read_input_tokens"),
@@ -166,11 +237,31 @@ def _klic(r: dict) -> tuple:
     return r["id"], r["model"], r["effort"], r["beh"], r["tah"]
 
 
+def _selhal_beh(r: dict) -> bool:
+    return any(x.startswith("beh:") for x in r.get("selhani") or [])
+
+
 def _nacti_stav(cesta: Path) -> dict[tuple, dict]:
+    """Hotové tahy ze `stav.jsonl`. Řádky s chybou běhu (`beh: …`) nejsou hotové, další spuštění je zopakuje.
+    Nečitelný poslední řádek (přerušený zápis) se zahodí i ze souboru, nečitelný řádek uprostřed = ValueError."""
     if not cesta.exists():
         return {}
-    radky = (json.loads(r) for r in cesta.read_text(encoding="utf-8").splitlines() if r.strip())
-    return {_klic(r): r for r in radky}
+    radky = [r for r in cesta.read_text(encoding="utf-8").splitlines() if r.strip()]
+    nactene = []
+    for n, r in enumerate(radky, 1):
+        try:
+            nactene.append(json.loads(r))
+        except ValueError:
+            if n != len(radky):
+                raise ValueError(f"{cesta}: nečitelný řádek {n}") from None
+            cesta.write_text("".join(x + "\n" for x in radky[:-1]), encoding="utf-8")
+    hotove: dict[tuple, dict] = {}
+    for r in nactene:  # pozdější řádek téhož tahu (opakování po chybě) platí
+        if _selhal_beh(r):
+            hotove.pop(_klic(r), None)
+        else:
+            hotove[_klic(r)] = r
+    return hotove
 
 
 def _plan(scenare: list[dict], konfigurace: list[tuple[str, str]], behu: dict[str, int]) -> list[tuple]:
@@ -198,11 +289,79 @@ def _over_pracovni(pracovni: Path) -> None:
                              "F0 musí měřit jen systémový prompt chatu.")
 
 
+def over_mcp(spust_claude, mcp_config: str, cwd: Path, timeout_s: int = 120) -> None:
+    """Sonda na začátku běhu: v události `init` (`stream-json`) musí být server cosepece `connected` a nástroje
+    přesně NASTROJE_MCP. Bez toho by CLI běželo bez nástrojů (`is_error: false`) a model odpovídal zpaměti."""
+    cwd.mkdir(parents=True, exist_ok=True)
+    argv = prikaz(SONDA_MODEL, "low", "Jsi test.", mcp_config, None, format_vystupu="stream-json")
+    try:
+        proc = spust_claude(argv, input="Odpověz jen OK.", capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", cwd=str(cwd), timeout=timeout_s, env=_prostredi())
+    except subprocess.TimeoutExpired:
+        raise ZastaveniBehu(f"mcp: sonda MCP nedoběhla do {timeout_s} s") from None
+    init, vysledek = None, None
+    for radek in (proc.stdout or "").splitlines():
+        try:
+            d = json.loads(radek)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("type") == "system" and d.get("subtype") == "init":
+            init = d
+        elif isinstance(d, dict) and d.get("type") == "result":
+            vysledek = d
+    try:  # limit zůstane limitem (kód 3), jiná chyba sondy běh zastaví
+        if vysledek and vysledek.get("is_error") is True:
+            _vyhod_podle_druhu(str(vysledek.get("result") or ""), status=vysledek.get("api_error_status"))
+        if init is None and proc.returncode:
+            _vyhod_podle_druhu((proc.stderr or "").strip() or f"návratový kód {proc.returncode}")
+    except ChybaBehu as e:
+        raise ZastaveniBehu(f"sonda MCP selhala: {e}") from None
+    if init is None:
+        raise ZastaveniBehu("mcp: sonda MCP nevrátila událost init")
+    stav = {s.get("name"): s.get("status") for s in init.get("mcp_servers") or [] if isinstance(s, dict)}
+    if stav.get("cosepece") != "connected":
+        raise ZastaveniBehu(f"mcp: server cosepece není připojený (stav {stav.get('cosepece')!r}); "
+                            "zkontroluj token v konfiguraci MCP a dostupnost serveru")
+    nastroje = set(init.get("tools") or [])
+    if nastroje != set(NASTROJE_MCP):
+        raise ZastaveniBehu(f"mcp: model by měl jiné nástroje než NASTROJE_MCP (navíc "
+                            f"{sorted(nastroje - set(NASTROJE_MCP))}, chybí {sorted(set(NASTROJE_MCP) - nastroje)})")
+
+
+def _vyhodnot(proc, model: str) -> dict:
+    """Výstup jednoho běhu; nečitelný stdout s nenulovým kódem → druh chyby podle stderr."""
+    try:
+        json.loads((proc.stdout or "").strip())
+    except ValueError:
+        if proc.returncode:
+            _vyhod_podle_druhu((proc.stderr or "").strip() or f"návratový kód {proc.returncode}")
+    return rozeber(proc.stdout, model)
+
+
+def _radek_chyby(radek: dict, chyba: str, session_id: str = "") -> dict:
+    radek.update({"odpoved": "", "session_id": session_id, "uuid_odpovedi": None, "vstup": 0, "vystup": 0,
+                  "cache_cteni": 0, "cache_zapis": 0, "kol": 0, "ms": 0, "cena_usd": 0.0,
+                  "selhani": [f"beh: {chyba}"]})
+    return radek
+
+
+def _zapis(stav_cesta: Path, hotove: dict, klic: tuple, radek: dict) -> None:
+    with stav_cesta.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(radek, ensure_ascii=False) + "\n")
+    hotove[klic] = radek
+
+
 def spust(scenare, konfigurace: list[tuple[str, str]], behu: dict[str, int], vystup: Path,
           spust_claude=subprocess.run, *, mcp_config: str = "", pracovni: Path | None = None,
-          system: str = prompt.SYSTEM, pauza_s: float = PAUZA_S, timeout_s: int = 300) -> list[dict]:
+          system: str = prompt.SYSTEM, pauza_s: float = PAUZA_S, timeout_s: int = 300,
+          najdi_odpoved=posledni_odpoved, sonda_mcp: bool = True) -> list[dict]:
     """Projde scénáře pro každou konfiguraci; řádek na tah do `vystup/stav.jsonl` a vrátí všechny řádky plánu.
-    Tahy už zapsané ve `stav.jsonl` přeskočí. Limit předplatného → `LimitPredplatneho` se `zbyva`."""
+
+    Tahy hotové ve `stav.jsonl` přeskočí, tahy s chybou běhu zopakuje. Tah navazuje přes `--resume` a
+    `--resume-session-at` na poslední odpověď předchozího tahu; když předchozí tah selhal, zbylé tahy scénáře se
+    nespustí (řádek `beh: navazuje na selhaný tah`). Limit předplatného → `LimitPredplatneho` se `zbyva`;
+    odhlášení, výpadek MCP nebo MAX_CHYB_PO_SOBE chyb po sobě → `ZastaveniBehu`."""
+    over_konfigurace(konfigurace)
     vystup = Path(vystup)
     pracovni = Path(pracovni) if pracovni else Path(tempfile.gettempdir()) / "cosepece-f0"
     pracovni = pracovni.resolve()
@@ -211,54 +370,61 @@ def spust(scenare, konfigurace: list[tuple[str, str]], behu: dict[str, int], vys
     stav_cesta = vystup / STAV
     hotove = _nacti_stav(stav_cesta)
     plan = _plan(scenare, konfigurace, behu)
-    prvni = True
+    klice = [(p[0]["id"], *p[1:5]) for p in plan]
+    if sonda_mcp and any(k not in hotove for k in klice):
+        _over_prostredi()
+        over_mcp(spust_claude, mcp_config, pracovni / "sonda-mcp")
+    prvni, chyb_po_sobe = True, 0
     for poradi, (s, model, effort, beh, i, tah, kontext, predchozi) in enumerate(plan):
-        klic = (s["id"], model, effort, beh, i)
-        if klic in hotove:
+        klic = klice[poradi]
+        if klic in hotove and not _selhal_beh(hotove[klic]):
             continue
-        _bez_api_klice()
-        resume = (hotove.get((s["id"], model, effort, beh, i - 1)) or {}).get("session_id") if i > 1 else None
+        z = znacka(kontext, predchozi)
+        radek = {"id": s["id"], "sada": s["sada"], "model": model, "effort": effort, "beh": beh, "tah": i,
+                 "otazka": tah["text"], "znacka": z, "cituje_ocekavano": tah.get("cituje")}
+        resume = resume_at = None
+        if i > 1:
+            pred = hotove.get((s["id"], model, effort, beh, i - 1)) or {}
+            resume, resume_at = pred.get("session_id"), pred.get("uuid_odpovedi")
+            if _selhal_beh(pred) or not resume or not resume_at:
+                # bez navázání by tah běžel jako nová konverzace bez kontextu a hodnotil se, jako by navazoval
+                _zapis(stav_cesta, hotove, klic, _radek_chyby(radek, "navazuje na selhaný tah"))
+                continue
+        _over_prostredi()
         cwd = pracovni / _nazev(f"{model}-{effort}") / _nazev(f"{s['id']}-b{beh}")
         cwd.mkdir(parents=True, exist_ok=True)
-        z = znacka(kontext, predchozi)
-        vstup = f"{z}\n\n{tah['text']}" if z else tah["text"]
         if not prvni:
             time.sleep(pauza_s)
         prvni = False
-        radek = {"id": s["id"], "sada": s["sada"], "model": model, "effort": effort, "beh": beh, "tah": i,
-                 "otazka": tah["text"], "znacka": z, "cituje_ocekavano": tah.get("cituje")}
         surove = vystup / "surove" / _nazev(f"{model}-{effort}")
         surove.mkdir(parents=True, exist_ok=True)
         try:
-            proc = spust_claude(prikaz(model, effort, system, mcp_config, resume), input=vstup, capture_output=True,
-                                text=True, encoding="utf-8", errors="replace", cwd=str(cwd), timeout=timeout_s)
+            proc = spust_claude(prikaz(model, effort, system, mcp_config, resume, resume_at),
+                                input=f"{z}\n\n{tah['text']}" if z else tah["text"], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", cwd=str(cwd), timeout=timeout_s, env=_prostredi())
             jmeno = _nazev(f"{s['id']}-b{beh}-t{i}")
             (surove / f"{jmeno}.json").write_text(proc.stdout or "", encoding="utf-8")
             if proc.stderr:
                 (surove / f"{jmeno}.err").write_text(proc.stderr, encoding="utf-8")
-            try:
-                v = rozeber(proc.stdout, model)
-            except ChybaBehu:
-                try:
-                    json.loads((proc.stdout or "").strip())
-                except ValueError:  # nečitelný stdout: hlášku limitu může nést jen stderr
-                    if _je_limit(proc.stderr):
-                        raise LimitPredplatneho((proc.stderr or "")[:300]) from None
-                raise
+            v = _vyhodnot(proc, model)
             radek.update(v)
-            radek["selhani"] = zkontroluj(tah, v["odpoved"], None, v["cena_usd"]).selhani
+            radek["uuid_odpovedi"] = najdi_odpoved(v["session_id"])
+            selhani = zkontroluj(tah, v["odpoved"], None, v["cena_usd"]).selhani
+            if tah.get("nastroje_any") and v["kol"] <= 1:
+                selhani.append("nastroje_any")  # jedno kolo = žádné volání nástroje (výpadek MCP, odpověď zpaměti)
+            radek["selhani"] = selhani
+            chyb_po_sobe = 0
         except LimitPredplatneho as e:
-            zbyva = sum(1 for p in plan[poradi:] if (p[0]["id"], *p[1:5]) not in hotove)
+            zbyva = sum(1 for k in klice[poradi:] if k not in hotove or _selhal_beh(hotove[k]))
             raise LimitPredplatneho(str(e), zbyva) from None
         except (ChybaBehu, subprocess.TimeoutExpired) as e:
             chyba = f"timeout {timeout_s} s" if isinstance(e, subprocess.TimeoutExpired) else str(e)
-            radek.update({"odpoved": "", "session_id": getattr(e, "session_id", None) or "", "vstup": 0, "vystup": 0,
-                          "cache_cteni": 0, "cache_zapis": 0, "kol": 0, "ms": 0, "cena_usd": 0.0,
-                          "selhani": [f"beh: {chyba}"]})
-        with stav_cesta.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(radek, ensure_ascii=False) + "\n")
-        hotove[klic] = radek
-    return [hotove[(p[0]["id"], *p[1:5])] for p in plan]
+            _radek_chyby(radek, chyba, getattr(e, "session_id", None) or "")
+            chyb_po_sobe += 1
+        _zapis(stav_cesta, hotove, klic, radek)
+        if chyb_po_sobe >= MAX_CHYB_PO_SOBE:
+            raise ZastaveniBehu(f"{chyb_po_sobe} chyby běhu po sobě, poslední: {radek['selhani'][0]}")
+    return [hotove[k] for k in klice]
 
 
 # selhání, která se ve F0 do skóre nepočítají a souhrn je vypíše zvlášť: cena F0 je horní odhad (F12), formát [N]
@@ -355,11 +521,15 @@ def _konfigurace(text: str) -> list[tuple[str, str]]:
         if not model or not effort:
             raise SystemExit(f"konfigurace {cast!r} musí mít tvar model:effort")
         out.append((model, effort))
+    try:
+        over_konfigurace(out)
+    except ValueError as e:
+        raise SystemExit(f"konfigurace: {e}") from None
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
-    _bez_api_klice()
+    _over_prostredi()
     ap = argparse.ArgumentParser(prog="python -m eval.chat.f0", description=__doc__.splitlines()[0])
     ap.add_argument("--mcp-config", required=True, help="konfigurace MCP se serverem cosepece (mimo repo)")
     ap.add_argument("--vystup", required=True, type=Path, help="surové výstupy, stav.jsonl a souhrn.md")
@@ -372,13 +542,18 @@ def main(argv: list[str] | None = None) -> int:
     scenare = nacti_scenare(a.scenare)
     if a.jen_sada:
         scenare = [s for s in scenare if s["sada"] == a.jen_sada]
+    konfigurace = _konfigurace(a.konfigurace)
     try:
-        radky = spust(scenare, _konfigurace(a.konfigurace), BEHU, a.vystup,
+        radky = spust(scenare, konfigurace, BEHU, a.vystup,
                       mcp_config=str(Path(a.mcp_config).resolve()), pracovni=a.pracovni, timeout_s=a.timeout)
     except LimitPredplatneho as e:
         print(f"Limit předplatného: zbývá {e.zbyva} tahů. Po obnovení limitu spusť znovu stejný příkaz, "
               f"hotové tahy ze {STAV} se přeskočí. ({e})", file=sys.stderr)
         return 3
+    except ZastaveniBehu as e:
+        print(f"Běh zastaven: {e}. Oprav příčinu a spusť znovu stejný příkaz; tahy s chybou běhu se zopakují.",
+              file=sys.stderr)
+        return 4
     md = souhrn(radky)
     (a.vystup / "souhrn.md").write_text(md, encoding="utf-8")
     print(md)

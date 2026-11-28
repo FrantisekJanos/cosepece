@@ -289,17 +289,25 @@
   // ---------- společné scény ----------
 
   function pnAuthors(list) {
-    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub}] ze serveru, klub už jako popisek) seskupení
-    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá
+    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub, spolu}] ze serveru, klub už jako popisek) seskupení
+    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá. spolu = nejvyšší počet
+    // spolupodepsaných mezi PN skupiny (u jména „a N další“)
     var groups = [];
     (Array.isArray(list) ? list : []).forEach(function (x) {
       if (!x || !x.jmeno || x.cislo == null || String(x.cislo) === '') return;
       var jmeno = String(x.jmeno), klub = x.klub ? String(x.klub) : '';
       var g = groups.filter(function (y) { return y.jmeno === jmeno && y.klub === klub; })[0];
-      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [] });
+      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [], spolu: 0 });
       g.cisla.push(String(x.cislo));
+      g.spolu = Math.max(g.spolu, +x.spolu || 0);
     });
     return groups;
+  }
+
+  function othersSuffix(n) {
+    // „ a 2 další“, „ a 5 dalších“: spolupodepsaní PN ze serveru (pn_autor[].spolu, pn.top[].spolu); jméno se nezkracuje
+    n = +n || 0;
+    return n > 0 ? ' a ' + n + (n <= 4 ? ' další' : ' dalších') : '';
   }
 
   function fillPnAuthors(row, list) {
@@ -310,7 +318,7 @@
     row.innerHTML = '';
     groups.slice(0, 2).forEach(function (g) {
       var nums = g.cisla.slice(0, 2).join(', ') + (g.cisla.length > 2 ? ' a další' : '');
-      var pna = add(mk('span', 'pna'), mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno));
+      var pna = add(mk('span', 'pna'), mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno + othersSuffix(g.spolu)));
       if (g.klub) add(pna, document.createTextNode(' '), klubChip(g.klub, true));
       row.appendChild(pna);
     });
@@ -613,7 +621,8 @@
   }
 
   function buildProc(z) {
-    var pr = z.proc && z.proc.text && z.proc.zdroj ? z.proc : null;
+    // „Co uvádí důvodová zpráva“: jen obsah důvodové zprávy (úvodní slovo ani „podle předkladatelů“ ne)
+    var pr = z.proc && z.proc.text && z.proc.zdroj && /^důvodová zpráva/i.test(String(z.proc.zdroj).trim()) ? z.proc : null;
     var po = z.pozor && z.pozor.text && z.pozor.zdroj ? z.pozor : null;
     if (!pr && !po) return false;
     var a = A('s-z-proc', readTime((pr ? pr.text.length : 0) + (po ? po.text.length : 0)) + 0.5, false);
@@ -690,7 +699,8 @@
     var badge = mk('span', 'aibadge', 'shrnutí AI');
     badge.dataset.m = id.slice(2).replace(/-/g, '_') + '_ai';
     var labrow = add(mk('div', 'labrow'), mk('div', 'lab', label), badge);
-    var who = side.kdo ? mk('div', 'who2', side.kdo) : null;
+    // řečníka u strany šablona neukazuje (bod je shrnutí AI, ne výrok osoby); zdroj je u každého bodu
+    var who = null;
     var list = mk('div', 'bul');
     var chars = 0;
     var a = A(id, 0, id === 's-r-odp');
@@ -702,7 +712,7 @@
       var bt = fillWords(mk('div', 'bt'), b.text, true);
       bt.dataset.m = id.slice(2).replace(/-/g, '_') + '_' + (i + 1);
       var bs = mk('div', 'bs');
-      if (b.zdroj) bs.appendChild(mk('span', 'src', b.zdroj));
+      if (b.zdroj) bs.appendChild(mk('span', 'src', /^projev/.test(String(b.zdroj)) ? b.zdroj : 'projev: ' + b.zdroj));
       (b.kluby || []).forEach(function (k) { bs.appendChild(klubChip(k, true)); });
       // neautorizovaný stenozáznam musí být vidět; chybějící údaj se bere jako neautorizováno
       if (b.autorizovano !== true) {
@@ -787,7 +797,8 @@
     a.show($('s-p-top').querySelector('.lab'), 0, -30, 0).pop($('pt-ai'), 0.25, 0.5);
     top.forEach(function (x, i) {
       var pc = mk('div', 'pc');
-      var head = add(mk('div', 'pch'), mk('span', 'pcn', 'PN ' + x.cislo), x.autor ? mk('span', 'src', x.autor) : null,
+      var head = add(mk('div', 'pch'), mk('span', 'pcn', 'PN ' + x.cislo),
+        x.autor ? mk('span', 'src', x.autor + othersSuffix(x.spolu)) : null,
         x.klub ? klubChip(x.klub, true) : null);
       var tt = fillPlain(mk('div', 't2'), x.titulek);
       tt.dataset.m = 'pt_' + (i + 1);
@@ -828,10 +839,11 @@
       // vyváženost: shrnutí argumentů jen když má doložené body předkladatel i námitky
       var pro = validPoints(r.pro), proti = validPoints(r.namitky);
       if (pro.length && proti.length) {
-        on('s-r-pro', buildBul('s-r-pro', r.pro.lab || 'Proč to předkladatel chce', r.pro, pro));
-        on('s-r-proti', buildBul('s-r-proti', r.namitky.lab || 'Hlavní námitky', r.namitky, proti));
+        // nadpisy pevně (lab z karty se nebere): body jsou to, co v projevech zaznělo, ne výrok osoby
+        on('s-r-pro', buildBul('s-r-pro', 'V projevech pro návrh zaznělo', r.pro, pro));
+        on('s-r-proti', buildBul('s-r-proti', 'V projevech proti zaznělo', r.namitky, proti));
         var odp = validPoints(r.odpovedi);
-        if (odp.length) on('s-r-odp', buildBul('s-r-odp', r.odpovedi.lab || 'Odpověď předkladatele', r.odpovedi, odp));
+        if (odp.length) on('s-r-odp', buildBul('s-r-odp', 'V odpovědi zaznělo', r.odpovedi, odp));
       }
     } else if (c.format === 'pn') {
       var pn = c.pn;

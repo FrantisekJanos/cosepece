@@ -165,6 +165,25 @@ kontrola `media.validate(..., "landscape")`), worker ho nahraje jako `PUT ?actio
 (před videem na výšku, stejný limit 30 MB) a bot ho při převzetí sady uloží do `video_landscape_path`, takže Threads
 dostane šířku. Vadná nebo chybějící šířka variantu nevyřadí, jen se zaloguje; `reels-generate --no-landscape` ji vypne.
 
+**Citace a autorství (`hlidac_reels/attribution.py`):**
+
+- Výrok se osobě nepřisuzuje. Kontrola odmítne sloveso mluvení u osoby, role nebo klubu („Novák řekl“, „opozice
+  tvrdí“; R1), „podle X“ u osoby (R2), „Jméno: …“ (R3), uvozovky, které nejsou doslovnou citací dokumentu z karty
+  (R4), a motiv („obešli“, „potichu“, „vláda chce“; R7). Text z projevu jen ve tvaru „V projevu J. Nováka 12. 11.
+  zaznělo: „…““ nebo „…, že …“ s položkou v poli karty `citace_projevu` (`klic`, `recnik`, `datum`, `url`
+  stenozáznamu, `autorizovano`, `doslovne`, `text`; R5), ne v titulku, háčku ani v prvním odstavci popisku (R6).
+- U navrhovatelů vždy „a N dalších“: `pn_autor[].spolu` (spolupodepsaní z hlavičky textu PN, server
+  `Proposers::pnCosigners`; null = nejde určit, pak „podle evidence psp.cz“) a `predkladatel.vice` / `dalsi` /
+  `dalsi_text` u poslaneckého návrhu. Normalizace značku za celé jméno v popisku doplní, `kdo` (v3, příběh) skládá
+  z předkladatele ze serveru, `spolu` bere jen ze serveru, zdroj bodu rozpravy skládá z `recnik` a `datum`
+  („projev: A. Schillerová · 13. 10.“), maže `predkladatel.citace` a `pribeh.vysledek.stanoviska` od modelu
+  (stanovisko garančního výboru doplní ze serveru).
+- Popisek videa z rozboru AI (v2, `pn.top`, znaky a dopad AI) musí obsahovat „AI“; „přílepek“ nebo „závažnost“
+  v prvním odstavci jen s „AI“ v témže odstavci.
+- Kontrola běží nad kartou, popiskem i texty pro Threads a X (`caption.threads_text`, `x_text`: useknutá citace
+  nebo značka je chyba). Chyba jde do opravného běhu, nic se strojově nepřepisuje.
+- Jednorázový průchod frontou: `reels-audit-atribuce` (čekající položky), `--vse` i zveřejněná videa; nic nemění.
+
 **Kontrola a oprava variant (generátor):**
 
 - Před kontrolou projde karta a popisek normalizací (`generator/normalize.py`): `hook.big` zapsané jako „číslo + jednotka“
@@ -355,6 +374,13 @@ jedinou variantu `pribeh`. Sada smí mít u všech
   půjdou ke schválení, i když se autopilot před převzetím sady znovu zapne. Odpověď uvede počty videí i úloh.
 - `/video`, `/vyber` a `fresh` autopilot nikdy nepoužijí.
 - Pořadí nasazení: nejdřív server (web a bot společně přes redeploy), potom worker na PC.
+- Kontrola atribuce (`hlidac_reels/attribution.py`, níže) běží při převzetí sady autopilota i těsně před zveřejněním:
+  sada s nálezem jde celá ke schválení a bot pošle výstrahu s chybami. Ručně schválená položka s nálezem se vrátí
+  do `pending` s tlačítky (Upravit popisek). Karta varianty autopilota se při převzetí uloží do `reel_state`
+  (`card:<id>`), aby brána hlídala i „a N dalších“ a citace projevů.
+- Autopilot u PN bez autora v evidenci psp.cz video nevyrobí (model se nespustí), cituje jen autorizované projevy
+  a u autorů, jejichž klub ke dni podání server nepotvrdil (`pn.top`, `pn.autori`), klub neukáže. Formát `rozprava`
+  autopilot nedělá.
 - **Autopilot nezapínat, dokud není aktualizovaný worker na PC.** Starý worker pole `autopilot` v claimu ignoruje
   a vygeneruje 3 varianty včetně formátu `zmena`, které by pak šly ven bez schválení.
 - Hned po redeployi serveru může API workeru několik sekund vracet 500, dokud bot nevytvoří nové sloupce

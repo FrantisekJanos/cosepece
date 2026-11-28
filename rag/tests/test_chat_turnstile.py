@@ -23,8 +23,7 @@ def anyio_backend():
 
 @pytest.fixture(autouse=True)
 def cista_pamet(monkeypatch):
-    """Paměť použitých tokenů je v procesu; každý test začíná prázdnou a bez přepisu hostname."""
-    monkeypatch.delenv("CHAT_TURNSTILE_HOSTNAME", raising=False)
+    """Paměť použitých tokenů je v procesu; každý test začíná prázdnou."""
     turnstile._vycisti_pamet()
     yield
     turnstile._vycisti_pamet()
@@ -195,10 +194,45 @@ async def test_bez_tajemstvi_je_nedostupnost():
         await over_token(http(OK), "t", "1.2.3.4", "")
 
 
-async def test_hostname_z_prostredi(monkeypatch):
-    monkeypatch.setenv("CHAT_TURNSTILE_HOSTNAME", "localhost")
-    assert await over_token(http({"success": True, "hostname": "localhost", "action": "chat"}), "t1", "1.2.3.4", "s")
-    assert not await over_token(http(OK), "t2", "1.2.3.4", "s")
+async def test_hostname_z_nastaveni(caplog):
+    caplog.set_level(logging.WARNING)
+    n = nacti({"CHAT_TURNSTILE_HOSTNAME": "localhost"})
+    assert n.turnstile_hostname == "localhost"
+    assert "CHAT_TURNSTILE_HOSTNAME" in caplog.text
+    assert await over_token(http({"success": True, "hostname": "localhost", "action": "chat"}), "t1", "1.2.3.4", "s",
+                            n.turnstile_hostname)
+    assert not await over_token(http(OK), "t2", "1.2.3.4", "s", n.turnstile_hostname)
+
+
+def test_vychozi_hostname_bez_varovani(caplog):
+    caplog.set_level(logging.WARNING)
+    assert nacti({}).turnstile_hostname == "cosepece.cz" == turnstile.HOSTNAME
+    assert nacti({"CHAT_TURNSTILE_HOSTNAME": "cosepece.cz"}).turnstile_hostname == "cosepece.cz"
+    assert "CHAT_TURNSTILE_HOSTNAME" not in caplog.text
+
+
+async def test_prazdny_hostname_je_nedostupnost():
+    with pytest.raises(OvereniNedostupne):
+        await over_token(http(OK), "t", "1.2.3.4", "s", "")
+
+
+def test_pamet_pouzitych_ma_strop(monkeypatch):
+    monkeypatch.setattr(turnstile, "MAX_POUZITYCH", 3)
+    for t in ("a", "b", "c", "d"):
+        assert turnstile._spotrebuj(t)
+    assert len(turnstile._pouzite) == 3
+    assert turnstile._spotrebuj("a")            # nejstarší vypadl
+    assert not turnstile._spotrebuj("d")        # novější si pamatuje
+    assert len(turnstile._pouzite) == 3
+
+
+def test_pamet_pouzitych_po_vyprseni(monkeypatch):
+    cas = [1000.0]
+    monkeypatch.setattr(turnstile.time, "monotonic", lambda: cas[0])
+    assert turnstile._spotrebuj("a")
+    cas[0] += turnstile.PLATNOST_TOKENU_S + 1
+    assert turnstile._spotrebuj("b")
+    assert list(turnstile._pouzite) == [turnstile.hashlib.sha256(b"b").hexdigest()]
 
 
 async def test_tajemstvi_ani_token_nejdou_do_logu(caplog):

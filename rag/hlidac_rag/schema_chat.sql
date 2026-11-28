@@ -2,7 +2,7 @@
 -- db.migrate po schema.sql. Role ani hesla tu nejsou (role.py). Schéma se z denního dumpu vyřazuje (--exclude-schema=chat).
 -- Mazání: konverzace po 30 dnech nebo na požádání (kaskádou zprávy, zdroje, volání nástrojů). Cena volání (volani_llm) a
 -- počítadlo zpráv (zprava_log) po smazání konverzace zůstávají, jinak by smazání vynulovalo limity útraty a zpráv.
--- Surová IP se neukládá nikdy, jen otisk (HMAC s denní solí), který počítá volající; po 48 h se z tabulek maže.
+-- Surová IP se neukládá nikdy, jen otisk (HMAC s náhodnou solí dne z chat.sul_dne); otisky i soli se po 48 h mažou.
 
 CREATE SCHEMA IF NOT EXISTS chat;
 
@@ -122,3 +122,11 @@ CREATE TABLE IF NOT EXISTS chat.nahlaseni (
   vyrizeno      timestamptz
 );
 CREATE INDEX IF NOT EXISTS nahlaseni_kod_idx ON chat.nahlaseni (kod);
+
+-- Náhodná sůl pro otisk IP, jedna na pražský den (spec 11.1). Vzniká při prvním použití dne, úklid ji maže po 48 h:
+-- bez ní nejde otisk ani výčtem adres zpětně přepočítat.
+CREATE TABLE IF NOT EXISTS chat.sul_dne (
+  den        date PRIMARY KEY,
+  sul        bytea NOT NULL CHECK (octet_length(sul) = 32),
+  vytvoreno  timestamptz NOT NULL DEFAULT now()
+);

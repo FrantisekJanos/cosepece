@@ -1,12 +1,13 @@
 """Cloudflare Turnstile (spec 11.2): kdy ověřit znovu a ověření tokenu přes `siteverify`.
 
 Platí „žádné placené volání bez důkazu“: token projde jen při `success: true`, správném `hostname` (výchozí
-`cosepece.cz`, pro lokální vývoj přepis `CHAT_TURNSTILE_HOSTNAME`) a `action = "chat"`. Výpadek `siteverify`
+`cosepece.cz`, volající předá `Nastaveni.turnstile_hostname`, pro lokální vývoj `CHAT_TURNSTILE_HOSTNAME`) a `action = "chat"`. Výpadek `siteverify`
 (timeout, chyba sítě, 5xx, nečitelná odpověď), chyba na straně Cloudflare (`internal-error`) a špatné
 tajemství vyhodí `OvereniNedostupne` (služba vrátí 503 `overeni_nedostupne`), nikdy úspěch.
 
 Token je jednorázový: Cloudflare druhé použití odmítne (`timeout-or-duplicate`) a služba si navíc v procesu
-pamatuje otisky použitých tokenů po dobu jejich platnosti (300 s), takže opakovaný token neprojde ani bez dotazu.
+pamatuje otisky použitých tokenů po dobu jejich platnosti (300 s, nejvýš `MAX_POUZITYCH`, nad stropem vypadnou
+nejstarší), takže opakovaný token neprojde ani bez dotazu.
 
 Tajemství (`CHAT_TURNSTILE_SECRET`) předává volající; do logu ani do výjimek nejde, stejně jako token.
 """
@@ -14,28 +15,29 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import time
 from datetime import datetime, timedelta
 
 import httpx2 as httpx
 
-from .config import Nastaveni
+from .config import TURNSTILE_HOSTNAME, Nastaveni
 
 log = logging.getLogger(__name__)
 
 SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-HOSTNAME = "cosepece.cz"
+HOSTNAME = TURNSTILE_HOSTNAME
 ACTION = "chat"
 TIMEOUT_S = 4
 PLATNOST_TOKENU_S = 300
 MAX_DELKA_TOKENU = 2048
+MAX_POUZITYCH = 100_000   # strop paměti použitých tokenů (~100 B na záznam)
 PRISNY_ZPRAV = 2   # přísný režim: nové ověření každé 2 zprávy
 
 # Chyby, které nový token od uživatele nevyřeší (porucha Cloudflare nebo naše nastavení).
 _CHYBY_SERVERU = frozenset({"internal-error", "missing-input-secret", "invalid-input-secret"})
 
-_pouzite: dict[str, float] = {}   # sha256 tokenu → monotónní čas, kdy vyprší
+# sha256 tokenu → monotónní čas, kdy vyprší. Pořadí vložení = pořadí vypršení (stejná platnost), první je nejstarší.
+_pouzite: dict[str, float] = {}
 
 
 class OvereniNedostupne(Exception):
@@ -76,26 +78,27 @@ def _vycisti_pamet() -> None:
 def _spotrebuj(token: str) -> bool:
     """Zapíše token jako použitý; False, když už použitý byl."""
     ted = time.monotonic()
-    for k in [k for k, do in _pouzite.items() if do <= ted]:
-        del _pouzite[k]
+    while _pouzite and next(iter(_pouzite.values())) <= ted:   # vypršelé jsou na začátku
+        del _pouzite[next(iter(_pouzite))]
     klic = hashlib.sha256(token.encode()).hexdigest()
     if klic in _pouzite:
         return False
+    while len(_pouzite) >= MAX_POUZITYCH:   # strop: vypadne nejstarší
+        del _pouzite[next(iter(_pouzite))]
     _pouzite[klic] = ted + PLATNOST_TOKENU_S
     return True
 
 
-def _hostname() -> str:
-    return (os.environ.get("CHAT_TURNSTILE_HOSTNAME") or "").strip() or HOSTNAME
-
-
-async def over_token(http: httpx.AsyncClient, token: str, ip: str, tajemstvi: str) -> bool:
+async def over_token(http: httpx.AsyncClient, token: str, ip: str, tajemstvi: str,
+                     hostname: str = HOSTNAME) -> bool:
     """Ověří token Turnstile u Cloudflare. True jen při `success`, správném hostname a action.
 
     Neplatný, použitý nebo prázdný token: False. Výpadek, chyba Cloudflare nebo chybějící tajemství:
     `OvereniNedostupne`."""
     if not tajemstvi:
         raise OvereniNedostupne("chybí tajemství Turnstile")
+    if not hostname:
+        raise OvereniNedostupne("chybí hostname Turnstile")
     if not isinstance(token, str) or not token.strip() or len(token) > MAX_DELKA_TOKENU:
         return False
     if not _spotrebuj(token):
@@ -127,7 +130,7 @@ async def over_token(http: httpx.AsyncClient, token: str, ip: str, tajemstvi: st
             raise OvereniNedostupne("ověření teď nefunguje")
         log.info("turnstile: token neprošel %s", kody)
         return False
-    if v.get("hostname") != _hostname() or v.get("action") != ACTION:
+    if v.get("hostname") != hostname or v.get("action") != ACTION:
         log.warning("turnstile: nesedí hostname nebo action (%r, %r)", v.get("hostname"), v.get("action"))
         return False
     return True

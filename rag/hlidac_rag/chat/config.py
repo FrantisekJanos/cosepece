@@ -5,6 +5,7 @@ Neplatná hodnota shodí službu už při startu (`ValueError` se jménem promě
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -14,6 +15,9 @@ _NEPRAVDA = frozenset({"0", "false", "ne", "no", "off"})
 EFFORTY = ("low", "medium", "high", "xhigh", "max")
 
 MODEL_VYCHOZI = "claude-sonnet-5-5"
+TURNSTILE_HOSTNAME = "cosepece.cz"   # hostname, který musí vrátit siteverify (spec 11.2)
+
+log = logging.getLogger(__name__)
 
 # Sloupce „Sonnet $2 (výchozí)“ a „Haiku $2“ ze spec 10.2 a 11.1.
 # Effort u Haiku spec nefixuje („podle F0, low nebo medium“); do rozhodnutí F0 je low.
@@ -97,6 +101,7 @@ class Nastaveni:
     turnstile_prisny_prah: float
     karta_jako: str  # tool_result | blok
     drzeni_tahu_s: int = 300
+    turnstile_hostname: str = TURNSTILE_HOSTNAME   # CHAT_TURNSTILE_HOSTNAME jen pro lokální vývoj
 
 
 def _hodnota(env: Mapping[str, str], jmeno: str, vychozi, typ, minimum=0):
@@ -142,6 +147,10 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
     model = _hodnota(env, "CHAT_MODEL", MODEL_VYCHOZI, str)
     p = PROFILY.get(model, PROFILY[MODEL_VYCHOZI])
     s = _SPOLECNE
+    hostname = _hodnota(env, "CHAT_TURNSTILE_HOSTNAME", TURNSTILE_HOSTNAME, str)
+    if hostname != TURNSTILE_HOSTNAME:
+        log.warning("CHAT_TURNSTILE_HOSTNAME=%r: Turnstile přijme tokeny jiného webu než %s (jen pro vývoj)",
+                    hostname, TURNSTILE_HOSTNAME)
     return Nastaveni(
         zapnuto=_hodnota(env, "CHAT_ZAPNUTO", False, bool),
         rezim=_vyber(env, "CHAT_REZIM", "skryte", ("skryte", "verejne")),
@@ -181,4 +190,5 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
         ),
         karta_jako=_vyber(env, "CHAT_KARTA_JAKO", "tool_result", ("tool_result", "blok")),
         drzeni_tahu_s=_hodnota(env, "CHAT_DRZENI_TAHU_S", s["drzeni_tahu_s"], int, 30),
+        turnstile_hostname=hostname,
     )

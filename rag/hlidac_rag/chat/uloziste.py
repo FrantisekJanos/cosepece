@@ -62,6 +62,18 @@ def _jeden(conn: psycopg.Connection, q: str, params: tuple = ()) -> tuple | None
     return conn.execute(q, params).fetchone()
 
 
+# --- sůl dne pro otisk IP ---
+
+DELKA_SOLI = 32
+
+
+def sul_dne(conn: psycopg.Connection, den: date) -> bytes:
+    """Náhodná sůl otisku IP pro pražský `den`; vznikne při prvním použití dne (souběžně vyhraje jedna)."""
+    conn.execute("INSERT INTO chat.sul_dne (den, sul) VALUES (%s, %s) ON CONFLICT (den) DO NOTHING",
+                 (den, secrets.token_bytes(DELKA_SOLI)))
+    return bytes(_jeden(conn, "SELECT sul FROM chat.sul_dne WHERE den = %s", (den,))[0])
+
+
 # --- relace ---
 
 def zaloz_relaci(conn: psycopg.Connection) -> str:
@@ -317,7 +329,7 @@ def uklid(conn: psycopg.Connection, ted: datetime) -> dict:
     """Retence (spec 15), spustitelná z cronu: `python -m hlidac_rag.chat.uloziste`.
 
     Konverzace a relace bez aktivity 30 dní (kaskádou zprávy, zdroje, volání nástrojů), otisky IP starší 48 h
-    (volani_llm, relace), otisk odpovědi (a hodnocení) starší 12 měsíců, počítadlo zpráv starší 2 dnů a vyřízená
+    (volani_llm, relace) a soli dne starší včerejška (chat.sul_dne), otisk odpovědi (a hodnocení) starší 12 měsíců, počítadlo zpráv starší 2 dnů a vyřízená
     nahlášení starší 30 dní. Ceny volání modelu zůstávají (bez IP jsou to jen čísla)."""
     _vyzaduj_cas(ted)
     p = {"ted": ted, "tz": TZ}
@@ -332,6 +344,9 @@ def uklid(conn: psycopg.Connection, ted: datetime) -> dict:
         ip += conn.execute("UPDATE chat.relace SET otisk_ip = NULL WHERE otisk_ip IS NOT NULL AND overeni_cas < %s",
                            (ted - UKLID_IP,)).rowcount
         s["otisky_ip"] = ip
+        # sůl dne D se používá do půlnoci D, smaže se v D+2 (zůstává dnešní a včerejší)
+        s["soli"] = conn.execute(
+            "DELETE FROM chat.sul_dne WHERE den < (%(ted)s AT TIME ZONE %(tz)s)::date - 1", p).rowcount
         s["otisky_odpovedi"] = conn.execute(
             "DELETE FROM chat.otisk_odpovedi WHERE datum < ((%(ted)s AT TIME ZONE %(tz)s)::date - interval '12 months')",
             p).rowcount

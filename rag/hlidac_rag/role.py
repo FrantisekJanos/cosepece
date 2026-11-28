@@ -100,10 +100,12 @@ ROLE: dict[str, Role] = {
         tabulky=TABULKY_CTENI, sloupce={}, schemata=SCHEMATA_CTENI, funkce=CHAT_RO_FUNKCE,
         nastaveni={**JEN_CTENI, "statement_timeout": "5s"},
     ),
-    # úložiště chatu (relace, konverzace, útrata, úklid): nic mimo schéma chat
+    # úložiště chatu (relace, konverzace, útrata, úklid): nic mimo schéma chat. Výjimka ADP (chat_rw má DML i na
+    # budoucích tabulkách schématu chat přes ALTER DEFAULT PRIVILEGES) je schválená majitelem.
     "chat_rw": Role(
         jmeno="chat_rw", promenna_hesla="CHAT_DB_RW_PASSWORD", spojeni=CHAT_RW_SPOJENI,
         tabulky=(), sloupce={}, schemata=(), funkce=(), zapis_schemata=("chat",),
+        nastaveni={"statement_timeout": "10s", "idle_in_transaction_session_timeout": "30s"},
     ),
 }
 

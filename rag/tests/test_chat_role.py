@@ -288,6 +288,12 @@ def test_chat_ro_vychozi_transakce_jen_pro_cteni(chat_ro_conn):
         chat_ro_conn.execute("SELECT rag.pricti_dotaz()")
 
 
+def test_chat_rw_ma_casove_limity(chat_rw_conn):
+    """Zaseknutý dotaz nebo opuštěná transakce nesmí držet spojení chat_rw (limit 5 spojení)."""
+    assert _jedna(chat_rw_conn, "SHOW statement_timeout") == "10s"
+    assert _jedna(chat_rw_conn, "SHOW idle_in_transaction_session_timeout") == "30s"
+
+
 def test_chat_ro_cte_presne_vycet(superuser_conn):
     """V public, mcp a chat čte chat_ro přesně TABULKY_CTENI; ve schématech steno, texty a rag všechno."""
     from hlidac_rag import role

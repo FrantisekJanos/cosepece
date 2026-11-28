@@ -28,7 +28,9 @@ esac""",
     "docker": """echo "docker $*" >> "$LOG"
 case "$*" in
   "compose config --images") printf 'docker-web\\ndocker-chat\\n' ;;
-  "compose config --services") printf 'web\\nsync\\nmcp\\nchat\\ndb\\n' ;;
+  "compose config --services")
+    [ "${FAKE_SERVICES_FAIL:-0}" = 1 ] && exit 1
+    printf 'web\\nsync\\nmcp\\nchat\\ndb\\n' ;;
   "run --rm --network none"*) echo "VŠE OK" ;;
   "compose up -d chat") exit "${FAKE_CHAT_UP:-0}" ;;
   "compose run "*) exit "${FAKE_EVAL:-0}" ;;
@@ -40,6 +42,8 @@ esac""",
   *) echo 200 ;;
 esac""",
     "sleep": ":",
+    # sed -i na .env může selhat (např. .env je jen pro čtení); ostatní volání nic nedělají
+    "sed": '[ "${FAKE_SED_FAIL:-0}" = 1 ] && exit 1; exec /usr/bin/env sed "$@"',
     "timeout": 'shift; exec "$@"',
 }
 
@@ -121,3 +125,18 @@ def test_web_neodpovida_chat_se_nespousti(tmp_path):
     r, log, _ = _spust(tmp_path, FAKE_WEB_HTTP="500")
     assert r.returncode == 1   # stejný commit: bez návratu, ale chyba
     assert "docker compose up -d chat" not in log and _evaly(log) == []
+
+
+def test_selhani_prepisu_env_chat_zastavi(tmp_path):
+    """Neúspěšný sed -i (set -e) nesmí ukončit skript s chatem zapnutým: chat se zastaví a .env zůstane."""
+    r, log, env = _spust(tmp_path, FAKE_EVAL="1", FAKE_SED_FAIL="1")
+    assert r.returncode == 0, r.stderr
+    assert "docker compose stop chat" in log and "CHAT_ZAPNUTO=1" in env
+    assert "nepodařilo se přepsat" in r.stderr
+
+
+def test_prazdny_seznam_sluzeb_je_chyba_a_nic_nespusti(tmp_path):
+    """Bez seznamu služeb by `up -d` bez argumentů spustil i chat (před ověřením webu a MCP)."""
+    r, log, _ = _spust(tmp_path, FAKE_SERVICES_FAIL="1")
+    assert r.returncode != 0
+    assert not [x for x in log if x.startswith("docker compose up")]

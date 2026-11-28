@@ -119,6 +119,8 @@ def test_init_vypina_lokalni_promenne(monkeypatch):
     assert zachyceno["send_default_pii"] is False
 
 
+# send_default_pii=False posíláme záměrně (SDK ho označilo za zastaralé); test hlídá, že zůstává vypnuté
+@pytest.mark.filterwarnings("ignore:The send_default_pii option is deprecated:DeprecationWarning")
 def test_heslo_db_neodejde_v_udalosti(monkeypatch):
     # celá cesta: skutečné sentry_sdk, selhané připojení psycopg (port 1 = odmítnuto, bez sítě), zachycená obálka
     import sentry_sdk

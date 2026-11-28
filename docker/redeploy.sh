@@ -38,7 +38,13 @@ if [ -n "$WEB_IMAGE" ] && [ "${SKIP_PREFLIGHT:-0}" != 1 ]; then
   fi
 fi
 # služba chat se spouští až po ověření webu a MCP (níže): její selhání nesmí zastavit ani vrátit nasazení webu
-docker compose up -d $(docker compose config --services | grep -vx chat || true)
+# seznam služeb se načte předem: prázdný (config selhal) = chyba, jinak by `up -d` bez argumentů spustil i chat
+SLUZBY=$(docker compose config --services | grep -vx chat || true)
+if [ -z "$SLUZBY" ]; then
+  echo "CHYBA: seznam služeb z docker compose config je prázdný, nic se nespouští." >&2
+  exit 1
+fi
+docker compose up -d $SLUZBY
 docker image prune -f >/dev/null
 docker compose ps --format '{{.Service}} {{.Status}}'
 # hodnota proměnné z .env; chybějící nesmí skript ukončit (set -e + pipefail)
@@ -96,8 +102,11 @@ elif docker compose config --services | grep -qx chat; then
       if [ "$KOD" = 1 ]; then
         # selhání kontrol kvality (neutralita, injekce, citace): chat se sám vypne (CHAT_ZAPNUTO=0 v .env)
         chat_varuj "kouřový eval neprošel, vypínám chat (CHAT_ZAPNUTO=0 v docker/.env; zapnutí: oprava, CHAT_ZAPNUTO=1, docker compose up -d chat)."
-        sed -i 's/^CHAT_ZAPNUTO=.*/CHAT_ZAPNUTO=0/' .env
-        if ! docker compose up -d chat; then
+        if ! sed -i 's/^CHAT_ZAPNUTO=.*/CHAT_ZAPNUTO=0/' .env; then
+          # bez této větve by set -e ukončil skript a chat by zůstal zapnutý
+          chat_varuj "nepodařilo se přepsat docker/.env, zastavuji chat (nastav CHAT_ZAPNUTO=0 ručně)."
+          docker compose stop chat || true
+        elif ! docker compose up -d chat; then
           chat_varuj "restart s CHAT_ZAPNUTO=0 selhal, zastavuji chat."
           docker compose stop chat || true
         fi

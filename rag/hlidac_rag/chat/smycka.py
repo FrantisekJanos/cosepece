@@ -7,7 +7,8 @@ stavem `chyba` a cenou volání, která proběhla.
 
 Stavy: `ok`; `strop` (strop kol, ceny tahu nebo rozpočtu výsledků, poslední odpověď bez nástrojů, nebo
 odpověď useknutá na `max_tokens`); `odmitnuto` (stop_reason `refusal`); `chyba` (`Pretizeno` i jiná chyba);
-`preruseno` (`prerusit` nastavený, tah skončí po rozběhnutém kole).
+`preruseno` (`prerusit` nastavený, tah skončí po rozběhnutém kole). `pause_turn` (jen serverové nástroje,
+které tah nemá) je `chyba`.
 """
 from __future__ import annotations
 
@@ -18,11 +19,11 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
-from .cenik import Cena, cena_usd
+from .cenik import CENY, Cena, cena_usd
 from .config import Nastaveni
 from .historie import ZNAKU_NA_TOKEN, odhad_tokenu
 from .llm import LLM, Odpoved, Pretizeno, Usage
-from .nastroje import SCHEMATA, Vysledek
+from .nastroje import SCHEMATA, Polozka, Vysledek
 from .prompt import SYSTEM
 from .registr import Registr, Zdroj
 
@@ -53,24 +54,30 @@ class Udalost:
     data: dict
 
 
-def _cena(odp: Odpoved, model: str, cenik: dict[str, Cena] | None) -> float:
-    """Cena podle modelu, který odpověděl; model mimo ceník (fallback) se ocení cenou požadovaného."""
+def _ocen(model: str, vstup: int, vystup: int, cteni: int, zapis: int, cenik: dict[str, Cena] | None) -> float:
+    """Cena podle ceníku. Model mimo ceník je chyba konfigurace: zaloguje se a ocení nejdražší cenou
+    z ceníku, ať se rozpočet nikdy nepodhodnotí."""
+    try:
+        return cena_usd(model, vstup, vystup, cteni, zapis, cenik)
+    except KeyError:
+        log.error("model %s není v ceníku, cena podle nejdražšího modelu", model)
+        ceny = cenik if cenik is not None else CENY
+        return max(cena_usd(m, vstup, vystup, cteni, zapis, ceny) for m in ceny)
+
+
+def _cena(odp: Odpoved, cenik: dict[str, Cena] | None) -> float:
+    """Cena volání podle modelu, který odpověděl."""
     u = odp.usage
-    try:
-        return cena_usd(odp.model, u.vstup, u.vystup, u.cache_cteni, u.cache_zapis, cenik)
-    except KeyError:
-        log.warning("model %s není v ceníku, cena podle %s", odp.model, model)
-        return cena_usd(model, u.vstup, u.vystup, u.cache_cteni, u.cache_zapis, cenik)
+    return _ocen(odp.model, u.vstup, u.vystup, u.cache_cteni, u.cache_zapis, cenik)
 
 
-def _odhad_volani(usage: Usage, model: str, n: Nastaveni, cenik: dict[str, Cena] | None) -> float:
-    """Odhad dalšího volání (plán, úloha 7 krok 3): celý vstup posledního volání jako čtení cache
-    a plných max_tokenu_odpovedi výstupu."""
-    vstup = usage.vstup + usage.cache_cteni + usage.cache_zapis
-    try:
-        return cena_usd(model, 0, n.max_tokenu_odpovedi, vstup, 0, cenik)
-    except KeyError:
-        return cena_usd(n.model, 0, n.max_tokenu_odpovedi, vstup, 0, cenik)
+def _odhad_volani(usage: Usage, novych_tokenu: int, model: str, n: Nastaveni,
+                  cenik: dict[str, Cena] | None) -> float:
+    """Odhad dalšího volání: celý vstup posledního volání jako čtení cache, jeho výstup a nové výsledky nástrojů
+    (s pokynem) jako zápis do cache a plných max_tokenu_odpovedi výstupu."""
+    cteni = usage.vstup + usage.cache_cteni + usage.cache_zapis
+    zapis = usage.vystup + novych_tokenu
+    return _ocen(model, 0, n.max_tokenu_odpovedi, cteni, zapis, cenik)
 
 
 def _int(s: str) -> int | None:
@@ -158,12 +165,33 @@ async def _proved(blok: dict, spust_nastroj: Callable[[str, dict], Awaitable[Vys
         return nazev, vstup, v, int((time.monotonic() - zacatek) * 1000)
 
 
-def _cisla(registr: Registr, v: Vysledek) -> tuple[str, list[int]]:
-    """Položky výsledku do registru; řádek s čísly [N], ať je model může citovat."""
-    cisla = [registr.pridej(p) for p in v.polozky]
+_CISLA = "Čísla zdrojů pro citaci: "
+
+
+def _cisla(registr: Registr, polozky: list[Polozka]) -> tuple[str, list[int]]:
+    """Položky do registru; řádek s čísly [N], ať je model může citovat."""
+    cisla = [registr.pridej(p) for p in polozky]
     if not cisla:
         return "", []
-    return "Čísla zdrojů pro citaci: " + ", ".join(f"[{c}] {p.klic}" for c, p in zip(cisla, v.polozky)) + "\n", cisla
+    return _CISLA + ", ".join(f"[{c}] {p.klic}" for c, p in zip(cisla, polozky)) + "\n", cisla
+
+
+def _do_rozpoctu(registr: Registr, v: Vysledek, zbyva: int) -> tuple[str, list[int], bool]:
+    """(obsah pro model, čísla zdrojů, oříznuto) do zbývajícího rozpočtu výsledků v tokenech.
+
+    Celý výsledek: do registru všechny položky. Oříznutý: jen položky, jejichž klíč zůstal v ponechaném textu
+    (hlavička adaptéru je na začátku), ať model necituje nic, co nedostal. Řádek s čísly má rezervu
+    s pětimístnými čísly, takže se vždy vejde. Když se nevejde ani kus, vrátí ROZPOCET_VYCERPAN."""
+    rezerva = (len(_CISLA) + sum(len(f"[99999] {p.klic}, ") for p in v.polozky) + 1) if v.polozky else 0
+    if math.ceil((len(v.text) + rezerva) / ZNAKU_NA_TOKEN) <= zbyva:
+        hlavicka, cisla = _cisla(registr, v.polozky)
+        return hlavicka + v.text, cisla, False
+    k = math.floor(zbyva * ZNAKU_NA_TOKEN) - rezerva - len(ZKRACENO_ROZPOCTEM)
+    if k < MIN_ZBYTEK_TOKENU * ZNAKU_NA_TOKEN:
+        return ROZPOCET_VYCERPAN, [], False
+    ponechano = v.text[:k]
+    hlavicka, cisla = _cisla(registr, [p for p in v.polozky if p.klic in ponechano])
+    return hlavicka + ponechano + ZKRACENO_ROZPOCTEM, cisla, True
 
 
 async def _volani(llm: LLM, n: Nastaveni, model: str, zpravy: list[dict], tool_choice: dict | None,
@@ -241,12 +269,7 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
             break
         finally:
             await volani.aclose()     # zavřený tah (odpojený klient) zruší i rozběhnuté volání modelu
-        try:
-            cena_volani = _cena(odp, model, cenik)
-        except KeyError:
-            log.error("model %s ani %s není v ceníku, volání nejde ocenit", odp.model, model)
-            stav = "chyba"     # služba má neznámý model odmítnout už při startu
-            break
+        cena_volani = _cena(odp, cenik)
         cena += cena_volani
         posledni_model = odp.model
         u = odp.usage
@@ -260,13 +283,10 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
             stav = "strop"      # tool_use v posledním volání se nevykoná
             break
         if odp.stop_reason == "pause_turn":
-            # jen u serverových nástrojů (tah žádné nemá): pokračuje se stejnými zprávami + odpovědí modelu
-            zpravy.append({"role": "assistant", "content": odp.content})
-            kol += 1
-            if kol >= n.max_kol:
-                stav = "strop"
-                break
-            continue
+            # nastává jen u serverových nástrojů, které tah nemá; pokračování by bylo prefillem (400)
+            log.error("neočekávaný stop_reason pause_turn")
+            stav = "chyba"
+            break
         bloky = [b for b in odp.content if b.get("type") == "tool_use"]
         if odp.stop_reason != "tool_use" or not bloky:
             break
@@ -283,12 +303,10 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
             elif zbyva_vysledku < MIN_ZBYTEK_TOKENU:
                 obsah, chyba = ROZPOCET_VYCERPAN, True
             else:
-                hlavicka, cisla = _cisla(registr, v)
-                obsah, chyba = hlavicka + v.text, False
-                if odhad_tokenu(obsah) > zbyva_vysledku:
-                    k = math.floor(zbyva_vysledku * ZNAKU_NA_TOKEN) - len(ZKRACENO_ROZPOCTEM)
-                    obsah, orezano = obsah[:k] + ZKRACENO_ROZPOCTEM, True
-                zbyva_vysledku -= odhad_tokenu(obsah)
+                obsah, cisla, orezano = _do_rozpoctu(registr, v, zbyva_vysledku)
+                chyba = obsah == ROZPOCET_VYCERPAN
+                if not chyba:
+                    zbyva_vysledku -= odhad_tokenu(obsah)
             vysledek = {"type": "tool_result", "tool_use_id": blok["id"], "content": obsah}
             if chyba:
                 vysledek["is_error"] = True
@@ -303,7 +321,8 @@ async def tah(llm: LLM, spust_nastroj: Callable[[str, dict], Awaitable[Vysledek]
             break
         # Strop ceny: další kolo s nástroji jen když se vejde ono i závěrečná odpověď bez nástrojů (2× odhad),
         # jinak by tah přetekl přes strop_tahu a den by přestal být tvrdý (spec 11.1).
-        odhad = _odhad_volani(u, odp.model, n, cenik)
+        novych = sum(odhad_tokenu(b["content"]) for b in vysledky) + odhad_tokenu(POKYN_STROP)
+        odhad = _odhad_volani(u, novych, model, n, cenik)
         if kol >= n.max_kol or cena + 2 * odhad > n.strop_tahu or zbyva_vysledku < MIN_ZBYTEK_TOKENU:
             vysledky.append({"type": "text", "text": POKYN_STROP})
             posledni = True

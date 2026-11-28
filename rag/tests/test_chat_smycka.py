@@ -185,7 +185,7 @@ async def test_rozpocet_vysledku_orizne_dalsi_nastroje():
     async def nastroj(nazev, argumenty):
         return Vysledek(dlouhy, [Polozka(f"tisk:{argumenty['ct']}", "tisk", "Tisk", None, {})], False)
 
-    n = replace(N, rozpocet_vysledku_tokenu=200)
+    n = replace(N, rozpocet_vysledku_tokenu=230)
     r = Registr()
     f = FalesnyLLM([ODP_TOOLS(*[("get_tisk", {"ct": i}) for i in (1, 2, 3, 4)]), ODP_TEXT("x")])
     u = await sber(tah(f, nastroj, M, r, n, MODEL, EV()))
@@ -196,8 +196,9 @@ async def test_rozpocet_vysledku_orizne_dalsi_nastroje():
     assert platne[1]["content"] != platne[0]["content"] and "zkráceno" in platne[1]["content"]   # třetí se ořízl
     assert [v["content"] for v in vys if v.get("is_error")] == [ROZPOCET_VYCERPAN] * (4 - len(platne))
     assert len(platne) < 4
-    # vyřazené výsledky nejdou do registru, vyčerpaný rozpočet = poslední volání bez nástrojů
-    assert [z.klic for z in r.nove()] == [f"tisk:{i}" for i in range(1, len(platne) + 1)]
+    # vyřazené ani oříznuté výsledky bez klíče v ponechaném textu nejdou do registru (M5);
+    # vyčerpaný rozpočet = poslední volání bez nástrojů
+    assert [z.klic for z in r.nove()] == ["tisk:1"]
     assert f.prijate_tool_choice[1] == {"type": "none"} and u[-1].data["stav"] == "strop"
     orez = [x.data for x in u if x.typ == "volani_nastroje"]
     assert [d["orezano"] for d in orez][:2] == [False, True]
@@ -362,10 +363,59 @@ async def test_cena_podle_modelu_ktery_odpovedel():
     assert u[-1].data["cena_usd"] == pytest.approx(1000 * 0.10 / 1e6) and u[-1].data["model"] == "claude-haiku-5-5"
 
 
-async def test_neznamy_model_odpovedi_se_ocenit_podle_pozadovaneho():
+async def test_neznamy_model_odpovedi_se_oceni_nejdrazsi_cenou(caplog):   # I1
     o = replace(ODP_TEXT("x", usage=Usage(1000, 0, 0, 0)), model="claude-sonnet-5")
-    u = await sber(tah(FalesnyLLM([o]), nastroj_ok, M, Registr(), N, MODEL, EV()))
-    assert u[-1].data["cena_usd"] == pytest.approx(1000 * 2.0 / 1e6) and u[-1].data["stav"] == "ok"
+    u = await sber(tah(FalesnyLLM([o]), nastroj_ok, M, Registr(), N, "claude-haiku-5-5", EV()))
+    assert u[-1].data["cena_usd"] == pytest.approx(1000 * 2.0 / 1e6)     # Sonnet 5.5, ne levnější Haiku
+    assert u[-1].data["stav"] == "ok" and "není v ceníku" in caplog.text
+
+
+async def test_odhad_a_cena_mimo_cenik_stejne_nejdrazsi():   # M2
+    # požadovaný model mimo ceník: odhad dalšího volání se ocení nejdražší cenou (ne cenou n.model = Haiku)
+    n = replace(N, model="claude-haiku-5-5", strop_tahu=0.03)
+    o = replace(ODP_TOOL("get_tisk", {"ct": 1}, usage=Usage(20000, 500, 0, 0)), model="claude-haiku-5-5")
+    f = FalesnyLLM([o, ODP_TEXT("x")])
+    u = await sber(tah(f, nastroj_ok, M, Registr(), n, "neznamy", EV()))
+    assert f.prijate_tool_choice[1] == {"type": "none"} and u[-1].data["stav"] == "strop"
+
+
+async def test_odhad_pocita_nove_vysledky_jako_zapis_cache():   # I2
+    # 1. volání 0,027 USD; výsledky ~4 000 tokenů. Odhad jen ze čtení cache (0,0128) by pustil další kolo
+    # (0,027 + 2 × 0,0128 = 0,053 ≤ 0,06) a tah by skončil nad stropem; se zápisem výsledků do cache ne.
+    async def nastroj(nazev, argumenty):
+        return Vysledek("x" * 8800, [], False)
+
+    prvni = ODP_TOOL("get_tisk", {"ct": 1}, usage=Usage(8000, 1100, 0, 0))
+    druhe = ODP_TOOL("get_tisk", {"ct": 2}, usage=Usage(0, 1200, 8000, 5100))
+    zaver = ODP_TEXT("x", usage=Usage(0, 1200, 13100, 5100))
+    f = FalesnyLLM([prvni, druhe, zaver])
+    n = replace(N, strop_tahu=0.06)
+    u = await sber(tah(f, nastroj, M, Registr(), n, MODEL, EV()))
+    assert f.prijate_tool_choice[1] == {"type": "none"} and u[-1].data["stav"] == "strop" and u[-1].data["kol"] == 1
+    assert u[-1].data["cena_usd"] <= n.strop_tahu
+
+
+async def test_pause_turn_je_chyba():   # M1
+    f = FalesnyLLM([ODP_STOP("pause_turn", "rozpracováno"), ODP_TEXT("nemá přijít")])
+    u = await sber(tah(f, nastroj_ok, M, Registr(), N, MODEL, EV()))
+    assert u[-1].data["stav"] == "chyba" and len(f.prijate) == 1 and u[-1].data["cena_usd"] > 0
+
+
+async def test_orezany_vysledek_registruje_jen_polozky_v_ponechanem_textu():   # M5
+    text = "- tisk:1 | Tisk 1\n" + "y" * 400 + "\n- tisk:2 | Tisk 2\n" + "z" * 400
+
+    async def nastroj(nazev, argumenty):
+        return Vysledek(text, [Polozka("tisk:1", "tisk", "Tisk 1", None, {}),
+                               Polozka("tisk:2", "tisk", "Tisk 2", None, {})], False)
+
+    r = Registr()
+    f = FalesnyLLM([ODP_TOOL("seznam_tisku", {}), ODP_TEXT("x")])
+    u = await sber(tah(f, nastroj, M, r, replace(N, rozpocet_vysledku_tokenu=250), MODEL, EV()))
+    obsah = vysledky_v(f.prijate[1][-1])[0]["content"]
+    assert [z.klic for z in r.nove()] == ["tisk:1"] and obsah.startswith("Čísla zdrojů pro citaci: [1] tisk:1\n")
+    assert "tisk:2" not in obsah and odhad_tokenu(obsah) <= 250
+    d = next(x for x in u if x.typ == "volani_nastroje").data
+    assert d["orezano"] is True and d["polozky"] == [1]
 
 
 # ---------------------------------------------------------------- AnthropicLLM nad falešným klientem
@@ -390,13 +440,17 @@ class _Blok:
         return dict(self._d)
 
 
+def _U(vstup, vystup, cteni, zapis, iterations=None):
+    return type("U", (), {"input_tokens": vstup, "output_tokens": vystup, "cache_read_input_tokens": cteni,
+                          "cache_creation_input_tokens": zapis, "iterations": iterations})()
+
+
 class _Zprava:
-    def __init__(self, bloky, stop_reason="end_turn", model=MODEL):
+    def __init__(self, bloky, stop_reason="end_turn", model=MODEL, usage=None):
         self.content = [_Blok(b) for b in bloky]
         self.stop_reason = stop_reason
         self.model = model
-        self.usage = type("U", (), {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 7,
-                                    "cache_creation_input_tokens": None})()
+        self.usage = usage or _U(10, 5, 7, None)
 
 
 class _Stream:
@@ -464,7 +518,7 @@ async def test_anthropic_parametry_pozadavku():
     assert kw["output_config"] == {"effort": "low"} and kw["max_tokens"] == 1200 and kw["model"] == MODEL
     assert kw["system"] == [{"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}]
     assert kw["tools"] is SCHEMATA
-    assert kw["betas"] == ["server-side-fallback-2026-07-01"] and kw["fallbacks"] == "default"
+    assert "betas" not in kw and "fallbacks" not in kw      # I1: fallback vypnutý, model se nemění
     posl = kw["messages"][-1]["content"]
     assert posl[-1] == {"type": "text", "text": "d", "cache_control": {"type": "ephemeral"}}
     assert "cache_control" not in posl[0] and kw["messages"][:2] == puvodni[:2]
@@ -498,6 +552,12 @@ async def test_anthropic_streamuje_text_a_vrati_odpoved():
     assert (o.stop_reason, o.model, o.usage) == ("end_turn", MODEL, Usage(10, 5, 7, 0)) and o.ms >= 0
 
 
+async def test_anthropic_usage_secte_iterations():   # I1 pojistka
+    usage = _U(10, 5, 7, 0, iterations=[_U(100, 40, 7, 3), _U(10, 5, 0, 0)])
+    o, _ = await _volej(FalesnyKlient(zprava=_Zprava([{"type": "text", "text": "x"}], usage=usage)))
+    assert o.usage == Usage(110, 45, 7, 3)
+
+
 @pytest.mark.parametrize("chyba", [
     anthropic.RateLimitError("429", response=_odpoved_http(429), body=None),
     anthropic.OverloadedError("529", response=_odpoved_http(529), body=None),
@@ -526,10 +586,11 @@ def test_anthropic_jen_llm_importuje_sdk():
             assert "import anthropic" not in soubor.read_text(encoding="utf-8"), soubor.name
 
 
-async def test_model_mimo_cenik_je_stav_chyba_ne_vyjimka():
-    o = replace(ODP_TEXT("x"), model="neznamy")
+async def test_model_mimo_cenik_neni_vyjimka():
+    o = replace(ODP_TEXT("x", usage=Usage(0, 100, 0, 0)), model="neznamy")
     u = await sber(tah(FalesnyLLM([o]), nastroj_ok, M, Registr(), N, "neznamy-pozadovany", EV()))
-    assert u[-1].typ == "konec" and u[-1].data["stav"] == "chyba"
+    assert u[-1].typ == "konec" and u[-1].data["stav"] == "ok"
+    assert u[-1].data["cena_usd"] == pytest.approx(100 * 10.0 / 1e6)
 
 
 async def test_zavreny_tah_zrusi_rozbehnute_volani_modelu():

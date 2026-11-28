@@ -16,9 +16,10 @@ from typing import Protocol
 
 import anthropic
 
-# Server-side fallback při odmítnutí (refusal) jen u Sonnetu; Haiku 5.5 ho nemá.
-BETA_FALLBACK = "server-side-fallback-2026-07-01"
-MODELY_S_FALLBACKEM = ("claude-sonnet-5-5",)
+# Server-side fallback (`fallbacks`) se záměrně neposílá, odchylka od spec 10.1: fallback by tiše přepnul na model
+# mimo ceník (u Sonnetu 5.5 na claude-sonnet-5 s dražším čtením cache), odmítnutý pokus by byl jen v
+# usage.iterations a routing by zůstal na fallbacku ~1 h. Při malém rozpočtu musí být cena tahu přesná a model
+# jen CHAT_MODEL nebo CHAT_MODEL_NOUZOVY; odmítnutí je stav `odmitnuto` se systémovou hláškou.
 _CACHE = {"type": "ephemeral"}
 # Chyba ve streamu (událost `error`) přijde se stavem HTTP 200; o přetížení rozhoduje typ chyby v těle.
 _TYPY_PRETIZENI = frozenset({"overloaded_error", "rate_limit_error", "api_error"})
@@ -38,10 +39,10 @@ class Usage:
 
 @dataclass(frozen=True)
 class Odpoved:
-    content: list[dict]   # bloky odpovědi beze změny (thinking s podpisem, fallback, tool_use) k vrácení do messages
+    content: list[dict]   # bloky odpovědi beze změny (thinking s podpisem, tool_use) k vrácení do messages
     stop_reason: str
     usage: Usage
-    model: str            # model, který skutečně odpověděl (po fallbacku jiný než požadovaný)
+    model: str            # model, který skutečně odpověděl (z odpovědi API)
     ms: int
 
 
@@ -76,10 +77,23 @@ def _pretizeni(e: anthropic.APIStatusError) -> bool:
     return str(typ) in _TYPY_PRETIZENI
 
 
+_POLE_USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _cisla_usage(u) -> list[int]:
+    return [int(getattr(u, pole, 0) or 0) for pole in _POLE_USAGE]
+
+
 def _usage(u) -> Usage:
-    return Usage(int(getattr(u, "input_tokens", 0) or 0), int(getattr(u, "output_tokens", 0) or 0),
-                 int(getattr(u, "cache_read_input_tokens", 0) or 0),
-                 int(getattr(u, "cache_creation_input_tokens", 0) or 0))
+    """Usage volání. Když API vrátí `usage.iterations` (pokusy uvnitř jednoho volání, např. odmítnutý pokus
+    a fallback), platí po polích větší z hodnot: horní úroveň, nebo součet pokusů (pojistka, ať cena nikdy
+    nevyjde nižší, než co API účtuje)."""
+    horni = _cisla_usage(u)
+    pokusy = getattr(u, "iterations", None) or []
+    if pokusy:
+        soucet = [sum(c) for c in zip(*(_cisla_usage(p) for p in pokusy))]
+        horni = [max(a, b) for a, b in zip(horni, soucet)]
+    return Usage(*horni)
 
 
 class AnthropicLLM:
@@ -100,9 +114,6 @@ class AnthropicLLM:
             kwargs["tools"] = tools
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
-        if model in MODELY_S_FALLBACKEM:
-            kwargs["betas"] = [BETA_FALLBACK]
-            kwargs["fallbacks"] = "default"
         zacatek = time.monotonic()
         try:
             async with self.client.beta.messages.stream(**kwargs) as stream:

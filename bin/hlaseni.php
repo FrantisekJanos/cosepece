@@ -60,6 +60,13 @@ foreach ($reports->list($states, (int)($opt['limit'] ?? 50)) as $row) {
     if (is_array($refs) && $refs !== []) {
         echo '  Ustanovení ověřená v textu návrhu: ' . implode(', ', $refs) . "\n";
     }
+    if ($row['kontrola'] !== null) {
+        $changed = array_intersect_key(Reports::CHECK_FIELDS, array_flip(array_filter((array)json_decode((string)$row['kontrola_zmeny'], true), 'is_string')));
+        echo '  Kontrola: ' . (Reports::CHECK_LABELS[$row['kontrola']] ?? $row['kontrola']) . ' (' . $row['kontrola_at'] . ($row['kontrola_model'] !== null ? ', ' . $row['kontrola_model'] : ', převzato z dřívější kontroly') . ')'
+            . ($changed !== [] ? ', změněno: ' . implode(', ', $changed) : '') . "\n";
+    } elseif ($row['stav'] === Reports::STATE_VALID) {
+        echo '  Kontrola: čeká' . ($row['kontrola_error'] !== null ? ' (minulý pokus: ' . $row['kontrola_error'] . ')' : '') . "\n";
+    }
     if ((int)$row['gh_issue'] > 0) {
         echo '  GitHub: https://github.com/' . $github['repo'] . '/issues/' . (int)$row['gh_issue'] . ' (' . $row['gh_at'] . ")\n";
     } elseif ($row['gh_error'] !== null) {

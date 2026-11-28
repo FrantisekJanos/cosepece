@@ -230,18 +230,37 @@ TXT;
         if ($model !== $verifier && $row['praxe_at'] !== null && (string)$row['praxe_model'] === $verifier && (int)$row['praxe_v'] === self::VERSION) {
             return true;
         }
-        $s = self::settings($this->config);
-        $context = self::billContext(PnText::normativePart((string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [(int)$row['ct']])),
-            PnText::normativePart((string)$row['text']), $s['bill_max']);
         try {
-            $clean = self::sanitize($result, (string)$row['text'], $context, (string)$row['osoba'], $model === $verifier);
+            $clean = $this->clean($id, $result, $model === $verifier);
         } catch (\DomainException $ex) {
             $this->saveError($id, 'Pojistka: ' . $ex->getMessage(), true);
             return false;
         }
-        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ?',
-            [json_encode($clean, JSON_UNESCAPED_UNICODE), $model, date('Y-m-d H:i:s'), self::VERSION, $id]);
+        $this->store($id, $clean, $model);
         return true;
+    }
+
+    /**
+     * Vysvětlení PN $id po pojistkách (sanitize nad textem PN a dotčenou částí návrhu zákona); nic neukládá.
+     * DomainException, když výsledek pojistkami neprojde; RuntimeException u neznámého PN.
+     */
+    public function clean(int $id, array $result, bool $allowExample): array
+    {
+        $row = $this->db->one('SELECT x.ct, x.text, p.osoba FROM pn_text x LEFT JOIN pn p ON p.id_dokument = x.id_dokument WHERE x.id_dokument = ?', [$id]);
+        if ($row === null) {
+            throw new \RuntimeException('Neznámý text PN ' . $id);
+        }
+        $s = self::settings($this->config);
+        $context = self::billContext(PnText::normativePart((string)$this->db->value('SELECT text FROM tisk_text WHERE ct = ?', [(int)$row['ct']])),
+            PnText::normativePart((string)$row['text']), $s['bill_max']);
+        return self::sanitize($result, (string)$row['text'], $context, (string)$row['osoba'], $allowExample);
+    }
+
+    /** Uloží vysvětlení, které prošlo pojistkami (clean()), a vynuluje počitadla pokusů. $at = čas uložení. */
+    public function store(int $id, array $clean, string $model, ?string $at = null): void
+    {
+        $this->db->run('UPDATE pn_text SET praxe_json = ?, praxe_model = ?, praxe_at = ?, praxe_v = ?, praxe_error = NULL, praxe_tries = 0, praxe_fails = 0 WHERE id_dokument = ?',
+            [json_encode($clean, JSON_UNESCAPED_UNICODE), mb_substr($model, 0, 60), $at ?? date('Y-m-d H:i:s'), self::VERSION, $id]);
     }
 
     /**

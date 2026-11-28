@@ -675,4 +675,118 @@ final class View
 </details>
         <?php
     }
+
+    /** Štítky pozměňovacího návrhu z řádku Repo::pnTexts(): přílepek, lhůta se zpětným použitím, rozsáhlý, AI N/10. */
+    public static function pnChips(array $x): string
+    {
+        $out = '';
+        if (!empty($x['signals']['other_laws'])) {
+            $out .= '<span class="chip chip-cut">Přílepek: ' . e(implode(', ', $x['signals']['other_laws'])) . '</span>';
+        }
+        if (!empty($x['signals']['retro_deadline']) && !empty($x['signals']['deadline'])) {
+            $out .= '<span class="chip chip-cut">Lhůta a zpětné použití</span>';
+        }
+        if (!empty($x['signals']['large'])) {
+            $out .= '<span class="chip chip-surge">Rozsáhlý</span>';
+        }
+        if (($x['ai_score'] ?? null) !== null) {
+            $out .= '<span class="chip ' . ((int)$x['ai_score'] >= 6 ? 'chip-cut' : 'chip-surge') . '">AI ' . (int)$x['ai_score'] . '/10</span>';
+        }
+        return $out;
+    }
+
+    /**
+     * Jedna změna tisku (položka z BillUpdates::days) jako HTML s odkazem na místo na stránce tisku: krok vede
+     * do průběhu projednávání (kotva krok-N), pozměňovací návrhy na své záznamy (pn-N), souhrn na psp.cz.
+     * $short je podoba do jednoho řádku: u pozměňovacích návrhů jen prvních pár čísel, bez doplňků.
+     */
+    public static function billUpdateItem(array $item, int $ct, bool $short): string
+    {
+        $title = e((string)$item['title']);
+        if ($item['type'] === 'pn') {
+            // jediné číslo navíc se vypíše, „a 1 další“ by místo neušetřilo
+            $limit = count($item['pn']) <= BillUpdates::PN_LINKS + 1 ? count($item['pn']) : BillUpdates::PN_LINKS;
+            $list = $short ? array_slice($item['pn'], 0, $limit) : [];
+            $links = [];
+            foreach ($list as $p) {
+                $links[] = '<a href="' . e(url('tisk', ['ct' => $ct], 'pn-' . (int)$p['cislo'])) . '">' . (int)$p['cislo'] . '</a>';
+            }
+            $rest = count($item['pn']) - count($list);
+            return $short
+                ? $title . ': č.' . "\u{00A0}" . implode(', ', $links) . ($rest > 0 ? ' a ' . $rest . ' ' . ($rest >= 5 ? 'dalších' : 'další') : '')
+                : '<strong>' . $title . '</strong>';
+        }
+        if ($item['type'] === 'summary') {
+            $link = (string)$item['url'] !== '' ? '<a href="' . e((string)$item['url']) . '">' . $title . '</a>' : $title;
+            return $short ? $link : $link . ' <span class="muted">(' . e((string)$item['detail']) . ')</span>';
+        }
+        // krok projednávání nebo vyhlášení: výrazné kroky jako štítek ve stejných barvách jako tečky v průběhu
+        $href = url('tisk', ['ct' => $ct], (int)$item['id'] > 0 ? 'krok-' . (int)$item['id'] : 'prubeh');
+        $chip = ['cut' => 'chip-cut', 'fast' => 'chip-fast', 'main' => 'chip-mp'][$item['flag']] ?? '';
+        $link = '<a' . ($chip !== '' ? ' class="chip ' . $chip . '"' : '') . ' href="' . e($href) . '">' . $title . '</a>';
+        if ($short) {
+            return $link;
+        }
+        $extra = (string)$item['detail'] !== '' ? ' <span class="muted">' . e((string)$item['detail']) . '</span>' : '';
+        if ((int)$item['vote'] > 0) {
+            $extra .= ' <a class="small" href="https://www.psp.cz/sqw/hlasy.sqw?g=' . (int)$item['vote'] . '">hlasování na psp.cz</a>';
+        }
+        return $link . $extra;
+    }
+
+    /**
+     * Souhrn jednoho dne změn tisku do řádku, např. „Zkrácená lhůta · Podán 1 pozměňovací návrh: č. 2589 ·
+     * Rozeslán souhrn pozměňovacích návrhů a 4 další“. Co se nevejde, je za odkazem na časovou osu tisku.
+     */
+    public static function billUpdateSummary(array $day, int $ct): string
+    {
+        $summary = BillUpdates::summary($day);
+        $parts = [];
+        foreach ($summary['items'] as $item) {
+            $parts[] = self::billUpdateItem($item, $ct, true);
+        }
+        $out = implode(' <span class="muted">·</span> ', $parts);
+        if ($summary['rest'] > 0) {
+            $rest = $summary['rest'];
+            $out .= ' a <a href="' . e(url('tisk-aktualizace', ['ct' => $ct], BillUpdates::anchor((string)$day['day']))) . '">' . $rest . ' '
+                . ($rest >= 5 ? 'dalších' : 'další') . '</a>';
+        }
+        return $out;
+    }
+
+    /**
+     * Řádek „Poslední změna“ na stránce tisku: nejnovější den se změnami je vidět hned, po rozbalení (bez
+     * JavaScriptu, prvek details) předchozí dny a odkaz na časovou osu tisku. Datum je den, kdy se změna stala,
+     * a vede na tentýž den na časové ose. Bez změn se nevypíše nic.
+     *
+     * @param list<array> $days dny od nejnovějšího (BillUpdates::days)
+     */
+    public static function billUpdatesBar(array $days, int $ct): void
+    {
+        if ($days === []) {
+            return;
+        }
+        $total = count($days);
+        $first = array_shift($days);
+        $hint = 'Den, kdy se změna stala. Krok se v otevřených datech Sněmovny může objevit se zpožděním.';
+        $dayUrl = static fn(array $day): string => url('tisk-aktualizace', ['ct' => $ct], BillUpdates::anchor((string)$day['day']));
+        ?>
+<details class="card updates">
+  <summary>
+    <span class="updates-line"><strong>Poslední změna <a href="<?= e($dayUrl($first)) ?>" title="<?= e($hint) ?>"><?= e(BillUpdates::dayWhen((string)$first['day'])) ?></a></strong> <span class="muted">·</span> <?= self::billUpdateSummary($first, $ct) ?></span>
+  </summary>
+  <?php if ($days !== []): ?>
+  <ol class="updates-list" aria-label="Předchozí změny">
+    <?php foreach (array_slice($days, 0, BillUpdates::ROW_DAYS) as $day): ?>
+    <li><a class="updates-time" href="<?= e($dayUrl($day)) ?>" title="<?= e($hint) ?>"><time datetime="<?= e((string)$day['day']) ?>"><?= e(BillUpdates::dayWhen((string)$day['day'])) ?></time></a><span><?= self::billUpdateSummary($day, $ct) ?></span></li>
+    <?php endforeach; ?>
+  </ol>
+  <?php endif; ?>
+  <div class="updates-foot">
+    <span class="muted small">Celkem <?= e(BillUpdates::daysLabel($total)) ?></span>
+    <a href="<?= e(url('tisk-aktualizace', ['ct' => $ct])) ?>">Zobrazit všechny změny tisku →</a>
+  </div>
+</details>
+        <?php
+    }
 }

@@ -421,3 +421,46 @@ def test_ingest_vadny_skipped_se_ignoruje(conn, tmp_path):
     (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
     res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
     assert res[0].ok and res[0].skipped == []
+
+
+def test_ingest_autopilot_atribuce_ke_schvaleni(conn, tmp_path):
+    # kontrola atribuce (docs/reels-citace-bezpecne.md): sada autopilota s výrokem přisouzeným osobě
+    # se nezveřejní sama, jde celá ke schválení
+    from hlidac_reels import inbox, queue
+    jid = _autopilot_job(conn)
+    folder = _set(tmp_path, jid, ["ok", "ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["variants"][1]["caption"] = "Ministryně řekla, že lhůta stačí."
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=True)
+    assert res[0].ok and res[0].autopilot is False and list(res[0].attribution) == [2]
+    assert any(e.startswith("R1") for e in res[0].attribution[2])
+    items = queue.set_items(conn, jid)
+    assert [(r.status, r.autopilot) for r in items] == [("queued", False)] * 2
+
+
+def test_ingest_autopilot_ulozi_kartu(conn, tmp_path):
+    from hlidac_reels import inbox, queue
+    jid = _autopilot_job(conn)
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["variants"][0]["card"] = {"ct": 311, "title": "T", "format": "pn"}
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media", autopilot_on=True)
+    assert res[0].autopilot is True
+    rid = res[0].reel_ids[0]
+    assert json.loads(queue.get_state(conn, f"{inbox.CARD_KEY}{rid}"))["title"] == "T"
+
+
+def test_ingest_ulozi_kartu_i_ke_schvaleni(conn, tmp_path):
+    # brána před zveřejněním hlídá „a N dalších“ i u ručně schválené položky: karta se uloží vždy
+    from hlidac_reels import inbox, queue
+    jid = _job(conn)
+    folder = _set(tmp_path, jid, ["ok"])
+    m = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    m["variants"][0]["card"] = {"ct": 311, "pn_autor": [{"cislo": 1, "jmeno": "Jan Novák", "spolu": 2}]}
+    (folder / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    res = inbox.ingest_all(conn, tmp_path / "inbox", tmp_path / "media")
+    rid = res[0].reel_ids[0]
+    assert res[0].autopilot is False
+    assert json.loads(queue.get_state(conn, f"{inbox.CARD_KEY}{rid}"))["pn_autor"][0]["spolu"] == 2

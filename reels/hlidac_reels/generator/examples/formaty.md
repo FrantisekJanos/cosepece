@@ -21,9 +21,9 @@
 | Scéna | Obsah |
 |---|---|
 | `s-z-1` až `s-z-3` | Místo v textu (§ / článek), popisek, „DNES“ (přeškrtnuto) × „PO NOVELE“, výstřižek s doslovnou citací, zdroj (tisk, článek) |
-| `s-z-proc` | „Proč to navrhují“ (důvodová zpráva nebo úvodní slovo, se zdrojem) × „Na co se dívat“ (se zdrojem) |
+| `s-z-proc` | „Co uvádí důvodová zpráva“ (jen z důvodové zprávy, `zdroj` „důvodová zpráva k tisku N“; jinak blok vynech) × „Na co se dívat“ (se zdrojem) |
 
-**Data:** `zmena.body[{kde,co,pred,po,bez_pred,citace,zdroj,url}]` ← `osnova_textu`, `get_cel`, `hledej_v_textech("nahrazuje", ct=…)` (tabulky textů po celcích); `zmena.proc{text,zdroj}` ← důvodová zpráva (`vcetne_duvodove=True`) nebo `get_projev` úvodního slova; `zmena.pozor{text,zdroj}` ← `get_tisk(ct,["rozbor"])` (`rozbor.ai`) a důvody skóre. Bod bez citace nebo zdroje šablona nezařadí.
+**Data:** `zmena.body[{kde,co,pred,po,bez_pred,citace,zdroj,url}]` ← `osnova_textu`, `get_cel`, `hledej_v_textech("nahrazuje", ct=…)` (tabulky textů po celcích); `zmena.proc{text,zdroj}` ← jen důvodová zpráva (`vcetne_duvodove=True`), psaná jako obsah dokumentu („Důvodová zpráva uvádí…“); `zmena.pozor{text,zdroj}` ← `get_tisk(ct,["rozbor"])` (`rozbor.ai`) a důvody skóre. Bod bez citace nebo zdroje šablona nezařadí.
 
 **Automatizace hned:** novelizační body tvaru „číslo/slova „X“ se nahrazují „Y““ jdou vytáhnout regulárním výrazem včetně citace a místa. Citace AI rozboru (`rozbor.ai.citace`) jsou už ověřené proti textu.
 **AI potřeba:** výběr 1–3 nejdůležitějších změn, lidský popisek („lhůta pro zahájení řízení“), věta „proč“ z důvodové zprávy. Vhodné pro stávající AI frontu (Haiku + ověření Sonnetem) s povinnou doslovnou citací.
@@ -36,17 +36,17 @@
 | Scéna | Obsah |
 |---|---|
 | `s-r-kdo` | Počet vystoupení a řečníků, pruhy po klubech (jedna šedá), kolik stenozáznamů je neautorizovaných |
-| `s-r-pro` | „Proč to předkladatel chce“: až 3 body, u každého řečník a datum |
-| `s-r-proti` | „Hlavní námitky“: až 3 body, řečníci, šedé štítky klubů, poznámka (např. kdo v principu souhlasí) |
-| `s-r-odp` | „Odpověď předkladatele“: až 3 body (volitelné) |
+| `s-r-pro` | „V projevech pro návrh zaznělo“: až 3 body, u každého zdroj „projev: A. Schillerová · 13. 10.“ (skládá systém z `recnik` a `datum`) |
+| `s-r-proti` | „V projevech proti zaznělo“: až 3 body, zdroj „projevy: Jakob, Munzar · 13. 10.“, šedé štítky klubů, poznámka |
+| `s-r-odp` | „V odpovědi zaznělo“: až 3 body (volitelné) |
 
 Každá scéna se shrnutím má štítek „shrnutí AI“, neautorizovaný projev štítek „neautorizováno“, závěr „Shrnutí AI z N projevů, odkazy na cosepece.cz“.
 
-**Data:** `rozprava.projevu`, `recniku`, `kluby[{klub,projevu}]`, `neautorizovano` ← `projevy_k_tisku(ct)` (tabulka projevů; počty jsou čisté SQL); `pro/namitky/odpovedi.body[{text,zdroj,kluby,url,klic,autorizovano}]` ← `get_projev(klic)`. Šablona ukáže shrnutí jen tehdy, když má doložené body předkladatel i námitky; bod bez `url` vypadne.
+**Data:** `rozprava.projevu`, `recniku`, `kluby[{klub,projevu}]`, `neautorizovano` ← `projevy_k_tisku(ct)` (tabulka projevů; počty jsou čisté SQL); `pro/namitky/odpovedi.body[{text,recnik,datum,kluby,url,klic,autorizovano}]` ← `get_projev(klic)`; `recnik` u více řečníků seznam, `zdroj` a `kdo` doplní systém, nadpisy dává šablona. Šablona ukáže shrnutí jen tehdy, když má doložené body předkladatel i námitky; bod bez `url` vypadne.
 
 **Automatizace hned:** scéna s čísly.
 **AI potřeba:** celé shrnutí argumentů. Doporučený postup je MAP/REDUCE z `docs/prompt-rozbor-rozpravy-v1.md` (položky `argument` se `smer` a `predmet`, párování námitka–odpověď), Reel pak bere 2–3 nejčastější položky každé strany a odkaz na projev.
-**Rizika:** nejvyšší ze všech formátů. Výběr tří bodů z desítek projevů je redakční rozhodnutí (ukázka 311 vznikla ze 6 ze 40 projevů a přiznává to). Parafráze může posunout smysl, výrok řečníka není fakt („odhad je nejistý“ je námitka, ne zjištění). Neautorizované projevy se mohou změnit (`zmeny_projevu`). Bez lidské kontroly nepouštět.
+**Rizika:** nejvyšší ze všech formátů. Výběr tří bodů z desítek projevů je redakční rozhodnutí (ukázka 311 vznikla ze 6 ze 40 projevů a přiznává to). Parafráze může posunout smysl, výrok řečníka není fakt („odhad je nejistý“ je námitka, ne zjištění). Neautorizované projevy se mohou změnit (`zmeny_projevu`). Bez lidské kontroly nepouštět: autopilot formát `rozprava` nedělá.
 
 ## 4. `pn` – Kdo co přidal
 
@@ -59,7 +59,7 @@ Každá scéna se shrnutím má štítek „shrnutí AI“, neautorizovaný proj
 | `s-p-jine` | Jiné zákony, do kterých PN sahají (číslo Sb., název, čísla PN), razítko PŘÍLEPEK jen s klíčem `pn_other_law` (volitelné) |
 | `s-p-top` | Až 3 PN: číslo, autor, klub, titulek; štítek „titulky: AI“ (volitelné) |
 
-**Data:** `pn.count`, `authors`, `autori[{jmeno,klub,count}]` ← `pn_k_tisku(ct)` + `najdi_osobu` (klub); `late_count`, `pn_dny` ← `pn[].cas` + `kroky`; `jine_zakony[{sb,nazev,pn}]` ← `pn[].laws`, `zakony_z_pn`; `top[{cislo,autor,klub,titulek,url}]` ← `pn[].titulek`, `ai_score`. U videa k vybraným PN (`podklady/zadani.md`) systém přepíše autora a klub zadaných PN v `top` údaji ze serveru (klub ke dni podání) a doplní pole `pn_autor`; model `pn_autor` nepíše.
+**Data:** `pn.count`, `authors`, `autori[{jmeno,klub,count}]` ← `pn_k_tisku(ct)` + `najdi_osobu` (klub); `late_count`, `pn_dny` ← `pn[].cas` + `kroky`; `jine_zakony[{sb,nazev,pn}]` ← `pn[].laws`, `zakony_z_pn`; `top[{cislo,autor,klub,titulek,url}]` ← `pn[].titulek`, `ai_score`. U videa k vybraným PN (`podklady/zadani.md`) systém přepíše autora a klub zadaných PN v `top` údaji ze serveru (klub ke dni podání) a doplní pole `pn_autor`; model `pn_autor` nepíše. Počet spolupodepsaných (`spolu`) doplní systém jen u zadaných PN; u ostatních ho nepiš. Video autopilota klub u autorů, které server nepotvrdil, neukáže.
 
 **Automatizace hned:** celé. Titulky PN už web má (AI fronta), jen se přebírají a označí.
 **AI potřeba:** žádná nová.

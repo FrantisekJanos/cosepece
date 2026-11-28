@@ -29,8 +29,8 @@ $watch = $repo->watchlist(config('watch_laws', []), config('watch_tisky', []));
 $authors = $repo->topAuthors(7, 6);
 $bills = $repo->bills('flagged', '', 12);
 $maxAuthor = $authors[0]['n'] ?? 1;
-// řádek „Poslední změna“: nejnovější aktualizace a pět předchozích po rozbalení
-$updates = Updates::latest(db(), 6);
+// řádek „Poslední aktualizace“: nejnovější aktualizace a pět předchozích po rozbalení
+$updates = Updates::latest(db(), 6, (int)$w['level_watch']);
 
 View::header('Přehled', 'prehled');
 ?>

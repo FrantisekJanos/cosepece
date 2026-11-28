@@ -1,6 +1,6 @@
 <?php
 // Aktualizace: nové události (tabulka alerts) seskupené podle synchronizace, která je zaznamenala.
-// Řádek „Poslední změna“ na přehledu a časová osa na /aktualizace. Skupina se pozná podle času vzniku
+// Řádek „Poslední aktualizace“ na přehledu a časová osa na /aktualizace. Skupina se pozná podle času vzniku
 // upozornění (created_at): jeden běh je zapíše během vteřin, další běh přijde nejdřív za desítky minut.
 // Historii běhů (sync_beh) k tomu nepoužíváme, uchovává se jen 90 dní. Popisy se skládají z titulků
 // upozornění, bez AI. Jen zobrazení: skóre ani rozesílání se tím nemění.
@@ -88,27 +88,49 @@ final class Updates
         return $groups;
     }
 
-    /** Posledních $count aktualizací i s událostmi (včetně běžné agendy), pro řádek na přehledu. */
-    public static function latest(Db $db, int $count): array
+    /**
+     * Posledních $count aktualizací i s událostmi (včetně běžné agendy), pro řádek na přehledu.
+     * $minScore jen počítá důležité události (important); podle toho odkaz na časovou osu ví,
+     * jestli je aktualizace vidět i ve výchozím pohledu bez běžné agendy.
+     */
+    public static function latest(Db $db, int $count, int $minScore = 0): array
     {
-        return self::withEvents($db, array_slice(self::groups($db, 0, self::RECENT_STAMPS), 0, $count));
+        return self::withEvents($db, array_slice(self::groups($db, $minScore, self::RECENT_STAMPS), 0, $count));
     }
 
     /**
      * Souhrn aktualizace do jednoho řádku: nejvýš $max událostí (od nejvyššího skóre) seskupených podle
-     * toho, co se stalo („Zkrácená lhůta“, „Sněmovna schválila“), a počet těch, které se nevešly.
+     * toho, co se stalo („Zkrácená lhůta“, „Sněmovna schválila“) a kdy (day = den události, Y-m-d),
+     * a počet těch, které se nevešly. Den události se liší ode dne zaznamenání, když se krok objeví
+     * v otevřených datech se zpožděním.
      *
-     * @return array{parts: list<array{what: string, events: list<array>}>, rest: int}
+     * @return array{parts: list<array{what: string, day: string, events: list<array>}>, rest: int}
      */
     public static function summary(array $events, int $max = self::ROW_ITEMS): array
     {
         $parts = [];
         foreach (array_slice($events, 0, $max) as $event) {
             [$what, $name] = self::split((string)$event['title']);
-            $parts[$what] ??= ['what' => $what, 'events' => []];
-            $parts[$what]['events'][] = $event + ['name' => $name];
+            $day = substr((string)$event['event_at'], 0, 10);
+            $key = $what . '|' . $day;
+            $parts[$key] ??= ['what' => $what, 'day' => $day, 'events' => []];
+            $parts[$key]['events'][] = $event + ['name' => $name];
         }
         return ['parts' => array_values($parts), 'rest' => max(0, count($events) - $max)];
+    }
+
+    /**
+     * Datum události do závorky za popis („26. 11.“, v jiném roce „31. 12. 2025“), když se stala jiný den,
+     * než ji web zaznamenal; jinak prázdný řetězec. Čtenář pak na stránce tisku hledá správné datum.
+     */
+    public static function dayNote(string $eventDay, string $recordedAt): string
+    {
+        $event = strtotime($eventDay);
+        $recorded = strtotime($recordedAt);
+        if ($event === false || $recorded === false || date('Y-m-d', $event) === date('Y-m-d', $recorded)) {
+            return '';
+        }
+        return date(date('Y', $event) === date('Y', $recorded) ? 'j. n.' : 'j. n. Y', $event);
     }
 
     /**

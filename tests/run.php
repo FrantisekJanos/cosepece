@@ -1715,7 +1715,7 @@ $apiPrep = array_values(array_filter((new Hlidac\Api(db(), new Hlidac\Repo(db())
 check('API: upozornění bez čísla tisku', array_key_exists(0, $apiPrep) ? [$apiPrep[0]['ct'], $apiPrep[0]['skore']] : 'chybí', [null, 50]);
 
 echo "Stránky\n";
-foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'aktualizace.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {
@@ -3108,7 +3108,7 @@ $htRoute = static function (string $path) use ($htRules): ?array {
     return null;
 };
 $htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
-    'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx',
+    'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'aktualizace', 'aktualizace/', 'aktualizace/x', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx',
     'sitemap.xml', 'sitemap.xml/', 'sitemap', 'xsitemap.xml', 'robots.txt', 'robots.txt/', 'robots', 'xrobots.txt'];
 $htDiff = [];
 foreach ($htSamples as $sample) {
@@ -3544,6 +3544,85 @@ check('api: návrh bez vysvětlení má v_praxi null', array_key_exists('v_praxi
 db()->run('DELETE FROM pn_text WHERE ct = 9970');
 db()->run('DELETE FROM pn WHERE ct = 9970');
 $dropBill(9970);
+
+// --- aktualizace: řádek „Poslední změna“ na přehledu a časová osa (/aktualizace) ---
+echo "Aktualizace\n";
+// zkušební upozornění s časem vzniku v roce 2031, aby byla ve výpisu první; na konci se smažou
+$upAdd = function (string $key, string $kind, int $ct, string $created, string $title, int $score): void {
+    db()->run('INSERT INTO alerts (alert_key, kind, ct, event_at, created_at, title, body, watched, posted, score, obdobi) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 2, ?, ?)',
+        ['updtest:' . $key, $kind, $ct, substr($created, 0, 10) . ' 00:00:00', $created, $title, 'Text upozornění.', $score, (int)db()->getMeta('obdobi_cislo', '0') ?: null]);
+};
+$upAdd('a1', 'cut', 221, '2031-03-05 02:11:03', 'Zkrácená lhůta: Novela A', 78);
+$upAdd('a2', 'cut', 311, '2031-03-05 02:11:09', 'Zkrácená lhůta: Novela B', 31);
+$upAdd('b1', 'pn', 221, '2031-03-04 20:51:00', 'Nový pozměňovací návrh k tisku: Novela A', 68);
+$upAdd('b2', 'passed', 90, '2031-03-04 20:43:00', 'Sněmovna schválila: Novela C', 10);
+$upAdd('c1', 'pn', 78, '2031-03-04 20:30:00', 'Nový pozměňovací návrh k tisku: Novela D', 5);
+foreach ([60, 50, 40, 30, 20, 10] as $i => $upScore) {
+    $upAdd('d' . $i, 'newbill', 221 + $i, '2031-03-03 10:00:0' . $i, 'Nový poslanecký návrh: Návrh ' . $i, $upScore);
+}
+for ($i = 0; $i < 15; $i++) {
+    $upAdd('e' . $i, 'p90', 400 + $i, '2031-03-02 09:00:00', 'Navrženo schválit už v 1. čtení: Hromadný ' . $i, 30);
+}
+$upWatch = (int)Hlidac\Scorer::weights(config())['level_watch'];
+$upGroups = array_slice(Hlidac\Updates::groups(db(), $upWatch), 0, 5);
+check('aktualizace: upozornění vzniklá do 10 minut po sobě jsou jedna aktualizace', [array_column($upGroups, 'id'), array_column($upGroups, 'n'), array_column($upGroups, 'important')],
+    [['u-20310305-0211', 'u-20310304-2043', 'u-20310304-2030', 'u-20310303-1000', 'u-20310302-0900'], [2, 2, 1, 6, 15], [2, 1, 0, 4, 15]]);
+check('aktualizace: rozsah časů vzniku', [$upGroups[1]['from'], $upGroups[1]['to']], ['2031-03-04 20:43:00', '2031-03-04 20:51:00']);
+check('aktualizace: omezený výběr neúplnou poslední skupinu vynechá', array_column(Hlidac\Updates::groups(db(), 0, 3), 'id'), ['u-20310305-0211']);
+$upLatest = Hlidac\Updates::latest(db(), 4);
+check('aktualizace: události od nejvyššího skóre, včetně běžné agendy', [count($upLatest), array_column($upLatest[0]['events'], 'ct'), array_column($upLatest[1]['events'], 'score'), array_column($upLatest[2]['events'], 'ct')],
+    [4, [221, 311], [68, 10], [78]]);
+$upImportant = Hlidac\Updates::withEvents(db(), [$upGroups[1]], $upWatch);
+check('aktualizace: s prahem skóre zůstanou jen důležité události, počty za celou aktualizaci', [array_column($upImportant[0]['events'], 'alert_key'), $upImportant[0]['n']], [['updtest:b1'], 2]);
+$upSum = Hlidac\Updates::summary($upLatest[0]['events']);
+check('aktualizace: souhrn seskupí stejný druh události', [count($upSum['parts']), $upSum['parts'][0]['what'], array_column($upSum['parts'][0]['events'], 'name'), $upSum['rest']],
+    [1, 'Zkrácená lhůta', ['Novela A', 'Novela B'], 0]);
+$upSumBig = Hlidac\Updates::summary($upLatest[3]['events']);
+check('aktualizace: souhrn ukáže nejvýš čtyři události, zbytek spočítá', [count($upSumBig['parts'][0]['events']), $upSumBig['rest']], [4, 2]);
+check('aktualizace: titulek se dělí na první dvojtečce', [Hlidac\Updates::split('Zkrácená lhůta: Novela z. - zákoník práce'), Hlidac\Updates::split('Vláda schválila návrh: Zákon: část první'), Hlidac\Updates::split('Bez dvojtečky')],
+    [['Zkrácená lhůta', 'Novela z. - zákoník práce'], ['Vláda schválila návrh', 'Zákon: část první'], ['', 'Bez dvojtečky']]);
+check('aktualizace: dlouhý název se zkrátí', [Hlidac\Updates::shorten('Krátký název'), mb_strlen(Hlidac\Updates::shorten(str_repeat('slovo ', 30), 40)) <= 40, str_ends_with(Hlidac\Updates::shorten(str_repeat('slovo ', 30), 40), '…')],
+    ['Krátký název', true, true]);
+$upNow = (int)strtotime('2031-03-05 14:08:00');
+check('aktualizace: čas pro čtenáře (dnes, včera, datum, jiný rok)', [Hlidac\Updates::when('2031-03-05 02:11:03', false, $upNow), Hlidac\Updates::when('2031-03-05 02:11:03', true, $upNow),
+    Hlidac\Updates::when('2031-03-04 16:46:00', false, $upNow), Hlidac\Updates::when('2031-03-04 16:46:00', true, $upNow), Hlidac\Updates::when('2031-03-02 20:51:00', true, $upNow),
+    Hlidac\Updates::when('2030-12-31 09:05:00', false, $upNow)],
+    ['dnes 2:11', 'dnes ve 2:11', 'včera 16:46', 'včera v 16:46', '2. 3. ve 20:51', '31. 12. 2030 9:05']);
+check('aktualizace: předložka před hodinou', array_map(fn(int $h): string => Hlidac\Updates::prep($h), [0, 1, 2, 4, 5, 11, 12, 14, 15, 19, 20, 23]),
+    ['v', 'v', 've', 've', 'v', 'v', 've', 've', 'v', 'v', 've', 've']);
+check('aktualizace: den v týdnu a skloňování počtu', [Hlidac\Updates::dayLabel('2031-03-05 02:11:03'), Hlidac\Updates::eventsWord(1), Hlidac\Updates::eventsWord(3), Hlidac\Updates::eventsWord(5)],
+    ['Středa 5. 3. 2031', '1 událost', '3 události', '5 událostí']);
+$upHtml = Hlidac\View::updateSummary($upLatest[0]);
+check('aktualizace: řádek souhrnu odkazuje na tisky a ukazuje skóre', [str_contains($upHtml, 'Zkrácená lhůta: <a href="' . e(url('tisk', ['ct' => 221])) . '">221' . "\u{00A0}" . '· Novela A</a>'),
+    str_contains($upHtml, '<a href="' . e(url('tisk', ['ct' => 311])) . '">311' . "\u{00A0}" . '· Novela B</a>'), substr_count($upHtml, 'class="score score-'), str_contains($upHtml, 'dalších')], [true, true, 2, false]);
+check('aktualizace: co se do řádku nevejde, je za odkazem na časovou osu', str_contains(Hlidac\View::updateSummary($upLatest[3]), ' a <a href="' . e(url('aktualizace', ['vse' => 1], 'u-20310303-1000')) . '">2 další</a>'), true);
+ob_start();
+Hlidac\View::updatesBar($upLatest, '2031-03-05 14:08:00');
+$upBar = (string)ob_get_clean();
+check('aktualizace: řádek na přehledu se rozbaluje bez JavaScriptu a vede na časovou osu', [str_contains($upBar, '<details class="card updates">'), str_contains($upBar, 'Poslední změna '),
+    substr_count($upBar, '<li>'), str_contains($upBar, 'Data naposledy kontrolována '), str_contains($upBar, '<a href="' . e(url('aktualizace')) . '">Zobrazit všechny aktualizace')], [true, true, 3, true, true]);
+ob_start();
+Hlidac\View::updatesBar([], null);
+check('aktualizace: bez upozornění se řádek nevypíše', (string)ob_get_clean(), '');
+$upPage = function (array $get): string {
+    $_GET = $get;
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/aktualizace.php');
+    return (string)ob_get_clean();
+};
+$upDefault = $upPage([]);
+check('časová osa: výchozí pohled jen s důležitými událostmi', [str_contains($upDefault, 'id="u-20310305-0211"'), str_contains($upDefault, 'id="u-20310304-2043"'), str_contains($upDefault, 'id="u-20310304-2030"'),
+    str_contains($upDefault, 'Sněmovna schválila: Novela C'), str_contains($upDefault, '<h2 class="upd-day">Středa 5. 3. 2031</h2>'),
+    str_contains($upDefault, '+ <a href="' . e(url('aktualizace', ['vse' => 1], 'u-20310304-2043')) . '">1 událost z běžné agendy</a>')], [true, true, false, false, true, true]);
+check('časová osa: velká aktualizace ukáže 12 událostí, další po rozbalení', [str_contains($upDefault, '<details class="upd-more">'), str_contains($upDefault, 'Další 3 události této aktualizace')], [true, true]);
+$upAll = $upPage(['vse' => '1']);
+check('časová osa: s běžnou agendou jsou vidět všechny aktualizace a události', [str_contains($upAll, 'id="u-20310304-2030"'), str_contains($upAll, 'Sněmovna schválila: Novela C'), str_contains($upAll, 'z běžné agendy</a>')], [true, true, false]);
+check('časová osa: hezká adresa a mapa webu', [Hlidac\Url::route('aktualizace'), str_ends_with(url('aktualizace'), '/aktualizace'), in_array(absUrl('aktualizace'), array_column(Hlidac\Sitemap::entries(db()), 'loc'), true)],
+    [['aktualizace.php', []], true, true]);
+$_GET = [];
+db()->run("DELETE FROM alerts WHERE alert_key LIKE 'updtest:%'");
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

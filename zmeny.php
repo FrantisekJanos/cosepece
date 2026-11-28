@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Chybu ve vysvětlení jde nahlásit',
+        'U každého vysvětlení, co by pozměňovací návrh změnil v praxi, je vpravo nahoře malý praporek. Otevře krátký formulář: označíte, která část nesedí (koho se změna týká, stav před a po, čísla a lhůty, nebo srozumitelnost), a můžete připsat, jak to má být správně a kde to v textu návrhu najdeme. Hlášení nejdřív roztřídí jazykový model, který vyřadí reklamu, nesmysly a pokusy ovlivnit jeho chování. Platná hlášení použijeme k prověření vysvětlení. Názory na návrh samotný nesbíráme, poznámky nezveřejňujeme a na hlášení neodpovídáme. Skóre se nemění.',
+        [131], false],
     ['2026-11-28', 'Poslední změna na stránce tisku a časová osa tisku',
         'Na stránce tisku je pod nadpisem nový řádek s poslední změnou: který den se u tisku naposledy něco stalo a co to bylo, například podané pozměňovací návrhy, zkrácená lhůta, rozeslaný souhrn pozměňovacích návrhů nebo další krok projednávání. Odkazy vedou přímo na daný pozměňovací návrh nebo krok na stránce. Po rozbalení ukáže pět předchozích dnů se změnami. Odkaz „Zobrazit všechny změny tisku“ vede na novou časovou osu tisku, kde jsou kroky a pozměňovací návrhy den po dni od nejnovějšího, u návrhů i s předkladatelem a shrnutím. Datum je den, kdy se změna stala; v otevřených datech Sněmovny se krok může objevit se zpožděním. Skóre se nemění.',
         [133], false],

@@ -141,6 +141,7 @@ View::header('Jak hodnotíme', 'metodika', 'Jak se počítá skóre závažnosti
       Ze <?= $rel['sample']['n'] ?> zkontrolovaných textů zvýšil závažnost tak, že text dostal body, u <?= $rel['sample']['to_points'] ?> (z toho na závažný nález <?= $rel['sample']['to_finding'] ?>).<?php else: ?> Výsledky přibudou po prvním ověřovacím běhu.<?php endif; ?></li>
   </ul>
   <p class="muted small">Model nedostává jméno předkladatele ani typ návrhu. Citace z textu ověřujeme strojově, nález bez ověřené citace má nejvýš 2/10. Srovnání s hodnocením lidí (ruční kalibrace) zatím neproběhlo, čísla výše porovnávají dva modely mezi sebou.</p>
+  <p class="small" id="hlaseni"><b>Našli jste chybu ve vysvětlení pozměňovacího návrhu?</b> U každého vysvětlení „v praxi“ je vpravo nahoře praporek. Otevře krátký formulář, kde označíte, která část nesedí, a můžete připsat, jak to má být správně. Hlášení nejdřív roztřídí jazykový model, který vyřadí reklamu, nesmysly a pokusy ovlivnit jeho chování; názory na návrh samotný nesbíráme. Poznámku nezveřejňujeme a vaši IP adresu neukládáme, jen na hodinu její otisk kvůli omezení počtu hlášení. Vyřazená hlášení po 30 dnech mažeme.</p>
 </section>
 
 <section class="card pad" id="odpovednost" aria-label="Upozornění a omezení odpovědnosti">

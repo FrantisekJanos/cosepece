@@ -117,6 +117,12 @@ return [
         'timeout' => 300,      // s na jeden rozbor přes CLI
     ],
 
+    // hlášení chyb ve vysvětlení PN „v praxi“ od čtenářů (praporek u vysvětlení, app/Reports.php). Třídí je rychlý
+    // model při běhu AI (bin/ai.php --hlaseni); přehled: php bin/hlaseni.php. per_hour = hlášení z jedné adresy
+    // za hodinu, per_day = všech za den, open_per_pn = kolik nevyřízených smí čekat u jednoho vysvětlení,
+    // keep_days = po kolika dnech se vyřazená hlášení smažou, tries = kolikrát smí třídění selhat
+    'hlaseni' => ['enabled' => true, 'per_hour' => 5, 'per_day' => 200, 'max_note' => 500, 'open_per_pn' => 10, 'keep_days' => 30, 'tries' => 3],
+
     // profily na sociálních sítích (ikony v hlavičce webu); výchozí jsou v app/View.php (View::SOCIAL),
     // tady je lze přepsat, prázdná adresa ikonu skryje
     // 'social' => ['facebook' => 'https://www.facebook.com/…', 'instagram' => '', 'x' => 'https://x.com/…'],

@@ -118,6 +118,29 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .pn-praxe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 8px; font-size: 14px; line-height: 1.5; }
 .pn-praxe-grid > div { padding: 8px 10px; background: var(--line-soft); border-radius: 6px; overflow-wrap: anywhere; }
 .pn-praxe-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+/* nahlášení chyby ve vysvětlení: praporek v rohu bloku, vrstva s formulářem (assets/report.js) */
+.pn-praxe.has-report { position: relative; }
+.pn-praxe.has-report > :first-child { margin-right: 30px; }
+.report-link { position: absolute; top: 4px; right: 4px; display: inline-flex; padding: 6px; border-radius: 6px; color: var(--muted); opacity: .7; }
+.report-link:hover, .report-link:focus-visible { color: var(--ink); opacity: 1; background: var(--line-soft); }
+.report-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); margin: auto; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px rgba(21, 23, 28, .25); overflow-y: auto; }
+.report-dialog::backdrop { background: rgba(21, 23, 28, .5); }
+.report-dialog h2 { margin: 0 0 4px; }
+.report-form { display: flex; flex-direction: column; gap: 12px; }
+.report-form p { margin: 0; }
+.report-form fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 6px; }
+.report-form legend { padding: 0; margin-bottom: 6px; font-weight: 600; }
+.report-option { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.report-note { display: flex; flex-direction: column; gap: 6px; }
+.report-note > span { font-weight: 600; }
+.report-note > span .muted { font-weight: 400; }
+.report-note textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; color: inherit; background: var(--surface); resize: vertical; }
+.report-help { padding: 10px 12px; background: var(--line-soft); border-radius: 8px; color: var(--ink-2); }
+.report-web { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.report-error { color: #B91C1C; font-weight: 600; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+.report-page { max-width: 640px; }
+.report-page h1 { font-size: 26px; margin: 0; }
 .pn-flagged { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pn-flagged strong { margin-right: 2px; }
 .pn-flagged a.chip { text-decoration: none; }

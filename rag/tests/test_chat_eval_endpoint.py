@@ -19,18 +19,7 @@ def anyio_backend():
 
 
 def _svet(odpovedi, **kw) -> Svet:
-    s = Svet(odpovedi, **kw)
-    ul = s.ulozit
-
-    def smaz_konverzaci(kid, sid):          # úložiště z test_chat_app zatím mazání nemá
-        k = ul.konverzace_.get(kid)
-        if not k or k["relace_id"] != sid:
-            return False
-        del ul.konverzace_[kid]
-        return True
-
-    ul.smaz_konverzaci = smaz_konverzaci
-    return s
+    return Svet(odpovedi, **kw)
 
 
 def _klient(s: Svet) -> httpx.AsyncClient:
@@ -86,6 +75,13 @@ async def test_prekroceni_stropu_ceny_ukonci_beh():
     assert s.llm.volani == 1 and s.ulozit.konverzace_ == {}
 
 
+async def test_selhani_na_tahu_pres_strop_zustava_selhanim():
+    s = _svet([ODP_TEXT("Určitě volte X.")])
+    v = await _spust(s, [_scenar(tahy=[{"text": "Koho volit?", "must_not": ["volte"], "kour": True}])], max_usd=0.0001)
+    assert v[0]["stav"] == "selhani" and navratovy_kod(v) == 1
+    assert len(v) == 1
+
+
 async def test_zly_klic_je_odmitnut_jako_sluzba_a_klic_se_nevypise(capsys):
     s = _svet([ODP_TEXT("x")])
     tajny = "tajny-klic-nikdy-ven"
@@ -97,6 +93,13 @@ async def test_zly_klic_je_odmitnut_jako_sluzba_a_klic_se_nevypise(capsys):
     assert v[0]["stav"] == "sluzba" and "428" in v[0]["chyba"] and kod == 2    # bez klíče chce Turnstile
     ven = capsys.readouterr()
     assert tajny not in ven.out + ven.err and tajny not in repr(v)
+
+
+@pytest.mark.parametrize("hodnota", ["-1", "0", "nan", "inf", "abc"])
+def test_max_usd_jen_konecne_kladne(hodnota):
+    with pytest.raises(SystemExit):
+        chat_eval._parser().parse_args(["--max-usd", hodnota])
+    assert chat_eval._parser().parse_args(["--max-usd", "0.5"]).max_usd == 0.5
 
 
 def test_klic_se_necte_z_argumentu(capsys):

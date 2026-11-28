@@ -170,6 +170,13 @@ class FalesneUloziste:
         k = self.konverzace_.get(id)
         return dict(k) if k and k["relace_id"] == rid else None
 
+    def smaz_konverzaci(self, kid, sid):
+        k = self.konverzace_.get(kid)
+        if not k or k["relace_id"] != sid:
+            return False
+        del self.konverzace_[kid]
+        return True
+
     def tahy(self, kid):
         return [Tah(o["text"], o["kontext"].get("znacka", ""), b["text"], list(b["citovane"]))
                 for b in self.zpravy for o in self.otazky
@@ -533,6 +540,19 @@ async def test_stav_bez_limitu_a_po_limitu():
     st = (await asgi(s.app, "GET", "/chat-api/stav")).json()      # bez IP: stav jde zjistit i tak
     assert st["dostupny"] is False and st["kod"] == "limit_den" and st["znovu_v"]
     assert not s.ulozit.relace_                                     # stav relaci nezakládá
+
+
+async def test_pole_eval_v_konci_jen_s_platnym_klicem():
+    s = Svet([ODP_TEXT("Ano.")])
+    r = await post(s, turnstile_token=None, dalsi={"X-Chat-Eval": EVAL_KLIC})
+    konec = [d for t, d, _ in sse(r.telo) if t == "konec"][-1]
+    assert konec["eval"]["cena_usd"] > 0 and konec["eval"]["nastroje"] == []
+    s = Svet([ODP_TEXT("Ano.")])
+    konec = [d for t, d, _ in sse((await post(s)).telo) if t == "konec"][-1]
+    assert "eval" not in konec
+    s = Svet([ODP_TEXT("Ano.")])      # špatný klíč = běžný požadavek (s platným Turnstile) bez pole eval
+    konec = [d for t, d, _ in sse((await post(s, dalsi={"X-Chat-Eval": "spatny"})).telo) if t == "konec"][-1]
+    assert "eval" not in konec
 
 
 async def test_eval_klic_obchazi_jen_turnstile():      # limity dál platí

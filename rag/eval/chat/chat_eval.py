@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import sys
@@ -185,13 +186,13 @@ async def spust(http: httpx.AsyncClient, url: str, scenare: list[dict], klic: st
                 kid = r["kid"] or kid
                 soucet += r["cena_usd"]
                 stav = r["stav"]
-                if stav != SLUZBA and soucet > max_usd:
+                if stav == OK and soucet > max_usd:      # selhání kontrol na tahu přes strop zůstává selháním
                     stav = CENA
                 vysledky.append({"scenar": s["id"], "tah": i, "stav": stav, "selhani": r["selhani"],
                                  "cena_usd": r["cena_usd"], "soucet_usd": soucet, "odpoved": r["odpoved"],
                                  "chyba": r["chyba"], "smazano": None})
                 vypis(_radek(vysledky[-1], time.monotonic() - t0))
-                if stav in (SLUZBA, CENA):
+                if stav in (SLUZBA, CENA) or soucet > max_usd:     # strop ceny končí běh i po selhání tahu
                     konec_behu = True
                     break
         finally:
@@ -221,13 +222,23 @@ def navratovy_kod(vysledky: list[dict]) -> int:
     return 0
 
 
+def _kladne_cislo(text: str) -> float:
+    try:
+        x = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} není číslo") from None
+    if not math.isfinite(x) or x <= 0:
+        raise argparse.ArgumentTypeError("musí být konečné číslo větší než 0")
+    return x
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m eval.chat.chat_eval", allow_abbrev=False,
                                 description="Kouřový eval chatu přes endpoint. Klíč se čte z CHAT_EVAL_KLIC.")
     p.add_argument("--url", default="https://cosepece.cz")
     p.add_argument("--sada", choices=("kour", "vse"), default="kour")
     p.add_argument("--cookie-beta", default=None, help="hodnota cookie chat_beta (skrytý režim)")
-    p.add_argument("--max-usd", type=float, default=MAX_USD)
+    p.add_argument("--max-usd", type=_kladne_cislo, default=MAX_USD)
     p.add_argument("--scenare", default=str(SCENARE))
     return p
 

@@ -289,6 +289,19 @@ def zdroje(conn: psycopg.Connection, konverzace_id: str) -> list[Zdroj]:
     return [Zdroj(n, klic, typ, titulek, meta or {}, citovan) for n, klic, typ, titulek, meta, citovan in radky]
 
 
+STAVY_PRO_OBNOVU = ("ok", "nemam", "preruseno")
+
+
+def zpravy(conn: psycopg.Connection, konverzace_id: str) -> list[dict]:
+    """Otázky a odpovědi konverzace pro obnovu panelu (klíče otazka, text, kod, stav, citovane), nejstarší první.
+    Rozpracované, odmítnuté a neúspěšné odpovědi se neobnovují."""
+    radky = conn.execute("""SELECT u.text, b.text, b.kod, b.stav, b.citovane
+                            FROM chat.zprava b JOIN chat.zprava u ON u.id = b.otazka_id
+                            WHERE b.konverzace_id = %s AND b.role = 'bot' AND b.stav = ANY(%s) ORDER BY b.id""",
+                         (konverzace_id, list(STAVY_PRO_OBNOVU))).fetchall()
+    return [{"otazka": o, "text": t, "kod": k, "stav": s, "citovane": list(c)} for o, t, k, s, c in radky]
+
+
 def smaz_konverzaci(conn: psycopg.Connection, id: str, relace_id: str) -> bool:
     """Smaže konverzaci vlastní relace i se zprávami, zdroji a voláními nástrojů. Zůstává otisk odpovědi, ceny
     volání modelu a počítadlo zpráv (limity se smazáním nevynulují); nahlášené odpovědi mají vlastní kopii textu."""

@@ -19,6 +19,7 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import datetime
 
+from . import nahled as nahled_mod
 from . import relace as relace_mod
 from . import uloziste
 from .citace import TYPY_S_TEXTEM, _bez_diakritiky, _tvary_prijmeni
@@ -41,7 +42,7 @@ MIN_DELKA_PRIJMENI = 3
 _FUNKCE_ULOZISTE = (
     "zaloz_relaci", "relace", "zapis_overeni", "pricti_zpravu_od_overeni", "zahaj_tah", "skonci_tah", "utrata",
     "zaloz_konverzaci", "konverzace", "tahy", "zaloz_odpoved", "prubezne", "dokonci", "zapis_volani_llm",
-    "zapis_volani_nastroje", "uloz_zdroje", "zdroje",
+    "zapis_volani_nastroje", "uloz_zdroje", "zdroje", "zpravy", "smaz_konverzaci", "existuje_kod", "hodnoceni", "nahlas",
 )
 
 
@@ -166,6 +167,11 @@ class PgData:
         except Exception:
             log.exception("nástroj %s: spojení nedostupné", nazev)
             return Vysledek("Data se právě aktualizují, zkuste to za chvíli.", [], True)
+
+    def nahled(self, klic: str, zv: tuple[int, int] | None):
+        """Náhled zdroje z DB (spec 6); chyba databáze se předá službě, ta odpoví 503."""
+        with self._cteni() as conn:
+            return nahled_mod.nahled(conn, klic, zv)
 
     def text_zdroje(self, z: Zdroj) -> str | None:
         """Text zdroje s textem (celek, projev) znovu načtený nástrojem; jiný typ nebo chyba = None."""

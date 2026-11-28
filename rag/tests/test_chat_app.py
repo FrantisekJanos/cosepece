@@ -554,7 +554,7 @@ async def test_cely_tah_ulozi_vse():
     start = ud[0][1]
     assert set(start) == {"konverzace_id", "zprava_id", "tah_id"} and start["zprava_id"] == z["id"]
     zdroje = next(d for t, d, _ in ud if t == "zdroje")["zdroje"]
-    assert zdroje == [{"n": 1, "typ": "pn", "titulek": "PN 2329 (tisk 221)", "znacky": []}]
+    assert zdroje == [{"n": 1, "typ": "pn", "titulek": "PN 2329 (tisk 221)", "znacky": [], "klic": "pn:2329"}]
     konec = ud[-1][1]
     assert konec["kod"] == z["kod"] and konec["stav"] == "ok" and isinstance(konec["zbyva_otazek"], int)
     assert s.ulozit.volani_nastroje[0]["nastroj"] == "get_pn"

@@ -1,7 +1,9 @@
 """HTTP služba chatbota (spec 3, 4.2, 11, 12, 14): Starlette pod uvicornem s jedním procesem.
 
 Adresy (vše pod `/chat-api`): `zdravi`, `stav`, `beta`, `zprava` (SSE), `tah/{id}/stream` (opětovné připojení),
-`tah/{id}/stop`, `w.js` a `s/<hash>/<soubor>` (statické soubory widgetu z `chat/static/`).
+`tah/{id}/stop`, `w.js` a `s/<hash>/<soubor>` (statické soubory widgetu z `chat/static/`) a obslužné adresy
+(spec 6, 9, 15): `nahled` (náhled zdroje z DB), `hodnoceni`, `nahlasit`, `smazat`, `overit` (kód odpovědi), `zasady`
+(HTML) a `konverzace/{id}` (zprávy a zdroje pro obnovu panelu).
 
 `POST /chat-api/zprava` ověří všechno PŘED otevřením streamu a prvním placeným voláním, v tomto pořadí:
 skrytý režim (`chat_beta`) → `Origin` → velikost těla a zprávy → relace (`chat_sid`) → útrata → stropy v USD →
@@ -16,11 +18,15 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import html
 import hmac
 import json
 import logging
+import math
+import re
 import secrets
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -34,7 +40,7 @@ from starlette.requests import Request, cookie_parser
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
-from . import hlaseni, rozpocet, turnstile
+from . import hlaseni, nahled, rozpocet, turnstile
 from .beh import BehTahu, ProudTahu, RegistrTahu, Vystup
 from .cenik import CENY, Cena
 from .citace import TYPY_S_TEXTEM, over_odstavec
@@ -43,8 +49,8 @@ from .historie import ZNAKU_NA_TOKEN, odhad_tokenu, sestav
 from .kontext import Kontext, z_json, znacka
 from .llm import LLM, MAX_OPAKOVANI, mozna_uctovano
 from .nastroje import Vysledek
-from .relace import (COOKIE_BETA, COOKIE_SID, BETA_PLATNOST, ChybiIP, cookie_sid, den_prahy, ip_z_hlavicky, over_beta,
-                     platne_sid, podepis_beta)
+from .relace import (COOKIE_BETA, COOKIE_SID, BETA_PLATNOST, ChybiIP, _sit, cookie_sid, den_prahy, ip_z_hlavicky,
+                     over_beta, platne_sid, podepis_beta)
 from .smycka import _ocen
 from .smycka import tah as smycka_tah
 from .uloziste import RelaceNeexistuje, Utrata
@@ -69,6 +75,19 @@ STATIC = Path(__file__).parent / "static"
 TYPY_SOUBORU = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html",
                 ".svg": "image/svg+xml", ".json": "application/json", ".txt": "text/plain"}
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+# spec 6 a 12: služba volá ven jen tyto servery (Anthropic přes SDK vlastním klientem, ostatní přes sdílený klient)
+POVOLENE_HOSTY = frozenset({"api.anthropic.com", "api.openai.com", "challenges.cloudflare.com", "api.telegram.org"})
+LIMIT_POZADAVKU = 60                # spec 6: náhledy a obslužné adresy, požadavků za okno na otisk IP
+OKNO_LIMITU_S = 60
+MAX_KLICU_LIMITU = 10000            # po překročení se z paměti smažou prošlá okna
+MAX_DUVOD = 1000                    # spec 15: důvod nahlášení do 1 000 znaků
+KOD_ODPOVEDI = re.compile(r"[a-z0-9]{8}")
+ID_KONVERZACE = re.compile(r"[0-9a-f]{32}")
+ZV = re.compile(r"([0-9]{1,7})-([0-9]{1,7})")
+HLAVICKY_HTML = {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+                 "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
+ZASTUPCE_PROVOZOVATELE = "{{PROVOZOVATEL}}"
+PROVOZOVATEL_CHYBI = "provozovatel a kontakt zatím nejsou zveřejněny"
 
 
 @dataclass(frozen=True, repr=False)
@@ -95,6 +114,23 @@ class Tajemstvi:
 class _Odmitnuti(Exception):
     def __init__(self, odpoved: Response):
         self.odpoved = odpoved
+
+
+class NepovolenyHost(httpx.TransportError):
+    """Odchozí požadavek mimo `POVOLENE_HOSTY` (spec 6: chat nic nestahuje z psp.cz ani odjinud)."""
+
+
+async def _jen_povolene_hosty(request: httpx.Request) -> None:
+    if request.url.host not in POVOLENE_HOSTY:
+        raise NepovolenyHost(f"odchozí spojení na {request.url.host} není povoleno")
+
+
+def omez_hosty(http: httpx.AsyncClient) -> httpx.AsyncClient:
+    """Klientovi přidá hook událostí `request`, který odmítne jiný host než z `POVOLENE_HOSTY` (i při přesměrování)."""
+    hooky = http.event_hooks
+    if _jen_povolene_hosty not in hooky["request"]:
+        http.event_hooks = {**hooky, "request": [*hooky["request"], _jen_povolene_hosty]}
+    return http
 
 
 def _json(data: dict, status: int = 200, hlavicky: dict | None = None) -> JSONResponse:
@@ -134,7 +170,8 @@ class Sluzba:
     def __init__(self, n: Nastaveni, llm: LLM, ulozit, http: httpx.AsyncClient, tajemstvi: Tajemstvi, data,
                  cenik: dict[str, Cena] | None, static_dir: Path, hodiny: Callable[[], datetime],
                  odpojeni_s: float, ping_s: float, drzeni_udalosti_s: float):
-        self.n, self.llm, self.ulozit, self.http, self.tajemstvi, self.data = n, llm, ulozit, http, tajemstvi, data
+        self.n, self.llm, self.ulozit, self.tajemstvi, self.data = n, llm, ulozit, tajemstvi, data
+        self.http = omez_hosty(http)
         self.cenik = cenik if cenik is not None else CENY
         self.static_dir = static_dir
         self.hash_static = _hash_static(static_dir)
@@ -148,6 +185,8 @@ class Sluzba:
         self.hlidac = hlaseni.Hlidac()
         self._klic_sid = secrets.token_bytes(32)
         self._ulohy: set[asyncio.Task] = set()
+        self._klic_limitu = secrets.token_bytes(32)
+        self._okna_limitu: dict[str, deque] = {}
         self._vlakna = ThreadPoolExecutor(max_workers=SOUBEH_NASTROJU_DB, thread_name_prefix="chat-nastroj")
 
     # --- pomocné ---
@@ -276,9 +315,150 @@ class Sluzba:
         beh.prerusit.set()
         return Response(status_code=204)
 
+    # --- náhledy a obslužné adresy (spec 6, 9, 15) ---
+
+    def _omez(self, request: Request) -> Response | None:
+        """Limit požadavků na otisk IP, čítač jen v paměti procesu (spec 6). None = smí."""
+        try:
+            ip = ip_z_hlavicky(request.headers.get("x-forwarded-for"))
+        except ChybiIP:
+            return _chyba(400, "spatny_pozadavek")
+        otisk = hmac.new(self._klic_limitu, _sit(ip).encode(), hashlib.sha256).hexdigest()[:32]
+        ted = self.hodiny().timestamp()
+        okna = self._okna_limitu
+        okno = okna.setdefault(otisk, deque())
+        while okno and okno[0] <= ted - OKNO_LIMITU_S:
+            okno.popleft()
+        if len(okno) >= LIMIT_POZADAVKU:
+            znovu = max(1, math.ceil(okno[0] + OKNO_LIMITU_S - ted))
+            return _chyba(429, "limit_pozadavku", hlavicky={"Retry-After": str(znovu)})
+        okno.append(ted)
+        if len(okna) > MAX_KLICU_LIMITU:
+            for k in [k for k, o in okna.items() if o[-1] <= ted - OKNO_LIMITU_S]:
+                del okna[k]
+        return None
+
+    async def _obsluzny_json(self, request: Request) -> dict:
+        """Tělo POST obslužné adresy: shodný `Origin`, tělo do 16 KB, JSON objekt."""
+        if request.headers.get("origin") != self.puvod:
+            raise _Odmitnuti(_chyba(403, "puvod"))
+        try:
+            d = json.loads(await self._surove_telo(request))
+        except ValueError:
+            raise _Odmitnuti(_chyba(400, "spatny_pozadavek")) from None
+        if not isinstance(d, dict):
+            raise _Odmitnuti(_chyba(400, "spatny_pozadavek"))
+        return d
+
+    @staticmethod
+    def _kod(hodnota) -> str | None:
+        kod = hodnota.strip().lower() if isinstance(hodnota, str) else ""
+        return kod if KOD_ODPOVEDI.fullmatch(kod) else None
+
+    async def nahled_zdroje(self, request: Request) -> Response:
+        if (o := self._omez(request)) is not None:
+            return o
+        klic = request.query_params.get("k", "")
+        if not nahled.platny_klic(klic):         # neplatný klíč se do DB nedostane
+            return _chyba(404, "nenalezeno")
+        m = ZV.fullmatch(request.query_params.get("zv", ""))
+        zv = (int(m[1]), int(m[2])) if m else None
+        try:
+            data = await self._d("nahled", klic, zv)
+        except Exception:
+            log.warning("náhled %s: data nejsou dostupná", klic, exc_info=True)
+            return _chyba(503, "data_nedostupna")
+        if data is None:
+            return _chyba(404, "nenalezeno")
+        return _json(data, hlavicky={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"})
+
+    async def hodnoceni(self, request: Request) -> Response:
+        if (o := self._omez(request)) is not None:
+            return o
+        d = await self._obsluzny_json(request)
+        kod, palec = self._kod(d.get("kod")), d.get("palec")
+        if kod is None or isinstance(palec, bool) or not isinstance(palec, int) or palec not in (-1, 1):
+            return _chyba(400, "spatny_pozadavek")
+        if not await self._u("hodnoceni", kod, palec):
+            return _chyba(404, "nenalezeno")
+        return Response(status_code=204)
+
+    async def nahlasit(self, request: Request) -> Response:
+        if (o := self._omez(request)) is not None:
+            return o
+        d = await self._obsluzny_json(request)
+        kod, duvod = self._kod(d.get("kod")), d.get("duvod")
+        if kod is None or not isinstance(duvod, str):
+            return _chyba(400, "spatny_pozadavek")
+        if len(duvod) > MAX_DUVOD:
+            return _chyba(413, "prilis_dlouhy_duvod")
+        if not await self._u("nahlas", kod, duvod.strip()):
+            return _chyba(404, "nenalezeno")
+        return Response(status_code=204)
+
+    async def smazat(self, request: Request) -> Response:
+        if (o := self._omez(request)) is not None:
+            return o
+        d = await self._obsluzny_json(request)
+        kid, sid = d.get("konverzace_id"), request.cookies.get(COOKIE_SID)
+        if not isinstance(kid, str) or not ID_KONVERZACE.fullmatch(kid):
+            return _chyba(400, "spatny_pozadavek")
+        if not platne_sid(sid):
+            return _chyba(404, "nenalezeno")
+        if sid in self.bezici_relace:           # mazání pod běžícím tahem by tah rozbilo
+            return _chyba(409, "tah_bezi")
+        if not await self._u("smaz_konverzaci", kid, sid):      # cizí i neexistující konverzace vypadají stejně
+            return _chyba(404, "nenalezeno")
+        return Response(status_code=204)
+
+    async def konverzace_obnova(self, request: Request) -> Response:
+        if (o := self._omez(request)) is not None:
+            return o
+        kid, sid = request.path_params["id"], request.cookies.get(COOKIE_SID)
+        if not ID_KONVERZACE.fullmatch(kid) or not platne_sid(sid) or not await self._u("konverzace", kid, sid):
+            return _chyba(404, "nenalezeno")
+        zpravy = []
+        for t in await self._u("zpravy", kid):
+            zpravy.append({"role": "uzivatel", "text": t["otazka"]})
+            zpravy.append({"role": "bot", "text": t["text"], "kod": t["kod"], "stav": t["stav"],
+                           "citovane": list(t["citovane"])})
+        zdroje = [_zdroj_pro_widget(z) for z in await self._u("zdroje", kid) if z.citovan]
+        return _json({"konverzace_id": kid, "zpravy": zpravy, "zdroje": zdroje})
+
+    @staticmethod
+    def _html(telo: str, cache: str = "no-store") -> Response:
+        return Response(telo, media_type="text/html", headers={**HLAVICKY_HTML, "Cache-Control": cache})
+
+    async def overit(self, request: Request) -> Response:
+        """Řekne jen, zda odpověď s kódem existuje, a datum; text odpovědi nevrací (spec 15)."""
+        if (o := self._omez(request)) is not None:
+            return o
+        kod = self._kod(request.query_params.get("kod"))
+        datum = await self._u("existuje_kod", kod) if kod else None
+        if datum is not None:
+            veta = f"Odpověď s tímto kódem existuje, vznikla {datum.day}. {datum.month}. {datum.year}."
+        else:
+            veta = "Odpověď s tímto kódem neexistuje."
+        kod_html = f"<p>Kód: <code>{html.escape(kod)}</code></p>" if kod else ""
+        return self._html(
+            '<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" '
+            'content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">'
+            "<title>Ověření kódu odpovědi</title>"
+            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1rem}</style>"
+            f"</head><body><h1>Ověření kódu odpovědi</h1>{kod_html}<p><strong>{veta}</strong></p>"
+            "<p>Stránka neukazuje text odpovědi, jen to, zda ji chatbot cosepece.cz vytvořil.</p></body></html>")
+
+    async def zasady(self, request: Request) -> Response:
+        soubor = self.static_dir / "zasady.html"
+        if not soubor.is_file():
+            return PlainTextResponse("Not Found", 404)
+        kdo = html.escape(self.n.provozovatel or PROVOZOVATEL_CHYBI)
+        telo = soubor.read_text(encoding="utf-8").replace(ZASTUPCE_PROVOZOVATELE, kdo)
+        return self._html(telo, "public, max-age=300")
+
     # --- zpráva ---
 
-    async def _telo(self, request: Request) -> dict:
+    async def _surove_telo(self, request: Request) -> bytes:
         delka = request.headers.get("content-length", "")
         if delka.isdigit() and int(delka) > MAX_TELO:
             raise _Odmitnuti(_chyba(413, "prilis_velke"))
@@ -287,6 +467,10 @@ class Sluzba:
             telo += kus
             if len(telo) > MAX_TELO:
                 raise _Odmitnuti(_chyba(413, "prilis_velke"))
+        return telo
+
+    async def _telo(self, request: Request) -> dict:
+        telo = await self._surove_telo(request)
         try:
             d = json.loads(telo)
         except ValueError:
@@ -608,7 +792,8 @@ def _zdroj_pro_widget(z) -> dict:
         znacky.append("neautorizovano")
     if z.meta.get("odvozeny"):
         znacky.append("odvozeny_ai")
-    return {"n": z.n, "typ": z.typ, "titulek": z.titulek, "znacky": znacky}
+    # klic = klíč pro GET /chat-api/nahled (adresy od modelu se nepřebírají, odkazy staví server z klíče a dat)
+    return {"n": z.n, "typ": z.typ, "titulek": z.titulek, "znacky": znacky, "klic": nahled.klic_nahledu(z.klic, z.meta)}
 
 
 class SkrytyRezim:
@@ -627,6 +812,16 @@ class SkrytyRezim:
         await self.app(scope, receive, send)
 
 
+def _chraneno(handler):
+    """Obslužná adresa, která odmítá výjimkou `_Odmitnuti` (špatný `Origin`, příliš velké tělo)."""
+    async def obal(request: Request) -> Response:
+        try:
+            return await handler(request)
+        except _Odmitnuti as e:
+            return e.odpoved
+    return obal
+
+
 def vytvor(n: Nastaveni, llm: LLM, ulozit, http: httpx.AsyncClient, tajemstvi: Tajemstvi, *, data=None,
            cenik: dict[str, Cena] | None = None, static_dir: Path | None = None,
            hodiny: Callable[[], datetime] | None = None, odpojeni_s: float = ODPOJENI_S, ping_s: float = PING_S,
@@ -643,6 +838,13 @@ def vytvor(n: Nastaveni, llm: LLM, ulozit, http: httpx.AsyncClient, tajemstvi: T
         Route(f"{PREFIX}/zprava", s.zprava, methods=["POST"]),
         Route(f"{PREFIX}/tah/{{tah_id}}/stream", s.tah_stream, methods=["GET"]),
         Route(f"{PREFIX}/tah/{{tah_id}}/stop", s.tah_stop, methods=["POST"]),
+        Route(f"{PREFIX}/nahled", s.nahled_zdroje, methods=["GET"]),
+        Route(f"{PREFIX}/hodnoceni", _chraneno(s.hodnoceni), methods=["POST"]),
+        Route(f"{PREFIX}/nahlasit", _chraneno(s.nahlasit), methods=["POST"]),
+        Route(f"{PREFIX}/smazat", _chraneno(s.smazat), methods=["POST"]),
+        Route(f"{PREFIX}/overit", s.overit, methods=["GET"]),
+        Route(f"{PREFIX}/zasady", s.zasady, methods=["GET"]),
+        Route(f"{PREFIX}/konverzace/{{id}}", s.konverzace_obnova, methods=["GET"]),
         Route(f"{PREFIX}/w.js", s.w_js, methods=["GET"]),
         Route(f"{PREFIX}/s/{{hash}}/{{soubor:path}}", s.soubor, methods=["GET"]),
     ]

@@ -121,6 +121,25 @@ check('osoba ke jménu ve 2. pádě (jednoznačně, jinak null)', array_map(fn(s
 ]), [3, 2, 4, 5, 6, 8, 9, null, null, null, null]);
 check('krajský návrh: zastupitelstvo z úplného názvu', [Hlidac\Proposers::regionName('Návrh zastupitelstva Jihomoravského kraje na vydání zákona, kterým'),
     Hlidac\Proposers::regionName('Návrh poslanců X na vydání')], ['Zastupitelstvo Jihomoravského kraje', null]);
+// podepsaní PN z hlavičky textu (Reels: „a N dalších“ u jména autora)
+check('podepsaní PN z hlavičky textu', array_map(fn(string $t) => Hlidac\Proposers::pnSigners($t), [
+    'Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu zákona, kterým se mění',
+    "Pozměňovací návrh poslanců Michaely Šebelové, Toma Philippa,\nPavly Pivoňka Vaňkové a Jana Bauera k vládnímu návrhu zákona",
+    'Pozměňovací návrh poslankyně Jany Malé ke sněmovnímu tisku 311',
+    'Pozměňovací návrh poslanců Radka Vondráčka a dalších k vládnímu návrhu zákona',
+    'Návrh zákona, kterým se mění zákon o daních z příjmů',
+    '',
+]), [[1, 'Jana Nováka'], [4, 'Michaely Šebelové'], [1, 'Jany Malé'], null, null, null]);
+check('spolupodepsaní PN: jen když první jméno hlavičky sedí s autorem z evidence', [
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Michaely Šebelové, Toma Philippa a Pavly Pivoňka Vaňkové k vládnímu návrhu', 'Michaela Šebelová'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu', 'Jan Novák'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Toma Philippa a Michaely Šebelové k vládnímu návrhu', 'Michaela Šebelová'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Radka Vondráčka a dalších k vládnímu návrhu', 'Radek Vondráček'),
+    Hlidac\Proposers::pnCosigners('Text bez hlavičky', 'Jan Novák'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu', null),
+], [2, 0, null, null, null, null]);
+check('dovětek k prvnímu navrhovateli', array_map([Hlidac\Proposers::class, 'othersText'], [1, 3, 4, 5, null]),
+    ['a 1 další poslanec', 'a 3 další poslanci', 'a 4 další poslanci', 'a 5 dalších poslanců', 'a další poslanci']);
 $clubImporter = new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-clubs', $tmp . '/src'));
 $shortNames = (new ReflectionMethod($clubImporter, 'loadShortNames'))->invoke($clubImporter, $clubs);
 check('zkrácená jména poslanců: jednoznačné má id, shodné u dvou poslankyň 0, osoba bez klubu chybí',
@@ -169,9 +188,11 @@ check('předkladatel: vládní, poslanecká skupina s kluby, skupina bez počtu,
 ], [
     ['typ' => 'Vládní návrh', 'jmeno' => 'Ministerstvo financí', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný',
+        'vice' => true, 'dalsi' => 3, 'dalsi_text' => 'a 3 další poslanci',
         'skupina' => ['count' => 4, 'kluby' => [['klub' => 'ANO', 'count' => 2], ['klub' => 'KDU-ČSL', 'count' => 1], ['klub' => 'ODS', 'count' => 1]]],
         'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
-    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'funkce' => 'a další poslanci', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'funkce' => 'a další poslanci', 'vice' => true, 'dalsi' => null,
+        'dalsi_text' => 'a další poslanci', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Poslanecký návrh', 'jmeno' => 'Taťána Malá', 'funkce' => 'poslankyně', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Senátní návrh', 'jmeno' => 'Senát', 'funkce' => 'navrhli senátoři Canov M. a další', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Krajský návrh', 'jmeno' => 'Zastupitelstvo Jihomoravského kraje', 'predlozeno' => '2026-08-25'],
@@ -1921,14 +1942,19 @@ $rjC = $jobs->claim();
 $card = $jobs->cardV2(221);
 $rjKeys = ['ct', 'nazev', 'faze', 'score', 'title', 'perex', 'quote', 'quote_source', 'verified', 'reasons', 'url', 'data_date'];
 check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_keys($card ?? []))), []);
+// příjmení osob pro kontrolu atribuce generátoru (autoři PN, s rag/ i poslanci a řečníci): seřazená, bez duplicit
+$rjSurnames = $card['prijmeni_osob'] ?? null;
+check('karta v2: příjmení osob pro kontrolu atribuce', [is_array($rjSurnames), in_array('Jurečka', $rjSurnames ?? [], true),
+    $rjSurnames === array_values(array_unique($rjSurnames ?? [])), $rjSurnames !== null && $rjSurnames === (function (array $a) { sort($a); return $a; })($rjSurnames)],
+    [true, true, true, true]);
 check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
     [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
 check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
 check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk/221', '2026-11-20']);
 check('karta v2: předkladatel z dat (4 poslanci, první s klubem), titulek z textu návrhu bez autora PN',
     [$card['predkladatel'] ?? null, array_key_exists('pn_autor', $card ?? [])],
-    [['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný', 'skupina' => ['count' => 4],
-        'klub' => 'ANO', 'predlozeno' => '2026-06-08'], false]);
+    [['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný', 'vice' => true, 'dalsi' => 3,
+        'dalsi_text' => 'a 3 další poslanci', 'skupina' => ['count' => 4], 'klub' => 'ANO', 'predlozeno' => '2026-06-08'], false]);
 check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
 check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
 check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
@@ -1965,10 +1991,10 @@ db()->run("UPDATE pn_text SET ai_score = 6, ai_at = '2026-11-24 12:00:00' WHERE 
 $rjCardHead = $jobs->cardV2(78);
 check('karta z titulku PN: autor a klub PN ze serveru, předkladatel tisku',
     [$rjCardHead['quote_source'] ?? null, $rjCardHead['pn_autor'] ?? null, $rjCardHead['predkladatel'] ?? null],
-    ['pozměňovací návrh č. 9781', [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => 'ANO']],
+    ['pozměňovací návrh č. 9781', [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => 'ANO', 'spolu' => null]],
         ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'klub' => 'ANO', 'predlozeno' => '2026-01-12']]);
 db()->run("UPDATE pn SET klub = NULL WHERE id_dokument = 99781");
-check('karta /pn: autor PN bez klubu → klub null', $jobs->cardV2(78, [9781])['pn_autor'] ?? null, [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => null]]);
+check('karta /pn: autor PN bez klubu → klub null', $jobs->cardV2(78, [9781])['pn_autor'] ?? null, [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => null, 'spolu' => null]]);
 db()->run('DELETE FROM pn_text WHERE id_dokument IN (99781, 99782)');
 db()->run('DELETE FROM pn WHERE id_dokument IN (99781, 99782)');
 
@@ -2016,9 +2042,9 @@ $rjC = $jobs->claim();
 check('claim úlohy k PN: focus_pn jako pole čísel', [$rjC['job_id'] ?? null, $rjC['focus_pn'] ?? null], [$rjPnJob, [2312, 2313]]);
 check('claim úlohy k PN: údaje PN', $rjC['focus_pn_info'] ?? null, [
     ['cislo' => 2312, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:44:24', 'titulek' => null,
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'spolu' => null, 'vysledek' => null],
     ['cislo' => 2313, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:45:15', 'titulek' => 'Titulek PN 2313',
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'spolu' => null, 'vysledek' => null],
 ]);
 check('pole PostgreSQL → čísla', [Hlidac\ReelJobs::parsePnArray('{2376,2377}'), Hlidac\ReelJobs::parsePnArray(null), Hlidac\ReelJobs::parsePnArray('{}'), Hlidac\ReelJobs::parsePnArray('x')],
     [[2376, 2377], null, null, null]);
@@ -2824,7 +2850,7 @@ check('zmeny.php: bez odkazu na PR 0', [$f4Changes !== '', str_contains($f4Chang
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99801, 9801, 311, 6150, 'Test Poslanec', '2026-03-15 10:00:00', 'ANO2011')");
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99802, 9802, 311, NULL, 'Test Ministr', '2026-03-16 09:00:00', NULL)");
 // rozbor AI proběhl (bez titulku): úloha k PN se vydá až s rozborem všech zadaných PN (oprava 25. 11.)
-db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Text PN', 7, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Pozměňovací návrh poslance Test Poslance k vládnímu návrhu zákona. Text PN', 73, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
     [json_encode(['zavaznost' => 0]), json_encode(['zavaznost' => 0])]);
 // výsledek PN 9801 ve 3. čtení (PnOutcome) s hlasováním a kluby: claim ho posílá generátoru (šablona template_pn_v1)
 db()->run("INSERT INTO hlasovani (id_hlasovani, ct, schuze, cislo, datum, pro, proti, zdrzel, nehlasoval, prihlaseno, kvorum, vysledek, nazev, krok)

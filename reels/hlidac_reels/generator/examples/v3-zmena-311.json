@@ -55,7 +55,7 @@
   "kdo": "předkládá ministryně financí",
   "format": "zmena",
   "title": "Nová daň 50 % pro zpracovatele ropy. Platit má už za rok 2026",
-  "perex": "Vláda chce zdanit mimořádné marže rafinerií. Výnos má státu částečně vrátit výdaje spojené s růstem cen pohonných hmot.",
+  "perex": "Vládní návrh zavádí mimořádnou daň z marží rafinerií. Podle důvodové zprávy má výnos státu částečně vrátit výdaje spojené s růstem cen pohonných hmot.",
   "hook": {
     "big": 50,
     "unit": "%",
@@ -89,10 +89,6 @@
         "url": "https://www.psp.cz/sqw/text/orig2.sqw?idd=280196"
       }
     ],
-    "proc": {
-      "text": "Ministryně financí: marže rafinerií vyrostly kvůli ropné krizi, ne díky inovacím. Daň má státu vrátit část výdajů na pohonné hmoty.",
-      "zdroj": "úvodní slovo 13. 10. 2026, autorizováno"
-    },
     "pozor": {
       "lab": "Na co se dívat",
       "text": "Daň dopadne na období, které začalo před účinností zákona. Podle rozboru si přechodná ustanovení 1 a 2 odporují.",

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import psycopg
 
-from . import events, jobs, queue
+from . import events, inbox, jobs, queue
 from .queue import _tx
 
 log = logging.getLogger("hlidac_reels.uklid")
@@ -33,7 +33,7 @@ JOB_STATUS_PREFIX = "job_status:"  # bot.JOB_STATUS_KEY
 LANDSCAPE_FAILED_PREFIX = "landscape_failed:"  # bot.LANDSCAPE_FAILED_KEY bez id položky
 
 # klíče položky (id položky = přípona), sady (přípona = set_id = reel_jobs.id) a úlohy (přípona = reel_jobs.id)
-ITEM_PREFIXES = (LANDSCAPE_FAILED_PREFIX, queue.HELD_MSG_KEY, queue.PREVIEW_SENT_KEY)
+ITEM_PREFIXES = (LANDSCAPE_FAILED_PREFIX, queue.HELD_MSG_KEY, queue.PREVIEW_SENT_KEY, inbox.CARD_KEY)
 SET_PREFIXES = (queue.PICKED_KEY, queue.REMINDED_KEY, queue.SET_WARNINGS_KEY)
 JOB_PREFIXES = (JOB_STATUS_PREFIX, jobs.RETRIED_KEY)
 

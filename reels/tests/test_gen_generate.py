@@ -157,7 +157,7 @@ def test_bez_renderu(tmp_path, fake):
 
 
 def test_diakritika_prezije(tmp_path, fake):
-    text = "Příliš žluťoučký kůň úpěl ďábelské ódy.\n\nHodnotíme postup, ne politický obsah.\n\n#cosepece\n"
+    text = "Příliš žluťoučký kůň úpěl ďábelské ódy (AI).\n\nHodnotíme postup, ne politický obsah.\n\n#cosepece\n"
     fake["prepare"] = lambda wd: (wd / "variant-1" / "caption.txt").write_text(text, encoding="utf-8")
     r = _run(tmp_path)
     data = json.loads((tmp_path / "out" / "vysledek.json").read_text(encoding="utf-8"))
@@ -338,7 +338,8 @@ def test_normalizace_zapise_kartu_a_zasahy(tmp_path, fake):
     assert card["hook"]["big"] == "800" and card["hook"]["unit"] == "mil. Kč"
     assert r.variants[1].caption.endswith("Hodnotíme postup, ne politický obsah.")
     assert (d / "caption.txt").read_text(encoding="utf-8").strip() == r.variants[1].caption
-    notes = json.loads((d / "normalize.json").read_text(encoding="utf-8"))
+    # karta serveru v testu předkladatele nemá: pole kdo od modelu zmizí (zásah navíc, tady nás nezajímá)
+    notes = [n for n in json.loads((d / "normalize.json").read_text(encoding="utf-8")) if not n.startswith("kdo")]
     assert len(notes) == 2
     # bez zásahu se normalize.json zapíše prázdný
     assert json.loads((tmp_path / "out" / "variant-1" / "normalize.json").read_text(encoding="utf-8")) == []
@@ -367,7 +368,8 @@ def test_zasah_normalizace_prezije_opravu(tmp_path, fake, monkeypatch):
     monkeypatch.setattr(gen, "run_claude", run_claude)
     r = _run(tmp_path, render=False)
     assert len(fake["calls"]) == 2 and r.variants[1].ok, r.variants[1].errors
-    notes = json.loads((tmp_path / "out" / "variant-2" / "normalize.json").read_text(encoding="utf-8"))
+    notes = [n for n in json.loads((tmp_path / "out" / "variant-2" / "normalize.json").read_text(encoding="utf-8"))
+             if not n.startswith("kdo")]
     assert len(notes) == 1 and "800 mil. Kč" in notes[0]
 
 
@@ -815,3 +817,34 @@ def test_oprava_rozbije_kartu_vyrenderovane_varianty(tmp_path, fake, monkeypatch
     assert r.ok and all(v.ok for v in r.variants)
     assert _rendered_variants(fake).count("variant-2") == 4  # dvakrát na výšku a na šířku
     assert _state(tmp_path)["variants"]["2"]["state"] == "vyrenderovana"
+
+
+# --- atribuce (docs/reels-citace-bezpecne.md): chyba jde do opravného běhu, autopilot bez autora PN nic nevyrobí ---
+
+def test_chyba_atribuce_spusti_opravu(tmp_path, fake, monkeypatch):
+    def prepare(wd):
+        d = wd / "variant-2"
+        text = (d / "caption.txt").read_text(encoding="utf-8")
+        (d / "caption.txt").write_text("Ministryně řekla, že lhůta stačí.\n\n" + text, encoding="utf-8")
+    fake["prepare"] = prepare
+    real = gen.run_claude
+
+    def run_claude(prompt, **kw):
+        r = real(prompt, **kw)
+        if "OPRAVA:" in prompt:  # oprava: model větu se slovesem mluvení odstraní
+            assert "R1 popisek" in prompt
+            d = Path(kw["workdir"]) / "variant-2"
+            text = (d / "caption.txt").read_text(encoding="utf-8")
+            (d / "caption.txt").write_text(text.replace("Ministryně řekla, že lhůta stačí.\n\n", ""),
+                                           encoding="utf-8")
+        return r
+    monkeypatch.setattr(gen, "run_claude", run_claude)
+    r = _run(tmp_path, render=False)
+    assert len(fake["calls"]) == 2 and r.variants[1].ok, r.variants[1].errors
+
+
+def test_autopilot_pn_bez_autora_nevyrobi(tmp_path, fake):
+    info = [{"cislo": 2376, "osoba": None, "klub": None, "has_text": True}]
+    r = _run(tmp_path, render=False, autopilot=True, focus_pn=[2376], focus_info=info)
+    assert not r.ok and fake["calls"] == []
+    assert all("v evidenci psp.cz chybí" in v.errors[0] for v in r.variants)

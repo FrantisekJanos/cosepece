@@ -20,7 +20,7 @@ from hlidac_reels.media import VideoInfo
 
 CARD = "pribeh-pn-1813.json"
 CAPTION = ("PN 1813 podala Michaela Šebelová (STAN). Ruší strop 5 % na příspěvky pacientským organizacím.\n\n"
-           "Sněmovna zrušení stropu přijala, druhou část ne.\n\n"
+           "Sněmovna zrušení stropu přijala, druhou část ne. Hodnocení znaků: AI.\n\n"
            "Hodnotíme postup, ne politický obsah.\n\n#Sněmovna #pozměňovák #cosepece")
 
 
@@ -201,7 +201,7 @@ def test_formát_a_popisek():
     card["format"] = "pn"
     _, errs = _check(card)
     assert any("formát" in e for e in errs)
-    _, errs = _check(_card(), caption="PN 1813 podala Michaela Šebelová (STAN).")  # bez závěrečné věty doplní
+    _, errs = _check(_card(), caption="PN 1813 podala Michaela Šebelová (STAN). Shrnutí AI.")  # bez závěrečné věty doplní
     assert errs == []
     _, errs = _check(_card(), caption="Video o pozměňovacím návrhu.\n\nHodnotíme postup, ne politický obsah.")
     assert any("popisek" in e for e in errs)
@@ -347,7 +347,7 @@ def test_vzory_pro_model_projdou_kontrolou(name):
     src = Path(gen.__file__).parent / "examples" / name
     card = json.loads(src.read_text(encoding="utf-8"))
     cislo = card["pribeh"]["cislo"]
-    caption = f"PN {cislo} podal autor.\n\nHodnotíme postup, ne politický obsah.\n\n#a #b #c"
+    caption = f"PN {cislo} podal autor (shrnutí AI).\n\nHodnotíme postup, ne politický obsah.\n\n#a #b #c"
     errs = validate_variant(card, caption, template="template_pn_v1", ct=card["ct"],
                             reason_keys=[r["key"] for r in card["reasons"]], fmt="pribeh", focus_pn=[cislo])
     assert errs == []

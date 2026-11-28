@@ -5644,3 +5644,74 @@ def test_loop_zivost_jen_po_pruchodu_bez_chyby(conn, api, meta, media_dir, monke
     with pytest.raises(SystemExit):
         bot.loop(sleep=sleep)
     assert polls == [None, None, None, "2026-11-25T08:00:00+00:00"]
+
+
+# --- brána atribuce před zveřejněním (docs/reels-citace-bezpecne.md, U3) ---------------------------
+
+@pg
+def test_autopilot_vadny_popisek_nezverejni(conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 61, n=2)
+    queue.set_fields(conn, ids[0], caption="Novák řekl: „Tohle je podvod na voliče.“\n\nHodnotíme postup.")
+    bot.maybe_autopublish()
+    assert meta.calls["ig_create"] == 0 and meta.calls["fb_upload_reel"] == 0
+    rows = [_get(conn, i) for i in ids]
+    assert [(r.status, r.autopilot) for r in rows] == [("queued", False)] * 2
+    alert = api.texts()[-1]
+    assert "autopilot nezveřejnil" in alert and "R1" in alert and "Sada #61" in alert
+
+
+@pg
+def test_autopilot_cisty_popisek_zverejni(conn, api, meta, media_dir):
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 62, n=1)
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "published"
+
+
+@pg
+def test_autopilot_karta_z_prevzeti_hlida_dalsi_navrhovatele(conn, api, meta, media_dir):
+    from hlidac_reels import inbox, queue
+    bot, t = _autopilot_bot(conn, api, meta, media_dir)
+    ids = _autopilot_set(conn, media_dir, 63, n=1)
+    queue.set_fields(conn, ids[0], caption="PN 2376 podal Jan Novák (ANO).")
+    card = {"pn_autor": [{"cislo": 2376, "jmeno": "Jan Novák", "klub": "ANO", "spolu": 2}]}
+    queue.set_state(conn, f"{inbox.CARD_KEY}{ids[0]}", json.dumps(card))
+    bot.maybe_autopublish()
+    assert _get(conn, ids[0]).status == "queued"
+    assert "a 2 další poslanci" in api.texts()[-1]
+
+
+@pg
+def test_rucne_schvaleny_vadny_popisek_zpet_ke_schvaleni(bot, conn, api, meta, media_dir):
+    from hlidac_reels import queue
+    rid = _add(conn, media_dir, 64, caption="Ministryně tvrdí, že lhůta stačí.")
+    assert queue.transition(conn, rid, "queued", "pending")
+    bot.handle(_cb(f"ok:{rid}"))
+    assert _get(conn, rid).status == "pending" and meta.calls["ig_create"] == 0
+    last = api.sent()[-1]
+    assert "nezveřejněno" in last["text"] and f"ok:{rid}" in _buttons(last)
+
+
+@pg
+def test_audit_atribuce_fronty(conn, media_dir):
+    from hlidac_reels import audit_atribuce, queue
+    bad = _add(conn, media_dir, 71, caption="Opozice tvrdí, že daň zaplatí jedna firma.")
+    _add(conn, media_dir, 72)
+    done = _add(conn, media_dir, 73, caption="Podle Schillerové jde o úsporu.")
+    assert queue.transition(conn, done, "queued", "published")
+    assert [r[0] for r in audit_atribuce.audit(conn)] == [bad]
+    assert [r[0] for r in audit_atribuce.audit(conn, audit_atribuce.WAITING + ("published",))] == [bad, done]
+
+
+@pg
+def test_rucne_schvaleny_kontroluje_dalsi_navrhovatele(bot, conn, api, meta, media_dir):
+    from hlidac_reels import inbox, queue
+    rid = _add(conn, media_dir, 65, caption="PN 2376 podal Jan Novák (ANO).")
+    queue.set_state(conn, f"{inbox.CARD_KEY}{rid}",
+                    json.dumps({"pn_autor": [{"cislo": 2376, "jmeno": "Jan Novák", "klub": "ANO", "spolu": 2}]}))
+    assert queue.transition(conn, rid, "queued", "pending")
+    bot.handle(_cb(f"ok:{rid}"))
+    assert _get(conn, rid).status == "pending" and meta.calls["ig_create"] == 0
+    assert "a 2 další poslanci" in api.sent()[-1]["text"]

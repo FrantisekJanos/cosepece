@@ -34,10 +34,35 @@ class CasVyprsel(Pretizeno):
     """Volání nedoběhlo v časovém limitu. Mohlo být účtováno, cenu nikdo nezná (služba zapíše horní odhad)."""
 
 
-def _pred_streamem(e: BaseException) -> BaseException:
-    """Označí chybu HTTP stavu, která přišla dřív, než stream začal (požadavek se neúčtuje)."""
-    e.pred_streamem = True
+def _cteni_po_odeslani(e: BaseException) -> bool:
+    """Vypršelo čtení po odeslání požadavku (čekání na hlavičky nebo data)? Pak API mohlo začít generovat
+    a účtovat. Timeout spojení, poolu i zápisu požadavku znamená, že požadavek API nedostalo celý."""
+    return isinstance(e, httpx.ReadTimeout) or (isinstance(e, anthropic.APITimeoutError)
+                                               and isinstance(e.__cause__, httpx.ReadTimeout))
+
+
+def _preloz(e: Exception) -> Exception:
+    """Výjimka SDK nebo transportu → `CasVyprsel` / `Pretizeno`; chyby API (400…) a ostatní beze změny."""
+    if isinstance(e, anthropic.RateLimitError):
+        return Pretizeno(f"429: {e}")
+    if isinstance(e, anthropic.APIStatusError):
+        return Pretizeno(f"{e.status_code}: {e}") if _pretizeni(e) else e
+    if isinstance(e, anthropic.APITimeoutError):
+        return CasVyprsel(f"časový limit: {e}")
+    if isinstance(e, anthropic.APIConnectionError):
+        return Pretizeno(f"spojení: {e}")
+    # SDK chyby transportu uprostřed streamu nepřebalí (anthropic/_streaming.py)
+    if isinstance(e, httpx.TimeoutException):
+        return CasVyprsel(f"časový limit ve streamu: {type(e).__name__}")
+    if isinstance(e, httpx.TransportError):
+        return Pretizeno(f"spojení ve streamu: {type(e).__name__}")
     return e
+
+
+def mozna_uctovano(e: BaseException) -> bool:
+    """Mohlo nedoběhlé volání stát peníze? Jen chyba API nebo přetížení/výpadek (`Pretizeno`) bez příznaku
+    `pred_streamem`. Chyba v kódu (TypeError…) ani výjimka před odesláním požadavku se neúčtuje."""
+    return isinstance(e, (Pretizeno, anthropic.APIError)) and not getattr(e, "pred_streamem", False)
 
 
 @dataclass(frozen=True)
@@ -145,23 +170,15 @@ class AnthropicLLM:
                     if udalost.type == "content_block_delta" and getattr(udalost.delta, "type", None) == "text_delta":
                         await na_text(udalost.delta.text)
                 zprava = await stream.get_final_message()
-        except anthropic.RateLimitError as e:
-            chyba = Pretizeno(f"429: {e}")
-            raise (chyba if stream_bezi else _pred_streamem(chyba)) from e
-        except anthropic.APIStatusError as e:
-            if _pretizeni(e):
-                chyba = Pretizeno(f"{e.status_code}: {e}")
-                raise (chyba if stream_bezi else _pred_streamem(chyba)) from e
-            raise e if stream_bezi else _pred_streamem(e)
-        except anthropic.APITimeoutError as e:
-            raise CasVyprsel(f"časový limit: {e}") from e
-        except anthropic.APIConnectionError as e:
-            raise Pretizeno(f"spojení: {e}") from e
-        # SDK chyby transportu uprostřed streamu nepřebalí (anthropic/_streaming.py)
-        except httpx.TimeoutException as e:
-            raise CasVyprsel(f"časový limit ve streamu: {type(e).__name__}") from e
-        except httpx.TransportError as e:
-            raise Pretizeno(f"spojení ve streamu: {type(e).__name__}") from e
+        except Exception as e:
+            chyba = _preloz(e)
+            # před začátkem streamu (bez hlaviček odpovědi) API nic negenerovalo; výjimkou je timeout čtení
+            # po odeslání požadavku, tam API už mohlo začít
+            if not stream_bezi and not _cteni_po_odeslani(e):
+                chyba.pred_streamem = True
+            if chyba is e:
+                raise
+            raise chyba from e
         ms = int((time.monotonic() - zacatek) * 1000)
         content = [b.model_dump(mode="json", exclude_none=True) for b in zprava.content]
         return Odpoved(content, str(zprava.stop_reason), _usage(zprava.usage), str(zprava.model or model), ms)

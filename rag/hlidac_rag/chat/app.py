@@ -41,7 +41,7 @@ from .citace import TYPY_S_TEXTEM, over_odstavec
 from .config import Nastaveni
 from .historie import ZNAKU_NA_TOKEN, odhad_tokenu, sestav
 from .kontext import Kontext, z_json, znacka
-from .llm import LLM, MAX_OPAKOVANI, CasVyprsel
+from .llm import LLM, MAX_OPAKOVANI, mozna_uctovano
 from .nastroje import Vysledek
 from .relace import (COOKIE_BETA, COOKIE_SID, BETA_PLATNOST, ChybiIP, cookie_sid, den_prahy, ip_z_hlavicky, over_beta,
                      platne_sid, podepis_beta)
@@ -571,8 +571,8 @@ class Sluzba:
 
 class _LLMVTahu:
     """LLM pro jeden tah: timeout každého volání ze zbývajícího času tahu (SDK opakuje nejvýš MAX_OPAKOVANI)
-    a evidence rozběhnutého volání. Volání, které po odeslání požadavku skončí chybou (vypršení, přerušené
-    spojení, chyba ve streamu), dostane do útraty horní odhad ceny."""
+    a evidence rozběhnutého volání. Volání, které po odeslání požadavku skončí chybou API nebo výpadkem
+    (`llm.mozna_uctovano`: timeout čtení, přerušené spojení, chyba ve streamu), dostane do útraty horní odhad."""
 
     def __init__(self, llm: LLM, konec_tahu: float, pri_odhadu):
         self.llm, self.konec_tahu, self.pri_odhadu = llm, konec_tahu, pri_odhadu
@@ -589,10 +589,12 @@ class _LLMVTahu:
             o = await self.llm.volej(model=model, system=system, tools=tools, messages=messages,
                                      max_tokens=max_tokens, timeout_s=timeout_s, **kw)
         except Exception as e:
-            # požadavek odešel a mohl být účtován; neúčtuje se jen chyba HTTP stavu před začátkem streamu
             r, self.rozbehnute = self.rozbehnute, None
-            if not getattr(e, "pred_streamem", False):
+            if mozna_uctovano(e):      # chyba API nebo výpadek po odeslání požadavku: mohlo se účtovat
                 await self.pri_odhadu(r)
+            elif not getattr(e, "pred_streamem", False):
+                # chyba v kódu: bez odhadu (opakovaná chyba by jinak vyčerpala rozpočet), výstraha do Sentry
+                log.exception("volání modelu selhalo mimo API, cena se neodhaduje")
             raise
         self.rozbehnute = None
         u = o.usage

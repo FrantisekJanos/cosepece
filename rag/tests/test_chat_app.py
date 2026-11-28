@@ -1042,6 +1042,45 @@ async def test_prerusene_spojeni_ve_streamu_zapise_odhad_chyba_pred_streamem_ne(
     assert s.ulozit.volani_llm == [] and s.ulozit.zpravy[-1]["stav"] == "chyba"
 
 
+def _timeout_sdk(pricina):
+    import anthropic
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    e = anthropic.APITimeoutError(request=req)
+    e.__cause__ = pricina(f"{pricina.__name__}", request=req)
+    return e
+
+
+@pytest.mark.parametrize("chyba, odhad", [
+    (lambda: __import__("anthropic").APIConnectionError(
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")), False),
+    (lambda: _timeout_sdk(httpx.ConnectTimeout), False),
+    (lambda: _timeout_sdk(httpx.PoolTimeout), False),
+    (lambda: _timeout_sdk(httpx.WriteTimeout), False),
+    (lambda: _timeout_sdk(httpx.ReadTimeout), True),      # požadavek odešel, čekalo se na hlavičky
+], ids=["spojeni", "connect_timeout", "pool_timeout", "write_timeout", "read_timeout"])
+async def test_chyba_pred_streamem_zapise_odhad_jen_po_odeslani(chyba, odhad):     # re-recenze r3
+    s = Svet()
+    s.sluzba.llm = _LLMSKlientem(_KlientSChybou(pri_otevreni=chyba()))
+    r = await post(s)
+    await s.dobehni()
+    assert [v["stop_reason"] for v in s.ulozit.volani_llm] == (["odhad_timeout"] if odhad else [])
+    assert s.ulozit.zpravy[-1]["stav"] == "chyba" and ("chyba", {"kod": "chyba"}) in [(t, d) for t, d, _ in sse(r.telo)]
+
+
+async def test_runtime_error_z_llm_nezapise_cenu_a_zaloguje(caplog):
+    class Padajici(FalesnyLLM):
+        async def volej(self, **kw):
+            self.volani += 1
+            raise TypeError("chyba v kódu")
+    s = Svet()
+    s.sluzba.llm = Padajici([])
+    with caplog.at_level("ERROR", logger="hlidac_rag.chat.app"):
+        await post(s)
+        await s.dobehni()
+    assert s.ulozit.volani_llm == [] and s.ulozit.zpravy[-1]["stav"] == "chyba"
+    assert any("mimo API" in z.getMessage() and z.exc_info for z in caplog.records)
+
+
 async def test_selhani_pricteni_zpravy_uklidi_zalozenou_odpoved():            # re-recenze C
     s = Svet([ODP_TEXT("Ano.")])
 
@@ -1066,6 +1105,7 @@ async def test_chyba_modelu_je_udalost_chyba_a_cena_zustane():
     await s.dobehni()
     assert ("chyba", {"kod": "chyba"}) in [(t, d) for t, d, _ in sse(r.telo)]
     assert s.ulozit.zpravy[-1]["stav"] == "chyba" and s.sluzba.soubeh == 0
+    assert s.ulozit.volani_llm == []          # chyba v kódu se neúčtuje (re-recenze r3)
 
 
 async def test_telegram_jednou_pri_100_procentech():

@@ -10,6 +10,7 @@ parametru (0, "", [], u poradi -1); adaptér ji funkci nepředá a platí výcho
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -163,6 +164,12 @@ _PEVNE = {
 }
 # parametry schématu, které funkce nedostane (zpracuje je adaptér)
 _JEN_ADAPTER = {("get_hlasovani", "jmenovite")}
+# parametry bez výchozí hodnoty ve funkci: prázdnou hodnotu nejde zahodit (TypeError). Prázdný dotaz se předá
+# (hledej_v_textech s filtrem vypíše všechny celky, hledej_v_projevech vrátí čitelnou ValueError); u ostatních
+# (identifikátory ct, cislo, id_hlasovani, sb, klic, jmeno, osoba) je prázdná hodnota chyba argumentu.
+_BEZ_VYCHOZI = {(n, p.name) for n, f in _FUNKCE.items() for p in list(inspect.signature(f).parameters.values())[1:]
+                if p.default is inspect.Parameter.empty}
+_PRAZDNE_SMI = {("hledej_v_textech", "dotaz"), ("hledej_v_projevech", "dotaz")}
 
 NAZVY: frozenset[str] = frozenset(_DEFINICE)
 
@@ -225,6 +232,11 @@ def _argumenty(nazev: str, argumenty: dict) -> tuple[dict, dict]:
             pro_adapter[klic] = hodnota
         elif hodnota != _PRAZDNE_ZVLAST.get((nazev, klic), _PRAZDNE.get(schema["type"])):
             pro_funkci[klic] = hodnota
+        elif (nazev, klic) in _PRAZDNE_SMI:
+            pro_funkci[klic] = hodnota
+    chybi = sorted(k for (n, k) in _BEZ_VYCHOZI if n == nazev and k not in pro_funkci)
+    if chybi:
+        raise _SpatnyArgument(f"{', '.join(chybi)} je povinné (zadejte skutečnou hodnotu, ne 0 ani prázdný text)")
     return pro_funkci, pro_adapter
 
 
@@ -384,13 +396,65 @@ def _orez(text: str, max_znaku: int) -> str:
 
 def _rozpocty(nazev: str, max_znaku: int) -> dict:
     """Vlastní rozpočet nástrojů, které stránkují podle znaků, ať stránka nepřeteče přes ořez adaptéru."""
-    if nazev == "rozprava":     # stránka vystoupení; hlavička a souhrn rozpravy jdou navíc
-        return {"max_znaku": max(1000, min(40000, max_znaku // 2))}
+    if nazev == "rozprava":     # stránka vystoupení; přetečení se souhrnem řeší _stranka po celých záznamech
+        return {"max_znaku": max(1000, min(40000, max_znaku - 4000))}
     if nazev == "get_projev":
         return {"max_znaku": max(500, min(12000, max_znaku - 3000))}
     if nazev == "get_cel":
         return {"max_znaku": max(500, min(8000, max_znaku - 3000))}
     return {}
+
+
+# seznamy se stránkováním: (pole se záznamy, ukazatel další stránky); přes max_znaku se zkracují po celých záznamech
+_SEZNAMY = {
+    "rozprava": ("vystoupeni", "dalsi_od_poradi"), "projevy_k_tisku": ("projevy", "dalsi_offset"),
+    "projevy_recnika": ("projevy", "dalsi_offset"), "hledej_v_projevech": ("projevy", "dalsi_offset"),
+    "hledej_v_textech": ("vysledky", "dalsi_offset"), "pn_k_tisku": ("pn", "dalsi_offset"),
+    "tisky_menici_zakon": ("tisky", "dalsi_offset"), "osnova_textu": ("celky", "dalsi_offset"),
+    "hlasovani_k_tisku": ("hlasovani", "dalsi_offset"),
+}
+ZKRACENA_STRANKA = "[zkráceno kvůli velikosti: vráceno {k} z {n} záznamů; další stránka {param} = {dalsi}]"
+ZKRACENY_PROJEV = "[zkráceno kvůli velikosti: text vystoupení pokračuje přes pokracovani (get_projev)]"
+
+
+def _text(nazev: str, d: dict, poznamka: str | None = None) -> str:
+    hlavicka = _hlavicka(nazev, d, _polozky(nazev, d)) + (f"\n{poznamka}" if poznamka else "")
+    return hlavicka + "\n" + json.dumps(d, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _stranka(nazev: str, d: dict, max_znaku: int) -> tuple[dict, str]:
+    """(výsledek, text pro model) do max_znaku. Seznam se zkracuje po celých záznamech a ukazatel další stránky
+    (dalsi_od_poradi, dalsi_offset) ukáže na první nevrácený záznam, ať model nic nepřeskočí a JSON zůstane celý.
+    Jediné vystoupení rozpravy, které se nevejde, dostane zkrácený text a pokracovani přes get_projev (jako
+    rozprava._zkrat). Co se nevejde ani potom (detail, velký souhrn), ořízne _orez s poznámkou."""
+    text = _text(nazev, d)
+    if len(text) <= max_znaku or nazev not in _SEZNAMY or not d.get(_SEZNAMY[nazev][0]):
+        return d, _orez(text, max_znaku)
+    pole, ukazatel = _SEZNAMY[nazev]
+    zaznamy = d[pole]
+    n = len(zaznamy)
+    param = "od_poradi" if ukazatel == "dalsi_od_poradi" else "offset"
+
+    def dalsi(k: int):
+        """Ukazatel na záznam s indexem k (první nevrácený)."""
+        return zaznamy[k]["poradi"] if ukazatel == "dalsi_od_poradi" else (d.get("offset") or 0) + k
+
+    for k in range(n - 1, 0, -1):
+        kratsi = {**d, pole: zaznamy[:k], ukazatel: dalsi(k)}
+        text = _text(nazev, kratsi, ZKRACENA_STRANKA.format(k=k, n=n, param=param, dalsi=dalsi(k)))
+        if len(text) <= max_znaku:
+            return kratsi, text
+    # ani jeden záznam se celý nevejde: zůstane první
+    prvni = dict(zaznamy[0])
+    kratsi = {**d, pole: [prvni], ukazatel: dalsi(1) if n > 1 else d.get(ukazatel)}
+    poznamka = ZKRACENA_STRANKA.format(k=1, n=n, param=param, dalsi=dalsi(1)) if n > 1 else None
+    if nazev == "rozprava" and isinstance(prvni.get("text"), str):
+        poznamka = "\n".join(filter(None, [poznamka, ZKRACENY_PROJEV]))
+        cely = prvni["text"]
+        prvni.update(text="", zkraceno=True, pokracovani=f'get_projev("{prvni["klic"]}", offset_znaku={len(cely)})')
+        delka = max(0, min(len(cely), max_znaku - len(_text(nazev, kratsi, poznamka))))
+        prvni.update(text=cely[:delka], pokracovani=f'get_projev("{prvni["klic"]}", offset_znaku={delka})')
+    return kratsi, _orez(_text(nazev, kratsi, poznamka), max_znaku)
 
 
 def _rollback(conn) -> None:
@@ -435,6 +499,5 @@ def vykonej(conn, nazev: str, argumenty: dict, max_znaku: int = 18000) -> Vysled
         return Vysledek(DB_CHYBA, [], True)
     if nazev == "get_hlasovani" and not adapter.get("jmenovite"):
         d = {k: v for k, v in d.items() if k != "poslanci"}
-    polozky = _polozky(nazev, d)
-    telo = json.dumps(d, ensure_ascii=False, separators=(",", ":"), default=str)
-    return Vysledek(_orez(_hlavicka(nazev, d, polozky) + "\n" + telo, max_znaku), polozky, False)
+    d, text = _stranka(nazev, d, max_znaku)
+    return Vysledek(text, _polozky(nazev, d), False)

@@ -184,6 +184,94 @@ def test_prazdne_hodnoty_se_nepredaji_a_enum_bez_ohledu_na_velikost(monkeypatch)
     assert dostal == {"ct": 221, "pn": None, "oznaceni": None, "poradi": 0, "verze": "schvalene"}
 
 
+def _telo(text: str):
+    """JSON za hlavičkou textu pro model."""
+    return json.loads(text[text.index("\n{") + 1:])
+
+
+@pytest.mark.parametrize("nazev, argumenty, povinne", [
+    ("get_tisk", {"ct": 0, "vcetne": []}, "ct"),
+    ("get_pn", {"cislo": 0}, "cislo"),
+    ("rozprava", {"ct": 0, "format": "prehled"}, "ct"),
+    ("pn_k_tisku", {"ct": 0, "id_osoba": 0, "offset": 0}, "ct"),
+    ("hlasovani_k_tisku", {"ct": 0, "offset": 0}, "ct"),
+    ("projevy_k_tisku", {"ct": 0}, "ct"),
+    ("get_hlasovani", {"id_hlasovani": 0, "jmenovite": False}, "id_hlasovani"),
+    ("tisky_menici_zakon", {"sb": "", "offset": 0}, "sb"),
+    ("tisk_podle_sbirky", {"sb": ""}, "sb"),
+    ("get_projev", {"klic": "", "okoli": 0, "offset_znaku": 0}, "klic"),
+    ("najdi_osobu", {"jmeno": ""}, "jmeno"),
+    ("projevy_recnika", {"osoba": ""}, "osoba"),
+])
+def test_prazdny_povinny_identifikator_je_chyba_argumentu(monkeypatch, caplog, nazev, argumenty, povinne):
+    """Prázdná hodnota u parametru bez výchozí hodnoty ve funkci = čitelná chyba argumentu, ne TypeError
+    ve funkci („selhal na chybě serveru“ a log.exception do Sentry)."""
+    volano = []
+    monkeypatch.setitem(nastroje._FUNKCE, nazev, lambda conn, *a, **kw: volano.append(1))
+    v = vykonej(object(), nazev, argumenty)
+    assert v.chyba and f"{povinne} je povinné" in v.text and not volano
+    assert "chybě serveru" not in v.text and not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_prazdny_dotaz_se_preda(monkeypatch):
+    """hledej_v_textech s prázdným dotazem a filtrem vypíše všechny celky (tools.py), dotaz se proto předá."""
+    dostal = {}
+
+    def fake(conn, dotaz, **kw):
+        dostal.update(dotaz=dotaz, **kw)
+        return {"celkem": 0, "vysledky": []}
+
+    monkeypatch.setitem(nastroje._FUNKCE, "hledej_v_textech", fake)
+    v = vykonej(object(), "hledej_v_textech", {"dotaz": "", "ct": 221, "pn": 0, "meni_zakon": "", "rezim": "auto",
+                                               "offset": 0})
+    assert not v.chyba and dostal["dotaz"] == "" and dostal["ct"] == 221
+    # hledej_v_projevech: prázdný dotaz jde do funkce, ta vrátí čitelnou ValueError z tools._tsquery
+    v = vykonej(object(), "hledej_v_projevech", {"dotaz": "", "ct": 221})
+    assert v.chyba and "Dotaz je příliš krátký" in v.text
+
+
+def test_dlouha_rozprava_se_zkrati_po_vystoupenich(monkeypatch):
+    """Přetečení stránky rozpravy: celá vystoupení, platný JSON a dalsi_od_poradi = první nevrácené."""
+    def fake(conn, ct, od_poradi=0, **kw):
+        start = max(1, od_poradi)
+        vystoupeni = [{"poradi": i, "klic": f"10/34/{600 + i}/1", "datum": "2026-11-12", "recnik": f"Řečník {i}",
+                       "druh": "recnik", "znaku": 2000, "text": f"Projev {i}. " + "slovo " * 330}
+                      for i in range(start, start + 8)]
+        return {"ct": ct, "format": "plny", "celkem": 20, "od_poradi": start, "dalsi_od_poradi": start + 8,
+                "souhrn": {"recnici": [{"recnik": f"Řečník {i}", "vystoupeni": 1} for i in range(1, 21)]},
+                "vystoupeni": vystoupeni}
+
+    monkeypatch.setitem(nastroje._FUNKCE, "rozprava", fake)
+    v = vykonej(object(), "rozprava", {"ct": 221, "format": "plny", "od_poradi": 5}, max_znaku=7000)
+    assert not v.chyba and len(v.text) <= 7000
+    d = _telo(v.text)
+    vracena = [r["poradi"] for r in d["vystoupeni"]]
+    assert vracena == list(range(5, 5 + len(vracena))) and 1 <= len(vracena) < 8
+    assert d["dalsi_od_poradi"] == vracena[-1] + 1
+    assert all(r["text"].endswith("slovo ") for r in d["vystoupeni"])          # texty celé
+    assert [p.klic for p in v.polozky] == [f"projev:10/34/{600 + i}/1" for i in vracena]
+    assert f"od_poradi = {vracena[-1] + 1}" in v.text and "zkráceno" in v.text
+
+
+def test_seznam_s_offsetem_se_zkrati_a_posune_dalsi_offset(monkeypatch):
+    monkeypatch.setitem(nastroje._FUNKCE, "projevy_k_tisku", lambda conn, ct, **kw: {
+        "ct": ct, "celkem": 100, "offset": 40, "dalsi_offset": 60,
+        "projevy": [{"klic": f"10/34/{i}/1", "recnik": "R", "datum": "2026-11-12", "autorizovano": True,
+                     "uryvek": "x" * 400} for i in range(20)]})
+    v = vykonej(object(), "projevy_k_tisku", {"ct": 221, "offset": 40}, max_znaku=3000)
+    d = _telo(v.text)
+    assert len(v.text) <= 3000 and d["dalsi_offset"] == 40 + len(d["projevy"]) and len(d["projevy"]) < 20
+    assert len(v.polozky) == len(d["projevy"])
+
+
+def test_jedine_dlouhe_vystoupeni_dostane_pokracovani(conn_fake):
+    v = vykonej(conn_fake, "rozprava", {"ct": 221, "format": "plny"}, max_znaku=2000)
+    d = _telo(v.text)
+    r = d["vystoupeni"][0]
+    assert len(v.text) <= 2000 and len(d["vystoupeni"]) == 1 and d["dalsi_od_poradi"] == 2
+    assert r["zkraceno"] is True and r["pokracovani"] == f'get_projev("{r["klic"]}", offset_znaku={len(r["text"])})'
+
+
 def test_valueerror_jde_do_textu_beze_zmeny(monkeypatch):
     def fake(conn, ct, vcetne=None):
         raise ValueError("Tisk 9999 v 10. období nesleduji. Zkuste seznam_tisku(q=…).")

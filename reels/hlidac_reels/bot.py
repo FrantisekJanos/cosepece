@@ -55,7 +55,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid, xpost
+from . import attribution, db, events, fresh, hlidani, inbox, jobs, messages, publish, queue, uklid, xpost
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS
 from .messages import (AUTOPILOT_PN_LIST_HEADER, AUTOPILOT_QUEUED, approval_buttons, autopilot_done,
@@ -403,8 +403,46 @@ class Bot:
         self._publish(reel_id, publish.retry)
         self._safe_send_next()
 
+    def _attribution_errors(self, reel: Reel) -> list[str]:
+        """Kontrola atribuce nad popiskem (a kartou autopilota uloženou při převzetí, inbox.CARD_KEY)."""
+        card = None
+        raw = queue.get_state(self.conn, f"{inbox.CARD_KEY}{reel.id}")
+        if raw:
+            try:
+                card = json.loads(raw)
+            except ValueError:
+                card = None
+        return attribution.public_text_errors(card, reel.caption, reel.ct)
+
+    def _attribution_gate(self, reel_id: int, auto: bool) -> Reel | None:
+        """Brána před zveřejněním (docs/reels-citace-bezpecne.md, U3): popisek s výrokem přisouzeným osobě,
+        bez „a N dalších“ nebo bez označení AI se nezveřejní. Položka autopilota (i zbytek její sady) jde ke
+        schválení, ručně schválená zpět do pending s tlačítky; bot pošle výstrahu s chybami.
+        Vrací položku po zásahu, nebo None (v pořádku, zveřejnit)."""
+        reel = queue.get(self.conn, reel_id)
+        if reel is None or reel.status != "approved":
+            return None
+        errs = self._attribution_errors(reel)
+        if not errs:
+            return None
+        log.warning("#%s: kontrola atribuce nepustila zveřejnění: %s", reel_id, errs)
+        if auto:
+            queue.autopilot_set_to_approval(self.conn, reel_id)
+            self._say(self._scrub(messages.attribution_text(reel_id, errs, True, reel.set_id)))
+        else:
+            queue.transition(self.conn, reel_id, "approved", "pending", decided_at=None)
+            self._say(self._scrub(messages.attribution_text(reel_id, errs, False)), approval_buttons(reel_id))
+        return queue.get(self.conn, reel_id)
+
     def _publish(self, reel_id: int, fn: Callable[..., Reel], auto: bool = False) -> Reel:
-        """auto=True: položka autopilota, úspěch se ohlásí zprávou autopilota s odkazy."""
+        """auto=True: položka autopilota, úspěch se ohlásí zprávou autopilota s odkazy.
+
+        Před prvním zveřejněním (publish.run) projde popisek kontrolou atribuce (_attribution_gate); opakování
+        (publish.retry) už zveřejněnou položku jen dokončí a kontrolu nemá."""
+        if fn is publish.run:
+            blocked = self._attribution_gate(reel_id, auto)
+            if blocked is not None:
+                return blocked
         self._say("Zveřejňuji…")
         try:
             reel = fn(self.conn, self.meta, reel_id, media_dir=self.media_dir, public_base=self.public_base,
@@ -1620,6 +1658,10 @@ class Bot:
                 # nevzniklé varianty se ohlásí až po zveřejnění poslední položky sady (_announce_skipped)
                 queue.set_state(self.conn, f"{AUTOPILOT_SKIPPED_KEY}{r.job_id}",
                                 json.dumps(r.skipped, ensure_ascii=False))
+            if r.ok and r.attribution:
+                # sada autopilota s nálezem kontroly atribuce šla ke schválení (inbox._ingest_one)
+                errs = [f"varianta {n}: {e}" for n, es in sorted(r.attribution.items()) for e in es]
+                self._say(self._scrub(messages.attribution_text(0, errs, True, r.job_id)))
             if r.ok and not r.autopilot and r.warnings:
                 # vadná šířka: řádek v první zprávě sady (_offer_set); sada autopilota zprávu sady nemá,
                 # zůstane jen log z inbox

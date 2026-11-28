@@ -583,6 +583,17 @@ def autopilot_to_approval(conn) -> list[int]:
     return ids
 
 
+def autopilot_set_to_approval(conn, reel_id: int) -> list[int]:
+    """Položku autopilota (a zbylé nezveřejněné položky její sady) vrátí ke schválení: approved → queued,
+    autopilot false. Volá ji brána atribuce před zveřejněním (Bot._publish). Vrací id změněných položek."""
+    with _tx(conn), conn.cursor() as cur:
+        cur.execute("UPDATE reel_queue SET status='queued', autopilot=false, sent_at=NULL, decided_at=NULL "
+                    "WHERE status='approved' AND autopilot AND (id=%s OR set_id = (SELECT set_id FROM reel_queue "
+                    "WHERE id=%s AND set_id IS NOT NULL)) RETURNING id", (reel_id, reel_id))
+        ids = sorted(r[0] for r in cur.fetchall())
+    return ids
+
+
 def by_telegram_msg(conn, msg_id: int) -> Reel | None:
     """Položka, k níž patří zpráva v Telegramu (video nebo náhled s tlačítky)."""
     with conn.cursor() as cur:

@@ -166,6 +166,17 @@ def approval_buttons(reel_id: int) -> list[tuple[str, str]]:
             ("Zamítnout", f"no:{reel_id}")]
 
 
+def attribution_text(reel_id: int, errors: list[str], auto: bool, set_id: int | None = None) -> str:
+    """Brána atribuce nepustila položku ke zveřejnění (výrok přisouzený osobě, chybí „a N dalších“…)."""
+    what = f"Sada #{set_id}" if set_id is not None else f"#{reel_id}"
+    head = (f"⚠️ {what}: autopilot nezveřejnil, kontrola textu našla chyby. Jde ke schválení."
+            if auto else f"⚠️ #{reel_id}: nezveřejněno, kontrola textu našla chyby. Uprav popisek a schval znovu.")
+    lines = [f"– {e[:300]}" for e in errors[:5]]
+    if len(errors) > 5:
+        lines.append(f"– … a {len(errors) - 5} dalších")
+    return "\n".join([head, *lines])
+
+
 def retry_buttons(reel_id: int) -> list[tuple[str, str]]:
     return [("Zkusit znovu", f"retry:{reel_id}")]
 

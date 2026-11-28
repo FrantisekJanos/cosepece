@@ -1,6 +1,6 @@
 /* Panel chatu cosepece.cz (spec 7.1). Samostatné styly, všechny třídy s předponou cz-chat-; style.css webu se nemění.
    Barvy podle proměnných webu (assets/style.css), kde existují; tmavý režim podle prefers-color-scheme. */
-.cz-chat-panel {
+.cz-chat-panel, .cz-chat-nahled-pozadi {
   --cz-chat-pozadi: var(--surface, #fff);
   --cz-chat-plocha: var(--ground, #F6F6F3);
   --cz-chat-cara: var(--line, #E3E3DE);
@@ -13,6 +13,8 @@
   --cz-chat-system: #FFF7ED;
   --cz-chat-system-cara: #F3D9B5;
   --cz-chat-varovani: var(--warn, #B45309);
+}
+.cz-chat-panel {
   position: fixed; right: 16px; bottom: 16px; z-index: 2147483001;
   width: 440px; max-width: calc(100vw - 32px); height: 720px; max-height: calc(100vh - 32px);
   display: flex; flex-direction: column; box-sizing: border-box;
@@ -21,17 +23,18 @@
   font: 15px/1.5 Inter, system-ui, sans-serif; overflow: hidden;
 }
 @media (prefers-color-scheme: dark) {
-  .cz-chat-panel {
+  .cz-chat-panel, .cz-chat-nahled-pozadi {
     --cz-chat-pozadi: #1B1E24; --cz-chat-plocha: #14161B; --cz-chat-cara: #343842; --cz-chat-text: #ECEDEF;
     --cz-chat-text-2: #C9CCD3; --cz-chat-tlumeny: #A2A7B1; --cz-chat-akcent: #7AA2FF; --cz-chat-akcent-text: #0B1020;
     --cz-chat-uzivatel: #24304D; --cz-chat-system: #2B2418; --cz-chat-system-cara: #5A4626; --cz-chat-varovani: #F0A85A;
   }
 }
 .cz-chat-panel[hidden] { display: none; }
-.cz-chat-panel *, .cz-chat-panel *::before, .cz-chat-panel *::after { box-sizing: border-box; }
-.cz-chat-panel a { color: var(--cz-chat-akcent); }
-.cz-chat-panel button { font: inherit; }
-.cz-chat-panel :focus-visible { outline: 2px solid var(--cz-chat-akcent); outline-offset: 2px; }
+.cz-chat-panel *, .cz-chat-panel *::before, .cz-chat-panel *::after,
+.cz-chat-nahled-pozadi *, .cz-chat-nahled-pozadi *::before, .cz-chat-nahled-pozadi *::after { box-sizing: border-box; }
+.cz-chat-panel a, .cz-chat-nahled-pozadi a { color: var(--cz-chat-akcent); }
+.cz-chat-panel button, .cz-chat-nahled-pozadi button { font: inherit; }
+.cz-chat-panel :focus-visible, .cz-chat-nahled-pozadi :focus-visible { outline: 2px solid var(--cz-chat-akcent); outline-offset: 2px; }
 
 .cz-chat-hlava { padding: 10px 12px 8px; border-bottom: 1px solid var(--cz-chat-cara); }
 .cz-chat-hlava-radek { display: flex; align-items: center; gap: 8px; }
@@ -109,10 +112,91 @@
 .cz-chat-odeslat.cz-chat-zastavit { background: var(--cz-chat-text-2); color: var(--cz-chat-pozadi); }
 .cz-chat-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* odpověď bota z markdownu (vykresleni.mjs, spec 7.2) */
+.cz-chat-bot { white-space: normal; }
+.cz-chat-text > :first-child { margin-top: 0; }
+.cz-chat-text > :last-child { margin-bottom: 0; }
+.cz-chat-text p, .cz-chat-text ul, .cz-chat-text ol, .cz-chat-text blockquote, .cz-chat-text pre { margin: 0 0 8px; }
+.cz-chat-text ul, .cz-chat-text ol { padding-left: 20px; }
+.cz-chat-text h1, .cz-chat-text h2, .cz-chat-text h3, .cz-chat-text h4 { margin: 8px 0 4px; font-size: 15px; }
+.cz-chat-text blockquote { padding-left: 10px; border-left: 3px solid var(--cz-chat-cara); color: var(--cz-chat-text-2); }
+.cz-chat-text code { font-size: 13px; background: var(--cz-chat-plocha); padding: 0 3px; border-radius: 4px; }
+.cz-chat-text pre { overflow-x: auto; }
+.cz-chat-text table { border-collapse: collapse; font-size: 13px; margin: 0 0 8px; display: block; overflow-x: auto; }
+.cz-chat-text th, .cz-chat-text td { border: 1px solid var(--cz-chat-cara); padding: 3px 6px; text-align: left; }
+.cz-chat-vycet { list-style: none; padding-left: 0 !important; font-size: 14px; }
+.cz-chat-rozpracovane { white-space: pre-wrap; font-size: 13px; color: var(--cz-chat-text-2); }
+.cz-chat-cit {
+  border: 0; background: none; padding: 0 1px; color: var(--cz-chat-akcent); cursor: pointer; font-size: .85em;
+  vertical-align: super; line-height: 1;
+}
+.cz-chat-cit:hover { text-decoration: underline; }
+
+/* zdroje, ověření citací a patička pod odpovědí (spec 7.1, 9.1, 9.2) */
+.cz-chat-zdroje, .cz-chat-overeni, .cz-chat-odpoved-pata { margin-top: 8px; font-size: 13px; }
+.cz-chat-zdroje-nadpis { display: block; color: var(--cz-chat-tlumeny); margin-bottom: 4px; }
+.cz-chat-zdroje ul, .cz-chat-overeni { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.cz-chat-overeni { margin-top: 6px; }
+.cz-chat-zdroje li, .cz-chat-overeni li { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.cz-chat-zdroj {
+  border: 1px solid var(--cz-chat-cara); background: var(--cz-chat-plocha); color: var(--cz-chat-text);
+  border-radius: 999px; padding: 2px 10px; font-size: 13px; cursor: pointer; text-align: left; overflow-wrap: anywhere;
+}
+button.cz-chat-zdroj:hover { border-color: var(--cz-chat-akcent); }
+.cz-chat-zdroj-bez { cursor: default; color: var(--cz-chat-text-2); }
+.cz-chat-znacka {
+  display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px;
+  background: var(--cz-chat-system); border: 1px solid var(--cz-chat-system-cara); color: var(--cz-chat-text-2);
+}
+.cz-chat-odpoved-akce { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.cz-chat-mini {
+  border: 1px solid transparent; background: transparent; color: var(--cz-chat-tlumeny); border-radius: 6px;
+  padding: 2px 6px; min-height: 28px; font-size: 13px; cursor: pointer;
+}
+.cz-chat-mini:hover:not(:disabled) { border-color: var(--cz-chat-cara); }
+.cz-chat-mini[aria-pressed="true"] { border-color: var(--cz-chat-akcent); background: var(--cz-chat-plocha); }
+.cz-chat-mini:disabled { opacity: .5; cursor: default; }
+.cz-chat-kod { margin-left: auto; color: var(--cz-chat-tlumeny) !important; font-size: 12px; font-family: ui-monospace, monospace; }
+.cz-chat-pata-zprava { display: block; color: var(--cz-chat-tlumeny); font-size: 12px; }
+.cz-chat-pata-zprava:empty { display: none; }
+.cz-chat-nahlasit { margin-top: 6px; }
+.cz-chat-nahlasit[hidden] { display: none; }
+.cz-chat-nahlasit textarea {
+  width: 100%; resize: vertical; border: 1px solid var(--cz-chat-cara); border-radius: 8px; padding: 6px 8px;
+  font: inherit; color: var(--cz-chat-text); background: var(--cz-chat-pozadi);
+}
+
+/* modál náhledu zdroje (spec 6): na desktopu uprostřed stránky, na mobilu list přes panel */
+.cz-chat-nahled-pozadi {
+  position: fixed; inset: 0; z-index: 2147483002; background: rgba(21, 23, 28, .45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  font: 15px/1.5 Inter, system-ui, sans-serif; color: var(--cz-chat-text);
+}
+.cz-chat-nahled {
+  width: 640px; max-width: 100%; max-height: min(80vh, 760px); display: flex; flex-direction: column;
+  background: var(--cz-chat-pozadi); border: 1px solid var(--cz-chat-cara); border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(21, 23, 28, .3); overflow: hidden; outline: none;
+}
+.cz-chat-nahled-hlava { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--cz-chat-cara); }
+.cz-chat-nahled-nadpis { flex: 1; margin: 0; font: 600 15px/1.3 'Space Grotesk', Inter, sans-serif; }
+.cz-chat-nahled-obsah { overflow-y: auto; padding: 10px 14px 14px; overscroll-behavior: contain; }
+.cz-chat-nahled-obsah > p { margin: 0 0 8px; }
+.cz-chat-nahled-cesta { font-size: 13px; color: var(--cz-chat-tlumeny); }
+.cz-chat-nahled-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; margin-bottom: 10px; }
+.cz-chat-nahled-text mark { background: #FDE68A; color: #15171C; padding: 0 1px; }
+.cz-chat-kluby { border-collapse: collapse; font-size: 13px; margin-bottom: 10px; }
+.cz-chat-kluby th, .cz-chat-kluby td { border: 1px solid var(--cz-chat-cara); padding: 2px 6px; text-align: right; }
+.cz-chat-kluby tbody th { text-align: left; font-weight: 600; }
+.cz-chat-nahled-nav, .cz-chat-nahled-odkazy { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cz-chat-nahled-odkazy a { text-decoration: none; display: inline-flex; align-items: center; }
+.cz-chat-nahled-zdroj { font-size: 12px; color: var(--cz-chat-tlumeny); }
+
 /* mobil (< 640 px): celá obrazovka; výšku a polohu nastavuje chat.mjs podle visualViewport */
 @media (max-width: 639px) {
   .cz-chat-panel { left: 0; right: 0; top: 0; bottom: auto; width: 100%; max-width: none; height: 100%;
     max-height: none; border-radius: 0; border: 0; }
   .cz-chat-pole { font-size: 16px; }    /* iOS při menším písmu stránku přiblíží */
+  .cz-chat-nahled-pozadi { align-items: flex-end; padding: 0; }
+  .cz-chat-nahled { width: 100%; max-height: 85vh; border-radius: 14px 14px 0 0; border-bottom: 0; }
 }
 html.cz-chat-zamceno, html.cz-chat-zamceno body { overflow: hidden; }

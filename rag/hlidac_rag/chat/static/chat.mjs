@@ -1,12 +1,16 @@
 // Panel chatu cosepece.cz (spec 7.1, 7.3, 11.2, 11.3): otevírá ho zavaděč w.js po kliknutí na bublinu.
-// Text ze serveru (odpověď, hlášky, zdroje) jde do stránky jen přes textContent; markdown a náhledy řeší úloha 18.
+// Text ze serveru (hlášky, zprávy uživatele) jde do stránky jen přes textContent; odpověď bota, zdroje a náhledy
+// vykresluje zdroje.mjs (markdown bez HTML z vykresleni.mjs).
 // Úložiště: sessionStorage cz-chat-konv (konverzace a běžící tah této karty), cz-chat-zrcadlo (posledních 50 zpráv),
 // localStorage cz-chat-posledni = {id, cas} (nabídka „Pokračovat v předchozí konverzaci“ v nové kartě).
 
+import { e, tlacitko, udalost } from "./dom.mjs";
 import { hlaska, zbyvaText } from "./hlasky.mjs";
 import { kontext, zaostreni, zmer, vyskaOkna } from "./kontext.mjs";
 import { obnovZeZrcadla, sledujTah, zastavTah } from "./proud.mjs";
 import { Turnstile } from "./turnstile.mjs";
+import { zdrojeZpravy } from "./vykresleni.mjs";
+import { nastav as nastavZdroje, vyplnText, doplnky, zavriNahled } from "./zdroje.mjs";
 
 const API = "/chat-api";
 const K_KONV = "cz-chat-konv";
@@ -67,23 +71,6 @@ const S = {
 };
 
 // ---------------------------------------------------------------- DOM pomocníci
-
-function e(tag, vlastnosti = {}, ...deti) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(vlastnosti)) {
-    if (v === null || v === undefined || v === false) continue;
-    if (k === "text") el.textContent = v;
-    else if (k === "class") el.className = v;
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else el.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const d of deti) if (d) el.append(d);
-  return el;
-}
-
-function tlacitko(text, onclick, trida = "cz-chat-tl") {
-  return e("button", {type: "button", class: trida, text, onclick});
-}
 
 function dole(el) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -162,10 +149,11 @@ function nactiUlozene() {
   return o.tah;
 }
 
-// Zprávy z GET /konverzace/{id} jako zrcadlo panelu
-function zpravyZeServeru(zpravy) {
-  return zpravy.map((z) => z.role === "uzivatel" ? {role: "uzivatel", text: String(z.text || "")}
-    : {role: "bot", text: String(z.text || ""), kod: z.kod, stav: z.stav}).slice(-MAX_ZRCADLO);
+// Zprávy z GET /konverzace/{id} jako zrcadlo panelu (zdroje odpovědi podle `citovane`)
+function zpravyZeServeru(d) {
+  return d.zpravy.map((z) => z.role === "uzivatel" ? {role: "uzivatel", text: String(z.text || "")}
+    : {role: "bot", text: String(z.text || ""), kod: z.kod, stav: z.stav, zdroje: zdrojeZpravy(z.citovane, d.zdroje)})
+    .slice(-MAX_ZRCADLO);
 }
 
 // ---------------------------------------------------------------- stavba panelu
@@ -197,6 +185,7 @@ function postav() {
   el.nabidka = e("div", {class: "cz-chat-nabidka", hidden: true});
   el.ts = e("div", {class: "cz-chat-ts"});
   S.ts = new Turnstile(el.ts);
+  nastavZdroje({api: API, uloz: ulozHned});
   el.tretiStrany = e("p", {class: "cz-chat-treti"}, TRETI_STRANY + " ",
     e("a", {href: `${API}/zasady`, target: "_blank", rel: "noopener", text: "Zásady chatu"}));
   el.pole = e("textarea", {class: "cz-chat-pole", rows: 2, "aria-label": "Vaše otázka", placeholder: "Zeptejte se…",
@@ -342,11 +331,13 @@ function prvekZpravy(z) {
   if (z.role === "uzivatel") return e("div", {class: "cz-chat-zprava cz-chat-uzivatel", text: z.text});
   if (z.stav === "odmitnuto") return systemovyPrvek(hlaska("odmitnuto"));
   const obal = e("div", {class: "cz-chat-zprava cz-chat-bot"});
-  const text = e("div", {class: "cz-chat-text", text: z.text || ""});
+  const text = e("div", {class: "cz-chat-text"});
+  vyplnText(text, z, {streamuje: z.stav === "probiha", uzke: innerWidth < UZKE});
   obal.append(text);
   if (z.stav === "probiha" && !z.text) obal.classList.add("cz-chat-ceka");
   if (z.stav === "preruseno") obal.append(e("p", {class: "cz-chat-poznamka", text: "Odpověď jste zastavili."}));
   if (z.stav === "chyba") obal.append(systemovyPrvek(hlaska("chyba")));
+  obal.append(...doplnky(z));
   return obal;
 }
 
@@ -400,18 +391,10 @@ function prekresliBezici() {
     const el = S.el.zpravy;
     const bylDole = dole(el);
     const t = b.el.querySelector(".cz-chat-text");
-    if (t) t.textContent = b.bot.text;
+    if (t) vyplnText(t, b.bot, {streamuje: true, uzke: innerWidth < UZKE});
     b.el.classList.toggle("cz-chat-ceka", !b.bot.text);
     if (bylDole) el.scrollTop = el.scrollHeight;
   }, PREKRESLENI_MS);
-}
-
-// přechodná systémová hláška (opakování, výzva Turnstile); vrací funkci, která ji odstraní
-function docasnaHlaska(kod, data) {
-  const p = systemovyPrvek(hlaska(kod, data));
-  S.el.zpravy.append(p);
-  S.el.zpravy.scrollTop = S.el.zpravy.scrollHeight;
-  return () => p.remove();
 }
 
 function ukazHlasku(kod, data = {}) {
@@ -420,11 +403,13 @@ function ukazHlasku(kod, data = {}) {
   pripojSystem(systemovyPrvek(h));
 }
 
+// systémový prvek na konec zpráv; vrací funkci, která ho odstraní (přechodné hlášky: opakování, Turnstile)
 function pripojSystem(p) {
   S.el.zpravy.querySelector(".cz-chat-prazdne")?.remove();
   S.el.zpravy.append(p);
   S.el.zpravy.scrollTop = S.el.zpravy.scrollHeight;
   S.el.oznameni.textContent = p.textContent;
+  return () => p.remove();
 }
 
 // ---------------------------------------------------------------- tvrdé limity (pole zprávy zablokované)
@@ -434,6 +419,7 @@ function zablokuj(kod, data = {}) {
   const d = {ct: zakladniKontext().ct, ...data};
   const el = systemovyPrvek(hlaska(kod, d));
   S.blok = {kod, el, casovac: null};
+  udalost("chat_limit", {kod});
   if (kod === "limit_hodina" && data.znovu_v) {
     // odpočet: text se obnovuje, pole se odblokuje samo
     S.blok.casovac = setInterval(() => {
@@ -560,7 +546,7 @@ async function posliZpravu(text, k) {
     if (kod === "turnstile" && S.sitekey && tsPokusu < MAX_TURNSTILE) {
       // token se spotřeboval nebo vypršel: nový token a stejná zpráva znovu, bez zásahu uživatele
       tsPokusu++;
-      const skryj = docasnaHlaska("turnstile");
+      const skryj = pripojSystem(systemovyPrvek(hlaska("turnstile")));
       const t = await S.ts.novy();
       skryj();
       if (!t) return {kod: "overeni_nedostupne"};
@@ -571,7 +557,7 @@ async function posliZpravu(text, k) {
       if (obsazeno >= MAX_OBSAZENO) return {kod: "obsazeno_trvale"};
       obsazeno++;
       const s = Number(r.headers.get("retry-after"));
-      const skryj = docasnaHlaska("obsazeno");
+      const skryj = pripojSystem(systemovyPrvek(hlaska("obsazeno")));
       await spi((Number.isFinite(s) && s > 0 ? Math.min(s, 30) : 5) * 1000);
       skryj();
       continue;
@@ -599,7 +585,9 @@ async function odesli(text) {
   S.odesila = false;
   S.el.stav.textContent = "";
   if (!v.odpoved && v.mozna && S.konv.id) {
-    // spojení spadlo po odeslání: odpověď mohla na serveru vzniknout, nabídne se její načtení, ne nové odeslání
+    // spojení spadlo po odeslání: odpověď mohla na serveru vzniknout, nabídne se její načtení, ne nové odeslání;
+    // text se vrátí do pole, ať jde otázku poslat znovu, když odpověď nevznikla
+    if (!S.el.pole.value) S.el.pole.value = text;
     ulozHned();
     obnovTlacitka();
     return nabidniNacteni("spojeni_pred_startem");
@@ -615,6 +603,7 @@ async function odesli(text) {
     ukazHlasku(v.kod, v.data || {});
     return;
   }
+  udalost("chat_query", {stranka: k.typ});
   const bot = {role: "bot", text: "", stav: "probiha"};
   S.zpravy.push(bot);
   zacniTah(bot, pripojZpravu(bot), null, 0);
@@ -660,7 +649,7 @@ function zpracuj(b, u) {
       }
       break;
     case "overeni":
-      // značky ověření citátu dokreslí úloha 18; text „(neověřeno ve zdroji)“ vkládá server sám
+      // čipy ověření citátu kreslí zdroje.mjs po konci tahu; text „(neověřeno ve zdroji)“ vkládá server sám
       if (Array.isArray(d.citaty)) b.bot.citaty = [...(b.bot.citaty || []), ...d.citaty];
       break;
     case "zdroje":
@@ -728,6 +717,7 @@ async function dohledejZeServeru(b) {
   const posledni = d && [...d.zpravy].reverse().find((z) => z.role === "bot");
   if (posledni && posledni.stav !== "probiha") {
     b.bot.text = posledni.text || "";
+    b.bot.zdroje = zdrojeZpravy(posledni.citovane, d.zdroje);
     dokonciTah(b, {kod: posledni.kod, stav: posledni.stav});
     return;
   }
@@ -737,10 +727,12 @@ async function dohledejZeServeru(b) {
 // Hláška s tlačítkem „Načíst znovu“: GET posledního stavu konverzace, nikdy nové odeslání otázky
 function nabidniNacteni(kod) {
   const p = systemovyPrvek(hlaska(kod), [tlacitko("Načíst znovu", async () => {
+    if (S.bezi) return;      // mezitím běží nový tah: načtení konverzace by ho přepsalo
     p.remove();
     const d = await nactiKonverzaci(S.konv.id);
     if (!d) return ukazHlasku("konverzace_nedostupna");
-    S.zpravy = zpravyZeServeru(d.zpravy);
+    if (S.bezi) return;      // tah se rozběhl během načítání
+    S.zpravy = zpravyZeServeru(d);
     const posledni = S.zpravy[S.zpravy.length - 1];
     const vznika = posledni && posledni.role === "bot" && posledni.stav === "probiha";
     if (vznika) S.zpravy.pop();
@@ -783,7 +775,7 @@ async function pokracovat() {
     return ukazHlasku("konverzace_nedostupna");
   }
   S.konv = {...S.konv, id: p.id, tah: null, stranka: popisStranky(zakladniKontext())};
-  S.zpravy = zpravyZeServeru(d.zpravy).map((z) => z.stav === "probiha" ? {...z, stav: "preruseno"} : z);
+  S.zpravy = zpravyZeServeru(d).map((z) => z.stav === "probiha" ? {...z, stav: "preruseno"} : z);
   oznacAktivitu();
   ulozHned();
   vykresliVse();
@@ -794,6 +786,7 @@ function vycisti() {
   S.konv = {otevreno: true, stranka: popisStranky(zakladniKontext())};
   S.zpravy = [];
   S.volba = "auto";
+  zavriNahled();
   if (S.blok && S.blok.kod === "limit_konverzace") zrusBlok();
   ulozHned();
   obnovCip();
@@ -843,12 +836,14 @@ export function otevri() {
   obnovStav();
   el.zpravy.scrollTop = el.zpravy.scrollHeight;     // skrytý panel měl nulovou výšku, posun se dožene teď
   el.pole.focus();
+  udalost("chat_open", {stranka: zakladniKontext().typ});
 }
 
 export function zavri() {
   const el = S.el;
   if (el.panel.hidden) return;
   prepniVolby(false);
+  zavriNahled();
   el.panel.hidden = true;
   document.documentElement.classList.remove("cz-chat-zamceno");
   S.bublina.style.display = "flex";

@@ -63,8 +63,8 @@ def ODP_TEXT(text, usage=MALA, stop="end_turn"):
     return Odpoved([{"type": "text", "text": text}] if text else [], stop, usage, MODEL, 5)
 
 
-def U(den=0.0, hodina=0.0, relace=0.0, ip=0.0):
-    return Utrata(den=den, hodina=hodina, mesic=den, relace=relace, ip=ip, zprav_min=0, zprav_den=0)
+def U(den=0.0, hodina=0.0, relace=0.0, ip=0.0, zprav_den=0):
+    return Utrata(den=den, hodina=hodina, mesic=den, relace=relace, ip=ip, zprav_min=0, zprav_den=zprav_den)
 
 
 def N(**env):
@@ -471,6 +471,14 @@ async def test_limit_relace_a_ip():
     assert (await post(Svet(utrata=U(ip=0.5)))).json()["kod"] == "limit_ip"
 
 
+async def test_limit_relace_posle_pocet_otazek():
+    s = Svet(utrata=U(relace=0.25, zprav_den=7))
+    assert (await post(s)).json()["otazek"] == 7
+    st = (await asgi(s.app, "GET", "/chat-api/stav", hlavicky={"x-forwarded-for": "1.2.3.4"})).json()
+    assert (st["kod"], st["otazek"]) == ("limit_relace", 7)
+    assert "otazek" not in (await post(Svet(utrata=U(ip=0.5, zprav_den=7)))).json()
+
+
 async def test_skryty_rezim_bez_cookie_je_404_krome_w_js_beta_zdravi(tmp_path):
     (tmp_path / "w.js").write_text("// __CHAT_HASH__", encoding="utf-8")
     s = Svet([ODP_TEXT("Ano.")], n=N(CHAT_REZIM="skryte"), static_dir=tmp_path)
@@ -519,8 +527,8 @@ async def test_vypnuto_je_503_a_stav_rika_vypnuto():
 async def test_stav_bez_limitu_a_po_limitu():
     s = Svet()
     st = (await asgi(s.app, "GET", "/chat-api/stav", hlavicky={"x-forwarded-for": "1.2.3.4"})).json()
-    assert st == {"dostupny": True, "kod": None, "zbyva_otazek": 6, "znovu_v": None, "turnstile_sitekey": "site-key",
-                  "max_znaku_zpravy": 500}
+    assert st == {"dostupny": True, "kod": None, "zbyva_otazek": 6, "znovu_v": None, "otazek": None,
+                  "turnstile_sitekey": "site-key", "max_znaku_zpravy": 500}
     s = Svet(utrata=U(den=1.95))
     st = (await asgi(s.app, "GET", "/chat-api/stav")).json()      # bez IP: stav jde zjistit i tak
     assert st["dostupny"] is False and st["kod"] == "limit_den" and st["znovu_v"]

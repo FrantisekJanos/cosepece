@@ -1,0 +1,6 @@
+Vendorované knihovny widgetu chatu (spec 7.2). Za běhu se nic nestahuje z CDN.
+
+markdown-it 14.3.3 (MIT, licence v LICENSE-markdown-it)
+  zdroj:   npm markdown-it@14.3.3, soubor dist/markdown-it.min.js beze změny
+  SHA-256: 494ba53db1aac9f676317dda7062bd9545b5f0bbe3f12b0ab1ab4f813825cfb0
+  ověření: sha256sum markdown-it.min.js

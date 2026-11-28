@@ -138,8 +138,9 @@ def _json(data: dict, status: int = 200, hlavicky: dict | None = None) -> JSONRe
     return JSONResponse(data, status_code=status, headers={"Cache-Control": "no-store", **(hlavicky or {})})
 
 
-def _chyba(status: int, kod: str, znovu_v: datetime | None = None, hlavicky: dict | None = None) -> JSONResponse:
-    data: dict = {"kod": kod}
+def _chyba(status: int, kod: str, znovu_v: datetime | None = None, hlavicky: dict | None = None,
+           **navic) -> JSONResponse:
+    data: dict = {"kod": kod, **navic}
     if znovu_v is not None:
         data["znovu_v"] = znovu_v.isoformat()
     return _json(data, status, hlavicky)
@@ -219,7 +220,9 @@ class Sluzba:
             self._hlid_rozpocet(u, ted, vycerpano=True)
         if kod == "limit_hodina" and znovu is not None:
             hlavicky = {**hlavicky, "Retry-After": str(max(1, int((znovu - ted).total_seconds())))}
-        return _chyba(429, kod, znovu, hlavicky)
+        # u limitu relace počet dnešních otázek pro hlášku „Dnes jste položili N otázek“ (spec 11.3)
+        navic = {"otazek": u.zprav_den} if kod == "limit_relace" else {}
+        return _chyba(429, kod, znovu, hlavicky, **navic)
 
     def _hlid_rozpocet(self, u: Utrata, ted: datetime, vycerpano: bool = False) -> None:
         """Telegram při prvním překročení 60 % a 100 % dne (každý práh jednou za den v procesu)."""
@@ -259,6 +262,7 @@ class Sluzba:
         return _json({"dostupny": kod is None, "kod": kod,
                       "zbyva_otazek": rozpocet.zbyva_otazek(self.n, u) if kod != "vypnuto" else None,
                       "znovu_v": znovu.isoformat() if znovu else None,
+                      "otazek": u.zprav_den if kod == "limit_relace" else None,
                       "turnstile_sitekey": self.tajemstvi.turnstile_sitekey,
                       "max_znaku_zpravy": self.n.max_znaku_zpravy})
 

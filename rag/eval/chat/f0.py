@@ -10,6 +10,8 @@ Jedna pracovní složka na (konfigurace, scénář, běh), sdílená všemi tahy
 
 Cena tahu = `usage` × ceník (`cenik.cena_usd`). Je to horní odhad: CLI přidává vlastní režii a nástroje MCP nejsou
 oříznuté jako v chatu. Výstup `--output-format json` neuvádí volané nástroje, kontrola `nastroje_any` se ve F0 vynechá.
+Selhání `max_cena_usd` a `cituje` se do skóre nepočítají (formát [N] dává registr zdrojů serveru, F0 ho nemá);
+souhrn je vypíše zvlášť i se způsobem citace ([N], jen URL, bez citace).
 
 Spuštění (z `rag/`):
     python -m eval.chat.f0 --mcp-config <mcp.json> --vystup <složka> [--konfigurace model:effort,…] [--jen-sada X]
@@ -224,7 +226,7 @@ def spust(scenare, konfigurace: list[tuple[str, str]], behu: dict[str, int], vys
             time.sleep(pauza_s)
         prvni = False
         radek = {"id": s["id"], "sada": s["sada"], "model": model, "effort": effort, "beh": beh, "tah": i,
-                 "otazka": tah["text"], "znacka": z}
+                 "otazka": tah["text"], "znacka": z, "cituje_ocekavano": tah.get("cituje")}
         surove = vystup / "surove" / _nazev(f"{model}-{effort}")
         surove.mkdir(parents=True, exist_ok=True)
         try:
@@ -259,11 +261,25 @@ def spust(scenare, konfigurace: list[tuple[str, str]], behu: dict[str, int], vys
     return [hotove[(p[0]["id"], *p[1:5])] for p in plan]
 
 
+# selhání, která se ve F0 do skóre nepočítají a souhrn je vypíše zvlášť: cena F0 je horní odhad (F12), formát [N]
+# vzniká z registru zdrojů na serveru, který F0 nemá
+MIMO_SKORE = ("max_cena_usd", "cituje")
+_ODKAZ = re.compile(r"\[\d+\]")  # stejný vzor jako kontrola cituje v kontroly.py
+_URL = re.compile(r"https?://")
+
+
 def _skore(radky: list[dict]) -> float:
-    """Podíl tahů bez selhání kontrol; `max_cena_usd` se nepočítá (F12: cena F0 je horní odhad)."""
+    """Podíl tahů bez selhání kontrol; selhání z MIMO_SKORE se nepočítají."""
     if not radky:
         return 0.0
-    return 100 * sum(1 for r in radky if not [x for x in r["selhani"] if x != "max_cena_usd"]) / len(radky)
+    return 100 * sum(1 for r in radky if not [x for x in r["selhani"] if x not in MIMO_SKORE]) / len(radky)
+
+
+def _zpusob_citace(odpoved: str) -> str:
+    """„[N]“, „URL“ (jen adresy, bez [N]), nebo „bez“ (necituje vůbec)."""
+    if _ODKAZ.search(odpoved or ""):
+        return "[N]"
+    return "URL" if _URL.search(odpoved or "") else "bez"
 
 
 def _po_konfiguracich(radky: list[dict]) -> dict[str, list[dict]]:
@@ -275,10 +291,11 @@ def _po_konfiguracich(radky: list[dict]) -> dict[str, list[dict]]:
 
 def souhrn(radky: list[dict]) -> str:
     """Markdown: řádek na konfiguraci se skóre celkem a po sadách, selháními must_not (spec 14.2 bod 1),
-    selháními max_cena_usd zvlášť, chybami běhu a mediány ceny, kol a doby tahu."""
+    selháními mimo skóre zvlášť (max_cena_usd, cituje), způsobem citace u tahů s cituje: true ([N], jen URL, bez
+    citace), chybami běhu a mediány ceny, kol a doby tahu."""
     sady = [s for s in SADY if any(r["sada"] == s for r in radky)]
-    hlavicka = ["konfigurace", "tahů", "skóre", *sady, "must_not", "max_cena_usd", "chyby běhu",
-                "medián ceny", "medián kol", "medián ms"]
+    hlavicka = ["konfigurace", "tahů", "skóre", *sady, "must_not", "max_cena_usd", "cituje", "citace [N]",
+                "citace URL", "bez citace", "chyby běhu", "medián ceny", "medián kol", "medián ms"]
     md = ["| " + " | ".join(hlavicka) + " |", "|" + "---|" * len(hlavicka)]
     for konf, rr in _po_konfiguracich(radky).items():
         ok = [r for r in rr if not any(x.startswith("beh:") for x in r["selhani"])]
@@ -286,7 +303,11 @@ def souhrn(radky: list[dict]) -> str:
         bunky += [f"{_skore([r for r in rr if r['sada'] == s]):.1f} %" for s in sady]
         bunky += [str(sum(1 for r in rr if any(x.startswith("must_not") for x in r["selhani"]))),
                   str(sum(1 for r in rr if "max_cena_usd" in r["selhani"])),
-                  str(len(rr) - len(ok))]
+                  str(sum(1 for r in rr if "cituje" in r["selhani"]))]
+        # způsob citace u tahů, které citovat mají (cituje: true); necitování je údaj o kvalitě, URL místo [N] ne
+        zpusoby = [_zpusob_citace(r["odpoved"]) for r in ok if r.get("cituje_ocekavano") is True]
+        bunky += [str(zpusoby.count(z)) for z in ("[N]", "URL", "bez")]
+        bunky.append(str(len(rr) - len(ok)))
         if ok:
             bunky += [f"${statistics.median(r['cena_usd'] for r in ok):.4f}",
                       f"{statistics.median(r['kol'] for r in ok):g}",

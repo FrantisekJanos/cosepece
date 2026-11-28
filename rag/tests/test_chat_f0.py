@@ -122,6 +122,7 @@ def test_spust_vicekolovy_scenar_pres_resume_a_pokracuje_po_preruseni(tmp_path):
     assert fake.vstupy[0] == "[stránka: tisk 221, PN 2329 · stranka_zmenena: ne]\n\nProšel?"
     assert fake.cwd[0] == fake.cwd[-1] and Path(fake.cwd[0]).is_relative_to(tmp_path / "prac")
     assert [r["tah"] for r in radky] == [1, 2] and radky[0]["selhani"] == [] and radky[1]["session_id"] == "s3"
+    assert (radky[0]["cituje_ocekavano"], radky[1]["cituje_ocekavano"]) == (True, None)
     assert len((tmp_path / "vystup" / "stav.jsonl").read_text(encoding="utf-8").splitlines()) == 2
 
 
@@ -175,6 +176,27 @@ def test_souhrn_ma_skore_po_sadach_cenu_a_kola():
     assert (h["skóre"], h["zaklad"], h["must_not"], h["medián kol"]) == ("0.0 %", "0.0 %", "1", "3")
     assert (s["medián ceny"], s["medián ms"], s["tahů"]) == ("$0.0300", "10000", "2")
     assert dict(zip(hlavicka, radky["claude-haiku-5-5:medium"]))["skóre"] == "100.0 %"
+
+
+def _tabulka(md: str) -> dict[str, dict[str, str]]:
+    hlavicka = [c.strip() for c in next(r for r in md.splitlines() if r.startswith("| konfigurace")).split("|")[1:-1]]
+    return {r.split("|")[1].strip(): dict(zip(hlavicka, [c.strip() for c in r.split("|")[1:-1]]))
+            for r in md.splitlines() if r.startswith("| claude-")}
+
+
+def test_souhrn_cituje_mimo_skore_a_zpusob_citace():
+    zaklad = {"sada": "citace", "model": "claude-haiku-5-5", "effort": "low", "beh": 1, "kol": 1, "cena_usd": 0.001,
+              "ms": 1000, "otazka": "?"}
+    rr = [dict(zaklad, id="C-1", tah=1, cituje_ocekavano=True, odpoved="Ano [1].", selhani=[]),
+          dict(zaklad, id="C-2", tah=1, cituje_ocekavano=True, odpoved="Viz https://cosepece.cz/tisk/67.",
+               selhani=["cituje"]),
+          dict(zaklad, id="C-3", tah=1, cituje_ocekavano=True, odpoved="Ano.", selhani=["cituje"]),
+          dict(zaklad, id="C-4", tah=1, cituje_ocekavano=False, odpoved="Nevím.", selhani=[]),
+          dict(zaklad, id="C-5", tah=1, cituje_ocekavano=True, odpoved="Ano.", selhani=["cituje", "must: 67"])]
+    h = _tabulka(souhrn(rr))["claude-haiku-5-5:low"]
+    # cituje se do skóre nepočítá (F0 nemá registr zdrojů), jiné selhání ano
+    assert (h["skóre"], h["citace"], h["cituje"]) == ("80.0 %", "80.0 %", "3")
+    assert (h["citace [N]"], h["citace URL"], h["bez citace"]) == ("1", "1", "2")      # C-4 citovat nemá
 
 
 def test_slepe_pary_neprozradi_model():

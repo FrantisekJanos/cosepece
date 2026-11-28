@@ -3286,6 +3286,13 @@ check('v praxi: odmítnutí (číslo mimo text, hodnoticí slovo, jméno předkl
 check('v praxi: úvod „Předkladatel uvádí, že“ se z tvrzení odstraní (web ho doplňuje sám)',
     [$pxSan(['podle_predkladatele' => 'Předkladatelka uvádí, že kauce omezí účelové agentury.'])['podle_predkladatele'], $pxSan(['podle_predkladatele' => 'Podle předkladatele návrh nic nestojí.'])['podle_predkladatele']],
     ['Kauce omezí účelové agentury.', 'Návrh nic nestojí.']);
+$pxNote = $pxSan(['nejiste' => 'Úryvek vládního návrhu má odstavec bez slova „upraveným“, zatímco blok „platné znění“ je již obsahuje, proto vycházím z úryvku.']);
+check('v praxi: poznámka o podkladech se z pole nejistoty vypustí, odkaz na chybějící ustanovení zůstává',
+    [$pxNote['nejiste'], in_array('vypuštěno: poznámka o podkladech v poli nejistoty', $pxNote['upravy'] ?? [], true),
+        $pxSan(['nejiste' => 'Platné znění v podkladech už písmeno j) obsahuje.'])['nejiste'], $pxSan(['nejiste' => 'Zobrazené znění článku už písmeno a) obsahuje.'])['nejiste'],
+        $pxSan(['nejiste' => 'PN odkazuje na § 30a, jehož znění v poskytnutých textech není.'])['nejiste'],
+        $pxSan(['nejiste' => 'Úřad by mohl účet blokovat, text neuvádí lhůtu ani výpis z rejstříku.'])['nejiste']],
+    [null, true, null, null, 'PN odkazuje na § 30a, jehož znění v poskytnutých textech není.', 'Úřad by mohl účet blokovat, text neuvádí lhůtu ani výpis z rejstříku.']);
 check('v praxi: neznámý typ a příliš mnoho skupin', [$pxSan(['typ' => 'revoluce'])['typ'], count($pxSan(['koho_se_tyka' => ['a', 'b', 'c', 'd', 'e', 7]])['koho_se_tyka'])], ['vecna_zmena', 4]);
 
 // průchod s falešným CLI: rychlý model, pak silnější u PN s nálezem; odmítnutý výsledek se zkusí nejvýš praxe_tries×
@@ -3317,7 +3324,8 @@ echo json_encode(['type' => 'result', 'is_error' => false, 'stop_reason' => 'end
 FAKE);
 chmod($pxCli, 0755);
 $pxConfig = config();
-$pxConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $pxCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5', 'verify_model' => 'claude-sonnet-5-5'];
+$pxConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $pxCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5', 'verify_model' => 'claude-sonnet-5-5',
+    'praxe_verify_types' => []];
 $practice = new Hlidac\PnPractice(db(), $pxConfig);
 $pxScore = (int)db()->value('SELECT score FROM tisky WHERE ct = 9950');
 $pxQueue = $practice->queue(10, 9950);
@@ -3335,6 +3343,14 @@ $practice->run(10, 9950);
 check('v praxi: po třech neúspěších se PN z fronty vyřadí', [(int)$pxRow(99952)['praxe_tries'], $practice->queue(10, 9950)], [3, []]);
 // druhé kolo: jen PN s nálezem (závažnost od praxe_verify_min nebo příznak pravidel)
 check('v praxi: bez nálezu druhé kolo není', $practice->queue(10, 9950, true), []);
+// věcná změna jde k silnějšímu modelu i bez nálezu (výchozí praxe_verify_types); jiný typ změny ne
+$pxTyped = fn(?array $types): array => array_column((new Hlidac\PnPractice(db(), ['ai' => array_diff_key($pxConfig['ai'], ['praxe_verify_types' => 1])
+    + ($types === null ? [] : ['praxe_verify_types' => $types])] + $pxConfig))->queue(10, 9950, true), 'id');
+check('v praxi: věcná změna jde do druhého kola i bez nálezu, přesun peněz ne', [$pxTyped(null), $pxTyped(['presun_penez']), $pxTyped(['nesmysl'])], [[99951], [], []]);
+check('v praxi: typy pro druhé kolo (výchozí, vypnuté, neznámý typ se zahodí)',
+    [Hlidac\PnPractice::settings([])['verify_types'], Hlidac\PnPractice::settings(['ai' => ['praxe_verify_types' => []]])['verify_types'],
+        Hlidac\PnPractice::settings(['ai' => ['praxe_verify_types' => ['presun_penez', 'nesmysl']]])['verify_types']],
+    [['vecna_zmena'], [], ['presun_penez']]);
 db()->run('UPDATE pn_text SET ai_score = 5 WHERE id_dokument = 99951');
 check('v praxi: PN s nálezem jde do druhého kola', array_column($practice->queue(10, 9950, true), 'id'), [99951]);
 check('v praxi: běh silnějšího modelu', $practice->run(10, 9950, true), ['reviewed' => 1, 'errors' => 0]);

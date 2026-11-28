@@ -100,9 +100,10 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
   6b. PnPractice   vysvětlení PN „v praxi“ (co by se změnilo, kdyby prošel): samostatný průchod s vlastním promptem,
                    sloupce pn_text.praxe_*, do skóre nevstupuje. Model dostane zvlášť text změn, odůvodnění
                    předkladatele a dotčenou část návrhu zákona (billContext). Fronta ai_api.php?praxe=1 (kind praxe),
-                   klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem (smí přidat
-                   modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
-                   (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele; odmítnutý výsledek
+                   klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem a všechny věcné
+                   změny (ai.praxe_verify_types; smí přidat modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
+                   (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele, pole „nejiste“ bez
+                   poznámek o podkladech a první osoby (vypustí se); odmítnutý výsledek
                    se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
                    v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní; počitadla patří
                    k verzi praxe_try_v, po zvýšení VERSION se nepoužijí). Čísla paragrafů a zákonů nejsou hodnoty

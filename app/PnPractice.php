@@ -12,6 +12,9 @@
 // se neuloží a zkusí se znovu (nejvýš praxe_tries pokusů). Výpadek modelu nebo spojení (vyčerpaný limit
 // předplatného, časový limit) se mezi tyto pokusy nepočítá: má vlastní počitadlo praxe_fails s vyšším stropem
 // a PN s chybou jdou ve frontě až za ty, které chybu nemají. Modelový příklad smí napsat jen silnější model.
+//
+// Druhé kolo (silnější model) dostane PN s nálezem a všechny věcné změny (praxe_verify_types): procedurální
+// závažnost neříká, jak těžké je změnu vysvětlit. Přesuny peněz v rozpočtu a vypuštění částí zůstávají rychlému modelu.
 
 declare(strict_types=1);
 
@@ -46,7 +49,7 @@ Odpověz pouze JSON objektem bez dalšího textu:
 "po": stav, kdyby byl PN přijat, 1–3 věty.
 "v_praxi": 2–3 věty, co by to konkrétně znamenalo pro dotčené, s částkami a lhůtami z textu změn.
 {EXAMPLE_RULE}"podle_predkladatele": jedna věta, jaký cíl nebo dopad uvádí odůvodnění předkladatele, bez úvodu „Předkladatel uvádí, že“; null, když odůvodnění chybí.
-"nejiste": většinou null. Jedna věta jen tehdy, když bez chybějícího údaje nejde pochopit, co se mění (např. PN odkazuje na ustanovení, které v poskytnutých textech není). Nepiš sem, že texty neuvádějí datum účinnosti, dnešní znění zákona, počty dotčených, celkové dopady nebo podrobnosti provádění; to je běžné.
+"nejiste": většinou null. Jedna věta jen tehdy, když bez chybějícího údaje nejde pochopit, co se mění (např. PN odkazuje na ustanovení, které v poskytnutých textech není). Nepiš sem, že texty neuvádějí datum účinnosti, dnešní znění zákona, počty dotčených, celkové dopady nebo podrobnosti provádění; to je běžné. Nepiš sem ani nic o tom, jak jsou podklady uspořádané nebo z čeho jsi vycházel (úryvek, blok, vyznačení změn, platné znění přiložené k PN), a nepiš v první osobě.
 "citace": 1–2 věty zkopírované z textu změn (ne z odůvodnění) přesně znak po znaku, které dokládají "po".
 Pravidla:
 - Piš česky, krátkými větami, bez právnických obratů. PN ještě není schválen, proto piš v podmiňovacím způsobu („by musel“, „by platilo“).
@@ -66,6 +69,12 @@ TXT;
     // hodnoticí slova, která do věcného popisu nepatří (v tvrzení předkladatele se nekontrolují)
     private const JUDGING = '~\b(bohužel|naštěstí|konečně|skand[aá]l\w*|absurdn\w*|nesmysl\w*|nespravedliv\w*|lepší\w*|horší\w*)\b~ui';
 
+    // poznámka o podkladech místo o návrhu: jak jsou texty uspořádané („úryvek“, „blok“, „platné znění už obsahuje“)
+    // nebo z čeho model vycházel (první osoba). Čtenáři nic neříká, pole nejistoty se pak vypustí.
+    // Odkaz na ustanovení, které v textech chybí („§ 30a v poskytnutých textech není“), sem nepatří a zůstává.
+    private const WORKING_NOTE = '~\b(úryv\w*|blok(?:u|em|y|ů|ech)?|platn\w+\s+zněn\w+|vyznačen\w*|zobrazen\w+\s+zněn\w+'
+        . '|vycházím|vycházel\w*\s+jsem|předpokládám|usuzuji|domnívám|nemohu|nevím|nemám|beru|používám|počítám)\b~ui';
+
     public function __construct(private Db $db, private array $config)
     {
     }
@@ -82,6 +91,8 @@ TXT;
             'justification_max' => max(0, (int)($cfg['praxe_justification_max'] ?? 20000)),
             // silnější model přepíše vysvětlení u PN se závažností od této hodnoty nebo s příznakem pravidel
             'verify_min' => (int)($cfg['praxe_verify_min'] ?? 4),
+            // typy změn, které silnější model přepíše vždy, bez ohledu na závažnost (prázdné pole = žádné)
+            'verify_types' => array_values(array_intersect(self::TYPES, (array)($cfg['praxe_verify_types'] ?? ['vecna_zmena']))),
             'tries' => max(1, (int)($cfg['praxe_tries'] ?? 3)),
             // kolikrát smí selhat volání modelu nebo spojení, než se PN z fronty vyřadí (výpadek není chyba návrhu)
             'fails' => max(1, (int)($cfg['praxe_fails'] ?? 10)),
@@ -115,7 +126,7 @@ TXT;
      * PN, u kterých poslední pokus skončil chybou, až za ostatními (výpadek tak nezdržuje zbytek fronty).
      * Vyčerpané pokusy platí jen pro verzi, ve které vznikly (praxe_try_v): po zvýšení VERSION se PN zkusí znovu.
      * $verify = druhé kolo: silnější model přepíše vysvětlení u PN s nálezem (závažnost ≥ praxe_verify_min nebo
-     * příznak pravidel) a smí přidat modelový příklad.
+     * příznak pravidel) a u typů změn z praxe_verify_types (výchozí věcná změna) a smí přidat modelový příklad.
      *
      * @return list<array{kind: string, id: int, ct: int, prompt: string}>
      */
@@ -127,9 +138,16 @@ TXT;
         }
         // čísla z konfigurace přímo v dotazu (int): vázaný parametr SQLite porovnává jako text
         if ($verify) {
-            $where = 'x.praxe_at IS NOT NULL AND x.praxe_v = ' . self::VERSION . ' AND (x.praxe_model IS NULL OR x.praxe_model <> ?)'
-                . ' AND (x.ai_score >= ' . $s['verify_min'] . ' OR x.rule_score > 0)';
+            // nález (závažnost nebo příznak pravidel), nebo typ změny, který silnější model přepisuje vždy
+            $reasons = ['x.ai_score >= ' . $s['verify_min'], 'x.rule_score > 0'];
             $params = [AiReviewer::verifyModel($this->config)];
+            foreach ($s['verify_types'] as $type) {
+                // typ je v uloženém JSON (json_encode bez mezer); podtržítko v LIKE zastupuje jeden znak, shodě nevadí
+                $reasons[] = 'x.praxe_json LIKE ?';
+                $params[] = '%"typ":"' . $type . '"%';
+            }
+            $where = 'x.praxe_at IS NOT NULL AND x.praxe_v = ' . self::VERSION . ' AND (x.praxe_model IS NULL OR x.praxe_model <> ?)'
+                . ' AND (' . implode(' OR ', $reasons) . ')';
         } else {
             $where = '(x.praxe_at IS NULL OR x.praxe_v IS NULL OR x.praxe_v < ' . self::VERSION . ')';
             $params = [];
@@ -398,6 +416,12 @@ TXT;
         }
         if ($out['pred'] === '') {
             $out['pred_zdroj'] = null;
+        }
+
+        // pole nejistoty říká, co o návrhu nejde zjistit; poznámka o podkladech nebo o postupu modelu se vypustí
+        if ($out['nejiste'] !== '' && preg_match(self::WORKING_NOTE, $out['nejiste'])) {
+            $out['nejiste'] = '';
+            $out['upravy'][] = 'vypuštěno: poznámka o podkladech v poli nejistoty';
         }
 
         // hodnoticí slova a jméno předkladatele ve věcných polích

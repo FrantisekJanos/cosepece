@@ -457,3 +457,97 @@ def test_vety_za_cislem():
     assert [s for _, s in at._sentences("Lhůta začne v roce 2027. Hrnčíř řekl ne.")] == [
         "Lhůta začne v roce 2027.", "Hrnčíř řekl ne."]
     assert len(at._sentences("V projevu J. Nováka 12. 11. zaznělo, že ne.")) == 1
+
+
+# ---------- sondy z druhé recenze (p4): jednoslovné jméno, seznam příjmení ze serveru, úkony u role ----------
+
+P4_CARD = {"pn_autor": [{"jmeno": "Jan Novák", "klub": "ANO", "spolu": 3}], "pribeh": {"titulek": "PN 2376 ruší poplatek"}}
+P4_BASE = "PN 2376 podal Jan Novák (ANO) a 3 další poslanci. Shrnutí AI."
+
+
+def _p4(extra: str, in_card: bool = False, card: dict | None = None) -> list[str]:
+    c = dict(card or P4_CARD)
+    if in_card:
+        c["pribeh"] = {"titulek": "x", "co": {"text": extra}}
+        return at.public_text_errors(c, P4_BASE, 311)
+    return at.public_text_errors(c, P4_BASE + " " + extra, 311)
+
+
+@pytest.mark.parametrize("text", [
+    "Za návrhem stojí Okamura.", "Návrh podal Babiš.", "PN podpořil Babiš.", "Babiš je autorem návrhu.",
+    "Babišův návrh ruší poplatek.", "Návrh ruší Babišův poplatek.", "Okamurova SPD návrh podpořila.",
+    "Autorem je ve skutečnosti Okamura.", "Návrh sepsal Hrnčíř.", "Hrnčíř návrh odmítl.",
+    "Babiš said, že je to podvod.", "Babiš tweetoval, že je to podvod.", "Babiš na síti X napsal, že jde o podvod.",
+    "On k tomu dodal, že jde o podvod.", "Ten návrh prý zaplatí jedna firma.", "Prý jde o podvod na voliče.",
+    "Ministryně: marže vyrostly.", "Ministryně financí návrh podpořila.", "Premiér návrh odmítl.",
+    "Šéfka resortu to považuje za chybu.", "Poslankyně za ANO to považuje za chybu.",
+    "Novák chce zrušit poplatek.", "Hlasoval pro něj i Babiš.", "Proti byl i Rakušan.",
+    "Jan Novák (ANO) a 3 další poslanci. Novák je bývalý ministr.", "Novák byl odsouzen za podvod.",
+])
+def test_p4_chyba(text):
+    assert _p4(text), text
+
+
+@pytest.mark.parametrize("text", ["Návrh podal Babiš.", "Babišův návrh ruší poplatek.", "Za návrhem stojí Okamura."])
+def test_p4_chyba_v_karte(text):
+    assert _p4(text, in_card=True), text
+
+
+P4_GOOD = [
+    "PN ruší poplatek za odpad pro obce do 500 obyvatel.", "Garanční výbor PN doporučil přijmout.",
+    "Sněmovna PN přijala 102 hlasy, proti bylo 40.", "Změna se týká zákona č. 586/1992 Sb., o daních z příjmů.",
+    "Pro hlasovali poslanci ANO, SPD a Motoristů, proti ODS, STAN a Piráti.",
+    "Novela míří do Senátu, ten má na ni 30 dnů.", "Lhůta pro podání přiznání se prodlužuje do 1. července.",
+    "Ministerstvo financí bude muset do půl roku vydat vyhlášku.", "Česká národní banka dostane nové pravomoci.",
+    "Dotace půjdou přes Státní fond podpory investic.", "Úprava se týká Prahy, Brna a Ostravy.",
+    "Týká se to i obcí jako Lidice nebo Ležáky.", "Platí to pro Českou správu sociálního zabezpečení.",
+    "Sníží se daň pro OSVČ v paušálním režimu.", "Zákon o DPH se mění od 1. ledna 2027.",
+    "Evropská komise požaduje změnu do roku 2027.", "Ústavní soud zákon loni zrušil.",
+    "Návrh vrací Senát s pozměňovacími návrhy.", "Návrh reaguje na rozsudek Nejvyššího správního soudu.",
+    "Ministr zdravotnictví dostane nové pravomoci.", "Státní úřad pro jadernou bezpečnost vydá povolení.",
+    "PN přidává do zákona o zdravotních službách nový § 45a.", "Na Facebooku a Instagramu najdete další videa.",
+    "Celé znění najdete na cosepece.cz.", "Změna dopadne na Správu železnic a Ředitelství silnic a dálnic.",
+    "Úprava se týká zaměstnanců Policie ČR a Hasičského záchranného sboru.",
+    "Peníze dostane Národní sportovní agentura.", "Návrh se týká Vojenského zpravodajství.",
+    "Dálnice D1 dostane nový úsek u Brna.", "Platí to i pro Českou televizi a Český rozhlas.",
+    "Firmy jako ČEZ zaplatí vyšší daň.", "Podle Ministerstva financí to vynese 5 mld. Kč.",
+    "Výbor pro sociální politiku návrh projednal 12. 11.",
+]
+
+
+@pytest.mark.parametrize("text", P4_GOOD + [
+    # reálné texty generátoru (měření 2026-11-28)
+    "Titulky napsala AI webu cosepece.cz.", "Šest poslanců navrhlo novelu trestního zákoníku.",
+    "Hlasovalo 180 poslanců, pro bylo 95.", "Slovo od slova stejné znění má i PN 2481.",
+    "Během kontroly se domněnka podle § 9 považuje za naplněnou.", "Klub ANO ho podpořil.",
+])
+def test_p4_bez_chyby(text):
+    assert _p4(text) == [], (text, _p4(text))
+
+
+SURNAMES = ["Babiš", "Okamura", "Rakušan", "Schillerová", "Nový", "Novák"]
+
+
+@pytest.mark.parametrize("text", [
+    "Babiš je bývalý premiér.", "Babišova vláda návrh připravila.", "PN se týká i Okamurovy strany.",
+    "Rakušanovi návrh nevadí.", "Odhad připravilo ministerstvo Schillerové.", "Text navrhl i Nový.",
+])
+def test_seznam_prijmeni_ze_serveru(text):
+    card = dict(P4_CARD, prijmeni_osob=SURNAMES)
+    assert any("příjmení" in e for e in _p4(text, card=card)), text
+
+
+def test_seznam_prijmeni_nesahne_na_strukturovane_ani_bezna_slova():
+    card = dict(P4_CARD, prijmeni_osob=SURNAMES)
+    assert _p4("Nová úprava platí od ledna.", card=card) == []
+    assert at.public_text_errors(card, P4_BASE, 311) == []  # Novák je autor ve strukturovaném tvaru
+    assert "prijmeni_osob" not in dict(at.texts_of_card(card))
+
+
+def test_normalizace_prevezme_seznam_prijmeni():
+    from conftest import load_fixture
+    from hlidac_reels.generator.normalize import normalize
+    server = dict(load_fixture("card-1-v2.json"), prijmeni_osob=["Babiš", "Okamura"])
+    new, _, _ = normalize(load_fixture("v3-pn-311.json"), "x\n\nHodnotíme postup, ne politický obsah.", fmt="pn",
+                          focus_info=[], server_card=server)
+    assert new["prijmeni_osob"] == ["Babiš", "Okamura"]

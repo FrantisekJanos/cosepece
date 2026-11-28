@@ -34,12 +34,36 @@ SAY = re.compile(
     r"vysvětlil|vysvětluj|vysvětloval|argumentuj|argumentoval|zdůraznil|zdůrazňuj|poznamenal|oznámil|"
     r"vzkázal|vzkazuj|odpověděl|odpovídal|reagoval|reaguj|hájí|hájil|obhajuj|obhajoval|zdůvodňuj|zdůvodnil|"
     r"odůvodňuj|odůvodnil|míní|mínil|domnív|píše|psal|věří|věřil|mluvil|mluví|hovořil|hovoří|zmínil|"
-    r"odmítá|odmítl|odmítal|chválí|chválil|zaznělo|zaznívá|zaznívalo|vidí\s+jako)\w*",
+    r"odmítá|odmítl|odmítal|chválí|chválil|zaznělo|zaznívá|zaznívalo|vidí\s+jako|tweet|sdílel|sdílí|"
+    r"napsal[aiy]?\s*,?\s*že|prý\b|údajně\b|said|says|wrote|tweeted|claims?\b)\w*",
     re.IGNORECASE)
 # role osob („vládní“, „poslanecký“, „senátní“ jsou přívlastky návrhu, ne osoba; „autorizovaný“ není autor)
-ROLE = re.compile(r"(?<!\w)(?:poslan(?!eck)|europoslan|ministr|premiér|senátor(?!sk)|zpravodaj|předkladatel|"
+ROLE = re.compile(r"(?<!\w)(?:poslan(?!eck)|europoslan|ministr|premiér|senátor(?!sk)|zpravodaj(?!stv)|předkladatel|"
                   r"navrhovatel|opozic|opozič|koalic|koalič|mluvčí|expert|šéf|předsed|místopředsed|hejtman|starost|náměst|lídr|"
+                  r"poslankyn|ministryn|autoř|"
                   r"autor(?!iz))\w*", re.IGNORECASE)
+# úkony, které o osobě vypovídají stejně jako výrok (napsal, podpořil, hlasoval, „stojí za“): chyba u osoby nebo role
+# v jednotném čísle; skupina („poslanci ANO hlasovali“) a instituce („Senát návrh odmítl“) jsou věcný údaj
+ACT = re.compile(r"(?<!\w)(?:napsal|sepsal|tweet|sdílel|sdílí|považuj|považoval|podpořil|podporuj|odmítl|odmítá|"
+                 r"hlasoval|hlasuj|stojí\s+za|stál[aiy]?\s+za|je\s+autor|byl[aiy]?\s+proti|byl[aiy]?\s+pro)\w*",
+                 re.IGNORECASE)
+ROLE_ONE = re.compile(r"(?<!\w)(?:ministr|ministryně|poslanec|poslankyně|premiér|premiérka|šéf|šéfka|předseda|"
+                      r"předsedkyně|mluvčí|hejtman|hejtmanka|starosta|starostka|náměstek|náměstkyně|senátor|"
+                      r"senátorka|zpravodaj|zpravodajka|lídr|lídryně|autor|autorka|předkladatel|předkladatelka|"
+                      r"europoslanec|europoslankyně|expert|expertka)(?!\w)", re.IGNORECASE)
+POSSESSIVE = ("ův", "ova", "ovo", "ovu", "ovy", "ových", "ovým", "ovými", "ově", "ovou", "ovi", "ovo")
+SURNAME_FORMS = ("", "a", "e", "u", "y", "i", "o", "ovi", "em", "ou", "é", "ého", "ému", "ém", "ým", "ou", "á", "ý", "í", "ího", "ímu",
+                 "ův", "ova", "ovo", "ovu", "ovy", "ových", "ovým", "ovými", "ově", "ovou", "ovo", "ovi", "ovic",
+                 "ová", "ové", "ovou", "ovými")
+START_WORDS = {"ten", "ta", "to", "ti", "ty", "ten", "on", "ona", "ono", "oni", "ony", "co", "kdo", "jde", "je",
+               "bude", "má", "mají", "pro", "proti", "za", "na", "v", "ve", "po", "do", "od", "podle", "kromě", "také",
+               "i", "a", "ale", "už", "jen", "nově", "dosud", "dnes", "pak", "tak", "když", "pokud", "jak", "kde",
+               "celé", "celý", "celá", "ani", "nebo", "u", "při", "o", "s", "se", "z", "ze", "k", "ke",
+               "jeden", "jedna", "dva", "dvě", "tři", "čtyři", "pět", "šest", "sedm", "osm", "devět", "deset",
+               "oba", "obě", "všichni", "většina", "polovina", "část", "nikdo", "někteří", "každý", "titulky",
+               "titulek", "nový", "nová", "nové", "slovo", "slova", "doslova", "během", "kolem", "proto", "potom",
+               "zatím", "takové", "toto", "tato", "tento", "celkem", "nejprve", "zároveň", "navíc", "dále", "rovněž",
+               "zejména", "hlavně", "především", "tedy", "totiž", "například", "nově", "dosud", "letos", "loni"}
 CLUBS = ("ANO", "ODS", "STAN", "Piráti", "Pirátů", "Pirátům", "SPD", "TOP 09", "KDU-ČSL", "Motoristé", "Motoristů",
          "KSČM", "STAČILO!")
 CLUB_WORDS = {"ANO", "ODS", "STAN", "SPD", "TOP", "KDU-ČSL", "KSČM", "STAČILO"}
@@ -66,7 +90,26 @@ ALLOW_CAPS = ("ústav", "sněmovn", "senát", "parlament", "vlád", "ministerstv
               "vodní", "silnic", "dálnic", "ředitelstv", "inspektorát", "vězeňsk", "probační", "akademi",
               "univerzit", "vysok", "nemocnic", "fakultní", "lékařsk", "advokátní", "notářsk", "exekutorsk",
               "komor", "svaz", "asociac", "hospodářsk", "obchodní", "průmysl", "agrární", "odborov", "konfederac",
-              "gdpr", "dph", "ičo", "es", "eu", "mfčr", "uk", "usa", "sk", "de", "at", "pl", "hu", "ua", "ru")
+              "gdpr", "dph", "ičo", "es", "eu", "mfčr", "uk", "usa", "sk", "de", "at", "pl", "hu", "ua", "ru",
+              "klub", "lidic", "ležák", "bečv", "anthropoid", "masaryk", "infrastruktur", "podpor", "hasičsk", "záchrann",
+              "sbor", "sportovn", "zpravodajstv", "dálnic", "televiz", "rozhlas", "železnic", "ředitelstv", "jadern",
+              "cosepece", "onlyfans", "youtube", "tiktok", "google", "microsoft", "apple", "meta", "čez",
+              "osvč", "vltav", "morav", "labe", "odr", "šumav", "krkonoš", "jesenik", "jeseník", "beskyd", "tatr",
+              "dunaj", "evropě", "evropa", "asie", "afrik", "ameri", "čín", "japon", "izrael", "palestin", "gaz",
+              "írán", "turec", "franci", "itali", "španěl", "británi", "anglie", "skandináv", "švéd", "fin", "nor",
+              "dán", "nizozem", "belgi", "švýcar", "litv", "lotyš", "eston", "rumun", "bulhar", "chorvat", "slovin",
+              "srb", "řeck", "kypr", "malt", "irsk", "portugal", "luxemburs", "lucembur", "vánoc", "velikonoc",
+              "silvestr", "nový rok", "státní svátek", "den ", "vojensk", "zpravodajsk", "obrann", "zahraničn",
+              "vnitr", "spravedlnost", "kultur", "doprav", "životní", "školstv", "zemědělstv", "průmysl", "práce",
+              "místní", "pro ", "sociáln", "nadac", "spolek", "ústřed", "stavebn", "katastr", "pozemkov", "lesní",
+              "vodní", "zdravotní", "hygien", "sázk", "lotern", "loterie", "tipsport", "fortuna", "orlen", "unipetrol",
+              "mero", "transgas", "net4gas", "eg.d", "egd", "innogy", "rwe", "bohemia", "moravia", "silesia",
+              "chomutov", "kladn", "most", "děčín", "teplic", "karvin", "havířov", "frýd", "opav", "jihlav", "zlín",
+              "hradec", "pardubic", "budějovic", "karlov", "cheb", "tábor", "písek", "kolín", "mladá boleslav",
+              "boleslav", "hustopeč", "lipník", "přerov", "prostějov", "vsetín", "třebíč", "znojm", "břeclav",
+              "hodonín", "kroměříž", "uherské", "šumperk", "trutnov", "náchod", "jičín", "semil", "jablonec",
+              "česká lípa", "litoměřic", "louny", "rakovník", "beroun", "příbram", "benešov", "kutná hora",
+              "havlíčk", "pelhřimov", "strakonic", "prachatic", "klatov", "domažlic", "tachov", "sokolov", "rokycan")
 # podstatná jména institucí a míst: slovo s velkým písmenem před nimi je součást názvu, ne jméno osoby
 INSTITUTION_HEAD = ("agentu", "rad", "úřad", "fond", "komis", "soud", "správ", "inspekc", "nadac", "spol",
                     "památník", "univerzit", "nemocnic", "ústav", "centr", "institut", "knihovn", "muze", "divadl",
@@ -111,7 +154,7 @@ SKIP_KEYS = {"url", "url_psp", "klic", "key", "quote", "citace", "reasons", "pre
              "citace_projevu", "ct", "format", "faze", "score", "verified", "data_date", "quote_source",
              "typ_navrhu", "predlozeno", "kdo", "autor", "jmeno", "klub", "kluby", "recnik", "datum", "date",
              "cislo", "podano", "stav", "typ", "zdroj", "hlasovani", "spolu", "count", "ai", "pn",
-             "own", "hot"}
+             "own", "hot", "prijmeni_osob"}
 # blok `pn` (formát pn): volný text jen tyto položky; pn.top[].autor a pruhy autorů jsou jména
 PN_TEXT_KEYS = {"top", "titulek", "note", "sub", "pozn", "popis", "lab", "text"}
 
@@ -316,10 +359,13 @@ def _full_name_before(text: str, start: int, jmeno: str) -> int | None:
 
 
 def _person_check(text: str, where: str, people: list[str], mentions: list[dict],
-                  leads: list[tuple[int, int]]) -> tuple[list[str], list[tuple[int, int]]]:
-    """R8 pro jména z karty: každý výskyt (v jakémkoli pádě) jen strukturovaně. Vrací (chyby, úseky jmen)."""
+                  leads: list[tuple[int, int]], bad: list[tuple[int, int]] | None = None
+                  ) -> tuple[list[str], list[tuple[int, int]]]:
+    """R8 pro jména z karty: každý výskyt (v jakémkoli pádě) jen strukturovaně. Vrací (chyby, úseky jmen);
+    do `bad` přidá úseky výskytů mimo strukturovaný tvar."""
     errs: list[str] = []
     spans: list[tuple[int, int]] = []
+    bad = bad if bad is not None else []
     by_name = {m["jmeno"]: m for m in mentions}
     for p in people:
         if not p or not p.strip():
@@ -332,6 +378,8 @@ def _person_check(text: str, where: str, people: list[str], mentions: list[dict]
             if any(s <= m.start() < e for s, e in leads):
                 continue
             spec = by_name.get(p)
+            if spec is None or first is None:
+                bad.append((m.start(), m.end()))
             if spec is None:
                 errs.append(f"R8 {where}: jméno osoby „{m.group()}“ ve volném textu. Osoby uvádí jen systém "
                             "(autor PN nebo předkladatel ze serveru, citace projevu přes citace_projevu); "
@@ -378,6 +426,48 @@ def _name_candidates(sent: str, skip: list[tuple[int, int]]) -> list[re.Match]:
 SURNAME_END = ("ová", "ové", "ovou", "ský", "ská", "ské", "skou", "ckou", "cký", "cká", "ovi", "em")
 
 
+def _start_name(sent: str, skip: list[tuple[int, int]]) -> re.Match | None:
+    """První slovo věty, když může být jménem osoby: velké písmeno, ne zkratka, instituce, místo, dokument,
+    role, předložka ani zájmeno („Babiš …“, „Hrnčíř …“, „Okamurova SPD …“)."""
+    m = WORD.search(sent)
+    if m is None or sent[:m.start()].strip(" „\"(–-") or any(s <= m.start() < e for s, e in skip):
+        return None
+    w = m.group()
+    if (not w[:1].isupper() or _allowed_caps(w) or DOC.match(w) or INSTITUTION.match(w) or ROLE.match(w)
+            or w.lower() in START_WORDS or w.lower() in PREPOSITIONS or ACT.match(w) or SAY.match(w)):
+        return None
+    return m
+
+
+def _acts_right_after(sent: str, start: re.Match) -> bool:
+    """Za prvním slovem věty do tří slov stojí úkon nebo sloveso mluvení a za ním není dokument ani AI jako podmět
+    (inverze „Titulky napsala AI“)."""
+    words = list(WORD.finditer(sent, start.end()))[:3]
+    for i, w in enumerate(words):
+        verb = ACT.match(sent, w.start()) or SAY.match(sent, w.start())
+        if verb:
+            after = WORD.search(sent, verb.end())
+            inverted = after and (after.group().isupper() or (DOC.match(after.group())
+                                                              and not verb.group().lower().startswith("je")))
+            return not inverted
+    return False
+
+
+def _surname_re(surnames: list[str]) -> re.Pattern | None:
+    """Regex na příjmení ze seznamu serveru v jakémkoli pádě a v přivlastňovacím tvaru (Babiš, Babišova,
+    Okamurovi, Schillerové); rozlišuje velikost písmen."""
+    stems = set()
+    for sn in surnames or []:
+        if not isinstance(sn, str) or len(sn.strip()) < 3 or _allowed_caps(sn.strip()):
+            continue
+        stems.add(_surname_stem(sn.strip()))
+    if not stems:
+        return None
+    alt = "|".join(re.escape(x) for x in sorted(stems, key=len, reverse=True))
+    ends = "|".join(re.escape(e) for e in sorted(set(SURNAME_FORMS), key=len, reverse=True))
+    return re.compile(rf"(?<![\w-])(?:{alt})(?:{ends})(?![\w-])")
+
+
 def _strong_name(sent: str, m: re.Match) -> bool:
     """Jméno osoby s vysokou jistotou: dvě slova s velkým písmenem vedle sebe („Lukášem Vlčkem“), nebo tvar
     příjmení („Svárovská“, „Řehkovou“)."""
@@ -416,28 +506,51 @@ def _subject_ok(sent: str, say: re.Match) -> bool:
 
 
 def attribution_errors(text: str, *, where: str, people: list[str], docs: list[str],
-                       speeches: list[dict], mentions: list[dict] | None = None) -> list[str]:
+                       speeches: list[dict], mentions: list[dict] | None = None,
+                       surnames: re.Pattern | None = None) -> list[str]:
     """Pravidla R1–R5, R7 a R8 nad jedním textem; chyby česky s kódem pravidla na začátku.
-    mentions = osoby, které smí text jmenovat strukturovaně (mentions_of_card); bez nich žádná."""
+    mentions = osoby, které smí text jmenovat strukturovaně (mentions_of_card); bez nich žádná.
+    surnames = regex příjmení poslanců, členů vlády a řečníků ze serveru (_surname_re z `prijmeni_osob`)."""
     if not isinstance(text, str) or not text.strip():
         return []
     errs: list[str] = []
     leads = speech_leads(text)
     lead_spans = [(ld["start"], ld["end"]) for ld in leads]
-    person_errs, name_spans = _person_check(text, where, people, mentions or [], lead_spans)
+    bad_spans: list[tuple[int, int]] = []
+    person_errs, name_spans = _person_check(text, where, people, mentions or [], lead_spans, bad_spans)
     errs += person_errs
+    if surnames is not None:
+        sentence_starts = {st for st, _ in _sentences(text)}
+        for m in surnames.finditer(text):
+            if any(sp <= m.start() < e for sp, e in name_spans + lead_spans):
+                continue
+            # příjmení tvaru přídavného jména („Nová“, „Malý“) na začátku věty může být běžné slovo
+            if m.start() in sentence_starts and m.group().lower().endswith(("ý", "á", "í", "é")):
+                continue
+            name_spans.append((m.start(), m.end()))
+            bad_spans.append((m.start(), m.end()))
+            errs.append(f"R8 {where}: příjmení „{m.group()}“ ve volném textu. Osoby uvádí jen systém (autor PN nebo "
+                        "předkladatel ze serveru, citace projevu přes citace_projevu).")
     for start, sent in _sentences(text):
         local_skip = [(s - start, e - start) for s, e in name_spans + lead_spans if e > start and s < start + len(sent)]
         candidates = _name_candidates(sent, local_skip)
+        start_name = _start_name(sent, local_skip)
+        if start_name is not None and (start_name.group().endswith(POSSESSIVE) or _acts_right_after(sent, start_name)):
+            candidates.append(start_name)  # „Babišův návrh…“, „Hrnčíř návrh odmítl.“, „Babiš je autorem…“
         for c in candidates:
-            if not _strong_name(sent, c):
-                continue  # jedno slovo (položka rozpočtu, místo): jen signál osoby pro R1 a R7
             errs.append(f"R8 {where}: „{c.group()}“ vypadá jako jméno osoby („{_snippet(sent)}“). Osoby uvádí jen "
                         "systém; instituci nebo dokument napiš celým názvem, jinak osobu nejmenuj.")
         in_lead = lambda pos: any(s <= start + pos < e for s, e in lead_spans)  # noqa: E731
         persons = (bool(candidates) or ROLE.search(sent) is not None
                    or any(_stem_re(p).search(sent) for p in people if p and p.strip())
                    or any(re.search(rf"(?<!\w){re.escape(c)}(?!\w)", sent) for c in CLUBS))
+        # R1b: úkon, který vypovídá o osobě (podpořil, hlasoval, napsal, stojí za…), u osoby nebo role v j. č.
+        act = ACT.search(sent)
+        roles_one = [r for r in ROLE_ONE.finditer(sent) if not any(a <= r.start() < b for a, b in local_skip)]
+        if act and not in_lead(act.start()) and (candidates or roles_one
+                                                 or any(start <= b < start + len(sent) for b, _ in bad_spans)):
+            errs.append(f"R1 {where}: úkon přisouzený osobě („{_snippet(sent)}“, „{act.group()}“). Kdo co podpořil "
+                        "nebo hlasoval, ukazuje jen systém z dat (autor PN, hlasování po klubech).")
         # R1: sloveso mluvení nebo hodnocení jen s dokumentem či institucí jako podmětem a bez osoby ve větě
         for say in SAY.finditer(sent):
             if in_lead(say.start()):
@@ -638,6 +751,9 @@ def public_text_errors(card: dict | None, caption: str, ct: int | None) -> list[
     docs = _doc_quotes(card)
     speeches = [s for s in card.get("citace_projevu") or [] if isinstance(s, dict)]
     mentions = mentions_of_card(card)
+    own = {_surname_stem(m["jmeno"]) for m in mentions}
+    surnames = _surname_re([x for x in card.get("prijmeni_osob") or []
+                            if isinstance(x, str) and x.strip() and _surname_stem(x.strip()) not in own])
     texts = texts_of_card(card)
     caption = caption.strip() if isinstance(caption, str) else ""
     derived: list[tuple[str, str]] = []
@@ -651,7 +767,7 @@ def public_text_errors(card: dict | None, caption: str, ct: int | None) -> list[
                 errs.append(f"{name}: {e}")
     for where, text in texts + derived:
         errs += attribution_errors(text, where=where, people=people, docs=docs, speeches=speeches,
-                                   mentions=mentions)
+                                   mentions=mentions, surnames=surnames)
     for where, text in derived:
         if text.count("„") > text.count("“"):
             errs.append(f"{where}: useknutá citace (otevírací „ bez zavírací “). První odstavec popisku zkrať "

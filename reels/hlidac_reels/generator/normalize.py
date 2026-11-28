@@ -560,6 +560,13 @@ def normalize(card: dict, caption: str, *, fmt: str | None,
     """
     card = copy.deepcopy(card)
     notes: list[str] = []
+    # příjmení poslanců, členů vlády a řečníků ze serveru: kontrola atribuce (R8) je hlídá v každé variantě i v bráně
+    # před zveřejněním (karta jde do manifestu); model pole nepíše, starší server ho neposílá
+    surnames = server_card.get("prijmeni_osob") if isinstance(server_card, dict) else None
+    if isinstance(surnames, list):
+        card["prijmeni_osob"] = [x for x in surnames if isinstance(x, str)]
+    elif "prijmeni_osob" in card:
+        del card["prijmeni_osob"]
     _split_hook(card, notes)
     _nbsp_hook(card, notes)
     _drop_said(card, notes)

@@ -541,7 +541,41 @@ final class ReelJobs
                 }
             }
         }
+        $card['prijmeni_osob'] = $this->personSurnames();
         return $card;
+    }
+
+    /**
+     * Příjmení osob, které video nesmí jmenovat volným textem (kontrola atribuce generátoru, reels/attribution.py):
+     * autoři PN (pn.osoba) a ze schématu steno služby rag/ poslanci, kteří v tomto období hlasovali
+     * (hlasovani_poslanci), a řečníci ve stenozáznamech (mezi nimi členové vlády). Bez schématu steno (SQLite,
+     * hosting) jen autoři PN. Seřazené, bez duplicit; jen se předává generátoru, nikde se nezobrazuje.
+     *
+     * @return list<string>
+     */
+    public function personSurnames(): array
+    {
+        $names = [];
+        foreach ($this->db->all('SELECT DISTINCT osoba FROM pn WHERE osoba IS NOT NULL') as $r) {
+            $parts = preg_split('~\s+~u', trim((string)$r['osoba']), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            if (count($parts) >= 2) {
+                $names[] = end($parts);
+            }
+        }
+        if ((new PnOutcome($this->db, []))->stenoAvailable()) {
+            try {
+                foreach ($this->db->all('SELECT DISTINCT o.prijmeni FROM steno.osoba o
+                        WHERE o.id_osoba IN (SELECT id_osoba FROM hlasovani_poslanci)
+                           OR o.id_osoba IN (SELECT id_osoba FROM steno.projev WHERE id_osoba IS NOT NULL)') as $r) {
+                    $names[] = trim((string)$r['prijmeni']);
+                }
+            } catch (\Throwable) {
+                // starší schéma steno bez tabulky osoba: zůstanou autoři PN
+            }
+        }
+        $names = array_values(array_unique(array_filter($names, fn(string $n): bool => mb_strlen($n) >= 3)));
+        sort($names);
+        return $names;
     }
 
     /**

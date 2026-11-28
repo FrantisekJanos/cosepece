@@ -1942,6 +1942,11 @@ $rjC = $jobs->claim();
 $card = $jobs->cardV2(221);
 $rjKeys = ['ct', 'nazev', 'faze', 'score', 'title', 'perex', 'quote', 'quote_source', 'verified', 'reasons', 'url', 'data_date'];
 check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_keys($card ?? []))), []);
+// příjmení osob pro kontrolu atribuce generátoru (autoři PN, s rag/ i poslanci a řečníci): seřazená, bez duplicit
+$rjSurnames = $card['prijmeni_osob'] ?? null;
+check('karta v2: příjmení osob pro kontrolu atribuce', [is_array($rjSurnames), in_array('Jurečka', $rjSurnames ?? [], true),
+    $rjSurnames === array_values(array_unique($rjSurnames ?? [])), $rjSurnames !== null && $rjSurnames === (function (array $a) { sort($a); return $a; })($rjSurnames)],
+    [true, true, true, true]);
 check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
     [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
 check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);

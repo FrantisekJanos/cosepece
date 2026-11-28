@@ -415,6 +415,7 @@ _SEZNAMY = {
 }
 ZKRACENA_STRANKA = "[zkráceno kvůli velikosti: vráceno {k} z {n} záznamů; další stránka {param} = {dalsi}]"
 ZKRACENY_PROJEV = "[zkráceno kvůli velikosti: text vystoupení pokračuje přes pokracovani (get_projev)]"
+ZKRACENY_ZAZNAM = "[zkráceno kvůli velikosti: nejdelší pole záznamu je zkrácené (zkraceno: true), celé přes detail]"
 
 
 def _text(nazev: str, d: dict, poznamka: str | None = None) -> str:
@@ -444,17 +445,38 @@ def _stranka(nazev: str, d: dict, max_znaku: int) -> tuple[dict, str]:
         text = _text(nazev, kratsi, ZKRACENA_STRANKA.format(k=k, n=n, param=param, dalsi=dalsi(k)))
         if len(text) <= max_znaku:
             return kratsi, text
-    # ani jeden záznam se celý nevejde: zůstane první
-    prvni = dict(zaznamy[0])
-    kratsi = {**d, pole: [prvni], ukazatel: dalsi(1) if n > 1 else d.get(ukazatel)}
-    poznamka = ZKRACENA_STRANKA.format(k=1, n=n, param=param, dalsi=dalsi(1)) if n > 1 else None
-    if nazev == "rozprava" and isinstance(prvni.get("text"), str):
-        poznamka = "\n".join(filter(None, [poznamka, ZKRACENY_PROJEV]))
-        cely = prvni["text"]
-        prvni.update(text="", zkraceno=True, pokracovani=f'get_projev("{prvni["klic"]}", offset_znaku={len(cely)})')
-        delka = max(0, min(len(cely), max_znaku - len(_text(nazev, kratsi, poznamka))))
-        prvni.update(text=cely[:delka], pokracovani=f'get_projev("{prvni["klic"]}", offset_znaku={delka})')
-    return kratsi, _orez(_text(nazev, kratsi, poznamka), max_znaku)
+    # ani jeden záznam se celý nevejde: zůstane první se zkráceným nejdelším textovým polem. Délka se hledá
+    # půlením nad délkou výsledného textu (JSON escapuje " a \n na dva znaky, syrová délka nestačí).
+    prvni = zaznamy[0]
+    ukaz1 = dalsi(1) if n > 1 else d.get(ukazatel)
+    pole_textu = "text" if nazev == "rozprava" and isinstance(prvni.get("text"), str) else max(
+        (k for k, v in prvni.items() if isinstance(v, str) and k != "klic" and not k.startswith("url")),
+        key=lambda k: len(prvni[k]), default=None)     # klíč a odkazy se nezkracují (identita položky)
+    if pole_textu is not None:
+        cely = prvni[pole_textu]
+        poznamka = ZKRACENA_STRANKA.format(k=1, n=n, param=param, dalsi=ukaz1) if n > 1 else None
+        poznamka = "\n".join(filter(None, [poznamka, ZKRACENY_PROJEV if nazev == "rozprava" else ZKRACENY_ZAZNAM]))
+
+        def sestav(delka: int) -> tuple[dict, str]:
+            zaznam = {**prvni, pole_textu: cely[:delka], "zkraceno": True}
+            if nazev == "rozprava":
+                zaznam["pokracovani"] = f'get_projev("{prvni["klic"]}", offset_znaku={delka})'
+            kratsi = {**d, pole: [zaznam], ukazatel: ukaz1}
+            return kratsi, _text(nazev, kratsi, poznamka)
+
+        if len(sestav(0)[1]) <= max_znaku:
+            lo, hi = 0, len(cely)          # největší délka, se kterou se text vejde (délka textu roste s delka)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if len(sestav(mid)[1]) <= max_znaku:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return sestav(lo)
+    # nevejde se ani zkrácený záznam (velký souhrn nebo hlavička): stránka bez záznamů, ukazatel na první
+    prazdna = {**d, pole: [], ukazatel: dalsi(0)}
+    return prazdna, _orez(_text(nazev, prazdna, ZKRACENA_STRANKA.format(k=0, n=n, param=param, dalsi=dalsi(0))),
+                          max_znaku)
 
 
 def _rollback(conn) -> None:

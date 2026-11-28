@@ -272,6 +272,46 @@ def test_jedine_dlouhe_vystoupeni_dostane_pokracovani(conn_fake):
     assert r["zkraceno"] is True and r["pokracovani"] == f'get_projev("{r["klic"]}", offset_znaku={len(r["text"])})'
 
 
+ESCAPOVANY = 'řekl "ano"\n' * 900     # JSON z " a \n dělá dva znaky
+
+
+@pytest.mark.parametrize("max_znaku", [2000, 3000])
+def test_jedine_vystoupeni_s_uvozovkami_da_platny_json(monkeypatch, max_znaku):
+    monkeypatch.setitem(nastroje._FUNKCE, "rozprava", lambda conn, ct, **kw: {
+        "ct": ct, "format": "plny", "celkem": 3, "od_poradi": 1, "dalsi_od_poradi": None,
+        "vystoupeni": [{"poradi": i, "klic": f"10/34/{600 + i}/1", "recnik": "R", "text": ESCAPOVANY}
+                       for i in (1, 2, 3)]})
+    v = vykonej(object(), "rozprava", {"ct": 221, "format": "plny"}, max_znaku=max_znaku)
+    d = _telo(v.text)                                    # platný JSON
+    r = d["vystoupeni"][0]
+    assert len(v.text) <= max_znaku and d["dalsi_od_poradi"] == 2 and len(d["vystoupeni"]) == 1
+    assert ESCAPOVANY.startswith(r["text"]) and 0 < len(r["text"]) < len(ESCAPOVANY)
+    assert r["pokracovani"] == f'get_projev("10/34/601/1", offset_znaku={len(r["text"])})'
+    assert len(v.text) > max_znaku - 50                  # půlení najde skoro celé volné místo
+
+
+@pytest.mark.parametrize("max_znaku", [2000, 3000])
+def test_jediny_zaznam_seznamu_s_uvozovkami_da_platny_json(monkeypatch, max_znaku):
+    monkeypatch.setitem(nastroje._FUNKCE, "projevy_k_tisku", lambda conn, ct, **kw: {
+        "ct": ct, "celkem": 50, "offset": 20, "dalsi_offset": 40,
+        "projevy": [{"klic": f"10/34/{i}/1", "recnik": "R", "datum": "2026-11-12", "autorizovano": True,
+                     "url": "https://www.psp.cz/x.htm", "uryvek": ESCAPOVANY} for i in range(20)]})
+    v = vykonej(object(), "projevy_k_tisku", {"ct": 221, "offset": 20}, max_znaku=max_znaku)
+    d = _telo(v.text)
+    r = d["projevy"][0]
+    assert len(v.text) <= max_znaku and d["dalsi_offset"] == 21 and len(d["projevy"]) == 1
+    assert r["klic"] == "10/34/0/1" and r["zkraceno"] is True and ESCAPOVANY.startswith(r["uryvek"])
+    assert [p.klic for p in v.polozky] == ["projev:10/34/0/1"]
+
+
+def test_nevejde_se_ani_zkraceny_zaznam_stranka_bez_zaznamu(monkeypatch):
+    monkeypatch.setitem(nastroje._FUNKCE, "rozprava", lambda conn, ct, **kw: {
+        "ct": ct, "celkem": 2, "dalsi_od_poradi": None, "souhrn": {"recnici": ["R" * 50] * 100},
+        "vystoupeni": [{"poradi": i, "klic": f"10/34/{i}/1", "recnik": "R", "text": "x" * 500} for i in (4, 5)]})
+    v = vykonej(object(), "rozprava", {"ct": 221, "format": "plny", "od_poradi": 4}, max_znaku=3000)
+    assert len(v.text) <= 3000 and "od_poradi = 4" in v.text and not v.polozky
+
+
 def test_valueerror_jde_do_textu_beze_zmeny(monkeypatch):
     def fake(conn, ct, vcetne=None):
         raise ValueError("Tisk 9999 v 10. období nesleduji. Zkuste seznam_tisku(q=…).")

@@ -1140,7 +1140,13 @@ async def test_w_js_se_servi_s_cache_300_a_chat_js_immutable(tmp_path):
     assert w.hlavicka("content-type").startswith("text/javascript")
     c = await asgi(s.app, "GET", f"/chat-api/s/{h}/chat.mjs")
     assert c.status_code == 200 and "immutable" in c.hlavicka("cache-control") and c.telo == b"export const x = 1;"
-    assert (await asgi(s.app, "GET", "/chat-api/s/starahash/chat.mjs")).status_code == 404
+    assert (await asgi(s.app, "GET", "/chat-api/s/starahash/chat.mjs")).status_code == 404     # jiný tvar
+    # starý hash po nasazení (w.js v cache prohlížeče): aktuální obsah, ale bez immutable
+    jiny = "0" * 12 if h != "0" * 12 else "1" * 12
+    st = await asgi(s.app, "GET", f"/chat-api/s/{jiny}/chat.mjs")
+    assert st.status_code == 200 and st.telo == b"export const x = 1;"
+    assert st.hlavicka("cache-control") == "no-cache" and "immutable" not in st.hlavicka("cache-control")
+    assert (await asgi(s.app, "GET", f"/chat-api/s/{jiny}/../test_chat_app.py")).status_code == 404
     assert (await asgi(s.app, "GET", f"/chat-api/s/{h}/../test_chat_app.py")).status_code == 404
     assert (await asgi(s.app, "GET", f"/chat-api/s/{h}/neni.js")).status_code == 404
     # změna obsahu = nový hash (po redeployi se stáhne nový widget)

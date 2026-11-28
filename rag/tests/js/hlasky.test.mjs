@@ -57,6 +57,12 @@ test("akce a příznaky", () => {
   }
 });
 
+test("spojení spadlo před startem: odpověď mohla vzniknout, nic neblokuje", () => {
+  assert.match(hlaska("spojeni_pred_startem", {}).text, /mohla na serveru vzniknout/);
+  assert.equal(hlaska("spojeni_pred_startem", {}).blokuje, false);
+  assert.match(hlaska("odpoved_vznika", {}).text, /ještě připravuje/);
+});
+
 test("zbývající otázky", () => {
   assert.equal(zbyvaText(2), "Dnes zbývají 2 otázky");
   assert.equal(zbyvaText(1), "Dnes zbývá 1 otázka");

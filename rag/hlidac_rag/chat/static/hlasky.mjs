@@ -63,6 +63,10 @@ export function hlaska(kod, data = {}, ted = Date.now()) {
       return h("Na tuto otázku asistent neodpoví. Zkuste se zeptat jinak, k tisku, zákonu nebo hlasování.");
     case "tah_bezi":
       return h("Předchozí odpověď ještě běží, možná v jiné kartě. Počkejte, až doběhne, a zeptejte se znovu.");
+    case "spojeni_pred_startem":
+      return h("Spojení se přerušilo. Odpověď mohla na serveru vzniknout, zkuste ji načíst.");
+    case "odpoved_vznika":
+      return h("Odpověď se ještě připravuje. Zkuste ji za chvíli načíst znovu.");
     case "konverzace_nedostupna":
       return h("Předchozí konverzace už není k dispozici.");
     case "spojeni":

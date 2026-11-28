@@ -75,6 +75,7 @@ STATIC = Path(__file__).parent / "static"
 TYPY_SOUBORU = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html",
                 ".svg": "image/svg+xml", ".json": "application/json", ".txt": "text/plain"}
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+HASH_STATIC = re.compile(r"[0-9a-f]{12}")     # tvar výstupu _hash_static
 # spec 6 a 12: služba volá ven jen tyto servery (Anthropic přes SDK vlastním klientem, ostatní přes sdílený klient)
 POVOLENE_HOSTY = frozenset({"api.anthropic.com", "api.openai.com", "challenges.cloudflare.com", "api.telegram.org"})
 LIMIT_POZADAVKU = 60                # spec 6: náhledy a obslužné adresy, požadavků za okno na otisk IP
@@ -285,14 +286,18 @@ class Sluzba:
         return Response(obsah, media_type="text/javascript", headers={"Cache-Control": "public, max-age=300"})
 
     async def soubor(self, request: Request) -> Response:
-        if request.path_params["hash"] != self.hash_static:
+        """Statický soubor widgetu. Aktuální hash = `immutable`. Starý hash správného tvaru (w.js v cache prohlížeče
+        až 5 min po nasazení) dostane aktuální obsah s `no-cache`: 404 by si prohlížeč zapamatoval u `import()`
+        a widget by do obnovení stránky nešel otevřít."""
+        h = request.path_params["hash"]
+        if not HASH_STATIC.fullmatch(h):
             return PlainTextResponse("Not Found", 404)
         koren = self.static_dir.resolve()
         cesta = (koren / request.path_params["soubor"]).resolve()
         if koren not in cesta.parents or not cesta.is_file() or cesta.suffix not in TYPY_SOUBORU:
             return PlainTextResponse("Not Found", 404)
-        return Response(cesta.read_bytes(), media_type=TYPY_SOUBORU[cesta.suffix],
-                        headers={"Cache-Control": CACHE_IMMUTABLE})
+        cache = CACHE_IMMUTABLE if h == self.hash_static else "no-cache"
+        return Response(cesta.read_bytes(), media_type=TYPY_SOUBORU[cesta.suffix], headers={"Cache-Control": cache})
 
     def _beh_relace(self, request: Request) -> BehTahu | None:
         beh = self.tahy.get(request.path_params["tah_id"])

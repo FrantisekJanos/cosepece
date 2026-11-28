@@ -3,21 +3,18 @@
 // Úložiště: sessionStorage cz-chat-konv (konverzace a běžící tah této karty), cz-chat-zrcadlo (posledních 50 zpráv),
 // localStorage cz-chat-posledni = {id, cas} (nabídka „Pokračovat v předchozí konverzaci“ v nové kartě).
 
-import { rozeber } from "./sse.mjs";
 import { hlaska, zbyvaText } from "./hlasky.mjs";
 import { kontext, zaostreni, zmer, vyskaOkna } from "./kontext.mjs";
+import { obnovZeZrcadla, sledujTah, zastavTah } from "./proud.mjs";
+import { Turnstile } from "./turnstile.mjs";
 
 const API = "/chat-api";
 const K_KONV = "cz-chat-konv";
 const K_ZRCADLO = "cz-chat-zrcadlo";
 const K_POSLEDNI = "cz-chat-posledni";
 const MAX_ZRCADLO = 50;
-const NECINNOST_MS = 2 * 3600 * 1000;    // po 2 hodinách nečinnosti začíná panel prázdný
-const TURNSTILE_JS = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-const TURNSTILE_CEKANI_MS = 120000;       // na výzvu Turnstile (zaškrtávátko) čeká widget nejvýš tak dlouho
 const MAX_TURNSTILE = 2;                  // kolikrát po 428 zkusit nový token
 const MAX_OBSAZENO = 2;                   // spec 11.3: obsazeno zopakuje widget 2× sám
-const MAX_PRIPOJENI = 3;                  // pokusy o opětovné připojení ke streamu
 const PREKRESLENI_MS = 80;                // spec 7.2: překreslení nejvýš jednou za 80 ms
 const ULOZENI_MS = 300;
 const UZKE = 640;
@@ -61,10 +58,10 @@ const S = {
   stav: null, maxZnaku: MAX_ZNAKU, sitekey: "",
   konv: {}, zpravy: [], nabidnoutPredchozi: null,
   volba: "auto",          // "auto" | "tisk" | "obecny" | {druh, id}
-  bezi: null,             // {tahId, od, bot, el, hotovo, konec: Promise, dokonci, pokusu}
+  bezi: null,             // {tahId, od, bot, el, hotovo, konec: Promise, dokonci}
   odesila: false,
   blok: null,             // {kod, el, casovac}
-  token: null, tsId: null, tsCekaji: [], tsNacteno: null,
+  ts: null,               // Turnstile (turnstile.mjs)
   ukladani: null, prekresleni: null,
   el: {},
 };
@@ -157,18 +154,18 @@ function oznacAktivitu() {
 }
 
 function nactiUlozene() {
-  const konv = cti(sessionStorage, K_KONV) || {};
-  const zpravy = cti(sessionStorage, K_ZRCADLO);
-  const cerstve = konv.id && (konv.tah || Date.now() - (konv.cas || 0) < NECINNOST_MS);
-  if (cerstve) {
-    S.konv = konv;
-    S.zpravy = Array.isArray(zpravy) ? zpravy : [];
-  } else {
-    S.konv = {otevreno: konv.otevreno};
-    S.zpravy = [];
-  }
-  const posledni = cti(localStorage, K_POSLEDNI);
-  if (!S.konv.id && posledni && typeof posledni.id === "string") S.nabidnoutPredchozi = posledni;
+  const o = obnovZeZrcadla(cti(sessionStorage, K_KONV), cti(sessionStorage, K_ZRCADLO), cti(localStorage, K_POSLEDNI),
+    Date.now());
+  S.konv = o.konv;
+  S.zpravy = o.zpravy;
+  S.nabidnoutPredchozi = o.nabidnoutPredchozi;
+  return o.tah;
+}
+
+// Zprávy z GET /konverzace/{id} jako zrcadlo panelu
+function zpravyZeServeru(zpravy) {
+  return zpravy.map((z) => z.role === "uzivatel" ? {role: "uzivatel", text: String(z.text || "")}
+    : {role: "bot", text: String(z.text || ""), kod: z.kod, stav: z.stav}).slice(-MAX_ZRCADLO);
 }
 
 // ---------------------------------------------------------------- stavba panelu
@@ -199,6 +196,7 @@ function postav() {
 
   el.nabidka = e("div", {class: "cz-chat-nabidka", hidden: true});
   el.ts = e("div", {class: "cz-chat-ts"});
+  S.ts = new Turnstile(el.ts);
   el.tretiStrany = e("p", {class: "cz-chat-treti"}, TRETI_STRANY + " ",
     e("a", {href: `${API}/zasady`, target: "_blank", rel: "noopener", text: "Zásady chatu"}));
   el.pole = e("textarea", {class: "cz-chat-pole", rows: 2, "aria-label": "Vaše otázka", placeholder: "Zeptejte se…",
@@ -237,6 +235,7 @@ function postav() {
 function rozmer() {
   const p = S.el.panel;
   if (!p || p.hidden) return;
+  document.documentElement.classList.toggle("cz-chat-zamceno", innerWidth < UZKE);   // zámek posunu jen na mobilu
   if (innerWidth < UZKE) {
     const vv = window.visualViewport;
     p.style.height = `${vv ? vv.height : innerHeight}px`;
@@ -500,74 +499,12 @@ async function obnovStav() {
     S.sitekey = typeof d.turnstile_sitekey === "string" ? d.turnstile_sitekey : "";
     kod = d.kod || null;
     obnovZbyva(d.zbyva_otazek);
-    if (S.sitekey) pripravTurnstile();
+    if (S.sitekey) S.ts.priprav(S.sitekey);
   }
   if (kod === "spojeni") return ukazHlasku(kod);
   if (kod) return zablokuj(kod, d || {});
   if (S.blok && S.blok.kod !== "limit_konverzace") zrusBlok();
   obnovTlacitka();
-}
-
-// ---------------------------------------------------------------- Turnstile (spec 11.2)
-
-function nactiTurnstile() {
-  if (S.tsNacteno) return S.tsNacteno;
-  S.tsNacteno = new Promise((ok, chyba) => {
-    if (window.turnstile) return ok(window.turnstile);
-    const s = document.createElement("script");
-    s.src = TURNSTILE_JS;
-    s.async = true;
-    s.onload = () => (window.turnstile ? ok(window.turnstile) : chyba(new Error("turnstile")));
-    s.onerror = () => { S.tsNacteno = null; chyba(new Error("turnstile")); };
-    document.head.append(s);
-  });
-  return S.tsNacteno;
-}
-
-function predejToken(t) {
-  S.token = t;
-  const cekaji = S.tsCekaji;
-  S.tsCekaji = [];
-  for (const c of cekaji) c(t);
-}
-
-async function pripravTurnstile() {
-  if (S.tsId !== null) return;
-  try {
-    const ts = await nactiTurnstile();
-    if (S.tsId !== null) return;
-    S.tsId = ts.render(S.el.ts, {
-      sitekey: S.sitekey, action: "chat", appearance: "interaction-only", language: "cs",
-      "refresh-expired": "auto",
-      callback: (t) => predejToken(t),
-      "expired-callback": () => { S.token = null; },
-      "error-callback": () => { S.token = null; },
-    });
-  } catch { /* skript se nenačetl: server vrátí 428 a widget to zkusí znovu */ }
-}
-
-// Nový jednorázový token: starý se spotřeboval (nebo ho server odmítl). null = nepovedlo se.
-async function novyToken() {
-  S.token = null;
-  try {
-    await pripravTurnstile();
-    if (S.tsId === null) return null;
-    const cekani = new Promise((ok) => {
-      S.tsCekaji.push(ok);
-      setTimeout(() => ok(null), TURNSTILE_CEKANI_MS);
-    });
-    window.turnstile.reset(S.tsId);
-    return await cekani;
-  } catch {
-    return null;
-  }
-}
-
-function zahodToken() {
-  S.token = null;
-  if (S.tsId !== null && window.turnstile) {
-    try { window.turnstile.reset(S.tsId); } catch { /* nic */ }
-  }
 }
 
 // ---------------------------------------------------------------- odeslání
@@ -605,13 +542,16 @@ async function posliZpravu(text, k) {
   let tsPokusu = 0, obsazeno = 0;
   for (;;) {
     let r;
+    const token = S.ts.token;
     try {
       r = await fetch(`${API}/zprava`, {
         method: "POST", headers: {"Content-Type": "application/json"}, cache: "no-store",
-        body: JSON.stringify({text, konverzace_id: S.konv.id || null, kontext: k, turnstile: S.token || null}),
+        body: JSON.stringify({text, konverzace_id: S.konv.id || null, kontext: k, turnstile: token || null}),
       });
     } catch {
-      return {kod: "spojeni"};
+      return {kod: "spojeni", mozna: true};
+    } finally {
+      if (token) S.ts.zahod();      // token je jednorázový: po každém POST, který ho nesl, se vyžádá nový
     }
     if (r.ok && (r.headers.get("content-type") || "").startsWith("text/event-stream")) return {odpoved: r};
     let d = {};
@@ -621,16 +561,12 @@ async function posliZpravu(text, k) {
       // token se spotřeboval nebo vypršel: nový token a stejná zpráva znovu, bez zásahu uživatele
       tsPokusu++;
       const skryj = docasnaHlaska("turnstile");
-      const t = await novyToken();
+      const t = await S.ts.novy();
       skryj();
       if (!t) return {kod: "overeni_nedostupne"};
       continue;
     }
     if (kod === "turnstile") return {kod: "overeni_nedostupne"};
-    if (kod === "overeni_nedostupne") {
-      zahodToken();     // token se spotřeboval už před ověřením; příště nový
-      return {kod};
-    }
     if (kod === "obsazeno") {
       if (obsazeno >= MAX_OBSAZENO) return {kod: "obsazeno_trvale"};
       obsazeno++;
@@ -662,6 +598,12 @@ async function odesli(text) {
   const v = await posliZpravu(text, k);
   S.odesila = false;
   S.el.stav.textContent = "";
+  if (!v.odpoved && v.mozna && S.konv.id) {
+    // spojení spadlo po odeslání: odpověď mohla na serveru vzniknout, nabídne se její načtení, ne nové odeslání
+    ulozHned();
+    obnovTlacitka();
+    return nabidniNacteni("spojeni_pred_startem");
+  }
   if (!v.odpoved) {
     // zpráva neodešla: zmizí z konverzace a vrátí se do pole, ať ji uživatel nemusí psát znovu
     S.zpravy.splice(S.zpravy.indexOf(otazka), 1);
@@ -677,43 +619,29 @@ async function odesli(text) {
   S.zpravy.push(bot);
   zacniTah(bot, pripojZpravu(bot), null, 0);
   ulozHned();
-  ctiProud(v.odpoved);
+  sleduj(S.bezi, v.odpoved);
 }
 
-// ---------------------------------------------------------------- stream tahu
+// ---------------------------------------------------------------- stream tahu (čtení a připojení v proud.mjs)
 
 function zacniTah(bot, el, tahId, od) {
   let dokonci;
   const konec = new Promise((ok) => { dokonci = ok; });
-  S.bezi = {tahId, od, bot, el, hotovo: false, konec, dokonci, pokusu: 0};
+  S.bezi = {tahId, od, bot, el, hotovo: false, konec, dokonci};
   obnovTlacitka();
 }
 
-async function ctiProud(odpoved) {
-  const b = S.bezi;
-  if (!b) return;
-  try {
-    const cteni = odpoved.body.getReader();
-    const dekoder = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const {value, done} = await cteni.read();
-      if (done) break;
-      buf += dekoder.decode(value, {stream: true});
-      const r = rozeber(buf);
-      buf = r.zbytek;
-      for (const u of r.udalosti) zpracuj(b, u);
-      if (b.hotovo) {
-        cteni.cancel().catch(() => {});
-        return;
-      }
-    }
-  } catch { /* spojení spadlo: připojíme se znovu */ }
-  if (!b.hotovo && S.bezi === b) pripojZnovu(b);
+async function sleduj(b, odpoved = null) {
+  const vysledek = await sledujTah(b, {odpoved, api: API, naUdalost: (u) => zpracuj(b, u)});
+  if (vysledek !== "ztraceno" || S.bezi !== b || b.hotovo) return;
+  if (b.tahId) return dohledejZeServeru(b);
+  // spadlo před událostí `start`: odpověď mohla vzniknout, ale tah neznáme
+  zahodTah(b);
+  if (S.konv.id) nabidniNacteni("spojeni_pred_startem");
+  else ukazHlasku("spojeni");
 }
 
 function zpracuj(b, u) {
-  if (Number.isInteger(u.id)) b.od = u.id + 1;
   const d = u.data || {};
   switch (u.typ) {
     case "start":
@@ -725,7 +653,7 @@ function zpracuj(b, u) {
       if (typeof d.text === "string") S.el.stav.textContent = d.text;
       break;
     case "delta":
-      if (typeof d.text === "string") {
+      if (typeof d.text === "string" && b.bot.stav !== "odmitnuto") {
         b.bot.text += d.text;
         if (S.el.stav.textContent !== "Píšu odpověď…") S.el.stav.textContent = "Píšu odpověď…";
         prekresliBezici();
@@ -740,11 +668,14 @@ function zpracuj(b, u) {
       break;
     case "chyba":
       if (d.kod === "odmitnuto") {
-        // odmítnutí uprostřed streamu: celý zobrazený text odpovědi se stáhne
+        // odmítnutí uprostřed streamu: celý zobrazený text odpovědi se stáhne hned
         b.bot.text = "";
         b.bot.stav = "odmitnuto";
         b.bot.citaty = [];
         b.bot.zdroje = [];
+        clearTimeout(S.prekresleni);
+        S.prekresleni = null;
+        b.el = nahradPrvek(b.bot, b.el);
       } else b.bot.stav = "chyba";
       break;
     case "konec":
@@ -777,23 +708,18 @@ function dokonciTah(b, d) {
   b.dokonci();
 }
 
-async function pripojZnovu(b) {
-  while (S.bezi === b && !b.hotovo && b.pokusu < MAX_PRIPOJENI) {
-    if (!b.tahId) break;
-    b.pokusu++;
-    if (b.pokusu > 1) await spi(1000 * 2 ** (b.pokusu - 2));
-    let r;
-    try {
-      r = await fetch(`${API}/tah/${encodeURIComponent(b.tahId)}/stream?od=${b.od}`, {cache: "no-store"});
-    } catch {
-      continue;
-    }
-    if (r.status === 404) break;       // tah už v procesu není: výsledek je na serveru
-    if (!r.ok) continue;
-    b.pokusu = 0;
-    return ctiProud(r);
-  }
-  if (S.bezi === b && !b.hotovo) await dohledejZeServeru(b);
+// Rozepsaná odpověď, o které nic nevíme: zmizí z konverzace (otázka zůstává) a tah se uvolní
+function zahodTah(b) {
+  b.hotovo = true;
+  const i = S.zpravy.indexOf(b.bot);
+  if (i >= 0) S.zpravy.splice(i, 1);
+  b.el?.remove();
+  S.el.stav.textContent = "";
+  if (S.bezi === b) S.bezi = null;
+  S.konv.tah = null;
+  ulozHned();
+  obnovTlacitka();
+  b.dokonci();
 }
 
 // Tah se nepodařilo dočíst: konečný stav odpovědi z GET /konverzace/{id} (server je zdroj pravdy)
@@ -808,13 +734,29 @@ async function dohledejZeServeru(b) {
   dokonciTah(b, {stav: b.bot.text ? "preruseno" : "chyba"});
 }
 
-async function zastav() {
+// Hláška s tlačítkem „Načíst znovu“: GET posledního stavu konverzace, nikdy nové odeslání otázky
+function nabidniNacteni(kod) {
+  const p = systemovyPrvek(hlaska(kod), [tlacitko("Načíst znovu", async () => {
+    p.remove();
+    const d = await nactiKonverzaci(S.konv.id);
+    if (!d) return ukazHlasku("konverzace_nedostupna");
+    S.zpravy = zpravyZeServeru(d.zpravy);
+    const posledni = S.zpravy[S.zpravy.length - 1];
+    const vznika = posledni && posledni.role === "bot" && posledni.stav === "probiha";
+    if (vznika) S.zpravy.pop();
+    oznacAktivitu();
+    ulozHned();
+    vykresliVse();
+    if (vznika || !posledni || posledni.role !== "bot") nabidniNacteni("odpoved_vznika");
+  })]);
+  pripojSystem(p);
+}
+
+function zastav() {
   const b = S.bezi;
   if (!b || !b.tahId) return;
   S.el.stav.textContent = "Zastavuji…";
-  try {
-    await fetch(`${API}/tah/${encodeURIComponent(b.tahId)}/stop`, {method: "POST", cache: "no-store"});
-  } catch { /* stream doběhne sám */ }
+  zastavTah(b.tahId, {api: API});
 }
 
 // ---------------------------------------------------------------- konverzace: obnova, nový chat, smazání
@@ -841,9 +783,7 @@ async function pokracovat() {
     return ukazHlasku("konverzace_nedostupna");
   }
   S.konv = {...S.konv, id: p.id, tah: null, stranka: popisStranky(zakladniKontext())};
-  S.zpravy = d.zpravy.map((z) => z.role === "uzivatel" ? {role: "uzivatel", text: String(z.text || "")}
-    : {role: "bot", text: String(z.text || ""), kod: z.kod, stav: z.stav === "probiha" ? "preruseno" : z.stav})
-    .slice(-MAX_ZRCADLO);
+  S.zpravy = zpravyZeServeru(d.zpravy).map((z) => z.stav === "probiha" ? {...z, stav: "preruseno"} : z);
   oznacAktivitu();
   ulozHned();
   vykresliVse();
@@ -895,7 +835,6 @@ export function otevri() {
   if (!el.panel.hidden) return;
   el.panel.hidden = false;
   S.bublina.style.display = "none";     // inline styl bubliny z w.js přebije atribut hidden
-  document.documentElement.classList.toggle("cz-chat-zamceno", innerWidth < UZKE);
   S.konv.otevreno = true;
   rozmer();
   zkontrolujStranku();
@@ -926,25 +865,15 @@ export function spust({bublina, stav, poloha}) {
   S.poloha = poloha;
   S.stav = stav || null;
   bublina.removeAttribute("aria-busy");
-  nactiUlozene();
+  const tah = nactiUlozene();
   postav();
   obnovCitac();
   // rozběhnutý tah z předchozí stránky: připojí se od posledního přijatého offsetu (spec 7.3)
-  const tah = S.konv.tah;
-  let bot = null;
-  if (tah && typeof tah.id === "string" && Number.isInteger(tah.od)) {
-    bot = S.zpravy[S.zpravy.length - 1];
-    if (!bot || bot.role !== "bot") {
-      bot = {role: "bot", text: "", stav: "probiha"};
-      S.zpravy.push(bot);
-    }
-    bot.stav = "probiha";
-    zacniTah(bot, null, tah.id, tah.od);
-  }
+  if (tah) zacniTah(S.zpravy[S.zpravy.length - 1], null, tah.id, tah.od);
   vykresliVse();         // nastaví i S.bezi.el na prvek rozepsané odpovědi
   otevri();
-  if (bot) {
+  if (tah) {
     S.el.stav.textContent = "Připojuji se k rozepsané odpovědi…";
-    pripojZnovu(S.bezi);
+    sleduj(S.bezi);
   }
 }

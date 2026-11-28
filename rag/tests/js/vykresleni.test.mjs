@@ -124,3 +124,28 @@ test("vendorovaný markdown-it: verze, licence a otisk z README", () => {
   assert.ok(readme.includes(createHash("sha256").update(js).digest("hex")));
   assert.match(readFileSync(cesta("LICENSE-markdown-it"), "utf8"), /Permission is hereby granted/);
 });
+
+test("orig2.sqw z textu modelu nikdy jako odkaz, v jakémkoli zápisu", () => {
+  for (const u of ["https://www.psp.cz/sqw/text/orig2.sqw?idd=1", "https://www.psp.cz/sqw/text/ORIG2.sqw?idd=1",
+    "https://www.psp.cz/sqw/text/%6Frig2.sqw?idd=1", "https://psp.cz/sqw/text/Orig2.SQW"]) {
+    for (const uzke of [false, true]) {
+      for (const streamuje of [false, true]) {
+        const h = htmlOdpovedi(`Viz [Word](${u}) zde.\n\n| A |\n|---|\n| [W](${u}) |`, {uzke, streamuje});
+        assert.ok(!h.includes("<a "), `${u} → ${h}`);
+        assert.match(h, /Word/);
+      }
+    }
+  }
+  // „Word na psp.cz“ v náhledu jen přesně podle vzoru _DOCX z nahled.py
+  assert.deepEqual(odkazyNahledu({docx: "https://www.psp.cz/sqw/text/orig2.sqw?idd=123"}).map((o) => o.text), ["Word na psp.cz"]);
+  for (const d of ["https://www.psp.cz/sqw/text/orig2.sqw?idd=1&x=2", "https://psp.cz/sqw/text/orig2.sqw?idd=1",
+    "https://www.psp.cz/sqw/x", "https://www.psp.cz/sqw/text/ORIG2.sqw?idd=1"]) assert.deepEqual(odkazyNahledu({docx: d}), [], d);
+});
+
+test("[N] uvnitř odkazu zůstane textem, port mimo výchozí je zakázaný, globál markdownit nezůstane", () => {
+  const h = htmlOdpovedi("Viz [tisk [1]](https://www.psp.cz/x) a [1].", {zname: new Set([1])});
+  assert.equal((h.match(/data-n="1"/g) || []).length, 1);
+  assert.match(h, /<a [^>]*>tisk \[1\]<\/a>/);
+  assert.ok(!povolenyOdkaz("https://www.psp.cz:8443/x") && povolenyOdkaz("https://www.psp.cz:443/x") === true);
+  assert.equal(globalThis.markdownit, undefined);
+});

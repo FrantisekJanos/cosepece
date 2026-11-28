@@ -115,7 +115,7 @@
 /* odpověď bota z markdownu (vykresleni.mjs, spec 7.2) */
 .cz-chat-bot { white-space: normal; }
 .cz-chat-text > :first-child { margin-top: 0; }
-.cz-chat-text > :last-child { margin-bottom: 0; }
+.cz-chat-text > :last-child, .cz-chat-konec > :last-child { margin-bottom: 0; }
 .cz-chat-text p, .cz-chat-text ul, .cz-chat-text ol, .cz-chat-text blockquote, .cz-chat-text pre { margin: 0 0 8px; }
 .cz-chat-text ul, .cz-chat-text ol { padding-left: 20px; }
 .cz-chat-text h1, .cz-chat-text h2, .cz-chat-text h3, .cz-chat-text h4 { margin: 8px 0 4px; font-size: 15px; }
@@ -127,8 +127,9 @@
 .cz-chat-vycet { list-style: none; padding-left: 0 !important; font-size: 14px; }
 .cz-chat-rozpracovane { white-space: pre-wrap; font-size: 13px; color: var(--cz-chat-text-2); }
 .cz-chat-cit {
-  border: 0; background: none; padding: 0 1px; color: var(--cz-chat-akcent); cursor: pointer; font-size: .85em;
-  vertical-align: super; line-height: 1;
+  border: 0; background: none; padding: 0 2px; color: var(--cz-chat-akcent); cursor: pointer; font-size: .85em;
+  display: inline-block; min-width: 24px; min-height: 24px; line-height: 24px; vertical-align: baseline;
+  text-align: center;     /* cíl dotyku aspoň 24 px */
 }
 .cz-chat-cit:hover { text-decoration: underline; }
 

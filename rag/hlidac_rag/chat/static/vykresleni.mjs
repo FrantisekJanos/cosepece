@@ -5,8 +5,11 @@
 
 import * as vendor from "./vendor/markdown-it.min.js";
 
-// UMD: v Node (CommonJS) vrací export, v prohlížeči se jako modul zapíše do globalThis.markdownit
+// UMD: v Node (CommonJS) vrací export, v prohlížeči se jako modul zapíše do globalThis.markdownit;
+// globál se hned zachytí a smaže, ať na stránce webu nezůstane
 const markdownit = vendor.default || globalThis.markdownit;
+delete globalThis.markdownit;
+if (typeof markdownit !== "function") throw new Error("vykresleni.mjs: vendor/markdown-it.min.js se nenačetl");
 
 export const DOMENY = ["cosepece.cz", "psp.cz", "senat.cz", "e-sbirka.cz", "zakonyprolidi.cz", "odok.gov.cz", "vlada.cz"];
 const NAS_WEB = "cosepece.cz";
@@ -15,7 +18,7 @@ function hostOdkazu(href) {
   if (typeof href !== "string" || !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#]|$)/i.test(href)) return null;
   let u;
   try { u = new URL(href); } catch { return null; }
-  if (u.protocol !== "https:" || u.username || u.password) return null;
+  if (u.protocol !== "https:" || u.username || u.password || u.port !== "") return null;
   return u.hostname.toLowerCase();
 }
 
@@ -28,6 +31,17 @@ export function povolenyOdkaz(href) {
   const host = hostOdkazu(href);
   return host !== null && DOMENY.some((d) => naDomene(host, d));
 }
+
+// Soubory psp.cz (orig2.sqw, robots.txt zakazuje): z textu modelu nikdy odkaz; „Word na psp.cz“ jen z dat náhledu
+function vedeNaOrig2(href) {
+  try {
+    return decodeURIComponent(new URL(href).pathname).toLowerCase().includes("orig2");
+  } catch {
+    return true;        // nedekódovatelná cesta: raději bez odkazu
+  }
+}
+
+const DOCX = /^https:\/\/www\.psp\.cz\/sqw\/text\/orig2\.sqw\?idd=[0-9]{1,12}$/;    // jako _DOCX v nahled.py
 
 // odkaz na cosepece.cz zůstává ve stejném okně, ostatní se otevřou v nové kartě
 export function nasWeb(href) {
@@ -61,7 +75,7 @@ md.core.ruler.push("cz_odkazy", (state) => {
     for (const t of blok.children) {
       if (t.type === "link_open") {
         const href = t.attrGet("href");
-        zahodit = !povolenyOdkaz(href);
+        zahodit = !povolenyOdkaz(href) || vedeNaOrig2(href);
         if (zahodit) continue;
         t.attrs = [["href", href]];
         if (!nasWeb(href)) {
@@ -117,8 +131,9 @@ export function nahradCitace(html, zname) {
   let vKodu = 0;
   return String(html).split(/(<[^>]*>)/).map((cast) => {
     if (cast.startsWith("<")) {
-      if (/^<(code|pre)[\s>]/i.test(cast)) vKodu++;
-      else if (/^<\/(code|pre)>/i.test(cast)) vKodu = Math.max(0, vKodu - 1);
+      // uvnitř kódu a odkazu (tlačítko v <a> by nešlo použít) zůstává [N] textem
+      if (/^<(code|pre|a)[\s>]/i.test(cast)) vKodu++;
+      else if (/^<\/(code|pre|a)>/i.test(cast)) vKodu = Math.max(0, vKodu - 1);
       return cast;
     }
     if (vKodu) return cast;
@@ -131,14 +146,22 @@ export function nahradCitace(html, zname) {
 }
 
 // Celá odpověď: hotové bloky jako markdown, rozpracovaná tabulka jako prostý text, ostatní rozpracované jako markdown
-export function htmlOdpovedi(text, {streamuje = false, zname = new Set(), uzke = false} = {}) {
+// Po částech: `hotove` (zdrojový text hotových bloků, klíč keše) a jejich HTML zvlášť od rozpracovaného konce,
+// ať widget během streamu přepisuje jen konec (výběr textu v hotových blocích se neruší)
+export function castiOdpovedi(text, {streamuje = false, zname = new Set(), uzke = false} = {}) {
   const {hotove, rozpracovane} = pripravText(text, streamuje);
-  let html = hotove ? vykresliMarkdown(hotove, {uzke}) : "";
+  let konec = "";
   if (rozpracovane) {
-    html += /^\s*\|/m.test(rozpracovane) ? `<p class="cz-chat-rozpracovane">${esc(rozpracovane)}</p>`
+    konec = /^\s*\|/m.test(rozpracovane) ? `<p class="cz-chat-rozpracovane">${esc(rozpracovane)}</p>`
       : vykresliMarkdown(rozpracovane, {uzke});
   }
-  return nahradCitace(html, zname);
+  return {hotove, hotoveHtml: nahradCitace(hotove ? vykresliMarkdown(hotove, {uzke}) : "", zname),
+    konecHtml: nahradCitace(konec, zname)};
+}
+
+export function htmlOdpovedi(text, volby = {}) {
+  const c = castiOdpovedi(text, volby);
+  return c.hotoveHtml + c.konecHtml;
 }
 
 // ---------------------------------------------------------------- zdroje, ověření a náhled (data pro DOM)
@@ -208,6 +231,6 @@ export function odkazyNahledu(odkazy) {
   const out = [];
   if (typeof o.web === "string" && /^\/(?!\/)[^\s\\]*$/.test(o.web)) out.push({text: "Otevřít na cosepece", href: o.web, nove: false});
   if (povolenyOdkaz(o.psp)) out.push({text: "Originál na psp.cz", href: o.psp, nove: true});
-  if (povolenyOdkaz(o.docx)) out.push({text: "Word na psp.cz", href: o.docx, nove: true});
+  if (typeof o.docx === "string" && DOCX.test(o.docx)) out.push({text: "Word na psp.cz", href: o.docx, nove: true});
   return out;
 }

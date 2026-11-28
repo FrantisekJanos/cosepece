@@ -131,3 +131,19 @@ test("text odpovědi: innerHTML jen z markdown-it, [N] jen u známých zdrojů",
   vyplnText(el, {text: `**A** [1] [3] ${ZLE}`, zdroje: [{n: 1, klic: "tisk:1"}]});
   assert.match(el.innerHTMLZapsano, /<strong>A<\/strong> <button[^>]*data-n="1"[^>]*>\[1\]<\/button> \[3\] &lt;img/);
 });
+
+test("stream: hotové bloky se nepřepisují, jen rozpracovaný konec", () => {
+  const el = new Uzel("div");
+  vyplnText(el, {text: "První odstavec.\n\nDru"}, {streamuje: true});
+  const [hotove, konec] = el.deti;
+  assert.match(hotove.innerHTMLZapsano, /První odstavec/);
+  hotove.innerHTMLZapsano = "NEZMĚNĚNO";
+  vyplnText(el, {text: "První odstavec.\n\nDruhý"}, {streamuje: true});
+  assert.equal(hotove.innerHTMLZapsano, "NEZMĚNĚNO");
+  assert.match(konec.innerHTMLZapsano, /Druhý/);
+  vyplnText(el, {text: "První odstavec.\n\nDruhý.\n\nTř"}, {streamuje: true});
+  assert.match(hotove.innerHTMLZapsano, /Druhý\./);
+  vyplnText(el, {text: "První odstavec.\n\nDruhý.\n\nTřetí."}, {streamuje: false});
+  assert.match(el.innerHTMLZapsano, /Třetí\./);
+  assert.equal(el.czCasti, null);
+});

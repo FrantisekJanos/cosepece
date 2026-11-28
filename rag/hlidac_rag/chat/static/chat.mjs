@@ -67,6 +67,7 @@ const S = {
   blok: null,             // {kod, el, casovac}
   ts: null,               // Turnstile (turnstile.mjs)
   ukladani: null, prekresleni: null,
+  hlasenyLimit: null,     // kód limitu, který už šel do Umami (chat_limit jen při změně)
   el: {},
 };
 
@@ -419,7 +420,8 @@ function zablokuj(kod, data = {}) {
   const d = {ct: zakladniKontext().ct, ...data};
   const el = systemovyPrvek(hlaska(kod, d));
   S.blok = {kod, el, casovac: null};
-  udalost("chat_limit", {kod});
+  if (S.hlasenyLimit !== kod) udalost("chat_limit", {kod});
+  S.hlasenyLimit = kod;
   if (kod === "limit_hodina" && data.znovu_v) {
     // odpočet: text se obnovuje, pole se odblokuje samo
     S.blok.casovac = setInterval(() => {
@@ -490,6 +492,7 @@ async function obnovStav() {
   if (kod === "spojeni") return ukazHlasku(kod);
   if (kod) return zablokuj(kod, d || {});
   if (S.blok && S.blok.kod !== "limit_konverzace") zrusBlok();
+  if (!S.blok) S.hlasenyLimit = null;
   obnovTlacitka();
 }
 
@@ -686,7 +689,9 @@ function dokonciTah(b, d) {
   if (b.bot.stav === "probiha") b.bot.stav = "ok";
   b.el = nahradPrvek(b.bot, b.el);
   S.el.stav.textContent = "";
-  S.el.oznameni.textContent = b.bot.stav === "odmitnuto" ? hlaska("odmitnuto").text : b.bot.text;
+  // čtečce vykreslený text (bez značek markdownu)
+  S.el.oznameni.textContent = b.bot.stav === "odmitnuto" ? hlaska("odmitnuto").text
+    : b.el?.querySelector(".cz-chat-text")?.textContent || "";
   if (Number.isInteger(d.zbyva_otazek)) obnovZbyva(d.zbyva_otazek);
   if (S.bezi === b) S.bezi = null;
   S.konv.tah = null;

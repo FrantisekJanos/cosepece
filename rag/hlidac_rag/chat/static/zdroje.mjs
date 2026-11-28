@@ -5,7 +5,7 @@
 
 import { e, tlacitko, udalost } from "./dom.mjs";
 import {
-  htmlOdpovedi, cipyOvereni, zvyrazneniZdroje, useky, odkazyNahledu, popisZnacky,
+  htmlOdpovedi, castiOdpovedi, cipyOvereni, zvyrazneniZdroje, useky, odkazyNahledu, popisZnacky,
 } from "./vykresleni.mjs";
 
 const NAZVY_ZNENI = {schvalene: "schválené znění", puvodni: "původní znění"};
@@ -27,7 +27,24 @@ function zdrojeZpravy(z) {
 
 export function vyplnText(el, z, {streamuje = false, uzke = false} = {}) {
   const zdroje = zdrojeZpravy(z);
-  el.innerHTML = htmlOdpovedi(z.text || "", {streamuje, uzke, zname: new Set(zdroje.map((x) => x.n))});
+  const volby = {streamuje, uzke, zname: new Set(zdroje.map((x) => x.n))};
+  if (streamuje) {
+    // během streamu se přepisuje jen rozpracovaný konec; hotové bloky jen při změně (keš podle zdrojového textu)
+    const c = castiOdpovedi(z.text || "", volby);
+    if (!el.czCasti) {
+      el.czCasti = {hotove: null, hotoveEl: e("div", {class: "cz-chat-hotove"}), konecEl: e("div", {class: "cz-chat-konec"})};
+      el.replaceChildren(el.czCasti.hotoveEl, el.czCasti.konecEl);
+    }
+    const k = el.czCasti;
+    if (k.hotove !== c.hotove) {
+      k.hotoveEl.innerHTML = c.hotoveHtml;
+      k.hotove = c.hotove;
+    }
+    k.konecEl.innerHTML = c.konecHtml;
+  } else {
+    el.czCasti = null;
+    el.innerHTML = htmlOdpovedi(z.text || "", volby);
+  }
   el.onclick = (ev) => {
     const b = ev.target.closest?.(".cz-chat-cit");
     if (!b) return;

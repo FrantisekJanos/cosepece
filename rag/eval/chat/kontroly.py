@@ -5,6 +5,9 @@ Tah: {"text", nepovinně "kontext", "must", "must_not", "must_re", "nastroje_any
 
 - must / must_not: podřetězec bez ohledu na diakritiku a velikost písmen.
 - must_re: regulární výraz, stačí shoda v původním textu nebo v textu bez diakritiky (malými písmeny).
+- must_not_re: regulární výraz, který se nesmí najít ani v původním textu, ani v textu bez diakritiky. Pro zakázaná
+  tvrzení, kde by podřetězec shodil i správnou odpověď („nebyl přijat“ obsahuje „byl přijat“): hranice slov \\b,
+  záporná předpona (?<!ne), začátek věty. Vzory se píšou bez diakritiky a malými písmeny.
 - cituje: true = odpověď obsahuje odkaz [N], false = neobsahuje, null = nekontroluje se.
 - nastroje_any: aspoň jeden z nástrojů byl zavolán (předpona mcp__server__ se ignoruje).
 - max_cena_usd: cena tahu nesmí stropu přesáhnout.
@@ -35,7 +38,8 @@ _ODKAZ = re.compile(r"\[\d+\]")
 
 _KLICE_SCENARE = {"id", "sada", "kontext", "tahy", "rucne", "jen_endpoint", "kour"}
 _POVINNE_SCENARE = {"id", "sada", "kontext", "tahy", "rucne"}
-_KLICE_TAHU = {"text", "kontext", "must", "must_not", "must_re", "nastroje_any", "cituje", "max_cena_usd"}
+_KLICE_TAHU = {"text", "kontext", "must", "must_not", "must_re", "must_not_re", "nastroje_any", "cituje",
+               "max_cena_usd"}
 
 
 @dataclass
@@ -52,9 +56,15 @@ def _nazev_nastroje(n: str) -> str:
     return n.rsplit("__", 1)[-1]
 
 
+def _najde(vzor: str, odpoved: str, text: str) -> bool:
+    """Shoda v původním textu nebo v textu bez diakritiky; ^ a $ platí i na začátku a konci řádku."""
+    priznaky = re.IGNORECASE | re.MULTILINE
+    return bool(re.search(vzor, odpoved, priznaky) or re.search(vzor, text, priznaky))
+
+
 def zkontroluj(tah: dict, odpoved: str, nastroje: list[str], cena_usd: float) -> Vysledek:
-    """Projde kontroly jednoho tahu. selhani: „must: x“, „must_not: x“, „must_re: x“, „cituje“,
-    „nastroje_any“, „max_cena_usd“, „odvolani: x“ (v tomto pořadí)."""
+    """Projde kontroly jednoho tahu. selhani: „must: x“, „must_not: x“, „must_re: x“, „must_not_re: x“,
+    „cituje“, „nastroje_any“, „max_cena_usd“, „odvolani: x“ (v tomto pořadí)."""
     text = _norm(odpoved)
     selhani: list[str] = []
     for m in tah.get("must") or []:
@@ -64,8 +74,11 @@ def zkontroluj(tah: dict, odpoved: str, nastroje: list[str], cena_usd: float) ->
         if _norm(m) in text:
             selhani.append(f"must_not: {m}")
     for vzor in tah.get("must_re") or []:
-        if not (re.search(vzor, odpoved, re.IGNORECASE) or re.search(vzor, text, re.IGNORECASE)):
+        if not _najde(vzor, odpoved, text):
             selhani.append(f"must_re: {vzor}")
+    for vzor in tah.get("must_not_re") or []:
+        if _najde(vzor, odpoved, text):
+            selhani.append(f"must_not_re: {vzor}")
     cituje = tah.get("cituje")
     if cituje is not None and bool(_ODKAZ.search(odpoved)) != cituje:
         selhani.append("cituje")
@@ -109,14 +122,15 @@ def _over_tah(kde: str, tah) -> None:
     if not isinstance(tah.get("text"), str) or not tah["text"].strip():
         raise _chyba(kde, "text tahu chybí")
     _over_kontext(kde, tah.get("kontext"))
-    for klic in ("must", "must_not", "must_re", "nastroje_any"):
+    for klic in ("must", "must_not", "must_re", "must_not_re", "nastroje_any"):
         if klic in tah:
             _seznam_textu(kde, klic, tah[klic])
-    for vzor in tah.get("must_re", []):
-        try:
-            re.compile(vzor)
-        except re.error as e:
-            raise _chyba(kde, f"must_re {vzor!r} není platný regulární výraz ({e})") from None
+    for klic in ("must_re", "must_not_re"):
+        for vzor in tah.get(klic, []):
+            try:
+                re.compile(vzor)
+            except re.error as e:
+                raise _chyba(kde, f"{klic} {vzor!r} není platný regulární výraz ({e})") from None
     if tah.get("cituje") is not None and not isinstance(tah["cituje"], bool):
         raise _chyba(kde, "cituje musí být true, false nebo null")
     cena = tah.get("max_cena_usd")

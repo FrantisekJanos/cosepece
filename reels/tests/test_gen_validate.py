@@ -248,7 +248,7 @@ def test_popisek_sklonovane_jmeno_bez_klubu():
     info = json.loads(contract.read_text(encoding="utf-8"))
     card = load_fixture("v3-pn-311.json")
     card["pn"]["top"][0] = dict(card["pn"]["top"][0], cislo=9801)
-    caption = _caption("Návrh poslance Testa Poslance, PN 9801. PN 9802 podal ministr Test Ministr.")
+    caption = _caption("Návrh poslance Testa Poslance, PN 9801. PN 9802 podal ministr Test Ministr (podle evidence psp.cz).")
     new, cap, _ = normalize(card, caption, fmt="pn", focus_info=info)
     assert cap == caption
     errs = [e for e in _check(new, cap, focus_pn=[9801, 9802]) if "autor" in e]

@@ -26,8 +26,8 @@ def test_pn_info_ze_serveru_az_do_karty(tmp_path, fake):  # noqa: F811
     assert "Test Poslanec (klub ANO ke dni podání 15. 3. 2026)" in zadani
     # normalizace zapíše autory ze serveru do karty: klub ke dni podání, člen vlády bez klubu
     card = json.loads((out / "variant-2" / "card.json").read_text(encoding="utf-8"))
-    assert card["pn_autor"] == [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"},
-                                {"cislo": 9802, "jmeno": "Test Ministr", "klub": None}]
+    assert card["pn_autor"] == [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO", "spolu": 0},
+                                {"cislo": 9802, "jmeno": "Test Ministr", "klub": None, "spolu": None}]
 
 
 # --- F5: jméno autora uvnitř závorky („(Jan Novák)“) dostane klub za čárkou, ne vnořenou závorku ---

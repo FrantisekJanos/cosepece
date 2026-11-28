@@ -187,9 +187,12 @@ def _drop_said(card: dict, notes: list[str]) -> None:
         notes.append("predkladatel.citace: odstraněna (citace úvodního slova se ve videu neukazuje)")
 
 
-def _set_spolu(item: dict, pn: dict, where: str, notes: list[str]) -> None:
-    """Počet spolupodepsaných jen ze serveru: číslo se zapíše, neznámý počet (null nebo starší server) pole smaže."""
+def _set_spolu(item: dict, pn: dict, where: str, notes: list[str], keep_zero: bool = False) -> None:
+    """Počet spolupodepsaných jen ze serveru: číslo se zapíše, neznámý počet (null nebo starší server) pole smaže.
+    Nula se zapíše jen s keep_zero (příběh PN: „bez dalších“ je údaj); v pn.top nula pole jen smaže."""
     n = pn.get("spolu") if "spolu" in pn else None
+    if n == 0 and not keep_zero:
+        n = None
     if n is None:
         if "spolu" in item:
             notes.append(f"{where}: spolu {_quoted(item['spolu'])} odstraněno (server počet neuvádí)")
@@ -244,7 +247,7 @@ def _fix_story_author(story: dict, server: dict[int, dict], notes: list[str]) ->
     autor = story.get("autor")
     if pn is None or not isinstance(autor, dict):
         return
-    _set_spolu(autor, pn, f"pribeh PN {pn['cislo']}", notes)
+    _set_spolu(autor, pn, f"pribeh PN {pn['cislo']}", notes, keep_zero=True)
     if "spolu" not in autor and autor.get("pozn") != EVIDENCE:
         autor["pozn"] = EVIDENCE
         notes.append(f"pribeh PN {pn['cislo']}: počet spolupodepsaných neznámý, pozn „{EVIDENCE}“")

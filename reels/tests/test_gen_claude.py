@@ -188,7 +188,7 @@ def test_zadani_md_klub(tmp_path):
     no_day = [dict(info[0], klub_ke_dni=None)]
     write_focus(tmp_path, [9801], no_day)
     text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")
-    assert "- autor: Test Poslanec (klub ANO ke dni podání)\n" in text
+    assert "- autor: Test Poslanec (klub ANO ke dni podání); další spolupodepsaní nejsou\n" in text
     # bez jména autora
     write_focus(tmp_path, [9803], [])
     text = (tmp_path / "podklady" / "zadani.md").read_text(encoding="utf-8")

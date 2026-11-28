@@ -64,6 +64,7 @@ php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.ver
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
 php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
+php bin/ai.php --praxe --retry    # PN s vyčerpanými pokusy (odmítnuté pojistkami) zpět do fronty, bez modelu
 php bin/ai.php --hlaseni          # roztřídí hlášení čtenářů k vysvětlením (Reports); s --remote fronta z hostingu
 php bin/hlaseni.php [--vse]       # přehled hlášení čtenářů; --rozhodnout=ID --jako=platne|spam|… ruční rozhodnutí
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
@@ -104,12 +105,15 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    předkladatele a dotčenou část návrhu zákona (billContext). Fronta ai_api.php?praxe=1 (kind praxe),
                    klient bin/ai.php --praxe [--verify]: Haiku všechny PN, Sonnet znovu PN s nálezem a všechny věcné
                    změny (ai.praxe_verify_types; smí přidat modelový příklad). Pojistky PnPractice::sanitize: citace doslova z textu změn, čísla jen z podkladů
-                   (nebo součet/rozdíl dvou z nich), bez hodnoticích slov a jména předkladatele, pole „nejiste“ bez
+                   (nebo součet/rozdíl dvou z nich, počet dnů i jako rozdíl dvou dat téhož měsíce), bez hodnoticích slov a jména předkladatele, pole „nejiste“ bez
                    poznámek o podkladech a první osoby (vypustí se); odmítnutý výsledek
                    se neuloží (praxe_error, nejvýš praxe_tries pokusů; výpadek modelu nebo spojení se počítá zvlášť
                    v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní; počitadla patří
                    k verzi praxe_try_v, po zvýšení VERSION se nepoužijí). Čísla paragrafů a zákonů nejsou hodnoty
-                   ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Po změně promptu zvyš PnPractice::VERSION
+                   ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Znění s vyznačením změn přiložené
+                   za odůvodněním jde modelu jako samostatný blok (PnPractice::attachment), necituje se z něj. Opakovaný pokus
+                   dostane v zadání důvod minulého odmítnutí; `--praxe --retry` vrátí do fronty PN s vyčerpanými pokusy.
+                   Po změně promptu zvyš PnPractice::VERSION (přepíše všechna vysvětlení; u drobného zpřesnění stačí --retry)
   6c. Reports     hlášení chyb ve vysvětlení „v praxi“ od čtenářů (app/Reports.php, tabulka hlaseni): praporek
                    v rohu bloku vysvětlení (View::reportLink) otevře vrstvu s formulářem (View::reportDialog,
                    assets/report.js; bez JavaScriptu stránka hlaseni.php). submit(): stejný původ, past na roboty,

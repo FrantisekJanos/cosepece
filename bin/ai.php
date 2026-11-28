@@ -10,6 +10,8 @@
 //                  pokus o manipulaci, mimo téma. Rychlým modelem, bez --verify. Skóre se nemění.
 //   --resanitize   znovu použije pojistky na uložené rozbory (bez volání modelu) a přepočítá skóre;
 //                  s --praxe na uložená vysvětlení „v praxi“ (co neprojde, vrátí se do fronty)
+//   --praxe --retry  vrátí do fronty PN, jejichž vysvětlení pojistky odmítly tolikrát, že se už samy nezkusí
+//                  (bez volání modelu; další pokus dostane v zadání důvod posledního odmítnutí)
 
 declare(strict_types=1);
 
@@ -25,7 +27,7 @@ use Hlidac\Http;
 use Hlidac\PnPractice;
 use Hlidac\Reports;
 
-$opt = getopt('', ['limit:', 'ct:', 'remote:', 'token:', 'all', 'verify', 'resanitize', 'praxe', 'hlaseni']);
+$opt = getopt('', ['limit:', 'ct:', 'remote:', 'token:', 'all', 'verify', 'resanitize', 'praxe', 'retry', 'hlaseni']);
 $verify = isset($opt['verify']);
 $praxe = isset($opt['praxe']);
 $hlaseni = isset($opt['hlaseni']);
@@ -43,6 +45,15 @@ try {
     if (isset($opt['resanitize']) && $praxe) {
         // --praxe --resanitize: pojistky znovu na uložená vysvětlení „v praxi“; co neprojde, vrátí se do fronty
         echo json_encode((new PnPractice(db(), $config))->resanitizeStored(), JSON_UNESCAPED_UNICODE), "\n";
+        exit(0);
+    }
+    if (isset($opt['retry'])) {
+        // --praxe --retry: jen počitadlo pokusů, model se nevolá (jde spustit i v kontejneru na serveru)
+        if (!$praxe) {
+            fwrite(STDERR, "--retry je jen pro vysvětlení v praxi: php bin/ai.php --praxe --retry\n");
+            exit(1);
+        }
+        echo json_encode(['vraceno_do_fronty' => (new PnPractice(db(), $config))->retryRejected()], JSON_UNESCAPED_UNICODE), "\n";
         exit(0);
     }
     if (isset($opt['resanitize'])) {

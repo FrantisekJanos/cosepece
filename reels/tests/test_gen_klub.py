@@ -36,7 +36,7 @@ NOVAK = [{"cislo": 2376, "osoba": "Jan Novák", "klub": "ANO"}]
 
 
 def _caption(text: str) -> str:
-    return f"{text}\n\n{CLOSING}\n\n#snemovna"
+    return f"{text}\n\nTitulky: shrnutí AI.\n\n{CLOSING}\n\n#snemovna"
 
 
 def _novak_card() -> dict:

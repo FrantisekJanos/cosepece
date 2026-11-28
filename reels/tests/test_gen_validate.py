@@ -13,7 +13,7 @@ from hlidac_reels.generator.validate import caption_authors, check_layout, club_
 
 CAPTION_OK = (
     "Na mimořádnou daň pro rafinerie dostaly sněmovní výbory 30 dní. Běžná lhůta je 60.\n\n"
-    "Zkrátit lhůtu pro výbory až o 30 dní jednací řád Sněmovně dovoluje (§ 91 odst. 2).\n\n"
+    "Zkrátit lhůtu pro výbory až o 30 dní jednací řád Sněmovně dovoluje (§ 91 odst. 2). Titulky: shrnutí AI.\n\n"
     "Hodnotíme postup, ne politický obsah.\n\n#snemovna #zakony #cosepece"
 )
 V3 = ["v3-cesta-311.json", "v3-pn-115.json", "v3-zmena-221.json", "v3-cesta-174.json"]

@@ -9,7 +9,7 @@ from conftest import load_fixture
 from hlidac_reels.generator.normalize import normalize
 from hlidac_reels.generator.validate import CAPTION_LIMIT, CLOSING, validate_variant
 
-CAPTION = "Popisek k tisku.\n\n" + CLOSING + "\n\n#snemovna"
+CAPTION = "Popisek k tisku (shrnutí AI).\n\n" + CLOSING + "\n\n#snemovna"
 
 
 def _norm(card, caption=CAPTION, fmt="zmena"):
@@ -141,7 +141,7 @@ def _pn(card, caption, info=None):
 
 
 def _caption(text: str) -> str:
-    return f"{text}\n\n{CLOSING}\n\n#snemovna"
+    return f"{text}\n\nTitulky: shrnutí AI.\n\n{CLOSING}\n\n#snemovna"
 
 
 def _top(cislo, autor, klub):
@@ -292,7 +292,7 @@ def test_popisek_doplni_klub_za_prvni_vyskyt_bez_zavorky():
     card = _pn_card()
     info = [dict(_info()[0], klub="ODS")]
     # rozhoduje první výskyt celého jména: závorka za ním se nemění (správný klub, nebo chyba pro kontrolu)
-    text = "Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec tvrdí opak."
+    text = "Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec podal i další PN."
     new, cap, notes = _pn(card, _caption(text), info)
     assert cap == _caption(text) and not any(n.startswith("popisek") for n in notes)
     keys = [r["key"] for r in new["reasons"]]

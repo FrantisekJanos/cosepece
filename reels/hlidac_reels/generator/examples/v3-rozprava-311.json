@@ -95,28 +95,33 @@
     "pozn": "bez předsedajících, projevy od 200 znaků · psp.cz",
     "ai_z_projevu": 6,
     "pro": {
-      "kdo": "Alena Schillerová, ministryně financí (ANO)",
       "body": [
         {
           "text": "Marže rafinerií vyrostly kvůli ropné krizi, ne díky inovacím nebo vyšší efektivitě.",
-          "zdroj": "Schillerová · 13. 10.",
+          "zdroj": "projev: A. Schillerová · 13. 10.",
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
           "klic": "10/34/25/3",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Alena Schillerová",
+          "datum": "2026-10-13"
         },
         {
           "text": "Výnos má státu částečně vrátit výdaje spojené s růstem cen pohonných hmot.",
-          "zdroj": "Schillerová · 13. 10.",
+          "zdroj": "projev: A. Schillerová · 13. 10.",
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
           "klic": "10/34/25/3",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Alena Schillerová",
+          "datum": "2026-10-13"
         },
         {
           "text": "Vzorem je Polsko, kde navrhli 60% daň z mimořádné rafinérské marže.",
-          "zdroj": "Schillerová · 13. 10.",
+          "zdroj": "projev: A. Schillerová · 13. 10.",
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r1",
           "klic": "10/34/25/1",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Alena Schillerová",
+          "datum": "2026-10-13"
         }
       ]
     },
@@ -124,7 +129,7 @@
       "body": [
         {
           "text": "Daň fakticky zaplatí jediná firma, která provozuje obě české rafinerie.",
-          "zdroj": "Jakob, Munzar · 13. 10.",
+          "zdroj": "projevy: Jakob, Munzar · 13. 10.",
           "kluby": [
             "TOP09",
             "ODS"
@@ -134,11 +139,16 @@
           "dalsi_url": [
             "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034029.htm#r2"
           ],
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": [
+            "Jan Jakob",
+            "Vojtěch Munzar"
+          ],
+          "datum": "2026-10-13"
         },
         {
           "text": "Zdaňuje se hrubá marže, ne zisk. Daň může vzniknout, i když firmě zisk klesne.",
-          "zdroj": "Jakob, Munzar · 13. 10.",
+          "zdroj": "projevy: Jakob, Munzar · 13. 10.",
           "kluby": [
             "TOP09",
             "ODS"
@@ -148,43 +158,72 @@
           "dalsi_url": [
             "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034029.htm#r2"
           ],
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": [
+            "Jan Jakob",
+            "Vojtěch Munzar"
+          ],
+          "datum": "2026-10-13"
         },
         {
-          "text": "Odhad výnosu 5,5 miliardy Kč je nejistý, připouští to i důvodová zpráva.",
-          "zdroj": "Jakob · 13. 10.",
+          "text": "Odhad výnosu 5,5 miliardy Kč je nejistý. Důvodová zpráva ho uvádí jako odhad.",
+          "zdroj": "projev: J. Jakob · 13. 10.",
           "kluby": [
             "TOP09"
           ],
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034026.htm#r4",
           "klic": "10/34/26/4",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Jan Jakob",
+          "datum": "2026-10-13"
         }
       ],
-      "pozn": "STAN daň v principu podporuje, chce ji rozšířit i na dovoz.",
+      "pozn": "Klub STAN v rozpravě daň v principu podpořil a navrhl ji rozšířit i na dovoz.",
       "pozn_url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034028.htm#r2"
     },
     "odpovedi": {
-      "lab": "Odpověď ministryně",
-      "kdo": "Alena Schillerová v rozpravě 13. 10. 2026",
       "body": [
         {
-          "text": "Zisky rafineriím „spadly do klína“, při plánování investic s nimi počítat nemohly.",
-          "zdroj": "Schillerová · 13. 10.",
+          "text": "Zisky rafinerií nebyly výsledkem investic, při plánování s nimi firmy počítat nemohly.",
+          "zdroj": "projev: A. Schillerová · 13. 10.",
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034035.htm#r1",
           "klic": "10/34/35/1",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Alena Schillerová",
+          "datum": "2026-10-13"
         },
         {
           "text": "5,5 miliardy je odhad. Když rok 2027 mimořádný nebude, stát nevybere nic.",
-          "zdroj": "Schillerová · 13. 10.",
+          "zdroj": "projev: A. Schillerová · 13. 10.",
           "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034035.htm#r1",
           "klic": "10/34/35/1",
-          "autorizovano": true
+          "autorizovano": true,
+          "recnik": "Alena Schillerová",
+          "datum": "2026-10-13"
         }
       ]
     }
   },
   "ai_note": "Shrnutí AI ze 6 ze 40 projevů, odkazy na cosepece.cz",
-  "zdroje": "Zdroj: stenozáznamy 34. a 36. schůze, psp.cz"
+  "zdroje": "Zdroj: stenozáznamy 34. a 36. schůze, psp.cz",
+  "citace_projevu": [
+    {
+      "klic": "10/34/25/3",
+      "recnik": "Alena Schillerová",
+      "datum": "2026-10-13",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034025.htm#r3",
+      "autorizovano": true,
+      "doslovne": false,
+      "text": ""
+    },
+    {
+      "klic": "10/34/26/4",
+      "recnik": "Jan Jakob",
+      "datum": "2026-10-13",
+      "url": "https://www.psp.cz/eknih/2025ps/stenprot/034schuz/s034026.htm#r4",
+      "autorizovano": true,
+      "doslovne": false,
+      "text": ""
+    }
+  ]
 }

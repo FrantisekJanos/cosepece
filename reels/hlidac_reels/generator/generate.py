@@ -98,12 +98,13 @@ def _fingerprints(workdir: Path, numbers: list[int]) -> dict[int, tuple[str | No
 
 def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: bool,
            focus_pn: list[int] | None = None, focus_info: list[dict] | None = None,
-           server_card: dict | None = None) -> dict | None:
+           server_card: dict | None = None, autopilot: bool = False) -> dict | None:
     """Načte, znormalizuje a ověří variantu; vrací kartu, nebo None (chyby v v.errors).
 
     Normalizovaná karta a popisek se zapíšou zpět do složky varianty, zásahy do `normalize.json`.
     server_card = karta tisku ze serveru (`card_v2`): ve variantě v2 z ní platí `predkladatel` a autor PN
-    z titulku (`pn_autor`), viz normalize().
+    z titulku (`pn_autor`), ve v3 a příběhu PN pole `kdo`, viz normalize(). autopilot = úloha autopilota
+    (přísnější kontrola: jen autorizované projevy, bez neověřených klubů).
     """
     d = workdir / f"variant-{v.n}"
     v.errors = []
@@ -121,7 +122,7 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         return None
     try:  # pád kontroly (nečekaný tvar karty, chybějící Chromium) vyřadí jen tuto variantu
         card, caption, notes = normalize(card, v.caption, fmt=v.format, focus_info=focus_info or [],
-                                         server_card=server_card if v.template == "template_v2" else None)
+                                         server_card=server_card, autopilot=autopilot)
         if notes:
             (d / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
             if caption != v.caption:
@@ -129,12 +130,22 @@ def _check(v: Variant, workdir: Path, ct: int, reason_keys: list[str], layout: b
         v.caption = caption
         _append_notes(d / "normalize.json", notes)
         v.errors = validate_variant(card, v.caption, template=v.template, ct=ct, reason_keys=reason_keys,
-                                    fmt=v.format, focus_pn=focus_pn, focus_info=focus_info)
+                                    fmt=v.format, focus_pn=focus_pn, focus_info=focus_info,
+                                    autopilot=autopilot)
         if not v.errors and layout:
             v.errors = check_layout(card, v.template)
     except Exception as e:  # noqa: BLE001
         v.errors = [f"kontrola selhala: {type(e).__name__}: {e}"]
     return None if v.errors else card
+
+
+def _missing_authors(focus_pn: list[int] | None, focus_info: list[dict] | None) -> list[int]:
+    """Zadané PN, u kterých server autora neuvádí (`osoba` chybí nebo je prázdná, nebo PN v údajích chybí)."""
+    if not focus_pn:
+        return []
+    by_num = {str(i.get("cislo")): i for i in focus_info or [] if isinstance(i, dict)}
+    return [n for n in focus_pn
+            if not (isinstance(by_num.get(str(n), {}).get("osoba"), str) and by_num[str(n)]["osoba"].strip())]
 
 
 def _render_landscape(v: Variant, card: dict, portrait: Path) -> None:
@@ -317,6 +328,17 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
     else:
         formats = pick_formats(reason_keys, has_amendments, hint, focus=focus_pn is not None, has_text=has_text,
                                autopilot=autopilot)
+    no_author = _missing_authors(focus_pn, focus_info) if autopilot else []
+    if no_author:
+        # autopilot (bez lidské kontroly): PN bez autora v evidenci psp.cz nejde podepsat ani „podle evidence“;
+        # video se nevyrobí a model se vůbec nespouští (rozhodnutí majitele 2026-11-28)
+        why = (f"autopilot: autor PN {', '.join(map(str, no_author))} v evidenci psp.cz chybí, "
+               "video se nevyrobí")
+        planned = ([Variant(1, PRIBEH_TEMPLATE, PRIBEH)] if story else
+                   [Variant(1, "template_v2", None)] + [Variant(n, "template_v3", f) for n, f in enumerate(formats, 2)])
+        for v in planned:
+            v.errors = [why]
+        return GenResult(ct=ct, formats=formats, variants=planned, ok=False)
     outcome = [i.get("vysledek") for i in focus_info or [] if isinstance(i, dict)] if story else None
     input_hash = _input_hash(card_v2, focus_pn, formats, outcome)
     st = _load_state(out, input_hash)
@@ -397,7 +419,7 @@ def generate(*, ct: int, card_v2: dict, reason_keys: list[str], has_amendments: 
 
     def check(v: Variant, unchanged: set[int] | None = None) -> None:
         """Kontrola varianty (po běhu modelu i bez něj) a zápis stavu."""
-        cards[v.n] = card = _check(v, out, ct, reason_keys, render, focus_pn, focus_info, card_v2)
+        cards[v.n] = card = _check(v, out, ct, reason_keys, render, focus_pn, focus_info, card_v2, autopilot)
         if card is not None:
             save(v, VALID)
             return

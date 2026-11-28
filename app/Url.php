@@ -3,7 +3,8 @@
 // Jedna tabulka pro všechny směry: skládání odkazů (path, to), rozpoznání příchozí adresy (route; na Apachi
 // dělá totéž .htaccess, při místním náhledu bin/router.php) a přesměrování starých adres (redirectTarget).
 // Strojové adresy (api.php, rss.php, og.php, ai_api.php, reels_api.php, cron.php) zůstávají beze změny,
-// aby se nerozbily čtečky RSS a cizí nástroje. Mapa webu je na /sitemap.xml (sitemap.php).
+// aby se nerozbily čtečky RSS a cizí nástroje. Mapa webu je na /sitemap.xml (sitemap.php),
+// pokyny pro vyhledávače na /robots.txt (robots.php).
 
 declare(strict_types=1);
 
@@ -98,6 +99,10 @@ final class Url
         if (ltrim($path, '/') === 'sitemap.xml') {
             // mapa webu pro vyhledávače (strojová adresa, bez tolerance lomítka na konci)
             return ['sitemap.php', []];
+        }
+        if (ltrim($path, '/') === 'robots.txt') {
+            // pokyny pro vyhledávače s odkazem na mapu webu (strojová adresa, bez tolerance lomítka na konci)
+            return ['robots.php', []];
         }
         $path = preg_replace('~/$~', '', ltrim($path, '/')) ?? '';
         if ($path === '') {

@@ -3109,7 +3109,7 @@ $htRoute = static function (string $path) use ($htRules): ?array {
 };
 $htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
     'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx',
-    'sitemap.xml', 'sitemap.xml/', 'sitemap', 'xsitemap.xml'];
+    'sitemap.xml', 'sitemap.xml/', 'sitemap', 'xsitemap.xml', 'robots.txt', 'robots.txt/', 'robots', 'xrobots.txt'];
 $htDiff = [];
 foreach ($htSamples as $sample) {
     if ($htRoute($sample) !== Hlidac\Url::route($sample)) {
@@ -3496,6 +3496,26 @@ check('mapa webu: platné XML se všemi položkami', [$smDoc !== false, $smDoc !
 check('mapa webu: adresa se znaky & a < se v XML ošetří', Hlidac\Sitemap::xml([['loc' => 'https://x.cz/?a=1&b=<2>', 'lastmod' => null]]),
     '<?xml version="1.0" encoding="UTF-8"?>' . "\n" . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n" . '  <url><loc>https://x.cz/?a=1&amp;b=&lt;2&gt;</loc></url>' . "\n</urlset>\n");
 check('mapa webu: adresa /sitemap.xml vede na sitemap.php', Hlidac\Url::route('sitemap.xml'), ['sitemap.php', []]);
+
+// --- pokyny pro vyhledávače (/robots.txt) ---
+echo "Robots.txt\n";
+$rbRun = static function (): string {
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/robots.php');
+    return (string)ob_get_clean();
+};
+$rbSite = rtrim((string)config('site_url'), '/');
+check('robots.txt: vše povoleno a odkaz na mapu webu s celou adresou', $rbRun(), "User-agent: *\nAllow: /\n\nSitemap: " . $rbSite . "/sitemap.xml\n");
+check('robots.txt: adresa mapy začíná https:// nebo http://', (bool)preg_match('~^https?://~', $rbSite), true);
+Hlidac\Url::$pretty = false;
+check('robots.txt: bez hezkých adres ukazuje na sitemap.php', $rbRun(), "User-agent: *\nAllow: /\n\nSitemap: " . $rbSite . "/sitemap.php\n");
+Hlidac\Url::$pretty = null;
+check('robots.txt: bez adresy webu se řádek Sitemap vynechá', [Hlidac\Sitemap::robots(null), Hlidac\Sitemap::robots('/sitemap.xml')], ["User-agent: *\nAllow: /\n", "User-agent: *\nAllow: /\n"]);
+check('robots.txt: adresa s koncem řádku se nepoužije', [Hlidac\Sitemap::robots("https://x.cz/sitemap.xml\nDisallow: /"), Hlidac\Sitemap::robots("https://x.cz/sitemap.xml\n")], ["User-agent: *\nAllow: /\n", "User-agent: *\nAllow: /\n"]);
+check('robots.txt: adresa /robots.txt vede na robots.php', [Hlidac\Url::route('robots.txt'), Hlidac\Url::route('robots.txt/'), Hlidac\Url::route('robots')], [['robots.php', []], null, null]);
+check('robots.txt: žádný zákaz procházení', str_contains($rbRun(), 'Disallow'), false);
 
 // --- vysvětlení „v praxi“ v API (api.php?tisk=N&pn=1) ---
 echo "Vysvětlení v praxi v API\n";

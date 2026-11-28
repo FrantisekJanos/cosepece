@@ -523,4 +523,74 @@ final class View
           </article>
         <?php endforeach;
     }
+
+    /** Skóre jen číslem v barvě úrovně: do řádků, kde by slovo „Závažné“ překáželo. */
+    public static function scoreMini(int $score): string
+    {
+        $labels = [Scorer::LEVEL_MAJOR => 'závažné', Scorer::LEVEL_WATCH => 'pozor', Scorer::LEVEL_NORMAL => 'běžné'];
+        $level = Scorer::level($score, config());
+        return '<span class="score score-' . $level . '" title="Skóre závažnosti ' . $score . ' ze 100 (' . $labels[$level] . ')"><b>' . $score . '</b></span>';
+    }
+
+    /**
+     * Souhrn jedné aktualizace (Updates::withEvents) do řádku: co se stalo a odkazy na tisky se skóre,
+     * např. „Zkrácená lhůta: 300 · Novela z. - zákoník práce 78, 301 · Vl. n. z. o platformové práci 31“.
+     * Co se do řádku nevejde, je za odkazem na časovou osu.
+     */
+    public static function updateSummary(array $update): string
+    {
+        $summary = Updates::summary($update['events']);
+        $parts = [];
+        foreach ($summary['parts'] as $part) {
+            $links = [];
+            foreach ($part['events'] as $event) {
+                // tisk aktuálního období číslem a názvem (nedělitelná mezera, ať číslo nezůstane na konci řádku samo),
+                // ostatní (připravovaný zákon, minulé období) jen názvem
+                $label = (int)$event['ct'] > 0 && !self::isPastPeriod($event)
+                    ? (int)$event['ct'] . "\u{00A0}· " . Updates::shorten((string)$event['name'], 60)
+                    : Updates::shorten((string)$event['name']);
+                $links[] = '<a href="' . e(self::alertUrl($event)) . '">' . e($label) . '</a> ' . self::scoreMini((int)$event['score']);
+            }
+            $parts[] = ($part['what'] !== '' ? e($part['what']) . ': ' : '') . implode(', ', $links);
+        }
+        $out = implode(' <span class="muted">·</span> ', $parts);
+        if ($summary['rest'] > 0) {
+            $rest = $summary['rest'];
+            $out .= ' a <a href="' . e(url('aktualizace', ['vse' => 1], (string)$update['id'])) . '">' . $rest . ' '
+                . ($rest >= 5 ? 'dalších' : 'další') . '</a>';
+        }
+        return $out;
+    }
+
+    /**
+     * Řádek „Poslední změna“ na přehledu: nejnovější aktualizace je vidět hned, po rozbalení (bez JavaScriptu,
+     * prvek details) předchozí aktualizace a odkaz na časovou osu. Bez upozornění v databázi se nevypíše nic.
+     *
+     * @param list<array> $updates aktualizace od nejnovější (Updates::latest)
+     */
+    public static function updatesBar(array $updates, ?string $lastSync): void
+    {
+        if ($updates === []) {
+            return;
+        }
+        $first = array_shift($updates);
+        ?>
+<details class="card updates">
+  <summary>
+    <span class="updates-line"><strong title="Kdy web změnu zaznamenal">Poslední změna <?= e(Updates::when((string)$first['from'], true)) ?></strong> <span class="muted">·</span> <?= self::updateSummary($first) ?></span>
+  </summary>
+  <?php if ($updates !== []): ?>
+  <ol class="updates-list" aria-label="Předchozí aktualizace">
+    <?php foreach ($updates as $update): ?>
+    <li><time datetime="<?= e(date('Y-m-d\TH:i', (int)strtotime((string)$update['from']))) ?>"><?= e(Updates::when((string)$update['from'])) ?></time><span><?= self::updateSummary($update) ?></span></li>
+    <?php endforeach; ?>
+  </ol>
+  <?php endif; ?>
+  <div class="updates-foot">
+    <span class="muted small"><?php if ($lastSync !== null && $lastSync !== ''): ?>Data naposledy kontrolována <?= e(Updates::when($lastSync, true)) ?><?php endif; ?></span>
+    <a href="<?= e(url('aktualizace')) ?>">Zobrazit všechny aktualizace →</a>
+  </div>
+</details>
+        <?php
+    }
 }

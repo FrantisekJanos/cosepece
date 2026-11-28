@@ -22,6 +22,7 @@ final class Url
         'tisk' => 'tisk',
         'zakon' => 'zakony',
         'upozorneni' => 'upozorneni',
+        'aktualizace' => 'aktualizace',
         'pripravovane' => 'pripravovane',
         'metodika' => 'metodika',
         'data' => 'data-a-api',

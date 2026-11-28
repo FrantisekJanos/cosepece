@@ -10,9 +10,9 @@ namespace Hlidac;
 final class Sitemap
 {
     // stránky z tabulky Url::PAGES, které do mapy patří (hledání a revize jsou výsledky dotazu, ne obsah)
-    private const PAGES = ['index', 'tisky', 'zakon', 'upozorneni', 'pripravovane', 'metodika', 'data', 'mcp', 'zmeny'];
+    private const PAGES = ['index', 'tisky', 'zakon', 'upozorneni', 'aktualizace', 'pripravovane', 'metodika', 'data', 'mcp', 'zmeny'];
     // stránky, které se mění s každou synchronizací
-    private const LIVE = ['index', 'tisky', 'zakon', 'upozorneni', 'pripravovane'];
+    private const LIVE = ['index', 'tisky', 'zakon', 'upozorneni', 'aktualizace', 'pripravovane'];
 
     /**
      * Položky mapy: absolutní adresa a den poslední změny (YYYY-MM-DD) nebo null, když ho neznáme.

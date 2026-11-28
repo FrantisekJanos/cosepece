@@ -92,3 +92,10 @@ def test_cenik_z_env():
 def test_neplatny_cenik_selze():
     with pytest.raises(ValueError, match="CHAT_CENIK"):
         nacti_cenik({"CHAT_CENIK": "{nejson"})
+
+
+def test_drzeni_tahu_z_prostredi():
+    assert nacti({}).drzeni_tahu_s == 300
+    assert nacti({"CHAT_DRZENI_TAHU_S": "700"}).drzeni_tahu_s == 700
+    with pytest.raises(ValueError, match="CHAT_DRZENI_TAHU_S"):
+        nacti({"CHAT_DRZENI_TAHU_S": "5"})

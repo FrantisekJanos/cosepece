@@ -14,8 +14,10 @@ CREATE TABLE IF NOT EXISTS chat.relace (
   zprav_od_overeni  int NOT NULL DEFAULT 0,
   otisk_ip          text,                        -- otisk IP při ověření (maže se po 48 h)
   overeni_cas       timestamptz,                 -- kdy se ověřilo (stáří otisku)
-  tah_od            timestamptz                  -- příznak „běží tah“: nejvýš jeden tah relace (spec 11.1)
+  tah_od            timestamptz,                 -- příznak „běží tah“: nejvýš jeden tah relace (spec 11.1)
+  tah_token         text                         -- vlastník příznaku: tah smí příznak uvolnit jen svým tokenem
 );
+ALTER TABLE chat.relace ADD COLUMN IF NOT EXISTS tah_token text;
 
 CREATE TABLE IF NOT EXISTS chat.konverzace (
   id                text PRIMARY KEY,            -- 128 bitů náhodně

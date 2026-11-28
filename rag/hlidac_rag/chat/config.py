@@ -63,6 +63,7 @@ _SPOLECNE = {
     "karta_max_tokenu": 1200,
     "turnstile_hodin": 6.0,
     "turnstile_prisny_prah": 0.5,
+    "drzeni_tahu_s": 300,   # příznak běžícího tahu vyprší po této době (musí přesáhnout nejdelší tah)
 }
 
 
@@ -95,6 +96,7 @@ class Nastaveni:
     turnstile_hodin: float
     turnstile_prisny_prah: float
     karta_jako: str  # tool_result | blok
+    drzeni_tahu_s: int = 300
 
 
 def _hodnota(env: Mapping[str, str], jmeno: str, vychozi, typ, minimum=0):
@@ -178,4 +180,5 @@ def nacti(env: Mapping[str, str]) -> Nastaveni:
             env, "CHAT_TURNSTILE_PRISNY_PRAH", s["turnstile_prisny_prah"], float
         ),
         karta_jako=_vyber(env, "CHAT_KARTA_JAKO", "tool_result", ("tool_result", "blok")),
+        drzeni_tahu_s=_hodnota(env, "CHAT_DRZENI_TAHU_S", s["drzeni_tahu_s"], int, 30),
     )

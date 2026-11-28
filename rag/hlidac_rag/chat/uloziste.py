@@ -8,9 +8,11 @@ a dvě souběžné zprávy se nepotkají v otevřené transakci. Víceřádkové
 který spočítá volající.
 
 Tah relace (spec 11.1, „jedna relace smí mít jen jeden běžící tah“): `zahaj_tah` podmíněným UPDATE zvedne příznak
-`tah_od` na řádku relace a teprve potom přečte útratu. Druhá zpráva téže relace dostane None, dokud první nezapíše
-cenu (`zapis_volani_llm`) a nezavolá `skonci_tah`. Příznak po pádu vyprší sám (`drz_s`). Pořadí ve službě:
-`zahaj_tah` → kontrola stropů → `zaloz_odpoved` → volání modelu a zápis cen → `dokonci` → `skonci_tah` (vždy, i při chybě).
+`tah_od` na řádku relace, uloží do něj náhodný token vlastníka a teprve potom přečte útratu. Druhá zpráva téže relace
+dostane None, dokud první nezapíše cenu (`zapis_volani_llm`) a nezavolá `skonci_tah` se svým tokenem. Příznak po pádu
+vyprší sám (`drz_s`, ve službě `Nastaveni.drzeni_tahu_s`); převzatý tah pak starý vlastník se svým tokenem už neukončí.
+Pořadí ve službě: `zahaj_tah` → kontrola stropů → `zaloz_odpoved` → volání modelu a zápis cen → `dokonci` →
+`skonci_tah` (vždy, i při chybě). `drz_s` musí být delší než nejdelší tah (timeout SDK + nástroje).
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ STAVY_DO_HISTORIE = ("ok", "nemam")
 # bez 0/O, 1/l/I: kód se čte a opisuje
 ABECEDA_KODU = "abcdefghjkmnpqrstuvwxyz23456789"
 DELKA_KODU = 8
-DRZENI_TAHU_S = 300
+DRZENI_TAHU_S = 300   # výchozí; služba předá Nastaveni.drzeni_tahu_s (CHAT_DRZENI_TAHU_S)
 UKLID_KONVERZACI = timedelta(days=30)
 UKLID_IP = timedelta(hours=48)
 
@@ -92,23 +94,35 @@ def pricti_zpravu_od_overeni(conn: psycopg.Connection, relace_id: str) -> int:
 
 # --- tah relace a útrata ---
 
+class RelaceNeexistuje(LookupError):
+    """Relace s tímto id není (např. smazaná úklidem)."""
+
+
 def zahaj_tah(conn: psycopg.Connection, relace_id: str, otisk_ip: str, ted: datetime,
-              drz_s: int = DRZENI_TAHU_S) -> Utrata | None:
-    """Zahájí tah relace: atomicky zvedne příznak a vrátí útratu přečtenou až po něm.
+              drz_s: int = DRZENI_TAHU_S) -> tuple[str, Utrata] | None:
+    """Zahájí tah relace: atomicky zvedne příznak a vrátí (token vlastníka, útrata přečtená až po zvednutí).
 
-    None = relace už tah má (nebo neexistuje); volající odpoví „počkej na odpověď“. Příznak starší než `drz_s`
-    (pád procesu) se přebírá. Po každém tahu musí následovat `skonci_tah`."""
+    None = relace už tah má. Neexistující relace vyhodí `RelaceNeexistuje`. Příznak starší než `drz_s` (pád
+    procesu, příliš dlouhý tah) se přebírá. Po každém tahu musí následovat `skonci_tah(conn, relace_id, token)`.
+    Vyžaduje spojení v autocommit režimu (jinak by příznak zůstal v neodevzdané transakci)."""
     _vyzaduj_cas(ted)
-    r = _jeden(conn, """UPDATE chat.relace SET tah_od = %(ted)s
+    if not conn.autocommit:
+        raise RuntimeError("zahaj_tah vyžaduje spojení s autocommit=True")
+    token = secrets.token_hex(16)
+    r = _jeden(conn, """UPDATE chat.relace SET tah_od = %(ted)s, tah_token = %(token)s
                         WHERE id = %(id)s AND (tah_od IS NULL OR tah_od < %(ted)s - make_interval(secs => %(drz)s))
-                        RETURNING 1""", {"ted": ted, "id": relace_id, "drz": drz_s})
+                        RETURNING 1""", {"ted": ted, "id": relace_id, "drz": drz_s, "token": token})
     if r is None:
+        if _jeden(conn, "SELECT 1 FROM chat.relace WHERE id = %s", (relace_id,)) is None:
+            raise RelaceNeexistuje(relace_id)
         return None
-    return utrata(conn, relace_id, otisk_ip, ted)
+    return token, utrata(conn, relace_id, otisk_ip, ted)
 
 
-def skonci_tah(conn: psycopg.Connection, relace_id: str) -> None:
-    conn.execute("UPDATE chat.relace SET tah_od = NULL WHERE id = %s", (relace_id,))
+def skonci_tah(conn: psycopg.Connection, relace_id: str, token: str) -> bool:
+    """Uvolní příznak, jen když ho drží tento token. False = tah mezitím převzal jiný (starý vlastník nic nemaže)."""
+    return conn.execute("UPDATE chat.relace SET tah_od = NULL, tah_token = NULL WHERE id = %s AND tah_token = %s",
+                        (relace_id, token)).rowcount > 0
 
 
 def utrata(conn: psycopg.Connection, relace_id: str, otisk_ip: str, ted: datetime) -> Utrata:
@@ -131,7 +145,7 @@ def utrata(conn: psycopg.Connection, relace_id: str, otisk_ip: str, ted: datetim
           coalesce((SELECT sum(v.cena_usd) FROM chat.volani_llm v, b
                     WHERE v.cas >= b.den_od AND v.cas < b.den_do), 0)::float8,
           coalesce((SELECT sum(v.cena_usd) FROM chat.volani_llm v
-                    WHERE v.cas > %(ted)s - interval '60 minutes' AND v.cas <= %(ted)s), 0)::float8,
+                    WHERE v.cas > %(ted)s - interval '60 minutes'), 0)::float8,
           coalesce((SELECT sum(v.cena_usd) FROM chat.volani_llm v, b
                     WHERE v.cas >= b.mesic_od AND v.cas < b.mesic_do), 0)::float8,
           coalesce((SELECT sum(v.cena_usd) FROM chat.volani_llm v, b
@@ -139,7 +153,7 @@ def utrata(conn: psycopg.Connection, relace_id: str, otisk_ip: str, ted: datetim
           coalesce((SELECT sum(v.cena_usd) FROM chat.volani_llm v, b
                     WHERE v.otisk_ip = %(ip)s AND v.cas >= b.den_od AND v.cas < b.den_do), 0)::float8,
           (SELECT count(*) FROM chat.zprava_log z
-           WHERE z.relace_id = %(rel)s AND z.cas > %(ted)s - interval '1 minute' AND z.cas <= %(ted)s),
+           WHERE z.relace_id = %(rel)s AND z.cas > %(ted)s - interval '1 minute'),
           (SELECT count(*) FROM chat.zprava_log z, b
            WHERE z.relace_id = %(rel)s AND z.cas >= b.den_od AND z.cas < b.den_do)
         """, {"ted": ted, "tz": TZ, "rel": relace_id, "ip": otisk_ip})
@@ -210,17 +224,19 @@ def prubezne(conn: psycopg.Connection, zprava_id: int, text: str) -> None:
 
 
 def dokonci(conn: psycopg.Connection, zprava_id: int, text: str, stav: str, model: str | None,
-            citovane: list[int], overeni: dict) -> None:
+            citovane: list[int], overeni: dict) -> bool:
+    """Dokončí rozpracovanou odpověď. False = už dokončená (druhé volání hotovou odpověď nepřepíše)."""
     if stav not in KONCOVE_STAVY:
         raise ValueError(f"stav {stav!r}: čekám jeden z {KONCOVE_STAVY}")
     with conn.transaction():
         r = _jeden(conn, """UPDATE chat.zprava SET text = %s, stav = %s, model = %s, citovane = %s, overeni = %s
-                            WHERE id = %s AND role = 'bot' RETURNING kod""",
+                            WHERE id = %s AND role = 'bot' AND stav = 'probiha' RETURNING kod""",
                    (text, stav, model, list(citovane), Jsonb(overeni), zprava_id))
         if r is None:
-            raise LookupError(f"zpráva {zprava_id} není odpověď bota")
+            return False
         conn.execute("UPDATE chat.otisk_odpovedi SET hash = %s WHERE kod = %s",
                      (hashlib.sha256(text.encode("utf-8")).hexdigest(), r[0]))
+    return True
 
 
 def zapis_volani_llm(conn: psycopg.Connection, *, zprava_id: int | None, relace_id: str, otisk_ip: str | None,

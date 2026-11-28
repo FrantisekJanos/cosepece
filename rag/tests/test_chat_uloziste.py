@@ -129,13 +129,13 @@ def test_pocitadlo_zprav(conn, relace):
     now = datetime.now(PRAHA)
     uloziste.zaloz_odpoved(conn, k, "a", {})
     uloziste.zaloz_odpoved(conn, k, "b", {})
-    u = uloziste.utrata(conn, r, "ip", now + timedelta(seconds=5))
+    u = uloziste.utrata(conn, r, "ip", now)
     assert u.zprav_min == 2
     assert u.zprav_den in (0, 2)   # 0 jen při přechodu přes pražskou půlnoc mezi dvěma řádky testu
     assert uloziste.utrata(conn, r, "ip", now + timedelta(minutes=5)).zprav_min == 0
     # smazání konverzace počítadlo nevynuluje
     assert uloziste.smaz_konverzaci(conn, k, r)
-    assert uloziste.utrata(conn, r, "ip", now + timedelta(seconds=5)).zprav_min == 2
+    assert uloziste.utrata(conn, r, "ip", now).zprav_min == 2
 
 
 def test_relace_a_overeni(conn, relace):
@@ -321,16 +321,16 @@ def test_dva_tahy_jedne_relace_nejedou_zaroven(conn, relace):
     r = relace()
     druhe = db.connect(autocommit=True)
     try:
-        u1 = uloziste.zahaj_tah(conn, r, "ip", TED)
-        assert u1 is not None and u1.relace == 0
+        token1, u1 = uloziste.zahaj_tah(conn, r, "ip", TED)
+        assert u1.relace == 0
         # druhý tah téže relace je odmítnut, dokud první neskončí, a to i z jiného spojení
         assert uloziste.zahaj_tah(druhe, r, "ip", TED) is None
         assert uloziste.zahaj_tah(conn, r, "ip", TED) is None
         # první zapíše cenu a skončí: druhý už cenu vidí
         _volani(conn, r, "ip", 0.30, TED)
-        uloziste.skonci_tah(conn, r)
-        u2 = uloziste.zahaj_tah(druhe, r, "ip", TED)
-        assert u2 is not None and u2.relace == pytest.approx(0.30)
+        assert uloziste.skonci_tah(conn, r, token1) is True
+        token2, u2 = uloziste.zahaj_tah(druhe, r, "ip", TED)
+        assert u2.relace == pytest.approx(0.30) and token2 != token1
         # jiná relace tím blokována není
         assert uloziste.zahaj_tah(druhe, relace(), "ip", TED) is not None
     finally:
@@ -344,6 +344,52 @@ def test_tah_po_padu_se_uvolni_az_po_vyprseni(conn, relace):
     assert uloziste.zahaj_tah(conn, r, "ip", TED, drz_s=120) is not None
     assert uloziste.zahaj_tah(conn, r, "ip", TED + timedelta(seconds=119), drz_s=120) is None
     assert uloziste.zahaj_tah(conn, r, "ip", TED + timedelta(seconds=121), drz_s=120) is not None
+
+
+def test_stary_tah_neuvolni_prevzaty(conn, relace):
+    from hlidac_rag.chat import uloziste
+
+    r = relace()
+    token_a, _ = uloziste.zahaj_tah(conn, r, "ip", TED, drz_s=120)
+    token_b, _ = uloziste.zahaj_tah(conn, r, "ip", TED + timedelta(seconds=121), drz_s=120)   # B převzal po vypršení A
+    assert uloziste.skonci_tah(conn, r, token_a) is False                  # A skončil pozdě: B zůstává vlastníkem
+    assert uloziste.zahaj_tah(conn, r, "ip", TED + timedelta(seconds=122), drz_s=120) is None   # C neprojde
+    assert uloziste.skonci_tah(conn, r, token_b) is True
+    assert uloziste.zahaj_tah(conn, r, "ip", TED + timedelta(seconds=123), drz_s=120) is not None
+
+
+def test_neexistujici_relace_neni_obsazena_relace(conn):
+    from hlidac_rag.chat import uloziste
+
+    with pytest.raises(uloziste.RelaceNeexistuje):
+        uloziste.zahaj_tah(conn, "neexistuje", "ip", TED)
+
+
+def test_zahaj_tah_vyzaduje_autocommit(conn, relace):
+    from hlidac_rag import db
+    from hlidac_rag.chat import uloziste
+
+    r = relace()
+    c = db.connect()   # bez autocommit
+    try:
+        with pytest.raises(RuntimeError, match="autocommit"):
+            uloziste.zahaj_tah(c, r, "ip", TED)
+    finally:
+        c.close()
+
+
+def test_dokonci_nepřepíše_hotovou_odpoved(conn, relace):
+    from hlidac_rag.chat import uloziste
+
+    r = relace()
+    k = uloziste.zaloz_konverzaci(conn, r)
+    zid, kod = uloziste.zaloz_odpoved(conn, k, "q", {})
+    assert uloziste.dokonci(conn, zid, "první", "ok", "m", [1], {}) is True
+    assert uloziste.dokonci(conn, zid, "druhá", "chyba", "m2", [], {}) is False
+    stav, text, model = conn.execute("SELECT stav, text, model FROM chat.zprava WHERE id = %s", (zid,)).fetchone()
+    assert (stav, text, model) == ("ok", "první", "m")
+    h = conn.execute("SELECT hash FROM chat.otisk_odpovedi WHERE kod = %s", (kod,)).fetchone()[0]
+    assert h == __import__("hashlib").sha256("první".encode()).hexdigest()
 
 
 def test_soubeh_vlaken_pusti_prave_jeden_tah(conn, relace):

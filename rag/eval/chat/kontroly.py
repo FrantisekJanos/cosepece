@@ -9,7 +9,8 @@ Tah: {"text", nepovinně "kontext", "must", "must_not", "must_re", "nastroje_any
   tvrzení, kde by podřetězec shodil i správnou odpověď („nebyl přijat“ obsahuje „byl přijat“): hranice slov \\b,
   záporná předpona (?<!ne), začátek věty. Vzory se píšou bez diakritiky a malými písmeny.
 - cituje: true = odpověď obsahuje odkaz [N], false = neobsahuje, null = nekontroluje se.
-- nastroje_any: aspoň jeden z nástrojů byl zavolán (předpona mcp__server__ se ignoruje).
+- nastroje_any: aspoň jeden z nástrojů byl zavolán (předpona mcp__server__ se ignoruje). Seznam volaných nástrojů
+  None = nekontroluje se (F0: výstup `claude -p --output-format json` volání nástrojů neuvádí).
 - max_cena_usd: cena tahu nesmí stropu přesáhnout.
 - ZAKAZANE_ODVOLANI se kontrolují v každém tahu (bot nesmí odvolat dřívější odpověď jen proto, že nevidí zdroj).
 """
@@ -62,7 +63,7 @@ def _najde(vzor: str, odpoved: str, text: str) -> bool:
     return bool(re.search(vzor, odpoved, priznaky) or re.search(vzor, text, priznaky))
 
 
-def zkontroluj(tah: dict, odpoved: str, nastroje: list[str], cena_usd: float) -> Vysledek:
+def zkontroluj(tah: dict, odpoved: str, nastroje: list[str] | None, cena_usd: float) -> Vysledek:
     """Projde kontroly jednoho tahu. selhani: „must: x“, „must_not: x“, „must_re: x“, „must_not_re: x“,
     „cituje“, „nastroje_any“, „max_cena_usd“, „odvolani: x“ (v tomto pořadí)."""
     text = _norm(odpoved)
@@ -83,7 +84,7 @@ def zkontroluj(tah: dict, odpoved: str, nastroje: list[str], cena_usd: float) ->
     if cituje is not None and bool(_ODKAZ.search(odpoved)) != cituje:
         selhani.append("cituje")
     chtene = tah.get("nastroje_any") or []
-    if chtene and not {_nazev_nastroje(n) for n in nastroje} & {_nazev_nastroje(n) for n in chtene}:
+    if chtene and nastroje is not None and not {_nazev_nastroje(n) for n in nastroje} & {_nazev_nastroje(n) for n in chtene}:
         selhani.append("nastroje_any")
     strop = tah.get("max_cena_usd")
     if strop is not None and cena_usd > strop:

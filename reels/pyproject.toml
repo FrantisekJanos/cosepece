@@ -20,6 +20,7 @@ reels-bot = "hlidac_reels.bot:main"
 reels-threads-backfill = "hlidac_reels.backfill:main"
 reels-generate = "hlidac_reels.generator.generate:main"
 reels-worker = "hlidac_reels.generator.worker:main"
+reels-audit-atribuce = "hlidac_reels.audit_atribuce:main"
 
 [tool.setuptools.packages.find]
 include = ["hlidac_reels*"]

@@ -121,6 +121,25 @@ check('osoba ke jménu ve 2. pádě (jednoznačně, jinak null)', array_map(fn(s
 ]), [3, 2, 4, 5, 6, 8, 9, null, null, null, null]);
 check('krajský návrh: zastupitelstvo z úplného názvu', [Hlidac\Proposers::regionName('Návrh zastupitelstva Jihomoravského kraje na vydání zákona, kterým'),
     Hlidac\Proposers::regionName('Návrh poslanců X na vydání')], ['Zastupitelstvo Jihomoravského kraje', null]);
+// podepsaní PN z hlavičky textu (Reels: „a N dalších“ u jména autora)
+check('podepsaní PN z hlavičky textu', array_map(fn(string $t) => Hlidac\Proposers::pnSigners($t), [
+    'Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu zákona, kterým se mění',
+    "Pozměňovací návrh poslanců Michaely Šebelové, Toma Philippa,\nPavly Pivoňka Vaňkové a Jana Bauera k vládnímu návrhu zákona",
+    'Pozměňovací návrh poslankyně Jany Malé ke sněmovnímu tisku 311',
+    'Pozměňovací návrh poslanců Radka Vondráčka a dalších k vládnímu návrhu zákona',
+    'Návrh zákona, kterým se mění zákon o daních z příjmů',
+    '',
+]), [[1, 'Jana Nováka'], [4, 'Michaely Šebelové'], [1, 'Jany Malé'], null, null, null]);
+check('spolupodepsaní PN: jen když první jméno hlavičky sedí s autorem z evidence', [
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Michaely Šebelové, Toma Philippa a Pavly Pivoňka Vaňkové k vládnímu návrhu', 'Michaela Šebelová'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu', 'Jan Novák'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Toma Philippa a Michaely Šebelové k vládnímu návrhu', 'Michaela Šebelová'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslanců Radka Vondráčka a dalších k vládnímu návrhu', 'Radek Vondráček'),
+    Hlidac\Proposers::pnCosigners('Text bez hlavičky', 'Jan Novák'),
+    Hlidac\Proposers::pnCosigners('Pozměňovací návrh poslance Jana Nováka k vládnímu návrhu', null),
+], [2, 0, null, null, null, null]);
+check('dovětek k prvnímu navrhovateli', array_map([Hlidac\Proposers::class, 'othersText'], [1, 3, 4, 5, null]),
+    ['a 1 další poslanec', 'a 3 další poslanci', 'a 4 další poslanci', 'a 5 dalších poslanců', 'a další poslanci']);
 $clubImporter = new Hlidac\Importer(db(), new Hlidac\Source('', $tmp . '/cache-clubs', $tmp . '/src'));
 $shortNames = (new ReflectionMethod($clubImporter, 'loadShortNames'))->invoke($clubImporter, $clubs);
 check('zkrácená jména poslanců: jednoznačné má id, shodné u dvou poslankyň 0, osoba bez klubu chybí',
@@ -169,9 +188,11 @@ check('předkladatel: vládní, poslanecká skupina s kluby, skupina bez počtu,
 ], [
     ['typ' => 'Vládní návrh', 'jmeno' => 'Ministerstvo financí', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný',
+        'vice' => true, 'dalsi' => 3, 'dalsi_text' => 'a 3 další poslanci',
         'skupina' => ['count' => 4, 'kluby' => [['klub' => 'ANO', 'count' => 2], ['klub' => 'KDU-ČSL', 'count' => 1], ['klub' => 'ODS', 'count' => 1]]],
         'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
-    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'funkce' => 'a další poslanci', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
+    ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'funkce' => 'a další poslanci', 'vice' => true, 'dalsi' => null,
+        'dalsi_text' => 'a další poslanci', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Poslanecký návrh', 'jmeno' => 'Taťána Malá', 'funkce' => 'poslankyně', 'klub' => 'ANO', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Senátní návrh', 'jmeno' => 'Senát', 'funkce' => 'navrhli senátoři Canov M. a další', 'predlozeno' => '2026-08-25'],
     ['typ' => 'Krajský návrh', 'jmeno' => 'Zastupitelstvo Jihomoravského kraje', 'predlozeno' => '2026-08-25'],
@@ -1715,7 +1736,7 @@ $apiPrep = array_values(array_filter((new Hlidac\Api(db(), new Hlidac\Repo(db())
 check('API: upozornění bez čísla tisku', array_key_exists(0, $apiPrep) ? [$apiPrep[0]['ct'], $apiPrep[0]['skore']] : 'chybí', [null, 50]);
 
 echo "Stránky\n";
-foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'upozorneni.php' => [], 'aktualizace.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
+foreach (['index.php' => [], 'pripravovane.php' => [], 'data.php' => [], 'mcp.php' => [], 'tisky.php' => ['f' => 'p90'], 'tisk.php' => ['ct' => '90'], 'tisk-aktualizace.php' => ['ct' => '90'], 'upozorneni.php' => [], 'aktualizace.php' => [], 'metodika.php' => [], 'zmeny.php' => [], 'rss.php' => [], 'revize.php' => ['druh' => 'tisk', 'id' => '221'], 'api.php' => ['tisk' => '221']] as $page => $get) {
     $_GET = $get;
     ob_start();
     try {
@@ -1921,14 +1942,19 @@ $rjC = $jobs->claim();
 $card = $jobs->cardV2(221);
 $rjKeys = ['ct', 'nazev', 'faze', 'score', 'title', 'perex', 'quote', 'quote_source', 'verified', 'reasons', 'url', 'data_date'];
 check('karta v2 má základní klíče', array_values(array_diff($rjKeys, array_keys($card ?? []))), []);
+// příjmení osob pro kontrolu atribuce generátoru (autoři PN, s rag/ i poslanci a řečníci): seřazená, bez duplicit
+$rjSurnames = $card['prijmeni_osob'] ?? null;
+check('karta v2: příjmení osob pro kontrolu atribuce', [is_array($rjSurnames), in_array('Jurečka', $rjSurnames ?? [], true),
+    $rjSurnames === array_values(array_unique($rjSurnames ?? [])), $rjSurnames !== null && $rjSurnames === (function (array $a) { sort($a); return $a; })($rjSurnames)],
+    [true, true, true, true]);
 check('karta v2: titulek a citace z rozboru', [$card['ct'] ?? null, $card['score'] ?? null, $card['title'] ?? null, $card['quote'] ?? null, $card['quote_source'] ?? null, $card['verified'] ?? null],
     [221, 99, 'Nález 221', 'citace 221', 'text návrhu', false]);
 check('karta v2: důvody podle bodů sestupně', array_column($card['reasons'] ?? [], 'points'), [24, 15, 5]);
 check('karta v2: odkaz a datum dat', [$card['url'] ?? null, $card['data_date'] ?? null], ['https://hlidac.test/tisk/221', '2026-11-20']);
 check('karta v2: předkladatel z dat (4 poslanci, první s klubem), titulek z textu návrhu bez autora PN',
     [$card['predkladatel'] ?? null, array_key_exists('pn_autor', $card ?? [])],
-    [['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný', 'skupina' => ['count' => 4],
-        'klub' => 'ANO', 'predlozeno' => '2026-06-08'], false]);
+    [['typ' => 'Poslanecký návrh', 'jmeno' => 'Radek Vondráček', 'funkce' => 'první podepsaný', 'vice' => true, 'dalsi' => 3,
+        'dalsi_text' => 'a 3 další poslanci', 'skupina' => ['count' => 4], 'klub' => 'ANO', 'predlozeno' => '2026-06-08'], false]);
 check('karta v2: zkrácená lhůta pro výbory', $card['deadline'] ?? null, ['label' => 'Lhůta pro výbory', 'normal' => 60, 'actual' => 30, 'unit' => 'dní']);
 check('karta v2: počet PN podle tabulky pn', $card['pn']['count'] ?? 0, (int)db()->value('SELECT COUNT(*) FROM pn WHERE ct = 221'));
 check('claim: reason_keys podle bodů', $rjC['reason_keys'] ?? null, ['ai_bill', 'deadline_cut', 'sensitive']);
@@ -1965,10 +1991,10 @@ db()->run("UPDATE pn_text SET ai_score = 6, ai_at = '2026-11-24 12:00:00' WHERE 
 $rjCardHead = $jobs->cardV2(78);
 check('karta z titulku PN: autor a klub PN ze serveru, předkladatel tisku',
     [$rjCardHead['quote_source'] ?? null, $rjCardHead['pn_autor'] ?? null, $rjCardHead['predkladatel'] ?? null],
-    ['pozměňovací návrh č. 9781', [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => 'ANO']],
+    ['pozměňovací návrh č. 9781', [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => 'ANO', 'spolu' => null]],
         ['typ' => 'Poslanecký návrh', 'jmeno' => 'Babiš A.', 'klub' => 'ANO', 'predlozeno' => '2026-01-12']]);
 db()->run("UPDATE pn SET klub = NULL WHERE id_dokument = 99781");
-check('karta /pn: autor PN bez klubu → klub null', $jobs->cardV2(78, [9781])['pn_autor'] ?? null, [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => null]]);
+check('karta /pn: autor PN bez klubu → klub null', $jobs->cardV2(78, [9781])['pn_autor'] ?? null, [['cislo' => 9781, 'jmeno' => 'Test Autor', 'klub' => null, 'spolu' => null]]);
 db()->run('DELETE FROM pn_text WHERE id_dokument IN (99781, 99782)');
 db()->run('DELETE FROM pn WHERE id_dokument IN (99781, 99782)');
 
@@ -2016,9 +2042,9 @@ $rjC = $jobs->claim();
 check('claim úlohy k PN: focus_pn jako pole čísel', [$rjC['job_id'] ?? null, $rjC['focus_pn'] ?? null], [$rjPnJob, [2312, 2313]]);
 check('claim úlohy k PN: údaje PN', $rjC['focus_pn_info'] ?? null, [
     ['cislo' => 2312, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:44:24', 'titulek' => null,
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2312&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'spolu' => null, 'vysledek' => null],
     ['cislo' => 2313, 'osoba' => 'Marian Jurečka', 'cas' => '2026-11-13 09:45:15', 'titulek' => 'Titulek PN 2313',
-     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'vysledek' => null],
+     'url_psp' => 'https://www.psp.cz/sqw/sd.sqw?cd=2313&o=10', 'id_osoba' => 6205, 'klub' => 'KDU-ČSL', 'klub_ke_dni' => '2026-11-13', 'has_text' => true, 'spolu' => null, 'vysledek' => null],
 ]);
 check('pole PostgreSQL → čísla', [Hlidac\ReelJobs::parsePnArray('{2376,2377}'), Hlidac\ReelJobs::parsePnArray(null), Hlidac\ReelJobs::parsePnArray('{}'), Hlidac\ReelJobs::parsePnArray('x')],
     [[2376, 2377], null, null, null]);
@@ -2824,7 +2850,7 @@ check('zmeny.php: bez odkazu na PR 0', [$f4Changes !== '', str_contains($f4Chang
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99801, 9801, 311, 6150, 'Test Poslanec', '2026-03-15 10:00:00', 'ANO2011')");
 db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (99802, 9802, 311, NULL, 'Test Ministr', '2026-03-16 09:00:00', NULL)");
 // rozbor AI proběhl (bez titulku): úloha k PN se vydá až s rozborem všech zadaných PN (oprava 25. 11.)
-db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Text PN', 7, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
+db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, rule_score, ai_json) VALUES (99801, 311, 9801, 'Pozměňovací návrh poslance Test Poslance k vládnímu návrhu zákona. Text PN', 73, 0, ?), (99802, 311, 9802, '', 0, 0, ?)",
     [json_encode(['zavaznost' => 0]), json_encode(['zavaznost' => 0])]);
 // výsledek PN 9801 ve 3. čtení (PnOutcome) s hlasováním a kluby: claim ho posílá generátoru (šablona template_pn_v1)
 db()->run("INSERT INTO hlasovani (id_hlasovani, ct, schuze, cislo, datum, pro, proti, zdrzel, nehlasoval, prihlaseno, kvorum, vysledek, nazev, krok)
@@ -3107,7 +3133,7 @@ $htRoute = static function (string $path) use ($htRules): ?array {
     }
     return null;
 };
-$htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
+$htSamples = ['tisky', 'tisky/', 'tisk', 'tisk/221', 'tisk/221/', 'tisk/0', 'tisk/abc', 'tisk/221/x', 'tisk/221/aktualizace', 'tisk/221/aktualizace/', 'tisk/221/aktualizace/x', 'tisk/abc/aktualizace', 'tisk-aktualizace', 'xtisk/221/aktualizace', 'zakony', 'zakony/', 'zakon', 'zakon/159/2006', 'zakon/159/2006/',
     'zakon/12345/2006', 'zakon/159/06', 'upozorneni', 'aktualizace', 'aktualizace/', 'aktualizace/x', 'pripravovane', 'metodika', 'data-a-api', 'data', 'data/x', 'mcp', 'zmeny', 'hledat', 'revize', 'neznama', 'app/Url.php', 'xtisky', 'tiskyx',
     'sitemap.xml', 'sitemap.xml/', 'sitemap', 'xsitemap.xml', 'robots.txt', 'robots.txt/', 'robots', 'xrobots.txt'];
 $htDiff = [];
@@ -3133,6 +3159,9 @@ $redirects = [
     [['tisk.php', '/tisk/0221', ['ct' => '0221'], ''], '/tisk/221'],
     [['tisk.php', '/tisk.php?ct=abc', ['ct' => 'abc'], ''], '/tisk?ct=abc'],
     [['tisk.php', '/tisk?ct=abc', ['ct' => 'abc'], ''], null],
+    [['tisk-aktualizace.php', '/tisk-aktualizace.php?ct=221', ['ct' => '221'], ''], '/tisk/221/aktualizace'],
+    [['tisk-aktualizace.php', '/tisk/221/aktualizace', ['ct' => '221'], ''], null],
+    [['tisk-aktualizace.php', '/tisk/221/aktualizace/', ['ct' => '221'], ''], '/tisk/221/aktualizace'],
     [['index.php', '/index.php', [], ''], '/'],
     [['index.php', '/', [], ''], null],
     [['index.php', '/?druh=prilepky', ['druh' => 'prilepky'], ''], null],
@@ -3713,6 +3742,112 @@ check('časová osa: hezká adresa a mapa webu', [Hlidac\Url::route('aktualizace
     [['aktualizace.php', []], true, true]);
 $_GET = [];
 db()->run("DELETE FROM alerts WHERE alert_key LIKE 'updtest:%'");
+
+echo "Změny tisku\n";
+// řádek „Poslední změna“ na stránce tisku a časová osa /tisk/N/aktualizace (BillUpdates): dny od nejnovějšího,
+// v rámci dne výrazný krok, pozměňovací návrhy, souhrn, ostatní kroky
+$buBill = ['ct' => 777, 'souhrn_pn' => 4, 'souhrn_pn_at' => '2031-03-05 22:25', 'vyhlaseno' => '', 'sbirka' => ''];
+$buSteps = [
+    ['id_hist' => 10, 'datum' => '2031-01-08 00:00:00', 'typ_stavu' => 23, 'akce_id' => 16, 'stav' => 'Přijímáno do PS', 'akce' => 'předložen', 'id_hlasovani' => null],
+    ['id_hist' => 11, 'datum' => '2031-02-01 00:00:00', 'typ_stavu' => 1, 'akce_id' => 238, 'stav' => '1. čtení', 'akce' => 'zahájeno', 'id_hlasovani' => 555],
+    ['id_hist' => 12, 'datum' => '2031-03-05 00:00:00', 'typ_stavu' => 4, 'akce_id' => 23, 'stav' => '2. čtení - podrobná rozprava', 'akce' => 'ukončena', 'id_hlasovani' => null],
+    ['id_hist' => 13, 'datum' => '2031-03-05 00:00:00', 'typ_stavu' => 21, 'akce_id' => 59, 'stav' => 'Pozměňovací návrhy', 'akce' => 'změna lhůty pozmň. návrhu', 'id_hlasovani' => null],
+    ['id_hist' => 14, 'datum' => '2031-03-05 00:00:00', 'typ_stavu' => 54, 'akce_id' => 19, 'stav' => 'Garanční výbor', 'akce' => 'rozeslán', 'id_hlasovani' => null],
+];
+$buPn = [];
+foreach ([[900, '2031-03-05 12:06:00'], [801, '2031-03-04 17:51:28'], [802, '2031-03-04 17:53:53'], [803, '2031-03-04 17:55:22'], [804, '2031-03-04 17:57:20'], [805, '2031-03-04 17:58:35'], [806, '2031-03-04 09:00:00']] as [$buNo, $buAt]) {
+    $buPn[] = ['id_dokument' => 70000 + $buNo, 'cislo' => $buNo, 'ct' => 777, 'osoba' => 'Jana Testovací', 'klub' => 'STAN', 'cas' => $buAt];
+}
+$buDays = Hlidac\BillUpdates::days($buBill, $buSteps, $buPn, 10);
+check('změny tisku: dny od nejnovějšího', array_column($buDays, 'day'), ['2031-03-05', '2031-03-04', '2031-02-01', '2031-01-08']);
+check('změny tisku: pořadí v rámci dne (výrazný krok, PN, souhrn, ostatní kroky od posledního)',
+    array_map(static fn(array $i): string => $i['type'] . ':' . $i['title'], $buDays[0]['items']),
+    ['step:Zkrácená lhůta', 'pn:Podán 1 pozměňovací návrh', 'summary:Rozeslán souhrn pozměňovacích návrhů', 'step:Garanční výbor – rozeslán', 'step:2. čtení - podrobná rozprava – ukončena']);
+check('změny tisku: zkrácená lhůta nese původní název kroku, souhrn čas a odkaz na psp.cz',
+    [$buDays[0]['items'][0]['flag'], $buDays[0]['items'][0]['detail'], $buDays[0]['items'][2]['time'], $buDays[0]['items'][2]['detail'], $buDays[0]['items'][2]['url']],
+    ['cut', 'Pozměňovací návrhy – změna lhůty pozmň. návrhu', '22:25', 'tisk 777/4', 'https://www.psp.cz/sqw/text/tiskt.sqw?o=10&ct=777&ct1=4']);
+check('změny tisku: pozměňovací návrhy jednoho dne jsou jedna změna, od posledního podaného',
+    [count($buDays[1]['items']), $buDays[1]['items'][0]['title'], array_column($buDays[1]['items'][0]['pn'], 'cislo'), $buDays[1]['items'][0]['time']],
+    [1, 'Podáno 6 pozměňovacích návrhů', [805, 804, 803, 802, 801, 806], '17:58']);
+check('změny tisku: krok s hlasováním a bez času', [$buDays[2]['items'][0]['vote'], $buDays[2]['items'][0]['time'], $buDays[2]['items'][0]['id']], [555, '', 11]);
+check('změny tisku: vyhlášení ve Sbírce je výrazná změna', (function () use ($buBill, $buSteps): array {
+    $days = Hlidac\BillUpdates::days(['vyhlaseno' => '2031-04-01', 'sbirka' => '99/2031'] + $buBill, $buSteps, []);
+    return [$days[0]['day'], $days[0]['items'][0]['type'], $days[0]['items'][0]['flag'], $days[0]['items'][0]['title']];
+})(), ['2031-04-01', 'law', 'main', 'Vyhlášeno ve Sbírce zákonů jako č. 99/2031 Sb.']);
+check('změny tisku: bez kroků a návrhů žádný den, vadné datum se přeskočí',
+    [Hlidac\BillUpdates::days(['ct' => 1], [], []), count(Hlidac\BillUpdates::days(['ct' => 1], [['id_hist' => 1, 'datum' => '', 'typ_stavu' => 1, 'akce_id' => 1, 'stav' => 'x', 'akce' => '']], []))], [[], 0]);
+check('změny tisku: výrazné kroky jako tečky v průběhu', [Hlidac\BillUpdates::stepFlag(['typ_stavu' => 17, 'akce_id' => 59]), Hlidac\BillUpdates::stepFlag(['typ_stavu' => 21, 'akce_id' => 47]),
+    Hlidac\BillUpdates::stepFlag(['typ_stavu' => 64, 'akce_id' => 1]), Hlidac\BillUpdates::stepFlag(['typ_stavu' => 1, 'akce_id' => 238])], ['fast', 'cut', 'main', '']);
+check('změny tisku: skloňování', [Hlidac\BillUpdates::pnLabel(1), Hlidac\BillUpdates::pnLabel(3), Hlidac\BillUpdates::pnLabel(5), Hlidac\BillUpdates::daysLabel(1), Hlidac\BillUpdates::daysLabel(4), Hlidac\BillUpdates::daysLabel(6), Hlidac\BillUpdates::daysLabel(21)],
+    ['Podán 1 pozměňovací návrh', 'Podány 3 pozměňovací návrhy', 'Podáno 5 pozměňovacích návrhů', 'změny v 1 dni', 'změny ve 4 dnech', 'změny v 6 dnech', 'změny ve 21 dnech']);
+$buNow = (int)strtotime('2031-03-06 10:00:00');
+check('změny tisku: den slovy', [Hlidac\BillUpdates::dayWhen('2031-03-06', $buNow), Hlidac\BillUpdates::dayWhen('2031-03-05', $buNow), Hlidac\BillUpdates::dayWhen('2031-02-01', $buNow), Hlidac\BillUpdates::dayWhen('2030-12-31', $buNow)],
+    ['dnes', 'včera', '1. 2.', '31. 12. 2030']);
+$buLine = Hlidac\View::billUpdateSummary($buDays[0], 777);
+check('změny tisku: souhrn dne s odkazy na místa na stránce tisku', [
+    str_contains($buLine, '<a class="chip chip-cut" href="' . e(url('tisk', ['ct' => 777], 'krok-13')) . '">Zkrácená lhůta</a>'),
+    str_contains($buLine, 'Podán 1 pozměňovací návrh: č.' . "\u{00A0}" . '<a href="' . e(url('tisk', ['ct' => 777], 'pn-900')) . '">900</a>'),
+    str_contains($buLine, '<a href="https://www.psp.cz/sqw/text/tiskt.sqw?o=10&amp;ct=777&amp;ct1=4">Rozeslán souhrn pozměňovacích návrhů</a>'),
+    str_contains($buLine, ' a <a href="' . e(url('tisk-aktualizace', ['ct' => 777], 'd-2031-03-05')) . '">2 další</a>'),
+], [true, true, true, true]);
+$buLinePn = Hlidac\View::billUpdateSummary($buDays[1], 777);
+check('změny tisku: v řádku nejvýš čtyři čísla pozměňovacích návrhů', [substr_count($buLinePn, '#pn-'), str_contains($buLinePn, '>802</a> a 2 další'), str_contains($buLinePn, 'aktualizace#')], [4, true, false]);
+ob_start();
+Hlidac\View::billUpdatesBar($buDays, 777);
+$buBar = (string)ob_get_clean();
+check('změny tisku: řádek s posledním dnem, předchozími dny a odkazem na časovou osu', [
+    str_contains($buBar, '<details class="card updates">'),
+    str_contains($buBar, 'Poslední změna <a href="' . e(url('tisk-aktualizace', ['ct' => 777], 'd-2031-03-05')) . '"'),
+    substr_count($buBar, '<li><a class="updates-time"'),
+    str_contains($buBar, '<time datetime="2031-03-04">'),
+    str_contains($buBar, 'Celkem změny ve 4 dnech'),
+    str_contains($buBar, '<a href="' . e(url('tisk-aktualizace', ['ct' => 777])) . '">Zobrazit všechny změny tisku →</a>'),
+], [true, true, 3, true, true, true]);
+ob_start();
+Hlidac\View::billUpdatesBar([], 777);
+check('změny tisku: bez změn se řádek nevypíše', (string)ob_get_clean(), '');
+check('změny tisku: po rozbalení nejvýš pět předchozích dnů', (function (): int {
+    $steps = [];
+    for ($i = 1; $i <= 9; $i++) {
+        $steps[] = ['id_hist' => $i, 'datum' => '2031-05-0' . $i . ' 00:00:00', 'typ_stavu' => 1, 'akce_id' => 2, 'stav' => 'Krok ' . $i, 'akce' => '', 'id_hlasovani' => null];
+    }
+    ob_start();
+    Hlidac\View::billUpdatesBar(Hlidac\BillUpdates::days(['ct' => 778], $steps, []), 778);
+    return substr_count((string)ob_get_clean(), '<li><a class="updates-time"');
+})(), 5);
+// stránky nad daty testu: tisk 90 má kroky i pozměňovací návrhy
+$buPage = static function (string $file, array $get): string {
+    $_GET = $get;
+    ob_start();
+    (function (string $file): void {
+        require $file;
+    })(APP_ROOT . '/' . $file);
+    return (string)ob_get_clean();
+};
+$buTisk = $buPage('tisk.php', ['ct' => '90']);
+$buFirstStep = (int)db()->value('SELECT MIN(id_hist) FROM kroky WHERE ct = 90');
+check('stránka tisku: řádek „Poslední změna“ nad klíčovými čísly, kotvy kroků v průběhu', [
+    str_contains($buTisk, 'Poslední změna <a href="' . e(url('tisk-aktualizace', ['ct' => 90], 'd-'))),
+    strpos($buTisk, '<details class="card updates">') < strpos($buTisk, '<section class="kpis"'),
+    str_contains($buTisk, '<section class="card pad" id="prubeh"'),
+    str_contains($buTisk, '<li id="krok-' . $buFirstStep . '">'),
+    str_contains($buTisk, 'Zobrazit všechny změny tisku →'),
+], [true, true, true, true, true]);
+$buTimeline = $buPage('tisk-aktualizace.php', ['ct' => '90']);
+$buDays90 = Hlidac\BillUpdates::days(db()->one('SELECT * FROM tisky WHERE ct = 90'), db()->all('SELECT * FROM kroky WHERE ct = 90'), db()->all('SELECT * FROM pn WHERE ct = 90'), 10);
+$buPn90 = (int)db()->value('SELECT MAX(cislo) FROM pn WHERE ct = 90');
+check('časová osa tisku: den po dni s kotvami, odkazy na kroky a pozměňovací návrhy', [
+    str_contains($buTimeline, '<h1>Změny tisku 90</h1>'),
+    substr_count($buTimeline, '<section class="upd-item" id="d-') === count($buDays90),
+    str_contains($buTimeline, 'id="' . Hlidac\BillUpdates::anchor($buDays90[0]['day']) . '"'),
+    str_contains($buTimeline, 'href="' . e(url('tisk', ['ct' => 90], 'krok-' . $buFirstStep)) . '"'),
+    str_contains($buTimeline, 'href="' . e(url('tisk', ['ct' => 90], 'pn-' . $buPn90)) . '">Návrh č. ' . $buPn90 . '</a>'),
+    str_contains($buTimeline, '<link rel="canonical" href="' . e(siteUrl('tisk/90/aktualizace')) . '">'),
+], [true, true, true, true, true, true]);
+check('časová osa tisku: hezká adresa tam i zpět, v mapě webu není', [url('tisk-aktualizace', ['ct' => 221], 'd-2031-03-05'), Hlidac\Url::route('tisk/221/aktualizace'), Hlidac\Url::route('tisk/221/aktualizace/'),
+    Hlidac\Url::route('tisk/221/zmeny'), in_array(absUrl('tisk-aktualizace', ['ct' => 90]), array_column(Hlidac\Sitemap::entries(db()), 'loc'), true)],
+    ['/tisk/221/aktualizace#d-2031-03-05', ['tisk-aktualizace.php', ['ct' => '221']], ['tisk-aktualizace.php', ['ct' => '221']], null, false]);
+$_GET = [];
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

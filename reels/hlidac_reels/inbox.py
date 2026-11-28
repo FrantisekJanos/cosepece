@@ -16,7 +16,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import media, queue
+from . import attribution, media, queue
 from .enqueue import CAPTION_LIMIT
 from .generator.formats import FORMATS, PRIBEH, PRIBEH_TEMPLATE
 
@@ -38,6 +38,13 @@ class IngestResult:
     warnings: dict[int, list[str]] = field(default_factory=dict)  # varianta -> proč nemá video na šířku
     autopilot: bool = False  # položky vznikly schválené (úloha s autopilotem a přepínač zapnutý)
     skipped: list[dict] = field(default_factory=list)  # z manifestu: nevzniklé varianty [{n, format, errors}]
+    # sada autopilota, kterou kontrola atribuce nepustila (varianta -> chyby): jde ke schválení, bot to ohlásí
+    attribution: dict[int, list[str]] = field(default_factory=dict)
+
+
+# reel_state card:<reel_id> = JSON karty varianty (z manifestu); brána před zveřejněním
+# (Bot._publish) podle ní hlídá i „a N dalších“ a citace projevů, nejen popisek
+CARD_KEY = "card:"
 
 
 class _BadManifest(Exception):
@@ -209,6 +216,15 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict, autopilot: bool) -
             seen_sha.add(land)
         good.append((v, digest, land))
 
+    if autopilot and good:
+        # brána atribuce (docs/reels-citace-bezpecne.md, U3): sada s nálezem se nezveřejní bez člověka
+        for v, _, _ in good:
+            errs = attribution.public_text_errors(v.get("card"), v["caption"], m.get("ct"))
+            if errs:
+                res.attribution[v["n"]] = errs
+        if res.attribution:
+            log.warning("sada %s: kontrola atribuce, ke schválení: %s", job_id, res.attribution)
+            autopilot = False
     created: list[Path] = []
     if len(good) >= MIN_VALID:
         try:
@@ -243,6 +259,10 @@ def _ingest_one(conn, folder: Path, media_dir: Path, m: dict, autopilot: bool) -
                 raise
             res.ok = True
             res.autopilot = autopilot
+            # karta každé varianty (i té ke schválení): brána před zveřejněním podle ní hlídá „a N dalších“
+            for (v, *_), rid in zip(rows, res.reel_ids):
+                if isinstance(v.get("card"), dict):
+                    queue.set_state(conn, f"{CARD_KEY}{rid}", json.dumps(v["card"], ensure_ascii=False))
         except Exception as e:  # noqa: BLE001 - sada se nesmí uložit napůl
             log.exception("převzetí sady %s selhalo", job_id)
             res.reel_ids.clear()

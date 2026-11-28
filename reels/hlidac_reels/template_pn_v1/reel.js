@@ -293,17 +293,25 @@
   // ---------- společné scény ----------
 
   function pnAuthors(list) {
-    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub}] ze serveru, klub už jako popisek) seskupení
-    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá
+    // autoři zadaných PN (karta.pn_autor = [{cislo, jmeno, klub, spolu}] ze serveru, klub už jako popisek) seskupení
+    // podle jména a klubu v pořadí karty; záznam bez jména nebo čísla se vynechá. spolu = nejvyšší počet
+    // spolupodepsaných mezi PN skupiny (u jména „a N další“)
     var groups = [];
     (Array.isArray(list) ? list : []).forEach(function (x) {
       if (!x || !x.jmeno || x.cislo == null || String(x.cislo) === '') return;
       var jmeno = String(x.jmeno), klub = x.klub ? String(x.klub) : '';
       var g = groups.filter(function (y) { return y.jmeno === jmeno && y.klub === klub; })[0];
-      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [] });
+      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [], spolu: 0 });
       g.cisla.push(String(x.cislo));
+      g.spolu = Math.max(g.spolu, +x.spolu || 0);
     });
     return groups;
+  }
+
+  function othersSuffix(n) {
+    // „ a 2 další“, „ a 5 dalších“: spolupodepsaní PN ze serveru (pn_autor[].spolu, pn.top[].spolu); jméno se nezkracuje
+    n = +n || 0;
+    return n > 0 ? ' a ' + n + (n <= 4 ? ' další' : ' dalších') : '';
   }
 
   function fillPnAuthors(row, list) {
@@ -314,7 +322,7 @@
     row.innerHTML = '';
     groups.slice(0, 2).forEach(function (g) {
       var nums = g.cisla.slice(0, 2).join(', ') + (g.cisla.length > 2 ? ' a další' : '');
-      var pna = add(mk('span', 'pna'), mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno));
+      var pna = add(mk('span', 'pna'), mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno + othersSuffix(g.spolu)));
       if (g.klub) add(pna, document.createTextNode(' '), klubChip(g.klub, true));
       row.appendChild(pna);
     });
@@ -364,7 +372,7 @@
     fill($('hk-title'), c.title || c.nazev || '', function (t) { setWords($('hk-title'), t, true); });
     // klub ke dni podání posílá server v pn_autor (generátor); bez něj platí autor z karty
     var own = (Array.isArray(c.pn_autor) ? c.pn_autor : []).filter(function (x) { return p && x && String(x.cislo) === String(p.cislo); });
-    var authors = fillPnAuthors($('hk-pn'), own.length ? own : (p ? [{ cislo: p.cislo, jmeno: p.autor.jmeno, klub: p.autor.klub }] : []));
+    var authors = fillPnAuthors($('hk-pn'), own.length ? own : (p ? [{ cislo: p.cislo, jmeno: p.autor.jmeno, klub: p.autor.klub, spolu: p.autor.spolu }] : []));
     $('hk-faze').textContent = 'Fáze: ' + c.faze;
     var meta = [];
     if (c.typ_navrhu) meta.push(String(c.typ_navrhu));

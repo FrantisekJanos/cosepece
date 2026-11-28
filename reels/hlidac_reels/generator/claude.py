@@ -98,7 +98,9 @@ def write_published(workdir: Path, published: list[dict]) -> None:
         path.unlink(missing_ok=True)
         return
     parts = ["# Videa k tomuto tisku, která už vyšla",
-             "Popisky jsou od nejnovějšího. Jejich hlavní fakt a úhel už diváci viděli, neopakuj je.", ""]
+             "Popisky jsou od nejnovějšího. Jejich hlavní fakt a úhel už diváci viděli, neopakuj je.",
+             "Tvar starých popisků nenapodobuj: vznikly před pravidly o citacích a navrhovatelích "
+             "(podklady/pravidla.md).", ""]
     for n, p in enumerate(items, start=1):
         fmt = p.get("format") or "v2"
         when = str(p.get("published_at") or "")[:10]
@@ -122,19 +124,33 @@ def _pn_day(day) -> str:
     return f"{int(m[3])}. {int(m[2])}. {m[1]}" if m else str(day or "")
 
 
+def _cosigners(i: dict) -> str:
+    """Dovětek o spolupodepsaných z hlavičky textu PN (pnInfo.spolu); starší server klíč neposílá = nic."""
+    if "spolu" not in i:
+        return ""
+    n = i.get("spolu")
+    if isinstance(n, int) and not isinstance(n, bool):
+        if n == 0:
+            return "; další spolupodepsaní nejsou"
+        word = "další poslanec" if n == 1 else "další poslanci" if 2 <= n <= 4 else "dalších poslanců"
+        return f"; a {n} {word} (podle hlavičky textu PN): v popisku hned za jménem „a {n} {word}“"
+    return ("; počet spolupodepsaných nejde určit: o dalších nepiš, za jméno napiš „podle evidence psp.cz“")
+
+
 def _author_line(i: dict) -> str:
     """Řádek autora PN v zadání. Klub ke dni podání posílá server (pn.klub); bez údaje se klub neuvádí.
+    Za ním počet spolupodepsaných (`spolu`), když ho server posílá.
 
-    Starší server klíče `klub` a `klub_ke_dni` neposílá, chybějící klíč platí jako null.
+    Starší server klíče `klub`, `klub_ke_dni` a `spolu` neposílá, chybějící klíč platí jako null.
     """
     name = i.get("osoba")
     if not name:
         return "- autor: zjisti přes get_pn (klub neuváděj)"
     club = i.get("klub")
     if not club:
-        return f"- autor: {name} (klub v datech Sněmovny ke dni podání není, klub neuváděj)"
+        return f"- autor: {name} (klub v datech Sněmovny ke dni podání není, klub neuváděj){_cosigners(i)}"
     day = _pn_day(i.get("klub_ke_dni"))
-    return f"- autor: {name} (klub {club} ke dni podání{' ' + day if day else ''})"
+    return f"- autor: {name} (klub {club} ke dni podání{' ' + day if day else ''}){_cosigners(i)}"
 
 
 # stavy pn_vysledek (app/PnOutcome.php) slovy pro zadání modelu

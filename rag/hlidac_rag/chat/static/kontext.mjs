@@ -98,6 +98,11 @@ export function zmer(document, window) {
   return out;
 }
 
+// Výška viditelné části okna: na mobilu s otevřenou klávesnicí je menší než innerHeight
+export function vyskaOkna(window) {
+  return window.visualViewport?.height ?? window.innerHeight;
+}
+
 export function kontext(document, window) {
   const loc = window.location;
   const kan = document.querySelector('link[rel="canonical"]');
@@ -106,7 +111,7 @@ export function kontext(document, window) {
   if (k.typ === "tisk") {
     if (kotva.pn) k.pn = kotva.pn;
     else {
-      const z = zaostreni(zmer(document, window), window.innerHeight).zaostreno;
+      const z = zaostreni(zmer(document, window), vyskaOkna(window)).zaostreno;
       if (z) k[z.druh === "pn" ? "pn" : "hlasovani"] = z.id;
     }
   } else if (k.typ === "pripravovane" && kotva.pid) k.pid = kotva.pid;

@@ -19,7 +19,7 @@ import pytest
 
 from hlidac_rag.chat import turnstile
 from hlidac_rag.chat.app import Tajemstvi, vytvor
-from hlidac_rag.chat.beh import Vystup
+from hlidac_rag.chat.beh import BehTahu, ProudTahu, Vystup
 from hlidac_rag.chat.citace import Overeni
 from hlidac_rag.chat.config import nacti
 from hlidac_rag.chat.historie import Tah
@@ -519,7 +519,8 @@ async def test_vypnuto_je_503_a_stav_rika_vypnuto():
 async def test_stav_bez_limitu_a_po_limitu():
     s = Svet()
     st = (await asgi(s.app, "GET", "/chat-api/stav", hlavicky={"x-forwarded-for": "1.2.3.4"})).json()
-    assert st == {"dostupny": True, "kod": None, "zbyva_otazek": 6, "znovu_v": None, "turnstile_sitekey": "site-key"}
+    assert st == {"dostupny": True, "kod": None, "zbyva_otazek": 6, "znovu_v": None, "turnstile_sitekey": "site-key",
+                  "max_znaku_zpravy": 500}
     s = Svet(utrata=U(den=1.95))
     st = (await asgi(s.app, "GET", "/chat-api/stav")).json()      # bez IP: stav jde zjistit i tak
     assert st["dostupny"] is False and st["kod"] == "limit_den" and st["znovu_v"]
@@ -1324,3 +1325,11 @@ def test_pg_jmena_osob_ze_steno_osoba():
         pool.close()
         c.execute("DELETE FROM steno.osoba WHERE id_osoba IN (990001, 990002)")
         c.close()
+
+
+def test_stream_nema_content_length():
+    """Response bez těla by nesl content-length: 0 a uvicorn (h11) by stream SSE shodil (nalezeno ruční zkouškou)."""
+    p = ProudTahu(BehTahu("t", "r", 15), 0, 10, {"Set-Cookie": "a=b"})
+    jmena = [k for k, _ in p.raw_headers]
+    assert b"content-length" not in jmena and b"set-cookie" in jmena
+    assert dict(p.raw_headers)[b"content-type"].startswith(b"text/event-stream")

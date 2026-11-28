@@ -90,6 +90,8 @@ class ProudTahu(Response):
 
     def __init__(self, beh: BehTahu, od: int, ping_s: float, headers: dict | None = None):
         super().__init__(status_code=200, headers={**HLAVICKY_SSE, **(headers or {})})
+        # Response bez těla doplní content-length: 0 a skutečný server (h11) pak stream odmítne
+        self.raw_headers = [(k, v) for k, v in self.raw_headers if k != b"content-length"]
         self.beh, self.od, self.ping_s = beh, max(0, od), ping_s
 
     async def __call__(self, scope, receive, send) -> None:

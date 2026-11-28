@@ -258,7 +258,8 @@ class Sluzba:
         return _json({"dostupny": kod is None, "kod": kod,
                       "zbyva_otazek": rozpocet.zbyva_otazek(self.n, u) if kod != "vypnuto" else None,
                       "znovu_v": znovu.isoformat() if znovu else None,
-                      "turnstile_sitekey": self.tajemstvi.turnstile_sitekey})
+                      "turnstile_sitekey": self.tajemstvi.turnstile_sitekey,
+                      "max_znaku_zpravy": self.n.max_znaku_zpravy})
 
     async def beta(self, request: Request) -> Response:
         # cizí původ i jiná metoda vypadají stejně jako špatný kód: adresa nic neprozradí

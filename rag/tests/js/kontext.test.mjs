@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { zCesty, zKotvy, zaostreni, maBublinu, zmer, kontext, BEZ_BUBLINY } from "../../hlidac_rag/chat/static/kontext.mjs";
+import { zCesty, zKotvy, zaostreni, maBublinu, zmer, kontext, vyskaOkna, BEZ_BUBLINY } from "../../hlidac_rag/chat/static/kontext.mjs";
 
 test("cesty", () => {
   assert.deepEqual(zCesty("/tisk/221"), {typ: "tisk", ct: 221});
@@ -29,12 +29,11 @@ test("bublina není na revizích a mcp", () => {
   assert.equal(maBublinu("/tisk/1"), true);
 });
 
-test("F38: w.js má stejný výčet cest bez bubliny jako kontext.mjs", { skip: !existsSync(new URL("../../hlidac_rag/chat/static/w.js", import.meta.url)) }, () => {
+test("F38: w.js má stejný výčet cest bez bubliny jako kontext.mjs", () => {
   const w = readFileSync(fileURLToPath(new URL("../../hlidac_rag/chat/static/w.js", import.meta.url)), "utf8");
-  for (const cesta of BEZ_BUBLINY) assert.ok(w.includes(`"${cesta}"`) || w.includes(`'${cesta}'`), `w.js nezná ${cesta}`);
-  // žádná další cesta bez bubliny ve w.js: každý řetězec "/xyz" v poli musí být v BEZ_BUBLINY
   const m = w.match(/BEZ_BUBLINY\s*=\s*\[([^\]]*)\]/);
-  if (m) assert.deepEqual([...m[1].matchAll(/["'](\/[^"']*)["']/g)].map((x) => x[1]).sort(), [...BEZ_BUBLINY].sort());
+  assert.ok(m, "w.js nemá pole BEZ_BUBLINY");
+  assert.deepEqual([...m[1].matchAll(/["'](\/[^"']*)["']/g)].map((x) => x[1]).sort(), [...BEZ_BUBLINY].sort());
 });
 
 test("kotva", () => {
@@ -109,4 +108,18 @@ test("kontext: žádný volný text z URL ani DOM (jen čísla a povolený typ)"
   const k = kontext(dok({canonical: "https://cosepece.cz/tisk/5?q=nejaky%20text"}), okno("/tisk.php", "#prep-x y"));
   assert.deepEqual(k, {typ: "tisk", ct: 5, uzke: false});
   for (const v of Object.values(kontext(d, okno("/tisk/221")))) assert.ok(typeof v === "number" || typeof v === "boolean" || ["tisk"].includes(v));
+});
+
+test("mobil: zaostření podle visualViewport (otevřená klávesnice), ne podle innerHeight", () => {
+  // 375 × 667, klávesnice nechá vidět 400 px; PN zabírá 250 px viditelné části (>= 200, ale < 333)
+  const d = dok({pn: [el({id: "pn-41", rect: {top: 100, bottom: 350}})]});
+  const w = okno("/tisk/221", "", 375, 667);
+  assert.equal(kontext(d, w).pn, undefined);
+  w.visualViewport = {height: 400};
+  assert.equal(vyskaOkna(w), 400);
+  assert.deepEqual(kontext(d, w), {typ: "tisk", ct: 221, pn: 41, uzke: true});
+});
+
+test("bez visualViewport platí innerHeight", () => {
+  assert.equal(vyskaOkna({innerHeight: 667}), 667);
 });

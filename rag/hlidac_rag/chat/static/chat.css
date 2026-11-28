@@ -1,0 +1,118 @@
+/* Panel chatu cosepece.cz (spec 7.1). Samostatné styly, všechny třídy s předponou cz-chat-; style.css webu se nemění.
+   Barvy podle proměnných webu (assets/style.css), kde existují; tmavý režim podle prefers-color-scheme. */
+.cz-chat-panel {
+  --cz-chat-pozadi: var(--surface, #fff);
+  --cz-chat-plocha: var(--ground, #F6F6F3);
+  --cz-chat-cara: var(--line, #E3E3DE);
+  --cz-chat-text: var(--ink, #15171C);
+  --cz-chat-text-2: var(--ink-2, #3C4049);
+  --cz-chat-tlumeny: var(--muted, #5B5F68);
+  --cz-chat-akcent: var(--accent, #1D4ED8);
+  --cz-chat-akcent-text: #fff;
+  --cz-chat-uzivatel: #E8EEFD;
+  --cz-chat-system: #FFF7ED;
+  --cz-chat-system-cara: #F3D9B5;
+  --cz-chat-varovani: var(--warn, #B45309);
+  position: fixed; right: 16px; bottom: 16px; z-index: 2147483001;
+  width: 440px; max-width: calc(100vw - 32px); height: 720px; max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column; box-sizing: border-box;
+  background: var(--cz-chat-pozadi); color: var(--cz-chat-text);
+  border: 1px solid var(--cz-chat-cara); border-radius: 14px; box-shadow: 0 10px 40px rgba(21, 23, 28, .22);
+  font: 15px/1.5 Inter, system-ui, sans-serif; overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .cz-chat-panel {
+    --cz-chat-pozadi: #1B1E24; --cz-chat-plocha: #14161B; --cz-chat-cara: #343842; --cz-chat-text: #ECEDEF;
+    --cz-chat-text-2: #C9CCD3; --cz-chat-tlumeny: #A2A7B1; --cz-chat-akcent: #7AA2FF; --cz-chat-akcent-text: #0B1020;
+    --cz-chat-uzivatel: #24304D; --cz-chat-system: #2B2418; --cz-chat-system-cara: #5A4626; --cz-chat-varovani: #F0A85A;
+  }
+}
+.cz-chat-panel[hidden] { display: none; }
+.cz-chat-panel *, .cz-chat-panel *::before, .cz-chat-panel *::after { box-sizing: border-box; }
+.cz-chat-panel a { color: var(--cz-chat-akcent); }
+.cz-chat-panel button { font: inherit; }
+.cz-chat-panel :focus-visible { outline: 2px solid var(--cz-chat-akcent); outline-offset: 2px; }
+
+.cz-chat-hlava { padding: 10px 12px 8px; border-bottom: 1px solid var(--cz-chat-cara); }
+.cz-chat-hlava-radek { display: flex; align-items: center; gap: 8px; }
+.cz-chat-nadpis { flex: 1; margin: 0; font: 600 16px/1.3 'Space Grotesk', Inter, sans-serif; }
+.cz-chat-akce { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.cz-chat-tl {
+  border: 1px solid var(--cz-chat-cara); background: transparent; color: var(--cz-chat-text-2);
+  border-radius: 8px; padding: 4px 8px; font-size: 13px; cursor: pointer; min-height: 32px;
+}
+.cz-chat-tl:hover:not(:disabled) { background: var(--cz-chat-plocha); }
+.cz-chat-tl:disabled { opacity: .5; cursor: default; }
+.cz-chat-zavrit { font-size: 20px; line-height: 1; width: 32px; padding: 0; }
+.cz-chat-kontext { margin-top: 8px; position: relative; }
+.cz-chat-cip {
+  border: 1px solid var(--cz-chat-cara); background: var(--cz-chat-plocha); color: var(--cz-chat-text-2);
+  border-radius: 999px; padding: 3px 12px; font-size: 13px; cursor: pointer; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cz-chat-volby { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cz-chat-volby[hidden], .cz-chat-nabidka[hidden] { display: none; }
+.cz-chat-volba {
+  border: 1px solid var(--cz-chat-cara); background: var(--cz-chat-pozadi); color: var(--cz-chat-text);
+  border-radius: 999px; padding: 3px 10px; font-size: 13px; cursor: pointer;
+}
+.cz-chat-volba[aria-pressed="true"] { border-color: var(--cz-chat-akcent); color: var(--cz-chat-akcent); }
+
+.cz-chat-zpravy { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--cz-chat-plocha); overscroll-behavior: contain; }
+.cz-chat-zprava { max-width: 92%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cz-chat-uzivatel { align-self: flex-end; background: var(--cz-chat-uzivatel); }
+.cz-chat-bot { align-self: flex-start; background: var(--cz-chat-pozadi); border: 1px solid var(--cz-chat-cara); }
+.cz-chat-ceka .cz-chat-text::after { content: "…"; color: var(--cz-chat-tlumeny); }
+.cz-chat-poznamka { margin: 6px 0 0; font-size: 13px; color: var(--cz-chat-tlumeny); white-space: normal; }
+.cz-chat-oddelovac { align-self: center; font-size: 12px; color: var(--cz-chat-tlumeny); }
+.cz-chat-system {
+  align-self: stretch; padding: 8px 12px; border-radius: 10px; font-size: 14px; white-space: normal;
+  background: var(--cz-chat-system); border: 1px solid var(--cz-chat-system-cara); color: var(--cz-chat-text);
+}
+.cz-chat-bot .cz-chat-system { margin-top: 8px; }
+.cz-chat-system p { margin: 0; }
+.cz-chat-odkazy { margin: 6px 0 0; padding-left: 18px; }
+.cz-chat-system-akce { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.cz-chat-prazdne { margin: auto 0; display: flex; flex-direction: column; gap: 10px; }
+.cz-chat-uvod { margin: 0; color: var(--cz-chat-text-2); }
+.cz-chat-otazky { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cz-chat-otazka {
+  width: 100%; text-align: left; border: 1px solid var(--cz-chat-cara); background: var(--cz-chat-pozadi);
+  color: var(--cz-chat-text); border-radius: 10px; padding: 8px 12px; cursor: pointer;
+}
+.cz-chat-otazka:hover { border-color: var(--cz-chat-akcent); }
+.cz-chat-pokracovat { align-self: flex-start; }
+
+.cz-chat-stav { min-height: 0; padding: 0 12px; font-size: 13px; color: var(--cz-chat-tlumeny); background: var(--cz-chat-plocha); }
+.cz-chat-stav:not(:empty) { padding: 4px 12px; }
+.cz-chat-pata { padding: 8px 12px 10px; border-top: 1px solid var(--cz-chat-cara); display: flex; flex-direction: column; gap: 6px; }
+.cz-chat-nabidka { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--cz-chat-text-2); }
+.cz-chat-ts:empty { display: none; }
+.cz-chat-treti, .cz-chat-info, .cz-chat-zbyva { margin: 0; font-size: 12px; color: var(--cz-chat-tlumeny); }
+.cz-chat-treti[hidden], .cz-chat-zbyva[hidden] { display: none; }
+.cz-chat-zbyva { color: var(--cz-chat-varovani); font-weight: 600; }
+.cz-chat-formular { display: flex; flex-direction: column; gap: 4px; }
+.cz-chat-pole {
+  width: 100%; resize: none; border: 1px solid var(--cz-chat-cara); border-radius: 10px; padding: 8px 10px;
+  font: inherit; color: var(--cz-chat-text); background: var(--cz-chat-pozadi); max-height: 30vh;
+}
+.cz-chat-pole:disabled { opacity: .6; }
+.cz-chat-formular-pata { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cz-chat-citac { font-size: 12px; color: var(--cz-chat-tlumeny); }
+.cz-chat-citac-plno { color: var(--cz-chat-varovani); }
+.cz-chat-odeslat {
+  border: 0; border-radius: 8px; padding: 6px 16px; min-height: 36px; cursor: pointer;
+  background: var(--cz-chat-akcent); color: var(--cz-chat-akcent-text); font-weight: 600;
+}
+.cz-chat-odeslat:disabled { opacity: .5; cursor: default; }
+.cz-chat-odeslat.cz-chat-zastavit { background: var(--cz-chat-text-2); color: var(--cz-chat-pozadi); }
+.cz-chat-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* mobil (< 640 px): celá obrazovka; výšku a polohu nastavuje chat.mjs podle visualViewport */
+@media (max-width: 639px) {
+  .cz-chat-panel { left: 0; right: 0; top: 0; bottom: auto; width: 100%; max-width: none; height: 100%;
+    max-height: none; border-radius: 0; border: 0; }
+  .cz-chat-pole { font-size: 16px; }    /* iOS při menším písmu stránku přiblíží */
+}
+html.cz-chat-zamceno, html.cz-chat-zamceno body { overflow: hidden; }

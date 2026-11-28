@@ -97,6 +97,12 @@ class _Spojeni:
             h["Cookie"] = "; ".join(cookie)
         return h
 
+    def nova_relace(self) -> None:
+        """Další požadavek bez `chat_sid`: služba eval relaci založí znovu. Smaže i cookie, kterou si klient
+        httpx zapamatoval sám (bez hlavičky Cookie by ji poslal)."""
+        self.sid = None
+        self.http.cookies.delete(COOKIE_SID)
+
     def _zapamatuj_sid(self, r) -> None:
         for c in r.headers.get_list("set-cookie"):
             m = re.match(rf"{COOKIE_SID}=([0-9a-f]{{32}})", c)
@@ -167,7 +173,7 @@ async def _tah(sp: _Spojeni, tah: dict, kontext: dict | None, kid: str | None) -
 
 async def spust(http: httpx.AsyncClient, url: str, scenare: list[dict], klic: str, *, cookie_beta: str | None = None,
                 max_usd: float = MAX_USD, vypis=print) -> list[dict]:
-    """Projde tahy scénářů a vrátí výsledek za každý tah:
+    """Projde tahy scénářů (každý scénář v nové relaci) a vrátí výsledek za každý tah:
     {scenar, tah (od 1), stav, selhani, cena_usd, soucet_usd, odpoved, chyba, smazano (jen u posledního tahu
     scénáře: konverzace po sobě smazána)}. Služba, která tah neodbaví (HTTP chyba, limit, výpadek), ukončí celý běh,
     překročení `max_usd` také. Klíč se nevypisuje."""
@@ -177,6 +183,9 @@ async def spust(http: httpx.AsyncClient, url: str, scenare: list[dict], klic: st
     konec_behu = False
     for s in scenare:
         kid: str | None = None
+        # každý scénář ve vlastní relaci: limit zpráv relace za minutu (profil $5: 4–6) by jinak zastavil sadu
+        # v půli a brána kvality by nerozhodla (stav sluzba, kód 2); limity USD dne, hodiny a IP platí dál
+        sp.nova_relace()
         kontext = s.get("kontext")
         zacatek = len(vysledky)
         try:

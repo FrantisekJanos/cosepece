@@ -147,3 +147,41 @@ def test_beta_z_prostredi_bez_klice_a_spolu_s_cookie(capsys):
     assert "CHAT_BETA_KLIC" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         chat_eval._parser().parse_args(["--beta-z-prostredi", "--cookie-beta", "x"])
+
+
+class _UlozisteSeZpravami:
+    """Úložiště, které počítá zprávy relace jako `chat.zprava_log` (všechny v jedné minutě, eval je rychlý)."""
+
+    def __init__(self, ulozit):
+        self.puvodni_utrata = ulozit.utrata
+        self.puvodni_zaloz = ulozit.zaloz_odpoved
+        self.ulozit = ulozit
+        self.zprav: dict[str, int] = {}
+
+    def zaloz_odpoved(self, kid, text, kontext):
+        rid = self.ulozit.konverzace_[kid]["relace_id"]
+        self.zprav[rid] = self.zprav.get(rid, 0) + 1
+        return self.puvodni_zaloz(kid, text, kontext)
+
+    def utrata(self, rid, otisk, ted):
+        u = self.puvodni_utrata(rid, otisk, ted)
+        n = self.zprav.get(rid, 0)
+        return u.__class__(**{**u.__dict__, "zprav_min": n, "zprav_den": n})
+
+
+async def test_kour_sada_neprekroci_limit_zprav_relace_profilu_5_usd():
+    """Celá kouřová sada pod profilem $5 (Haiku): limit zpráv relace za minutu nesmí eval zastavit (final review I1).
+    Skutečné `rozpocet.zkontroluj` ve službě, zprávy se počítají za relaci."""
+    kour = vyber_scenare(nacti_scenare(SCENARE), "kour")
+    tahu = sum(len(s["tahy"]) for s in kour)
+    assert tahu > 6
+    s = _svet([ODP_TEXT("Odpověď bez citace.") for _ in range(tahu)],
+              n=N(CHAT_MODEL="claude-haiku-5-5", CHAT_ROZPOCET_DEN_USD="5", CHAT_ZPRAV_RELACE_MIN="6",
+                  CHAT_ZPRAV_RELACE_DEN="30"))
+    pocitadlo = _UlozisteSeZpravami(s.ulozit)
+    s.ulozit.zaloz_odpoved = pocitadlo.zaloz_odpoved
+    s.ulozit.utrata = pocitadlo.utrata
+    v = await _spust(s, kour)
+    assert not [x for x in v if x["stav"] == "sluzba"], [x["chyba"] for x in v if x["chyba"]]
+    assert len(v) == tahu and s.llm.volani == tahu
+    assert max(pocitadlo.zprav.values()) <= max(len(x["tahy"]) for x in kour)   # nová relace na scénář

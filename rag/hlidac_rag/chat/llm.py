@@ -29,6 +29,10 @@ class Pretizeno(Exception):
     """API je přetížené nebo nedostupné (429, 529, 5xx, výpadek spojení) i po opakování v SDK."""
 
 
+class CasVyprsel(Pretizeno):
+    """Volání nedoběhlo v časovém limitu. Mohlo být účtováno, cenu nikdo nezná (služba zapíše horní odhad)."""
+
+
 @dataclass(frozen=True)
 class Usage:
     vstup: int
@@ -49,7 +53,7 @@ class Odpoved:
 class LLM(Protocol):
     async def volej(self, *, model: str, effort: str, system: str, tools: list[dict], messages: list[dict],
                     max_tokens: int, na_text: Callable[[str], Awaitable[None]],
-                    tool_choice: dict | None = None) -> Odpoved: ...
+                    tool_choice: dict | None = None, timeout_s: float | None = None) -> Odpoved: ...
 
 
 def _se_zarazkou(messages: list[dict]) -> list[dict]:
@@ -96,7 +100,8 @@ def _usage(u) -> Usage:
     return Usage(*horni)
 
 
-TIMEOUT_VOLANI_S = 45   # jedno volání modelu; celý tah hlídá služba (LIMIT_TAHU_S)
+TIMEOUT_VOLANI_S = 30   # výchozí strop jednoho pokusu; služba posílá timeout_s ze zbývajícího času tahu
+MAX_OPAKOVANI = 1       # SDK opakuje nejvýš jednou: volání trvá nejvýš (1 + MAX_OPAKOVANI) × timeout
 
 
 class AnthropicLLM:
@@ -106,11 +111,12 @@ class AnthropicLLM:
     @classmethod
     def z_prostredi(cls) -> "AnthropicLLM":
         """Klient s klíčem z ANTHROPIC_API_KEY (ve službě chat vlastní klíč CHAT_ANTHROPIC_API_KEY z compose)."""
-        return cls(anthropic.AsyncAnthropic(timeout=TIMEOUT_VOLANI_S))
+        return cls(anthropic.AsyncAnthropic(timeout=TIMEOUT_VOLANI_S, max_retries=MAX_OPAKOVANI))
 
     async def volej(self, *, model: str, effort: str, system: str, tools: list[dict], messages: list[dict],
                     max_tokens: int, na_text: Callable[[str], Awaitable[None]],
-                    tool_choice: dict | None = None) -> Odpoved:
+                    tool_choice: dict | None = None, timeout_s: float | None = None) -> Odpoved:
+        """`timeout_s` = strop jednoho pokusu (SDK opakuje nejvýš MAX_OPAKOVANI); vypršení = `CasVyprsel`."""
         kwargs: dict = {
             "model": model,
             "max_tokens": max_tokens,
@@ -122,9 +128,10 @@ class AnthropicLLM:
             kwargs["tools"] = tools
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
+        klient = self.client if timeout_s is None else self.client.with_options(timeout=max(1.0, timeout_s))
         zacatek = time.monotonic()
         try:
-            async with self.client.beta.messages.stream(**kwargs) as stream:
+            async with klient.beta.messages.stream(**kwargs) as stream:
                 async for udalost in stream:
                     if udalost.type == "content_block_delta" and getattr(udalost.delta, "type", None) == "text_delta":
                         await na_text(udalost.delta.text)
@@ -135,6 +142,8 @@ class AnthropicLLM:
             if _pretizeni(e):
                 raise Pretizeno(f"{e.status_code}: {e}") from e
             raise
+        except anthropic.APITimeoutError as e:
+            raise CasVyprsel(f"časový limit: {e}") from e
         except anthropic.APIConnectionError as e:
             raise Pretizeno(f"spojení: {e}") from e
         ms = int((time.monotonic() - zacatek) * 1000)

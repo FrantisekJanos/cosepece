@@ -84,10 +84,17 @@ class FalesnyLLM:
         self.odpovedi = list(odpovedi)
         self.brana = brana
         self.volani = 0
+        self.timeouty: list[float | None] = []
 
-    async def volej(self, *, model, effort, system, tools, messages, max_tokens, na_text, tool_choice=None):
+    async def volej(self, *, model, effort, system, tools, messages, max_tokens, na_text, tool_choice=None,
+                    timeout_s=None):
         self.volani += 1
+        self.timeouty.append(timeout_s)
         o = self.odpovedi.pop(0)
+        if isinstance(o, BaseException):
+            raise o
+        if o == "visi":
+            await asyncio.Event().wait()
         for b in o.content:
             if b.get("type") == "text":
                 await na_text(b["text"])
@@ -111,8 +118,10 @@ class FalesneUloziste:
         self.prubezne_: list[str] = []
         self._zamek = threading.Lock()
 
-    def zaloz_relaci(self):
-        rid = os.urandom(16).hex()
+    def zaloz_relaci(self, id=None):
+        rid = id or os.urandom(16).hex()
+        if rid in self.relace_:
+            return rid
         self.relace_[rid] = {"id": rid, "overeno_do": None, "zprav_od_overeni": 0, "otisk": None, "tah": None}
         return rid
 
@@ -488,7 +497,9 @@ async def test_beta_spatny_kod_404_spravny_nastavi_cookie():
     assert (await asgi(s.app, "POST", "/chat-api/beta", b'{"kod": 1}', {"origin": PUVOD})).status_code == 404
     assert (await asgi(s.app, "POST", "/chat-api/beta", b"x", {"origin": PUVOD})).status_code == 404
     assert (await asgi(s.app, "POST", "/chat-api/beta", b'{"kod": "kod-bety"}', {"origin": "https://evil.cz"})
-            ).status_code == 403
+            ).status_code == 404
+    assert (await asgi(s.app, "POST", "/chat-api/beta", b'{"kod": "kod-bety"}')).status_code == 404
+    assert (await asgi(s.app, "GET", "/chat-api/beta", hlavicky={"origin": PUVOD})).status_code == 404
     r = await asgi(s.app, "POST", "/chat-api/beta", b'{"kod": "kod-bety"}', {"origin": PUVOD})
     c = r.cookie("chat_beta")
     assert r.status_code == 204 and c and "Path=/;" in c and "HttpOnly" in c and "SameSite=Strict" in c
@@ -614,9 +625,25 @@ async def test_428_nastavi_cookie_a_opakovani_s_tokenem_projde():
     s = Svet([ODP_TEXT("Ano.")])
     r = await post(s, turnstile_token=None)
     assert r.status_code == 428 and r.cookie("chat_sid")
+    assert not s.ulozit.relace_                       # bez Turnstile žádný řádek relace
+    assert (await post(s, turnstile_token=None, cookie=sid_cookie(r))).status_code == 428
+    assert not s.ulozit.relace_
     r2 = await post(s, cookie=sid_cookie(r))
     await s.dobehni()
-    assert r2.status_code == 200 and len(s.ulozit.relace_) == 1
+    assert r2.status_code == 200 and list(s.ulozit.relace_) == [sid_cookie(r).split("=")[1]]
+    assert sid_cookie(r2) == sid_cookie(r)
+
+
+async def test_podstrcene_id_relace_se_nepouzije():
+    s = Svet([ODP_TEXT("Ano.")])
+    podstrcene = "ab" * 16
+    r = await post(s, cookie=f"chat_sid={podstrcene}")
+    await s.dobehni()
+    rid = sid_cookie(r).split("=")[1]
+    assert r.status_code == 200 and rid != podstrcene and list(s.ulozit.relace_) == [rid]
+    # id vydané jiným procesem (jiný klíč) taky ne
+    r = await post(Svet([ODP_TEXT("Ano.")]), cookie=sid_cookie(r), turnstile_token=None)
+    assert sid_cookie(r).split("=")[1] != rid
 
 
 async def test_cizi_konverzace_je_400():
@@ -654,10 +681,12 @@ async def test_druha_zprava_teze_relace_behem_tahu_je_409():     # Review Focus 
     while b"event: start" not in prvni.telo:
         await asyncio.wait_for(prvni.zmena.wait(), 2)
         prvni.zmena.clear()
+    rid = cookie.split("=")[1]
+    zprav = s.ulozit.relace_[rid]["zprav_od_overeni"]
     druha = await post(s, cookie=cookie)
     assert (druha.status_code, druha.json()["kod"]) == (409, "tah_bezi")
+    assert s.ulozit.relace_[rid]["zprav_od_overeni"] == zprav      # odmítnutá zpráva se do Turnstile nepočítá
     # zámek v DB platí i bez čítače v procesu (víc procesů): druhý zahaj_tah dostane None
-    rid = cookie.split("=")[1]
     assert s.ulozit.zahaj_tah(rid, "o", datetime.now(timezone.utc)) is None
     brana.set()
     await uloha
@@ -802,6 +831,99 @@ async def test_refusal_je_systemova_hlaska_ne_text_bota():
     assert "zdroje" not in [t for t, _, _ in ud] and ud[-1][1]["stav"] == "odmitnuto"
     z = s.ulozit.zpravy[-1]
     assert z["stav"] == "odmitnuto" and z["text"] == "" and len(s.ulozit.volani_llm) == 1
+
+
+async def test_refusal_po_nekolika_deltach_stahne_cely_text():
+    class PoKouscich(FalesnyLLM):
+        async def volej(self, *, na_text, **kw):
+            self.volani += 1
+            for kus in ("Tohle je první odstavec odpovědi", " s dalším textem.\n\n", "Druhý odstavec", " pokračuje"):
+                await na_text(kus)
+            return Odpoved([{"type": "text", "text": "…"}], "refusal", MALA, MODEL, 5)
+    s = Svet()
+    s.llm.__class__ = PoKouscich
+    r = await post(s)
+    await s.dobehni()
+    ud = sse(r.telo)
+    delty = [i for i, (t, _, _) in enumerate(ud) if t == "delta"]
+    chyba = next(i for i, (t, d, _) in enumerate(ud) if t == "chyba")
+    assert len(delty) >= 2 and max(delty) < chyba and ud[chyba][1] == {"kod": "odmitnuto"}
+    assert "".join(d["text"] for t, d, _ in ud if t == "delta").startswith("Tohle je první odstavec odpovědi")
+    assert ud[-1][0] == "konec" and ud[-1][1]["stav"] == "odmitnuto" and "zdroje" not in [t for t, _, _ in ud]
+    z = s.ulozit.zpravy[-1]
+    assert z["stav"] == "odmitnuto" and z["text"] == ""
+
+
+async def test_chyba_uloziste_pri_priprave_uvolni_relaci_a_soubeh():      # recenze bod 1
+    s = Svet([ODP_TEXT("Ano."), ODP_TEXT("Ano.")])
+
+    def pada(*a, **kw):
+        raise RuntimeError("DB nedostupná")
+    puvodni_odpoved, puvodni_konec = s.ulozit.zaloz_odpoved, s.ulozit.skonci_tah
+    s.ulozit.zaloz_odpoved = pada
+    s.ulozit.skonci_tah = pada
+    for _ in range(3):      # i opakovaně: čítače se nesmí nasčítat (CHAT_SOUBEH_CELKEM = 2)
+        with pytest.raises(RuntimeError):
+            await post(s, ip=f"198.51.100.{next(_tok) % 200}")
+        assert s.sluzba.soubeh == 0 and not s.sluzba.bezici_relace and not s.sluzba.soubeh_ip
+    assert s.llm.volani == 0
+    s.ulozit.zaloz_odpoved, s.ulozit.skonci_tah = puvodni_odpoved, puvodni_konec
+    for r in s.ulozit.relace_.values():
+        r["tah"] = None          # příznak by v DB vypršel po drzeni_tahu_s
+    r = await post(s, ip="203.0.113.50")
+    await s.dobehni()
+    assert r.status_code == 200 and s.ulozit.zpravy[-1]["stav"] == "ok"
+
+
+async def test_timeout_volani_ze_zbyvajiciho_casu_a_odhad_ceny():           # recenze bod 2
+    from hlidac_rag.chat.llm import CasVyprsel
+    s = Svet([ODP_TOOL("get_pn", {"cislo": 2329}), CasVyprsel("časový limit")])
+    r = await post(s)
+    await s.dobehni()
+    t1, t2 = s.llm.timeouty
+    assert 30 <= t1 <= (75 - 5) / 2 and t2 <= t1          # (LIMIT_TAHU_S − rezerva) / (1 + MAX_OPAKOVANI)
+    assert len(s.ulozit.volani_llm) == 2
+    odhad = s.ulozit.volani_llm[-1]
+    assert odhad["stop_reason"] == "odhad_timeout" and odhad["vystup"] == s.n.max_tokenu_odpovedi
+    assert odhad["vstup"] >= MALA.vstup + MALA.vystup and odhad["cena_usd"] > s.ulozit.volani_llm[0]["cena_usd"]
+    assert s.ulozit.zpravy[-1]["stav"] == "chyba" and ("chyba", {"kod": "chyba"}) in [(t, d) for t, d, _ in sse(r.telo)]
+    assert all(v["tah"] is None for v in s.ulozit.relace_.values()) and s.sluzba.soubeh == 0
+
+
+async def test_tvrdy_limit_tahu_zapise_odhad_zruseneho_volani(monkeypatch):
+    from hlidac_rag.chat import app as app_mod
+    monkeypatch.setattr(app_mod, "LIMIT_TAHU_S", 0.2)
+    s = Svet(["visi"])
+    r = await post(s)
+    await s.dobehni()
+    assert [v["stop_reason"] for v in s.ulozit.volani_llm] == ["odhad_timeout"]
+    assert s.ulozit.volani_llm[0]["cena_usd"] > 0 and s.ulozit.zpravy[-1]["stav"] == "chyba"
+    assert s.llm.timeouty == [1.0]          # zbývající čas pod rezervou: nejmenší timeout
+    assert typy(r.telo)[-1] == "konec" and s.sluzba.soubeh == 0
+
+
+async def test_anthropic_llm_posila_timeout_a_cas_vyprsel():
+    import anthropic
+
+    from hlidac_rag.chat.llm import MAX_OPAKOVANI, AnthropicLLM, CasVyprsel
+    assert MAX_OPAKOVANI <= 1 and AnthropicLLM.z_prostredi.__func__ is not None
+    pouzite = {}
+
+    class Klient:
+        def with_options(self, **kw):
+            pouzite.update(kw)
+            return self
+
+        @property
+        def beta(self):
+            raise anthropic.APITimeoutError(request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+
+    async def na_text(t):
+        pass
+    with pytest.raises(CasVyprsel):
+        await AnthropicLLM(Klient()).volej(model=MODEL, effort="low", system="s", tools=[], messages=[
+            {"role": "user", "content": "x"}], max_tokens=10, na_text=na_text, timeout_s=12.5)
+    assert pouzite == {"timeout": 12.5}
 
 
 async def test_chyba_modelu_je_udalost_chyba_a_cena_zustane():

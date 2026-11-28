@@ -22,6 +22,7 @@ import logging
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,12 +39,13 @@ from .beh import BehTahu, ProudTahu, RegistrTahu, Vystup
 from .cenik import CENY, Cena
 from .citace import TYPY_S_TEXTEM, over_odstavec
 from .config import Nastaveni
-from .historie import ZNAKU_NA_TOKEN, sestav
+from .historie import ZNAKU_NA_TOKEN, odhad_tokenu, sestav
 from .kontext import Kontext, z_json, znacka
-from .llm import LLM
+from .llm import LLM, MAX_OPAKOVANI, CasVyprsel
 from .nastroje import Vysledek
 from .relace import (COOKIE_BETA, COOKIE_SID, BETA_PLATNOST, ChybiIP, cookie_sid, den_prahy, ip_z_hlavicky, over_beta,
                      platne_sid, podepis_beta)
+from .smycka import _ocen
 from .smycka import tah as smycka_tah
 from .uloziste import RelaceNeexistuje, Utrata
 
@@ -53,6 +55,8 @@ PREFIX = "/chat-api"
 MAX_TELO = 16 * 1024                # spec 11.1: tělo do 16 KB
 LIMIT_TAHU_S = 75                   # spec 8.2: tvrdý strop tahu (Cloudflare drží spojení 100 s)
 MEKKY_LIMIT_S = 60                  # potom se tah po rozběhnutém kole ukončí sám
+REZERVA_VOLANI_S = 5                # timeout volání modelu skončí aspoň tolik před LIMIT_TAHU_S
+STOP_ODHAD = "odhad_timeout"        # stop_reason ve volani_llm: cena je horní odhad nedoběhlého volání
 PRUBEZNE_S = 2.0                    # rozepsaný text se ukládá po ~2 s
 PING_S = 10.0
 ODPOJENI_S = 15.0                   # tak dlouho tah čeká na návrat odpojeného klienta
@@ -142,8 +146,8 @@ class Sluzba:
         self.soubeh = 0
         self.soubeh_ip: dict[str, int] = {}
         self.hlidac = hlaseni.Hlidac()
+        self._klic_sid = secrets.token_bytes(32)
         self._ulohy: set[asyncio.Task] = set()
-        from concurrent.futures import ThreadPoolExecutor
         self._vlakna = ThreadPoolExecutor(max_workers=SOUBEH_NASTROJU_DB, thread_name_prefix="chat-nastroj")
 
     # --- pomocné ---
@@ -217,8 +221,9 @@ class Sluzba:
                       "turnstile_sitekey": self.tajemstvi.turnstile_sitekey})
 
     async def beta(self, request: Request) -> Response:
-        if request.headers.get("origin") != self.puvod:
-            return _chyba(403, "puvod")
+        # cizí původ i jiná metoda vypadají stejně jako špatný kód: adresa nic neprozradí
+        if request.method != "POST" or request.headers.get("origin") != self.puvod:
+            return PlainTextResponse("Not Found", 404)
         try:
             kod = json.loads(await request.body() or b"{}").get("kod")
         except (ValueError, AttributeError):
@@ -313,7 +318,11 @@ class Sluzba:
             return _chyba(400, "spatny_pozadavek")
         ted = self.hodiny()
         sid = request.cookies.get(COOKIE_SID)
-        rid = sid if platne_sid(sid) and await self._u("relace", sid) else await self._u("zaloz_relaci")
+        if platne_sid(sid) and await self._u("relace", sid):
+            rid, nova = sid, False
+        else:
+            # řádek relace vznikne až po Turnstile; do té doby nese cookie id podepsané klíčem procesu
+            rid, nova = (sid if self._predbezne_sid(sid) else self._nove_sid()), True
         cookie = {"Set-Cookie": cookie_sid(rid)}       # i klouzavé prodloužení existující relace
         otisk = await self._u("otisk_ip", ip, den_prahy(ted))
         u = await self._u("utrata", rid, otisk, ted)
@@ -321,8 +330,10 @@ class Sluzba:
         if kod:
             return self._odmitni_limit(kod, u, ted, cookie)
         je_eval = self._je_eval(request)
+        if je_eval and nova:
+            await self._u("zaloz_relaci", rid)
         if not je_eval:
-            rel = await self._u("relace", rid)
+            rel = await self._u("relace", rid) if not nova else None
             if turnstile.potreba_overeni(n, rel, otisk, rozpocet.prisny_rezim(n, u), ted):
                 if not d.get("turnstile"):
                     return _chyba(428, "turnstile", hlavicky=cookie)
@@ -333,8 +344,9 @@ class Sluzba:
                     return _chyba(503, "overeni_nedostupne", hlavicky=cookie)
                 if not ok:
                     return _chyba(428, "turnstile", hlavicky=cookie)
+                if nova:
+                    await self._u("zaloz_relaci", rid)
                 await self._u("zapis_overeni", rid, otisk, turnstile.platnost_overeni(n, ted))
-            await self._u("pricti_zpravu_od_overeni", rid)
 
         # jeden tah relace a kapacita procesu (před zámkem v DB, spec 11.1)
         if rid in self.bezici_relace:
@@ -355,14 +367,32 @@ class Sluzba:
             if kod:
                 return self._odmitni_limit(kod, u, ted, cookie)
             p = await self._priprav(d, rid, token, otisk, u, je_eval, cookie)
+            if not je_eval:     # počítá se jen zpráva, která opravdu jde do tahu (ne 409, 503)
+                await self._u("pricti_zpravu_od_overeni", rid)
             self._na_pozadi(self._bez(p))
             predano = True                          # úklid (skonci_tah, čítače) převzal běh tahu
             return ProudTahu(p.beh, 0, self.ping_s, cookie)
         finally:
             if not predano:
-                if token is not None:
-                    await self._u("skonci_tah", rid, token)
-                self._uvolni(rid, otisk)
+                try:
+                    if token is not None:
+                        await self._u("skonci_tah", rid, token)
+                except Exception:
+                    log.exception("skonci_tah po odmítnutí selhal (příznak vyprší po %s s)", n.drzeni_tahu_s)
+                finally:
+                    self._uvolni(rid, otisk)
+
+    def _podpis_sid(self, nonce: str) -> str:
+        return hmac.new(self._klic_sid, nonce.encode(), hashlib.sha256).hexdigest()[:16]
+
+    def _nove_sid(self) -> str:
+        """Id relace, která ještě nemá řádek v DB: 16 hex náhodně + 16 hex podpis klíčem procesu (32 hex jako id
+        z `zaloz_relaci`). Bot tak bez Turnstile nezaloží v `chat.relace` nic a cizí id si nepodstrčí."""
+        nonce = secrets.token_hex(8)
+        return nonce + self._podpis_sid(nonce)
+
+    def _predbezne_sid(self, sid: str | None) -> bool:
+        return platne_sid(sid) and hmac.compare_digest(sid[16:], self._podpis_sid(sid[:16]))
 
     def _obsad(self, rid: str, otisk: str) -> None:
         self.bezici_relace.add(rid)
@@ -435,6 +465,7 @@ class Sluzba:
                 self._vlakna, over_odstavec, odstavec, p.registr, text_zdroje, self.data.jmena_osob)
 
         vystup = Vystup(p.registr, over)
+        llm = _LLMVTahu(self.llm, time.monotonic() + LIMIT_TAHU_S, lambda r: self._zapis_odhad(p, r))
         konec: dict = {"stav": "chyba", "model": p.model, "text": ""}
         mekky = asyncio.get_running_loop().call_later(MEKKY_LIMIT_S, beh.prerusit.set)
         try:
@@ -442,7 +473,7 @@ class Sluzba:
             ulozeno = time.monotonic()
             try:
                 async with asyncio.timeout(LIMIT_TAHU_S):
-                    gen = smycka_tah(self.llm, self._spust_nastroj, p.messages, p.registr, n, p.model, beh.prerusit,
+                    gen = smycka_tah(llm, self._spust_nastroj, p.messages, p.registr, n, p.model, beh.prerusit,
                                      self.cenik)
                     try:
                         async for u in gen:
@@ -468,6 +499,8 @@ class Sluzba:
             except TimeoutError:
                 log.error("tah %s překročil %s s", beh.id, LIMIT_TAHU_S)
                 konec = {**konec, "stav": "chyba"}
+                if llm.rozbehnute is not None:      # zrušené volání mohlo být účtováno
+                    await self._zapis_odhad(p, llm.rozbehnute)
             await self._dokonci(p, vystup, konec)
         except Exception:
             log.exception("tah %s selhal", beh.id)
@@ -491,6 +524,14 @@ class Sluzba:
         await self._u("zapis_volani_llm", zprava_id=p.zprava_id, relace_id=p.relace_id, otisk_ip=p.otisk,
                       model=d["model"], vstup=d["vstup"], vystup=d["vystup"], cache_cteni=d["cache_cteni"],
                       cache_zapis=d["cache_zapis"], cena_usd=d["cena_usd"], ms=d["ms"], stop_reason=d["stop_reason"])
+
+    async def _zapis_odhad(self, p: _Priprava, r: dict) -> None:
+        """Horní odhad ceny volání, které nedoběhlo (vstup bez cache + celé max_tokens výstupu)."""
+        cena = _ocen(r["model"], r["vstup"], r["vystup"], 0, 0, self.cenik)
+        log.warning("tah %s: volání modelu nedoběhlo, zapisuji horní odhad ceny %.4f USD", p.beh.id, cena)
+        await self._u("zapis_volani_llm", zprava_id=p.zprava_id, relace_id=p.relace_id, otisk_ip=p.otisk,
+                      model=r["model"], vstup=r["vstup"], vystup=r["vystup"], cache_cteni=0, cache_zapis=0,
+                      cena_usd=cena, ms=int((time.monotonic() - r["start"]) * 1000), stop_reason=STOP_ODHAD)
 
     async def _dokonci(self, p: _Priprava, vystup: Vystup, konec: dict) -> None:
         beh, stav = p.beh, konec["stav"]
@@ -519,6 +560,34 @@ class Sluzba:
         u = await self._u("utrata", p.relace_id, p.otisk, ted)
         self._hlid_rozpocet(u, ted)
         beh.pridej("konec", {"kod": p.kod, "stav": stav, "zbyva_otazek": rozpocet.zbyva_otazek(self.n, u)})
+
+
+class _LLMVTahu:
+    """LLM pro jeden tah: timeout každého volání ze zbývajícího času tahu (SDK opakuje nejvýš MAX_OPAKOVANI)
+    a evidence rozběhnutého volání. Vypršené volání (`CasVyprsel`) dostane do útraty horní odhad ceny."""
+
+    def __init__(self, llm: LLM, konec_tahu: float, pri_odhadu):
+        self.llm, self.konec_tahu, self.pri_odhadu = llm, konec_tahu, pri_odhadu
+        self.posledni_vstup = 0
+        self.rozbehnute: dict | None = None
+
+    async def volej(self, *, model, system, tools, messages, max_tokens, **kw):
+        zbyva = self.konec_tahu - time.monotonic() - REZERVA_VOLANI_S
+        timeout_s = max(1.0, zbyva / (1 + MAX_OPAKOVANI))
+        text = system + json.dumps(tools, ensure_ascii=False) + json.dumps(messages, ensure_ascii=False, default=str)
+        self.rozbehnute = {"model": model, "vstup": max(self.posledni_vstup, odhad_tokenu(text)),
+                           "vystup": max_tokens, "start": time.monotonic()}
+        try:
+            o = await self.llm.volej(model=model, system=system, tools=tools, messages=messages,
+                                     max_tokens=max_tokens, timeout_s=timeout_s, **kw)
+        except CasVyprsel:
+            r, self.rozbehnute = self.rozbehnute, None
+            await self.pri_odhadu(r)
+            raise
+        self.rozbehnute = None
+        u = o.usage
+        self.posledni_vstup = u.vstup + u.cache_cteni + u.cache_zapis + u.vystup
+        return o
 
 
 def _zdroj_pro_widget(z) -> dict:
@@ -558,7 +627,7 @@ def vytvor(n: Nastaveni, llm: LLM, ulozit, http: httpx.AsyncClient, tajemstvi: T
     trasy = [
         Route(f"{PREFIX}/zdravi", s.zdravi, methods=["GET"]),
         Route(f"{PREFIX}/stav", s.stav, methods=["GET"]),
-        Route(f"{PREFIX}/beta", s.beta, methods=["POST"]),
+        Route(f"{PREFIX}/beta", s.beta, methods=["GET", "POST"]),
         Route(f"{PREFIX}/zprava", s.zprava, methods=["POST"]),
         Route(f"{PREFIX}/tah/{{tah_id}}/stream", s.tah_stream, methods=["GET"]),
         Route(f"{PREFIX}/tah/{{tah_id}}/stop", s.tah_stop, methods=["POST"]),

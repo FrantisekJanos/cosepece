@@ -76,9 +76,11 @@ def sul_dne(conn: psycopg.Connection, den: date) -> bytes:
 
 # --- relace ---
 
-def zaloz_relaci(conn: psycopg.Connection) -> str:
-    rid = secrets.token_hex(16)
-    conn.execute("INSERT INTO chat.relace (id) VALUES (%s)", (rid,))
+def zaloz_relaci(conn: psycopg.Connection, id: str | None = None) -> str:
+    """Založí relaci s novým náhodným id, nebo s `id`, které služba vydala předem (podepsané, ještě bez řádku);
+    existující řádek se nemění (souběžně vyhraje jeden)."""
+    rid = id or secrets.token_hex(16)
+    conn.execute("INSERT INTO chat.relace (id) VALUES (%s) ON CONFLICT (id) DO NOTHING", (rid,))
     return rid
 
 

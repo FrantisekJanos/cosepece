@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Složitější vysvětlení píše silnější model',
+        'Vysvětlení, co by pozměňovací návrh změnil v praxi, dosud silnější model přepisoval jen u návrhů s procedurálním nálezem. Nově přepíše všechny věcné změny, protože i procedurálně čistý návrh může být věcně složitý (typicky daně). U přesunů peněz v rozpočtu a vypuštění částí návrhu zůstává vysvětlení rychlého modelu. Z části „Z textu neplyne“ zároveň mizí poznámky, které popisovaly podklady modelu místo návrhu. Děkujeme čtenáři, který na obojí upozornil.',
+        [111], false],
     ['2026-11-28', 'Poslední změna na přehledu a časová osa aktualizací',
         'Na přehledu je pod úvodem nový řádek s poslední změnou: kdy jsme naposledy zaznamenali nové dění a čeho se týkalo, s odkazy na jednotlivé tisky a jejich skóre. Po rozbalení ukáže pět předchozích aktualizací. Odkaz „Zobrazit všechny aktualizace“ vede na novou stránku Aktualizace s časovou osou po dnech. Aktualizace je jedna kontrola dat, která našla něco nového, například nové pozměňovací návrhy, zkrácenou lhůtu nebo schválení zákona. Řádek na přehledu ukazuje i běžnou agendu, časová osa ji ve výchozím pohledu skrývá. Stránka Upozornění zůstává a řadí tytéž události podle data, kdy se staly. Skóre se nemění.',
         [110], false],

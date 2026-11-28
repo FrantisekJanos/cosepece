@@ -4116,6 +4116,23 @@ check('kontrola hlášení: věta o kontrole u vysvětlení na webu', [$chkBill[
     Hlidac\View::reportCheckNote(['kontrola' => 'potvrzeno', 'at' => '2031-03-05 10:00:00']), Hlidac\View::reportCheckNote(['kontrola' => 'neproslo', 'at' => '2031-03-05 10:00:00']), Hlidac\View::reportCheckNote(null),
     str_contains(Hlidac\View::pnPractice($chkPraxe(), 'claude-sonnet-5-5', null, null, ['id_dokument' => 990001, 'cislo' => 9901, 'ct' => 311, 'check' => $chkBill[990001]]), 'Skóre neovlivňuje. Po hlášení čtenáře opraveno ')],
     ['opraveno', true, ' Po hlášení čtenáře zkontrolováno ' . e(formatDate('2031-03-05 10:00:00')) . ', beze změny.', '', '', true]);
+$chkOnlyC = (function () use ($chk, $chkA, $chkB, $chkC, $chkD): array {
+    // vyřazená všechna hlášení s kontrolou, pak jen část z nich; nakonec zpět na platná
+    foreach ([$chkA, $chkB, $chkC, $chkD] as $id) {
+        $chk->decide($id, 'mimo_tema');
+    }
+    $none = isset($chk->checksForBill(311)[990001]);
+    $chk->decide($chkC, 'platne');
+    $one = $chk->checksForBill(311)[990001]['kontrola'] ?? null;
+    foreach ([$chkA, $chkB, $chkD] as $id) {
+        $chk->decide($id, 'platne');
+    }
+    return [$none, $one];
+})();
+check('kontrola hlášení: dodatečně vyřazená hlášení větu o kontrole neukazují', $chkOnlyC, [false, 'opraveno']);
+check('kontrola hlášení: podnět u ručně schváleného hlášení neuvádí třídění modelem', [isset($chk->checksForBill(311)[990001]),
+    str_contains(Hlidac\Reports::githubBody(db()->one('SELECT * FROM hlaseni WHERE id = ?', [$chkC]), true), '_Hlášení č. ' . $chkC . ' označil jako platné správce webu. Zda má čtenář pravdu'),
+    str_contains(Hlidac\Reports::githubBody(db()->one('SELECT * FROM hlaseni WHERE id = ?', [$chkE]), true), 'prošlo automatickým tříděním (claude-haiku-5-5)')], [true, true, true]);
 $chkG = $chkSubmit('pred_po', 'Stav před je popsaný špatně.');
 $chkCapCfg = $chkCfg;
 $chkCapCfg['hlaseni']['check_per_day'] = 1;

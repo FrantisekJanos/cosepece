@@ -104,6 +104,7 @@ def test_pn_k_tisku_ma_vysledek_u_kazde_polozky(conn):
     assert "vysledek" in podle[502] and "vysledek" in podle[503]
     assert podle[502]["vysledek"]["stav"] == "prijat"
     assert podle[503]["vysledek"] is None
+    assert set(podle[502]["vysledek"]) == {"stav", "popis", "pismena"}
 
 
 @pg
@@ -116,6 +117,9 @@ def test_upozorneni_filtr_ct(conn):
     u = r["upozorneni"][0]
     assert (u["ct"], u["typ"], u["text"], u["url"]) == (231, "pn", "Nová PN", "https://cosepece.cz/tisk/231")
     vse = tools.upozorneni(conn)
+    alert(conn, "prep_nv:N-1", "prep_narizeni", 0, "2026-11-04 10:00:00")
+    nv = tools.upozorneni(conn, limit=1)["upozorneni"][0]
+    assert nv["url"] == "https://cosepece.cz/pripravovane?druh=narizeni#prep-N-1"
     assert vse["pocet"] == 3
     assert vse["upozorneni"][0]["url"] == "https://cosepece.cz/pripravovane#prep-P-1"
     assert tools.upozorneni(conn, limit=1)["pocet"] == 1

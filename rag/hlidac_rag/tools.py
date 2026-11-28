@@ -334,19 +334,23 @@ VYSLEDEK_POPIS = {
 }
 
 
-def _vysledek(stav: str | None, pismena: str | None, hlasovani: str | None, stanovisko: str | None) -> dict | None:
+def _vysledek(stav: str | None, pismena: str | None, hlasovani: str | None, stanovisko: str | None,
+              detail: bool = True) -> dict | None:
     """Výsledek PN ve 3. čtení z tabulky pn_vysledek (sloupce ct, cislo, pismena, stav, hlasovani, stanovisko).
 
     stav a popis jsou jako v DB (ne vymýšlené); pismena = písmena návrhu ze souhrnu po 2. čtení („B1, E“) jako seznam
     {"pismeno"}, hlasovani = JSON seznam {cislo, id, vysledek A/N, varianta} z hlasovani, stanovisko = stanovisko
-    výboru. Bez řádku v pn_vysledek (stav None) vrací None."""
+    výboru. Bez řádku v pn_vysledek (stav None) vrací None. detail=False (seznam v pn_k_tisku, kvůli limitu odpovědi)
+    vrací jen stav, popis a pismena; hlasovani a stanovisko jen s detail=True (get_pn)."""
     if not stav:
         return None
-    hl = _json(hlasovani)
-    return {"stav": stav, "popis": VYSLEDEK_POPIS.get(stav, stav),
-            "pismena": [{"pismeno": p.strip()} for p in (pismena or "").split(",") if p.strip()],
-            "hlasovani": hl if isinstance(hl, list) else [],
-            "stanovisko": stanovisko}
+    out = {"stav": stav, "popis": VYSLEDEK_POPIS.get(stav, stav),
+           "pismena": [{"pismeno": p.strip()} for p in (pismena or "").split(",") if p.strip()]}
+    if detail:
+        hl = _json(hlasovani)
+        out["hlasovani"] = hl if isinstance(hl, list) else []
+        out["stanovisko"] = stanovisko
+    return out
 
 
 def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
@@ -373,7 +377,7 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
         # z vysvětlení „v praxi“ jen hlavní věta (celé je v get_pn), aby se seznam vešel do limitu odpovědi
         praxe = _json(r.pop("praxe_json", None))
         r["v_praxi"] = praxe.get("co_se_meni") if isinstance(praxe, dict) else None
-        r["vysledek"] = _vysledek(r.pop("v_stav", None), r.pop("v_pismena", None), r.pop("v_hlasovani", None), r.pop("v_stanovisko", None))
+        r["vysledek"] = _vysledek(r.pop("v_stav", None), r.pop("v_pismena", None), r.pop("v_hlasovani", None), r.pop("v_stanovisko", None), detail=False)
         r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={r['cislo']}&o={OBDOBI}"
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(rows), "predkladatele": [(a["osoba"], a["n"]) for a in autori], "pn": rows}
@@ -416,6 +420,8 @@ def upozorneni(conn, ct: int | None = None, limit: int = 20) -> dict:
         key = r.pop("alert_key")
         if r["ct"]:
             r["url"] = f"{SITE}/tisk/{r['ct']}"
+        elif r["typ"] == "prep_narizeni":
+            r["url"] = f"{SITE}/pripravovane?druh=narizeni#prep-{key.split(':', 1)[-1]}"
         elif r["typ"].startswith("prep_"):
             r["url"] = f"{SITE}/pripravovane#prep-{key.split(':', 1)[-1]}"
         else:

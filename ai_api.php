@@ -4,7 +4,8 @@
 // Token v hlavičce X-Hlidac-Token (dřív ?token=…, stále přijímáno).
 //   GET  ai_api.php?action=queue&limit=10[&ct=221][&verify=1]  → {"items": [{kind, id, ct, prompt}]}
 //        verify=1: nejzávažnější nálezy k ověření silnějším modelem
-//        praxe=1: fronta vysvětlení PN „v praxi“ (kind = praxe; s verify=1 druhé kolo silnějším modelem)
+//        praxe=1: fronta vysvětlení PN „v praxi“ (kind = praxe; s verify=1 druhé kolo silnějším modelem;
+//        s kontrola=1 kontrola hotových vysvětlení, kind = praxe_kontrola, položka nese praxe_at)
 //        hlaseni=1: fronta hlášení čtenářů k roztřídění (kind = hlaseni, app/Reports.php); s verify=1 fronta
 //        kontrol nahlášených vysvětlení silnějším modelem (kind = kontrola, id = id dokumentu PN)
 //   POST ai_api.php?action=result  {"kind","id","result","model"} nebo {"kind","id","error"}
@@ -61,6 +62,9 @@ try {
             aiApiReply(['items' => !empty($_GET['verify']) ? $reports->checkQueue($limit) : $reports->queue($limit)]);
         }
         if (!empty($_GET['praxe'])) {
+            if (!empty($_GET['kontrola'])) {
+                aiApiReply(['items' => $practice->checkQueue($limit, $ct)]);
+            }
             aiApiReply(['items' => $practice->queue($limit, $ct, !empty($_GET['verify']))]);
         }
         aiApiReply(['items' => $reviewer->queue($limit, $ct, !empty($_GET['verify']))]);
@@ -76,8 +80,14 @@ try {
         $isPractice = (string)$body['kind'] === 'praxe';
         $isReport = (string)$body['kind'] === 'hlaseni';
         $isCheck = (string)$body['kind'] === 'kontrola';
+        $isPracticeCheck = (string)$body['kind'] === 'praxe_kontrola';
         if (isset($body['result']) && is_array($body['result'])) {
             $model = isset($body['model']) && is_string($body['model']) && preg_match('~^[a-z0-9.\-]{1,60}$~', $body['model']) ? $body['model'] : null;
+            if ($isPracticeCheck) {
+                // kontrola vysvětlení „v praxi“: výsledek patří k verzi praxe_at, ke starší verzi se zahodí
+                $for = isset($body['praxe_at']) && is_string($body['praxe_at']) ? $body['praxe_at'] : null;
+                aiApiReply(['ok' => true, 'accepted' => $practice->saveCheck((int)$body['id'], $body['result'], $model, $for)]);
+            }
             if ($isCheck) {
                 // kontrola nahlášeného vysvětlení: oprava, která neprojde pojistkami, se neuloží a zkusí se znovu
                 aiApiReply(['ok' => true, 'accepted' => $reports->saveCheck((int)$body['id'], $body['result'], $model)]);
@@ -91,6 +101,8 @@ try {
                 aiApiReply(['ok' => true, 'accepted' => $practice->saveResult((int)$body['id'], $body['result'], $model)]);
             }
             $reviewer->saveResult((string)$body['kind'], (int)$body['id'], $body['result'], $model);
+        } elseif ($isPracticeCheck) {
+            $practice->saveCheckError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         } elseif ($isCheck) {
             $reports->saveCheckError((int)$body['id'], (string)($body['error'] ?? 'Neznámá chyba'));
         } elseif ($isReport) {

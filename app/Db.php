@@ -323,6 +323,19 @@ final class Db
         $this->addColumn('pn_text', 'praxe_fails', 'INTEGER');
         // verze promptu a pojistek, ke které počitadla praxe_tries a praxe_fails patří (po zvýšení verze se nepoužijí)
         $this->addColumn('pn_text', 'praxe_try_v', 'INTEGER');
+        // kontrola vysvětlení „v praxi“ nezávislým modelem (PnPractice::saveCheck): verdikt a výtky k verzi
+        // praxe_kontrola_for (= praxe_at, kterou posuzovala). praxe_zobrazit = 0 skryje vysvětlení na webu, v API
+        // i v MCP (verdikt „chyba“ nebo nová verze čekající na kontrolu); dosavadní vysvětlení zůstávají vidět.
+        $this->addColumn('pn_text', 'praxe_zobrazit', 'INTEGER NOT NULL DEFAULT 1');
+        $this->addColumn('pn_text', 'praxe_kontrola', 'VARCHAR(20)');
+        $this->addColumn('pn_text', 'praxe_vytky', $text);
+        $this->addColumn('pn_text', 'praxe_kontrola_at', 'VARCHAR(19)');
+        $this->addColumn('pn_text', 'praxe_kontrola_model', 'VARCHAR(60)');
+        $this->addColumn('pn_text', 'praxe_kontrola_for', 'VARCHAR(19)');
+        $this->addColumn('pn_text', 'praxe_kontrola_fails', 'INTEGER');
+        $this->addColumn('pn_text', 'praxe_kontrola_error', $text);
+        // kolikrát po sobě silnější model přepsal vysvětlení, které kontrola označila jako chybné
+        $this->addColumn('pn_text', 'praxe_prepis', 'INTEGER');
         // kluby předkladatelů jmenovaných u poslaneckého návrhu ke dni předložení, v pořadí jmen v navrhovateli
         // a oddělené čárkou (Importer::proposerClub); jen se zobrazují, do skóre nevstupují
         $this->addColumn('tisky', 'navrhovatel_klub', 'VARCHAR(120)');

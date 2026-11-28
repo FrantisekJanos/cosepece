@@ -58,6 +58,8 @@ STATUS=0
   # aby dohánění starších PN (stovky textů) neblokovalo rozbor nových; jednorázově lze dohnat ručně s --all
   "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_PRAXE_LIMIT:-20}" --praxe || STATUS=1
   "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_PRAXE_LIMIT:-20}" --praxe --verify || STATUS=1
+  # kontrola hotových vysvětlení nezávislým modelem: co neprojde, se skryje a příští --verify ho přepíše s výtkami
+  "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_PRAXE_LIMIT:-20}" --praxe --kontrola || STATUS=1
   # hlášení čtenářů k vysvětlením: rychlý model je roztřídí (platné, spam, nesmysl, manipulace, mimo téma)
   "$PHP_BIN" "$DIR/bin/ai.php" --remote="$HLIDAC_URL" --limit="${AI_HLASENI_LIMIT:-20}" --hlaseni || STATUS=1
   # vysvětlení, ke kterým přišlo platné hlášení, zkontroluje silnější model; opravu pustí hosting jen přes pojistky

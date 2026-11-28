@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Vysvětlení „v praxi“ nově kontroluje nezávislý model',
+        'Prošli jsme všech 596 vysvětlení, co by pozměňovací návrh změnil v praxi, a nechali je porovnat s textem návrhu jiným modelem. U zhruba šestiny z nich vysvětlení čtenáře mylně informovalo: uvádělo údaje, které v textu nejsou (lhůty, pokuty, procenta), vydávalo tvrzení z odůvodnění za fakt, popisovalo i jiný pozměňovací návrh nebo přisuzovalo pozměňovacímu návrhu změnu, kterou obsahuje už projednávaný zákon. Taková vysvětlení jsme skryli a necháváme je přepsat podle výtek kontroly. Nově projde kontrolou každé vysvětlení, než se zobrazí, a čísla v hlavních částech vysvětlení se musí opírat o text změn nebo o návrh zákona, ne o odůvodnění. Skóre se nemění.',
+        [141], false],
     ['2026-11-28', 'Nahlášené vysvětlení zkontroluje silnější model',
         'Když nahlásíte chybu ve vysvětlení pozměňovacího návrhu a hlášení projde tříděním, silnější model vysvětlení znovu porovná s textem návrhu. Váš text přitom nedostane, jen část, kterou jste označili, a ustanovení, která jmenujete a která v návrhu opravdu jsou. Vysvětlení buď potvrdí, nebo opraví. Oprava se zobrazí jen tehdy, když projde stejnými pojistkami jako každé vysvětlení: citace musí být doslova v textu návrhu a čísla v podkladech. Výsledek uvidíte pod vysvětlením větou „Po hlášení čtenáře opraveno“ nebo „zkontrolováno, beze změny“. Formulář nově upozorňuje, že platná hlášení budeme zveřejňovat i s poznámkou jako podněty na GitHubu projektu. Skóre se nemění.',
         [136], false],

@@ -311,11 +311,11 @@ final class Repo
     public function pnTexts(int $ct): array
     {
         $out = [];
-        foreach ($this->db->all('SELECT id_dokument, rule_score, ai_score, signals, ai_json, ai_model, ai_prev_score, ai_prev_model, error, praxe_json, praxe_model FROM pn_text WHERE ct = ?', [$ct]) as $x) {
+        foreach ($this->db->all('SELECT id_dokument, rule_score, ai_score, signals, ai_json, ai_model, ai_prev_score, ai_prev_model, error, praxe_json, praxe_model, praxe_zobrazit FROM pn_text WHERE ct = ?', [$ct]) as $x) {
             $x['signals'] = json_decode((string)$x['signals'], true) ?: [];
             $x['ai'] = json_decode((string)$x['ai_json'], true) ?: null;
-            // vysvětlení „v praxi“ (PnPractice), jen k zobrazení
-            $x['praxe'] = json_decode((string)$x['praxe_json'], true) ?: null;
+            // vysvětlení „v praxi“ (PnPractice), jen k zobrazení; skryté (kontrola ho nepustila) jako by nebylo
+            $x['praxe'] = (int)$x['praxe_zobrazit'] === 1 ? (json_decode((string)$x['praxe_json'], true) ?: null) : null;
             $out[(int)$x['id_dokument']] = $x;
         }
         return $out;

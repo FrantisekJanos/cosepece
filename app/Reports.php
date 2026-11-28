@@ -155,8 +155,9 @@ final class Reports
      */
     public function target(int $id): ?array
     {
-        $row = $this->db->one('SELECT id_dokument, ct, cislo, text, praxe_json, praxe_at, praxe_model FROM pn_text WHERE id_dokument = ?', [$id]);
-        $practice = $row !== null ? json_decode((string)$row['praxe_json'], true) : null;
+        $row = $this->db->one('SELECT id_dokument, ct, cislo, text, praxe_json, praxe_at, praxe_model, praxe_zobrazit FROM pn_text WHERE id_dokument = ?', [$id]);
+        // skryté vysvětlení (kontrola ho nepustila) čtenář nevidí, nemá co hlásit
+        $practice = $row !== null && (int)$row['praxe_zobrazit'] === 1 ? json_decode((string)$row['praxe_json'], true) : null;
         if (!is_array($practice) || trim((string)($practice['co_se_meni'] ?? '')) === '') {
             return null;
         }

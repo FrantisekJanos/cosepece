@@ -109,6 +109,58 @@ final class Proposers
     }
 
     /**
+     * Počet podepsaných PN z hlavičky jeho textu („Pozměňovací návrh poslanců Michaely Šebelové, Toma Philippa
+     * a Pavly Pivoňka Vaňkové k vládnímu návrhu…“), pro „a N dalších“ ve videích Reels. Hledá se v prvních 800
+     * znacích; jména odděluje čárka nebo „a“ (víceslovné příjmení zůstane jedním jménem). Seznam končící
+     * „a dalších“, jiný začátek textu nebo prázdný seznam = null (počet nejde určit).
+     *
+     * @return array{0: int, 1: string}|null [počet jmen, první jméno ve 2. pádě]
+     */
+    public static function pnSigners(?string $text): ?array
+    {
+        $head = (string)preg_replace('~\s+~u', ' ', mb_substr((string)$text, 0, 800));
+        if (!preg_match('~Pozměňovací\s+návrh\s+poslan\S*(?:\s+a\s+poslan\S*)?\s+(.+?)\s+(?:k|ke)\s+'
+            . '(?:vládnímu\s+|senátnímu\s+|poslaneckému\s+)?(?:návrhu|sněmovnímu\s+tisku|tisku)\b~u', $head, $m)) {
+            return null;
+        }
+        $list = trim($m[1]);
+        if (preg_match('~\s+a\s+dalších$~u', $list) || str_contains($list, '(')) {
+            return null;
+        }
+        $names = array_values(array_filter(array_map('trim', preg_split('~,\s*|\s+a\s+~u', $list) ?: []), fn($n) => $n !== ''));
+        if ($names === []) {
+            return null;
+        }
+        return [count($names), $names[0]];
+    }
+
+    /**
+     * Počet spolupodepsaných PN (bez autora) z hlavičky textu: null, když počet nejde určit, nebo když první jméno
+     * hlavičky neodpovídá autorovi z evidence (pn.osoba, „Jan Novák“), aby se „a N dalších“ nepřipsalo jinému.
+     */
+    public static function pnCosigners(?string $text, ?string $osoba): ?int
+    {
+        $signers = self::pnSigners($text);
+        $osoba = trim((string)$osoba);
+        if ($signers === null || $osoba === '' || !str_contains($osoba, ' ')) {
+            return null;
+        }
+        $pos = (int)mb_strrpos($osoba, ' ');
+        $person = [1 => [mb_substr($osoba, 0, $pos), mb_substr($osoba, $pos + 1)]];
+        return self::matchGenitive($signers[1], $person) === 1 ? $signers[0] - 1 : null;
+    }
+
+    /** Dovětek k jménu prvního navrhovatele: „a 1 další poslanec“, „a 3 další poslanci“, „a 5 dalších poslanců“, bez počtu „a další poslanci“. */
+    public static function othersText(?int $n): string
+    {
+        if ($n === null) {
+            return 'a další poslanci';
+        }
+        $word = $n === 1 ? 'další poslanec' : ($n >= 2 && $n <= 4 ? 'další poslanci' : 'dalších poslanců');
+        return 'a ' . $n . ' ' . $word;
+    }
+
+    /**
      * Osoba ke jménu v 2. pádě („Radka Vondráčka“, „Marie Pošarové“, „Jiřího Nováka“): id jediného poslance,
      * jehož křestní jména i příjmení po slovech odpovídají (stejný kmen po odtržení koncovky, vypadávající e:
      * Turek → Turka, -ý → -ého). Víc shod nebo žádná = null.

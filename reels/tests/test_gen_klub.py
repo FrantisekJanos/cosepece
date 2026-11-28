@@ -26,8 +26,8 @@ def test_pn_info_ze_serveru_az_do_karty(tmp_path, fake):  # noqa: F811
     assert "Test Poslanec (klub ANO ke dni podání 15. 3. 2026)" in zadani
     # normalizace zapíše autory ze serveru do karty: klub ke dni podání, člen vlády bez klubu
     card = json.loads((out / "variant-2" / "card.json").read_text(encoding="utf-8"))
-    assert card["pn_autor"] == [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"},
-                                {"cislo": 9802, "jmeno": "Test Ministr", "klub": None}]
+    assert card["pn_autor"] == [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO", "spolu": 0},
+                                {"cislo": 9802, "jmeno": "Test Ministr", "klub": None, "spolu": None}]
 
 
 # --- F5: jméno autora uvnitř závorky („(Jan Novák)“) dostane klub za čárkou, ne vnořenou závorku ---
@@ -36,7 +36,7 @@ NOVAK = [{"cislo": 2376, "osoba": "Jan Novák", "klub": "ANO"}]
 
 
 def _caption(text: str) -> str:
-    return f"{text}\n\n{CLOSING}\n\n#snemovna"
+    return f"{text}\n\nTitulky: shrnutí AI.\n\n{CLOSING}\n\n#snemovna"
 
 
 def _novak_card() -> dict:
@@ -46,8 +46,10 @@ def _novak_card() -> dict:
 
 
 def _errs(card: dict, caption: str, focus_pn: tuple[int, ...] = (2376,)) -> list[str]:
-    return validate_variant(card, caption, template="template_v3", ct=311,
-                            reason_keys=[r["key"] for r in card["reasons"]], fmt="pn", focus_pn=list(focus_pn))
+    # jen kontrola klubu; jméno jiné osoby v popisku („PN 2377 Jana Malá“) hlídá attribution (R8)
+    return [e for e in validate_variant(card, caption, template="template_v3", ct=311,
+                                        reason_keys=[r["key"] for r in card["reasons"]], fmt="pn",
+                                        focus_pn=list(focus_pn)) if not e.startswith("R8")]
 
 
 def _name_in_paren(text: str, jmeno: str = "Jan Novák") -> str | None:

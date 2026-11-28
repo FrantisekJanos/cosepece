@@ -9,7 +9,7 @@ from conftest import load_fixture
 from hlidac_reels.generator.normalize import normalize
 from hlidac_reels.generator.validate import CAPTION_LIMIT, CLOSING, validate_variant
 
-CAPTION = "Popisek k tisku.\n\n" + CLOSING + "\n\n#snemovna"
+CAPTION = "Popisek k tisku (shrnutí AI).\n\n" + CLOSING + "\n\n#snemovna"
 
 
 def _norm(card, caption=CAPTION, fmt="zmena"):
@@ -128,8 +128,9 @@ def test_platna_karta_bez_zasahu():
 # --- F4: autor a klub zadaných PN ze serveru (pn_autor, pn.top, popisek) ---
 
 CONTRACT = Path(__file__).resolve().parents[2] / "tests" / "contract" / "focus-pn-info.json"
-AUTHORS = [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO"},
-           {"cislo": 9802, "jmeno": "Test Ministr", "klub": None}]
+# spolu = spolupodepsaní z hlavičky textu PN (contract: PN 9801 bez dalších, PN 9802 bez textu = nejde určit)
+AUTHORS = [{"cislo": 9801, "jmeno": "Test Poslanec", "klub": "ANO", "spolu": 0},
+           {"cislo": 9802, "jmeno": "Test Ministr", "klub": None, "spolu": None}]
 
 
 def _info() -> list[dict]:
@@ -141,7 +142,7 @@ def _pn(card, caption, info=None):
 
 
 def _caption(text: str) -> str:
-    return f"{text}\n\n{CLOSING}\n\n#snemovna"
+    return f"{text}\n\nTitulky: shrnutí AI.\n\n{CLOSING}\n\n#snemovna"
 
 
 def _top(cislo, autor, klub):
@@ -158,7 +159,7 @@ def _pn_card() -> dict:
 
 def test_pn_autor_ze_serveru():
     card = _pn_card()
-    caption = _caption("PN 9801 podal Test Poslanec (ANO), PN 9802 Test Ministr.")
+    caption = _caption("PN 9801 podal Test Poslanec (ANO), PN 9802 Test Ministr (podle evidence psp.cz).")
     new, cap, notes = _pn(card, caption)
     assert new["pn_autor"] == AUTHORS
     assert cap == caption and "pn_autor" not in card
@@ -292,7 +293,7 @@ def test_popisek_doplni_klub_za_prvni_vyskyt_bez_zavorky():
     card = _pn_card()
     info = [dict(_info()[0], klub="ODS")]
     # rozhoduje první výskyt celého jména: závorka za ním se nemění (správný klub, nebo chyba pro kontrolu)
-    text = "Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec tvrdí opak."
+    text = "Test Poslanec  (předkladatel) podal PN 9801. Test Poslanec podal i další PN."
     new, cap, notes = _pn(card, _caption(text), info)
     assert cap == _caption(text) and not any(n.startswith("popisek") for n in notes)
     keys = [r["key"] for r in new["reasons"]]
@@ -352,7 +353,7 @@ def test_stary_server_bez_klubu():
     # Review Focus 4: worker nasazený dřív než web, server klub ani has_text neposílá
     info = [{k: v for k, v in i.items() if k not in ("klub", "klub_ke_dni", "has_text", "id_osoba")} for i in _info()]
     card = _pn_card()
-    caption = _caption("PN 9801 podal Test Poslanec, PN 9802 Test Ministr.")
+    caption = _caption("PN 9801 podal Test Poslanec, PN 9802 Test Ministr (podle evidence psp.cz).")
     new, cap, notes = _pn(card, caption, info)
     assert new["pn_autor"] == [dict(a, klub=None) for a in AUTHORS]
     assert cap == caption

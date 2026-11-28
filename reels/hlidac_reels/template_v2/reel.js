@@ -175,10 +175,17 @@
       if (!x || !x.jmeno || x.cislo == null || String(x.cislo) === '') return;
       var jmeno = String(x.jmeno), klub = x.klub ? String(x.klub) : '';
       var g = groups.filter(function (y) { return y.jmeno === jmeno && y.klub === klub; })[0];
-      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [] });
+      if (!g) groups.push(g = { jmeno: jmeno, klub: klub, cisla: [], spolu: 0 });
       g.cisla.push(String(x.cislo));
+      g.spolu = Math.max(g.spolu, +x.spolu || 0);
     });
     return groups;
+  }
+
+  function othersSuffix(n) {
+    // „ a 2 další“, „ a 5 dalších“: spolupodepsaní PN ze serveru (pn_autor[].spolu, pn.top[].spolu); jméno se nezkracuje
+    n = +n || 0;
+    return n > 0 ? ' a ' + n + (n <= 4 ? ' další' : ' dalších') : '';
   }
 
   function fillPnAuthors(row, list) {
@@ -191,7 +198,7 @@
     groups.slice(0, 2).forEach(function (g) {
       var nums = g.cisla.slice(0, 2).join(', ') + (g.cisla.length > 2 ? ' a další' : '');
       var pna = mk('span', 'pna');
-      pna.appendChild(mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno));
+      pna.appendChild(mk('span', 'm', 'PN ' + nums + ' · ' + g.jmeno + othersSuffix(g.spolu)));
       if (g.klub) {
         pna.appendChild(document.createTextNode(' '));
         pna.appendChild(mk('span', 'klub', g.klub));
@@ -293,7 +300,8 @@
       $('who-typ').textContent = w.typ;
       $('who-ini').textContent = initials(w.jmeno);
       fill($('who-name'), String(w.jmeno), function (t) { setWords($('who-name'), t, false); });
-      setOpt($('who-funkce'), w.funkce);
+      // pod jménem i ostatní navrhovatelé („první podepsaný · a 3 další poslanci“), nikdy jen první jméno
+      setOpt($('who-funkce'), [w.funkce, w.dalsi_text && w.dalsi_text !== w.funkce ? w.dalsi_text : ''].filter(Boolean).join(' · '));
       setOpt($('who-klub'), w.klub ? 'klub ' + w.klub : '');
       setOpt($('who-predlozeno'), w.predlozeno ? 'předloženo ' + czDate(w.predlozeno) : '');
       $('who-meta').style.display = w.klub || w.predlozeno ? '' : 'none';
@@ -317,7 +325,8 @@
     if (opt.said) {
       var ci = opt.said;
       var rc = ci.recnik && ci.recnik.jmeno ? ci.recnik : opt.who;
-      $('said-lab').textContent = 'Úvodní slovo na plénu' + (ci.cteni ? ' · ' + ci.cteni : '');
+      // scéna je vypnutá (normalizace citaci úvodního slova maže); nadpis jen jako pojistka tvaru „v projevu zaznělo“
+      $('said-lab').textContent = 'V projevu zaznělo' + (ci.cteni ? ' · ' + ci.cteni : '');
       var said = String(ci.text).replace(/^[„"“]+|[“"”]+$/g, '');
       fill($('said-quote'), said, function (t) { setTyped($('said-quote'), t); });
       $('said-quote').className = 'q' + (said.length <= 90 ? ' short' : '');

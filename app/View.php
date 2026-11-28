@@ -534,8 +534,9 @@ final class View
 
     /**
      * Souhrn jedné aktualizace (Updates::withEvents) do řádku: co se stalo a odkazy na tisky se skóre,
-     * např. „Zkrácená lhůta: 300 · Novela z. - zákoník práce 78, 301 · Vl. n. z. o platformové práci 31“.
-     * Co se do řádku nevejde, je za odkazem na časovou osu.
+     * např. „Zkrácená lhůta (26. 11.): 300 · Novela z. - zákoník práce 78, 301 · Vl. n. z. o platformové práci 31“.
+     * Datum v závorce je den události, když se liší ode dne, kdy ji web zaznamenal (na stránce tisku je krok
+     * pod tímto datem). Co se do řádku nevejde, je za odkazem na časovou osu.
      */
     public static function updateSummary(array $update): string
     {
@@ -551,7 +552,9 @@ final class View
                     : Updates::shorten((string)$event['name']);
                 $links[] = '<a href="' . e(self::alertUrl($event)) . '">' . e($label) . '</a> ' . self::scoreMini((int)$event['score']);
             }
-            $parts[] = ($part['what'] !== '' ? e($part['what']) . ': ' : '') . implode(', ', $links);
+            $note = Updates::dayNote((string)$part['day'], (string)$update['from']);
+            $head = trim(e($part['what']) . ($note !== '' ? ' <span class="muted" title="Kdy se událost stala">(' . e($note) . ')</span>' : ''));
+            $parts[] = ($head !== '' ? $head . ': ' : '') . implode(', ', $links);
         }
         $out = implode(' <span class="muted">·</span> ', $parts);
         if ($summary['rest'] > 0) {
@@ -563,8 +566,18 @@ final class View
     }
 
     /**
-     * Řádek „Poslední změna“ na přehledu: nejnovější aktualizace je vidět hned, po rozbalení (bez JavaScriptu,
-     * prvek details) předchozí aktualizace a odkaz na časovou osu. Bez upozornění v databázi se nevypíše nic.
+     * Adresa aktualizace na časové ose (kotva u jejího času). Aktualizace jen s běžnou agendou ve výchozím
+     * pohledu není, proto odkaz vede do pohledu s běžnou agendou.
+     */
+    public static function updateUrl(array $update): string
+    {
+        return url('aktualizace', (int)($update['important'] ?? 0) > 0 ? [] : ['vse' => 1], (string)$update['id']);
+    }
+
+    /**
+     * Řádek „Poslední aktualizace“ na přehledu: nejnovější aktualizace je vidět hned, po rozbalení (bez JavaScriptu,
+     * prvek details) předchozí aktualizace a odkaz na časovou osu. Čas říká, kdy web změnu zaznamenal, a vede
+     * na tutéž aktualizaci na časové ose. Bez upozornění v databázi se nevypíše nic.
      *
      * @param list<array> $updates aktualizace od nejnovější (Updates::latest)
      */
@@ -574,15 +587,16 @@ final class View
             return;
         }
         $first = array_shift($updates);
+        $hint = 'Kdy web změnu zaznamenal. Datum v závorce říká, kdy se stala.';
         ?>
 <details class="card updates">
   <summary>
-    <span class="updates-line"><strong title="Kdy web změnu zaznamenal">Poslední změna <?= e(Updates::when((string)$first['from'], true)) ?></strong> <span class="muted">·</span> <?= self::updateSummary($first) ?></span>
+    <span class="updates-line"><strong>Poslední aktualizace <a href="<?= e(self::updateUrl($first)) ?>" title="<?= e($hint) ?>"><?= e(Updates::when((string)$first['from'], true)) ?></a></strong> <span class="muted">·</span> <?= self::updateSummary($first) ?></span>
   </summary>
   <?php if ($updates !== []): ?>
   <ol class="updates-list" aria-label="Předchozí aktualizace">
     <?php foreach ($updates as $update): ?>
-    <li><time datetime="<?= e(date('Y-m-d\TH:i', (int)strtotime((string)$update['from']))) ?>"><?= e(Updates::when((string)$update['from'])) ?></time><span><?= self::updateSummary($update) ?></span></li>
+    <li><a class="updates-time" href="<?= e(self::updateUrl($update)) ?>" title="<?= e($hint) ?>"><time datetime="<?= e(date('Y-m-d\TH:i', (int)strtotime((string)$update['from']))) ?>"><?= e(Updates::when((string)$update['from'])) ?></time></a><span><?= self::updateSummary($update) ?></span></li>
     <?php endforeach; ?>
   </ol>
   <?php endif; ?>

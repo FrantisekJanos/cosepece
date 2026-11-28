@@ -135,7 +135,7 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .alert h3 a:hover { text-decoration: underline; }
 .alert p { margin: 0; font-size: 14px; color: var(--ink-2); }
 
-/* řádek „Poslední změna“ na přehledu (prvek details, rozbalí se i bez JavaScriptu) */
+/* řádek „Poslední aktualizace“ na přehledu (prvek details, rozbalí se i bez JavaScriptu) */
 .updates summary { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; cursor: pointer; list-style: none; font-size: 14px; border-radius: 14px; }
 .updates summary::-webkit-details-marker { display: none; }
 .updates summary::after { content: ''; flex-shrink: 0; width: 9px; height: 9px; margin: 5px 4px 0 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); }
@@ -145,7 +145,8 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .updates .score { padding: 1px 6px; vertical-align: 1px; }
 .updates-list { list-style: none; margin: 0; padding: 0; }
 .updates-list li { display: flex; gap: 16px; padding: 12px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; line-height: 1.75; }
-.updates-list time { width: 104px; flex-shrink: 0; font-size: 13px; color: var(--muted); }
+.updates-time { width: 104px; flex-shrink: 0; font-size: 13px; color: var(--muted); }
+.updates-line strong a { color: inherit; }
 .updates-list li > span { flex: 1; min-width: 0; }
 .updates-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; }
 .updates-foot a { font-weight: 500; }
@@ -229,7 +230,7 @@ a.plain:hover { text-decoration: underline; }
   .search input { flex: 1; width: auto; max-width: none; }
   .alert { flex-direction: column; gap: 4px; }
   .updates-list li { flex-direction: column; gap: 2px; }
-  .updates-list time { width: auto; }
+  .updates-time { width: auto; }
   .timeline li { grid-template-columns: 80px 14px 1fr; }
   .timeline li::before { left: 100px; }
 }

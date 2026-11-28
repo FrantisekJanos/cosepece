@@ -3561,7 +3561,7 @@ db()->run('DELETE FROM pn_text WHERE ct = 9970');
 db()->run('DELETE FROM pn WHERE ct = 9970');
 $dropBill(9970);
 
-// --- aktualizace: řádek „Poslední změna“ na přehledu a časová osa (/aktualizace) ---
+// --- aktualizace: řádek „Poslední aktualizace“ na přehledu a časová osa (/aktualizace) ---
 echo "Aktualizace\n";
 // zkušební upozornění s časem vzniku v roce 2031, aby byla ve výpisu první; na konci se smažou
 $upAdd = function (string $key, string $kind, int $ct, string $created, string $title, int $score): void {
@@ -3585,7 +3585,7 @@ check('aktualizace: upozornění vzniklá do 10 minut po sobě jsou jedna aktual
     [['u-20310305-0211', 'u-20310304-2043', 'u-20310304-2030', 'u-20310303-1000', 'u-20310302-0900'], [2, 2, 1, 6, 15], [2, 1, 0, 4, 15]]);
 check('aktualizace: rozsah časů vzniku', [$upGroups[1]['from'], $upGroups[1]['to']], ['2031-03-04 20:43:00', '2031-03-04 20:51:00']);
 check('aktualizace: omezený výběr neúplnou poslední skupinu vynechá', array_column(Hlidac\Updates::groups(db(), 0, 3), 'id'), ['u-20310305-0211']);
-$upLatest = Hlidac\Updates::latest(db(), 4);
+$upLatest = Hlidac\Updates::latest(db(), 4, $upWatch);
 check('aktualizace: události od nejvyššího skóre, včetně běžné agendy', [count($upLatest), array_column($upLatest[0]['events'], 'ct'), array_column($upLatest[1]['events'], 'score'), array_column($upLatest[2]['events'], 'ct')],
     [4, [221, 311], [68, 10], [78]]);
 $upImportant = Hlidac\Updates::withEvents(db(), [$upGroups[1]], $upWatch);
@@ -3615,8 +3615,24 @@ check('aktualizace: co se do řádku nevejde, je za odkazem na časovou osu', st
 ob_start();
 Hlidac\View::updatesBar($upLatest, '2031-03-05 14:08:00');
 $upBar = (string)ob_get_clean();
-check('aktualizace: řádek na přehledu se rozbaluje bez JavaScriptu a vede na časovou osu', [str_contains($upBar, '<details class="card updates">'), str_contains($upBar, 'Poslední změna '),
+check('aktualizace: řádek na přehledu se rozbaluje bez JavaScriptu a vede na časovou osu', [str_contains($upBar, '<details class="card updates">'), str_contains($upBar, 'Poslední aktualizace <a href="' . e(url('aktualizace', [], 'u-20310305-0211')) . '"'),
     substr_count($upBar, '<li>'), str_contains($upBar, 'Data naposledy kontrolována '), str_contains($upBar, '<a href="' . e(url('aktualizace')) . '">Zobrazit všechny aktualizace')], [true, true, 3, true, true]);
+check('aktualizace: čas v řádku vede na tutéž aktualizaci na časové ose; jen běžná agenda do pohledu s běžnou agendou', [array_column($upLatest, 'important'),
+    Hlidac\View::updateUrl($upLatest[1]), Hlidac\View::updateUrl($upLatest[2]), str_contains($upBar, '<a class="updates-time" href="' . e(url('aktualizace', ['vse' => 1], 'u-20310304-2030')) . '"')],
+    [[2, 1, 0, 4], url('aktualizace', [], 'u-20310304-2043'), url('aktualizace', ['vse' => 1], 'u-20310304-2030'), true]);
+// událost, kterou web zaznamenal až za dva dny (krok se v otevřených datech objevil se zpožděním): řádek ukáže její datum
+$upLateRow = fn(int $ct, string $day, string $name, int $score): array => ['alert_key' => 'updtest:late' . $ct, 'kind' => 'cut', 'ct' => $ct, 'event_at' => $day . ' 00:00:00',
+    'created_at' => '2031-03-06 03:00:00', 'title' => 'Zkrácená lhůta: ' . $name, 'body' => '', 'watched' => 0, 'posted' => 2, 'score' => $score, 'obdobi' => null];
+$upLate = ['id' => 'u-20310306-0300', 'from' => '2031-03-06 03:00:00', 'to' => '2031-03-06 03:00:00', 'n' => 2, 'important' => 2,
+    'events' => [$upLateRow(300, '2031-03-04', 'Novela F', 78), $upLateRow(301, '2031-03-06', 'Novela G', 31)]];
+$upLateSum = Hlidac\Updates::summary($upLate['events']);
+check('aktualizace: stejná událost z různých dnů jsou dvě části souhrnu', [array_column($upLateSum['parts'], 'what'), array_column($upLateSum['parts'], 'day')],
+    [['Zkrácená lhůta', 'Zkrácená lhůta'], ['2031-03-04', '2031-03-06']]);
+check('aktualizace: datum události jen když se liší ode dne zaznamenání', [Hlidac\Updates::dayNote('2031-03-04', '2031-03-06 03:00:00'), Hlidac\Updates::dayNote('2031-03-06', '2031-03-06 03:00:00'),
+    Hlidac\Updates::dayNote('2030-12-31', '2031-01-01 02:00:00'), Hlidac\Updates::dayNote('', '2031-01-01 02:00:00')], ['4. 3.', '', '31. 12. 2030', '']);
+$upLateHtml = Hlidac\View::updateSummary($upLate);
+check('aktualizace: řádek uvádí datum události zaznamenané se zpožděním', [str_contains($upLateHtml, 'Zkrácená lhůta <span class="muted" title="Kdy se událost stala">(4. 3.)</span>: <a href="' . e(url('tisk', ['ct' => 300])) . '">'),
+    str_contains($upLateHtml, 'Zkrácená lhůta: <a href="' . e(url('tisk', ['ct' => 301])) . '">'), substr_count($upLateHtml, '(4. 3.)')], [true, true, 1]);
 ob_start();
 Hlidac\View::updatesBar([], null);
 check('aktualizace: bez upozornění se řádek nevypíše', (string)ob_get_clean(), '');

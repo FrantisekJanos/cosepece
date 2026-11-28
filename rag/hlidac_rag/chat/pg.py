@@ -43,7 +43,7 @@ _FUNKCE_ULOZISTE = (
     "zaloz_relaci", "relace", "zapis_overeni", "pricti_zpravu_od_overeni", "zahaj_tah", "skonci_tah", "utrata",
     "zaloz_konverzaci", "konverzace", "tahy", "zaloz_odpoved", "prubezne", "dokonci", "zapis_volani_llm",
     "zapis_volani_nastroje", "uloz_zdroje", "zdroje", "zpravy", "smaz_konverzaci", "existuje_kod", "hodnoceni", "nahlas",
-    "pocet_nahlaseni_dne",
+    "pocet_nahlaseni_dne", "zdravi",
 )
 
 
@@ -185,6 +185,11 @@ class PgData:
         if v.chyba:
             return None
         return next((p.text for p in v.polozky if p.klic == z.klic and p.text), None)
+
+    def zdravi(self) -> None:
+        """Kontrola spojení `chat_ro` pro /chat-api/zdravi."""
+        with self._cteni() as conn:
+            conn.execute("SELECT 1")
 
     def jmena_osob(self, text: str) -> list[str]:
         index = self._index_osob()

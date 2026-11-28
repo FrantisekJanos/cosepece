@@ -118,6 +118,10 @@ class FalesneUloziste:
         self.prubezne_: list[str] = []
         self._zamek = threading.Lock()
 
+    def zdravi(self):
+        if getattr(self, "db_mimo", False):
+            raise RuntimeError("spojení chat_rw selhalo")
+
     def zaloz_relaci(self, id=None):
         rid = id or os.urandom(16).hex()
         if rid in self.relace_:
@@ -255,6 +259,10 @@ class FalesnaData:
 
     def jmena_osob(self, text):
         return []
+
+    def zdravi(self):
+        if getattr(self, "db_mimo", False):
+            raise RuntimeError("spojení chat_ro selhalo")
 
 
 class Http:
@@ -517,7 +525,8 @@ async def test_beta_spatny_kod_404_spravny_nastavi_cookie():
     assert (await asgi(s.app, "GET", "/chat-api/beta", hlavicky={"origin": PUVOD})).status_code == 404
     r = await asgi(s.app, "POST", "/chat-api/beta", b'{"kod": "kod-bety"}', {"origin": PUVOD})
     c = r.cookie("chat_beta")
-    assert r.status_code == 204 and c and "Path=/;" in c and "HttpOnly" in c and "SameSite=Strict" in c
+    # Lax: příchod odkazem odjinud (Telegram, X) cookie pošle a PHP bublinu vloží hned (final review Minor 2)
+    assert r.status_code == 204 and c and "Path=/;" in c and "HttpOnly" in c and "SameSite=Lax" in c
     assert "Max-Age=2592000" in c
     r = await asgi(s.app, "GET", "/chat-api/stav", hlavicky={"cookie": c.split(";")[0], "x-forwarded-for": "1.2.3.4"})
     assert r.status_code == 200
@@ -1185,6 +1194,35 @@ async def test_w_js_se_servi_s_cache_300_a_chat_js_immutable(tmp_path):
 async def test_zdravi():
     s = Svet()
     assert (await asgi(s.app, "GET", "/chat-api/zdravi")).json() == {"ok": True}
+
+
+@pytest.mark.parametrize("cast", ["ulozit", "data"])
+async def test_zdravi_overi_obe_spojeni_do_db(cast):
+    """Špatné heslo chat_ro nebo chat_rw start neshodí (pool se otevírá na pozadí): /zdravi to musí poznat
+    (final review Minor 6), jinak redeploy pustí eval proti službě bez dat."""
+    s = Svet()
+    getattr(s, cast).db_mimo = True
+    r = await asgi(s.app, "GET", "/chat-api/zdravi")
+    assert r.status_code == 503 and r.json() == {"ok": False}
+    assert r.hlavicka("cache-control") == "no-store"
+
+
+async def test_skryty_rezim_404_bez_cache_a_soubory_private(tmp_path):
+    """Cloudflare nesmí zacachovat 404 skrytého režimu ani soubory widgetu pro beta (final review Minor 1)."""
+    (tmp_path / "w.js").write_text("// __CHAT_HASH__", encoding="utf-8")
+    (tmp_path / "chat.css").write_text("a{}", encoding="utf-8")
+    s = Svet(n=N(CHAT_REZIM="skryte"), static_dir=tmp_path)
+    h = s.sluzba.hash_static
+    r = await asgi(s.app, "GET", f"/chat-api/s/{h}/chat.css")
+    assert r.status_code == 404 and r.hlavicka("cache-control") == "no-store"
+    beta = {"cookie": f"chat_beta={podepis_beta(BETA_KLIC)}"}
+    r = await asgi(s.app, "GET", f"/chat-api/s/{h}/chat.css", hlavicky=beta)
+    assert r.status_code == 200 and r.hlavicka("cache-control").startswith("private,")
+    assert "immutable" in r.hlavicka("cache-control")
+    # veřejný režim: sdílená cache smí
+    s2 = Svet(static_dir=tmp_path)
+    r = await asgi(s2.app, "GET", f"/chat-api/s/{s2.sluzba.hash_static}/chat.css")
+    assert r.hlavicka("cache-control").startswith("public,")
 
 
 def test_tajemstvi_z_prostredi_a_bez_repr():

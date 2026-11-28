@@ -174,6 +174,11 @@ def utrata(conn: psycopg.Connection, relace_id: str, otisk_ip: str, ted: datetim
     return Utrata(*r)
 
 
+def zdravi(conn: psycopg.Connection) -> None:
+    """Kontrola spojení pro /chat-api/zdravi."""
+    conn.execute("SELECT 1")
+
+
 # --- konverzace a zprávy ---
 
 def zaloz_konverzaci(conn: psycopg.Connection, relace_id: str, eval_: bool = False) -> str:

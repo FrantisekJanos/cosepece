@@ -75,6 +75,9 @@ STATIC = Path(__file__).parent / "static"
 TYPY_SOUBORU = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html",
                 ".svg": "image/svg+xml", ".json": "application/json", ".txt": "text/plain"}
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+# skrytý režim: soubory widgetu jen pro beta, sdílená cache (Cloudflare) je nesmí držet
+CACHE_IMMUTABLE_SKRYTE = "private, max-age=31536000, immutable"
+ZDRAVI_TIMEOUT_S = 3        # /zdravi: nejdéle tak dlouho čeká na SELECT 1 přes oba pooly
 HASH_STATIC = re.compile(r"[0-9a-f]{12}")     # tvar výstupu _hash_static
 # spec 6 a 12: služba volá ven jen tyto servery (Anthropic přes SDK vlastním klientem, ostatní přes sdílený klient)
 POVOLENE_HOSTY = frozenset({"api.anthropic.com", "api.openai.com", "challenges.cloudflare.com", "api.telegram.org"})
@@ -247,6 +250,12 @@ class Sluzba:
     # --- adresy ---
 
     async def zdravi(self, request: Request) -> Response:
+        """200 jen když odpoví obě spojení do DB (chat_rw i chat_ro); špatné heslo start služby neshodí."""
+        try:
+            await asyncio.wait_for(asyncio.gather(self._u("zdravi"), self._d("zdravi")), ZDRAVI_TIMEOUT_S)
+        except Exception:
+            log.warning("zdraví: DB neodpovídá", exc_info=True)
+            return _json({"ok": False}, 503, {"Cache-Control": "no-store"})
         return _json({"ok": True})
 
     async def stav(self, request: Request) -> Response:
@@ -279,7 +288,7 @@ class Sluzba:
         if not (ocekavany and self.tajemstvi.beta_klic and isinstance(kod, str)
                 and hmac.compare_digest(kod.encode(), ocekavany.encode())):
             return PlainTextResponse("Not Found", 404)
-        cookie = (f"{COOKIE_BETA}={podepis_beta(self.tajemstvi.beta_klic)}; Path=/; HttpOnly; Secure; SameSite=Strict; "
+        cookie = (f"{COOKIE_BETA}={podepis_beta(self.tajemstvi.beta_klic)}; Path=/; HttpOnly; Secure; SameSite=Lax; "
                   f"Max-Age={int(BETA_PLATNOST.total_seconds())}")
         return Response(status_code=204, headers={"Set-Cookie": cookie, "Cache-Control": "no-store"})
 
@@ -301,7 +310,8 @@ class Sluzba:
         cesta = (koren / request.path_params["soubor"]).resolve()
         if koren not in cesta.parents or not cesta.is_file() or cesta.suffix not in TYPY_SOUBORU:
             return PlainTextResponse("Not Found", 404)
-        cache = CACHE_IMMUTABLE if h == self.hash_static else "no-cache"
+        immutable = CACHE_IMMUTABLE_SKRYTE if self.n.rezim == "skryte" else CACHE_IMMUTABLE
+        cache = immutable if h == self.hash_static else "no-cache"
         return Response(cesta.read_bytes(), media_type=TYPY_SOUBORU[cesta.suffix], headers={"Cache-Control": cache})
 
     def _beh_relace(self, request: Request) -> BehTahu | None:
@@ -833,7 +843,9 @@ class SkrytyRezim:
             hlavicky = dict((k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in scope.get("headers", []))
             beta = cookie_parser(hlavicky.get("cookie", "")).get(COOKIE_BETA)
             if not over_beta(beta, s.tajemstvi.beta_klic):
-                return await PlainTextResponse("Not Found", 404)(scope, receive, send)
+                # no-store: Cloudflare cachuje .js/.css podle přípony a 404 by pak dostali i beta uživatelé
+                return await PlainTextResponse("Not Found", 404, headers={"Cache-Control": "no-store"})(
+                    scope, receive, send)
         await self.app(scope, receive, send)
 
 

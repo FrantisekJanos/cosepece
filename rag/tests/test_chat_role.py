@@ -482,3 +482,17 @@ def test_cli_bez_hesla_vypise_vsechny_promenne(monkeypatch, capsys):
     assert role.main() == 2
     err = capsys.readouterr().err
     assert "CHAT_DB_RO_PASSWORD" in err and "CHAT_DB_RW_PASSWORD" in err and "MCP_DB_PASSWORD" in err
+
+
+def test_zdravi_projde_pod_chat_ro_i_chat_rw(data_pod_roli, prostredi):
+    """/chat-api/zdravi (final review Minor 6): SELECT 1 pod oběma rolemi jako ve službě."""
+    from hlidac_rag.chat.pg import PgUloziste
+
+    data_pod_roli.zdravi()
+    _bez_chyb_db("zdravi chat_ro")
+    pool = ConnectionPool(_dsn("chat_rw", HESLO_RW), min_size=1, max_size=1, open=True, timeout=5,
+                          kwargs={"autocommit": True})
+    try:
+        PgUloziste(pool).zdravi()
+    finally:
+        pool.close()

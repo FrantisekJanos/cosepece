@@ -32,7 +32,12 @@ case "$*" in
     [ "${FAKE_SERVICES_FAIL:-0}" = 1 ] && exit 1
     printf 'web\\nsync\\nmcp\\nchat\\ndb\\n' ;;
   "run --rm --network none"*) echo "VŠE OK" ;;
-  "compose up -d chat") exit "${FAKE_CHAT_UP:-0}" ;;
+  "compose up -d chat")
+    echo "chat up CHAT_ZAPNUTO=${CHAT_ZAPNUTO-unset}" >> "$LOG"
+    # prostředí kontejneru jako v compose: proměnná shellu přebije docker/.env
+    echo "${CHAT_ZAPNUTO-$(grep -E '^CHAT_ZAPNUTO=' .env | tail -n 1 | cut -d= -f2-)}" > "$LOG.chat"
+    exit "${FAKE_CHAT_UP:-0}" ;;
+  "compose exec -T chat printenv CHAT_ZAPNUTO") echo "${FAKE_PRINTENV:-$(cat "$LOG.chat" 2>/dev/null)}" ;;
   "compose run "*) exit "${FAKE_EVAL:-0}" ;;
 esac""",
     # vrací jen stavový kód (-w '%{http_code}'); 8103 = chat, 8100 = web
@@ -43,7 +48,8 @@ esac""",
 esac""",
     "sleep": ":",
     # sed -i na .env může selhat (např. .env je jen pro čtení); ostatní volání nic nedělají
-    "sed": '[ "${FAKE_SED_FAIL:-0}" = 1 ] && exit 1; exec /usr/bin/env sed "$@"',
+    # skutečný sed bez adresáře falešných příkazů v PATH (je první): `env sed` by spustil znovu tento soubor dokola
+    "sed": '[ "${FAKE_SED_FAIL:-0}" = 1 ] && exit 1; PATH="${PATH#*:}" exec sed "$@"',
     "timeout": 'shift; exec "$@"',
 }
 
@@ -62,7 +68,8 @@ def _spust(tmp_path: Path, zapnuto: str = "1", **falesne) -> tuple[subprocess.Co
         f.chmod(0o755)
     log = tmp_path / "log.txt"
     log.touch()
-    env = {k: v for k, v in os.environ.items() if k not in ("ROLLBACK", "SKIP_CHAT_EVAL", "SKIP_PREFLIGHT")}
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("ROLLBACK", "SKIP_CHAT_EVAL", "SKIP_PREFLIGHT") and not k.startswith("CHAT_")}
     env.update(PATH=str(binar) + os.pathsep + env.get("PATH", ""), LOG=str(log), **falesne)
     r = subprocess.run([BASH, str(docker / "redeploy.sh")], cwd=docker, env=env, capture_output=True,
                        text=True, encoding="utf-8", timeout=300)
@@ -140,3 +147,28 @@ def test_prazdny_seznam_sluzeb_je_chyba_a_nic_nespusti(tmp_path):
     r, log, _ = _spust(tmp_path, FAKE_SERVICES_FAIL="1")
     assert r.returncode != 0
     assert not [x for x in log if x.startswith("docker compose up")]
+
+
+def test_exportovany_env_v_shellu_vypnuti_neobejde(tmp_path):
+    """Operátor si `.env` načetl do shellu (CHAT_ZAPNUTO=1 v prostředí): vypnutí po selhání evalu musí platit
+    (final review I2). Proměnné shellu mají v docker compose přednost před .env."""
+    r, log, env = _spust(tmp_path, FAKE_EVAL="1", CHAT_ZAPNUTO="1", CHAT_MODEL="claude-sonnet-5-5")
+    assert r.returncode == 0, r.stderr
+    upy = [x for x in log if x.startswith("chat up ")]
+    assert upy == ["chat up CHAT_ZAPNUTO=unset", "chat up CHAT_ZAPNUTO=0"]   # start z .env, vypnutí explicitně
+    assert "CHAT_ZAPNUTO=0" in env and "vypínám chat" in r.stderr
+    assert "docker compose stop chat" not in log
+
+
+def test_vypnuti_neovereno_chat_zastavi(tmp_path):
+    """Kontejner po vypnutí dál hlásí CHAT_ZAPNUTO=1: chat se zastaví."""
+    r, log, _ = _spust(tmp_path, FAKE_EVAL="1", FAKE_PRINTENV="1")
+    assert r.returncode == 0, r.stderr
+    assert "docker compose stop chat" in log and "zastavuji" in r.stderr
+
+
+def test_hodnota_v_uvozovkach_eval_spusti(tmp_path):
+    """CHAT_ZAPNUTO="1" compose čte jako 1; skript také (final review Minor 5)."""
+    r, log, _ = _spust(tmp_path, zapnuto='"1"')
+    assert r.returncode == 0, r.stderr
+    assert len(_evaly(log)) == 1 and "kouřový eval prošel" in r.stdout

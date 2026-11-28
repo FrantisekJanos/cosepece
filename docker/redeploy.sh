@@ -6,6 +6,9 @@
 # Spuštění na serveru: ~/hlidac-zakonu/docker/redeploy.sh [commit]   (bez parametru origin/main)
 # config.php a .env v docker/ git ignoruje, data jsou ve volumech appdata a pgdata.
 set -euo pipefail
+# proměnné CHAT_* zděděné ze shellu (operátor si načetl .env přes set -a) by v docker compose přebily docker/.env:
+# po CHAT_ZAPNUTO=0 v .env by chat běžel dál zapnutý. Platí jen docker/.env.
+unset ${!CHAT_*}
 cd "$(dirname "$0")/.."
 TARGET=${1:-origin/main}
 PREVIOUS=$(git rev-parse HEAD)
@@ -47,8 +50,8 @@ fi
 docker compose up -d $SLUZBY
 docker image prune -f >/dev/null
 docker compose ps --format '{{.Service}} {{.Status}}'
-# hodnota proměnné z .env; chybějící nesmí skript ukončit (set -e + pipefail)
-env_hodnota() { grep -E "^$1=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- || true; }
+# hodnota proměnné z .env bez uvozovek (compose CHAT_ZAPNUTO="1" čte jako 1); chybějící nesmí skript ukončit
+env_hodnota() { grep -E "^$1=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true; }
 BIND=$(env_hodnota BIND)
 MCP_BIND=$(env_hodnota MCP_BIND)
 check() {
@@ -106,8 +109,12 @@ elif docker compose config --services | grep -qx chat; then
           # bez této větve by set -e ukončil skript a chat by zůstal zapnutý
           chat_varuj "nepodařilo se přepsat docker/.env, zastavuji chat (nastav CHAT_ZAPNUTO=0 ručně)."
           docker compose stop chat || true
-        elif ! docker compose up -d chat; then
+        # CHAT_ZAPNUTO=0 explicitně (přebije cokoli v prostředí) a kontrola v kontejneru; jinak chat zastavit
+        elif ! CHAT_ZAPNUTO=0 docker compose up -d chat; then
           chat_varuj "restart s CHAT_ZAPNUTO=0 selhal, zastavuji chat."
+          docker compose stop chat || true
+        elif [ "$(docker compose exec -T chat printenv CHAT_ZAPNUTO 2>/dev/null || true)" != 0 ]; then
+          chat_varuj "chat po restartu nehlásí CHAT_ZAPNUTO=0, zastavuji ho."
           docker compose stop chat || true
         fi
       else

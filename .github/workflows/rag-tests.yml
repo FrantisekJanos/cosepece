@@ -2,9 +2,9 @@ name: rag-tests
 
 on:
   push:
-    paths: ["rag/**", ".github/workflows/rag-tests.yml"]
+    paths: ["rag/**", "docker/docker-compose.yml", "docker/.env.example", ".github/workflows/rag-tests.yml"]
   pull_request:
-    paths: ["rag/**", ".github/workflows/rag-tests.yml"]
+    paths: ["rag/**", "docker/docker-compose.yml", "docker/.env.example", ".github/workflows/rag-tests.yml"]
 
 permissions:
   contents: read

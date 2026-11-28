@@ -145,6 +145,46 @@ CREATE TABLE IF NOT EXISTS mcp.volani (
   chyba boolean NOT NULL DEFAULT false,
   cas timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS volani_token_cas ON mcp.volani (token_id, cas);
+
+-- MCP server běží pod rolí mcp_ro (hlidac_rag.role), která mcp.token ani mcp.volani číst nesmí. Ověření tokenu, zápis
+-- volání a počet volání tokenu proto dělají tyto funkce: SECURITY DEFINER (práva vlastníka, tj. role migrace),
+-- pevný search_path, žádné dynamické SQL; EXECUTE má jen mcp_ro (GRANT v hlidac_rag.role), PUBLIC nic.
+-- over_token vrátí jen id platného tokenu pro daný sha256, seznam hashů přes ni vyčíst nejde.
+CREATE OR REPLACE FUNCTION mcp.over_token(p_hash text) RETURNS int
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, mcp AS $$
+  UPDATE mcp.token SET naposledy = now() WHERE hash = p_hash AND zrusen IS NULL RETURNING id
+$$;
+REVOKE ALL ON FUNCTION mcp.over_token(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION mcp.zapis_volani(p_token int, p_nastroj text, p_ms int, p_chyba boolean) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, mcp AS $$
+  INSERT INTO mcp.volani (token_id, nastroj, ms, chyba) VALUES (p_token, left(p_nastroj, 100), p_ms, coalesce(p_chyba, true))
+$$;
+REVOKE ALL ON FUNCTION mcp.zapis_volani(int, text, int, boolean) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION mcp.volani_od(p_token int, p_od timestamptz) RETURNS int
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, mcp AS $$
+  SELECT count(*)::int FROM mcp.volani WHERE token_id = p_token AND cas >= p_od
+$$;
+REVOKE ALL ON FUNCTION mcp.volani_od(int, timestamptz) FROM PUBLIC;
+
+-- Tabulky meta (web) a reel_state (bot reels) drží i tajemství (meta.form_secret, reel_state.threads_token), proto je
+-- mcp_ro čte jen přes pohledy s vyjmenovanými klíči, které potřebuje nástroj stav_dat (hlidac_rag.tools).
+-- Obě tabulky zakládá jiná služba: pohled vznikne při první migraci, kdy tabulka už existuje (rag-ingest migruje
+-- každou hodinu); po prvním vzniku pohledu je nutné znovu spustit python -m hlidac_rag.role (GRANT).
+DO $$
+BEGIN
+  IF to_regclass('public.meta') IS NOT NULL THEN
+    CREATE OR REPLACE VIEW mcp.meta_verejne AS
+      SELECT k, v FROM public.meta WHERE k IN ('steno_last_result', 'last_sync', 'ai_queue_seen_at');
+  END IF;
+  IF to_regclass('public.reel_state') IS NOT NULL THEN
+    CREATE OR REPLACE VIEW mcp.reel_state_verejne AS
+      SELECT key, value FROM public.reel_state WHERE key = 'hlidani_vystrahy';   -- tools.HLIDANI_KLIC
+  END IF;
+END
+$$;
 
 -- Texty návrhů zákonů a PN rozdělené na celky (část, článek, §, bod novely) pro MCP.
 -- Plní je hlidac_rag.texty.ingest.sync_texty; zdroj: tabulky PHP webu nebo vlastní stažení z psp.cz.

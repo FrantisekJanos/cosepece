@@ -126,7 +126,7 @@ def test_call_nastavuje_jen_transakci_ne_spojeni(fake_pool):
     assert conn.sql[0] == "SET TRANSACTION READ ONLY"
     assert conn.sql[1].startswith("SET LOCAL statement_timeout")
     assert not hasattr(conn, "read_only")       # režim čtení se nenastavuje na spojení v poolu
-    assert conn.sql[-1].startswith("INSERT INTO mcp.volani")
+    assert conn.sql[-2] == "SET TRANSACTION READ WRITE" and conn.sql[-1].startswith("SELECT mcp.zapis_volani(")
 
 
 def test_call_valueerror_je_toolerror(fake_pool):

@@ -52,11 +52,19 @@ python -m pytest tests                       # parser a skládání projevů nad
 python -m hlidac_rag.run                     # jeden běh ingestu (DATABASE_URL nebo PGHOST/PGUSER/PGPASSWORD)
 python -m hlidac_rag.run --reassemble        # znovu složit projevy všech schůzí
 python -m hlidac_rag.run --prepocitej-rozpravu   # znovu složit projevy všech schůzí z uložených částí a přepočítat rozpravu, bez sítě
-python -m hlidac_rag.tokens add <jméno>      # nový token pro MCP (vypíše se jen jednou)
+python -m hlidac_rag.tokens add <jméno>      # nový token pro MCP (vypíše se jen jednou; jako hlidac, ne mcp_ro)
+MCP_DB_PASSWORD=… python -m hlidac_rag.role  # role mcp_ro pro MCP server (idempotentní, po migraci)
 python -m hlidac_rag.mcp_server              # MCP server na :8000, endpoint /mcp
 ```
 
-V Dockeru běží jako služby `rag-ingest` (smyčka po hodině) a `mcp` (viz `docker/docker-compose.yml`).
+V Dockeru běží jako služby `rag-ingest` (smyčka po hodině) a `mcp` (viz `docker/docker-compose.yml`). Tokeny a roli
+spravujte v kontejneru `rag-ingest` (`docker compose exec rag-ingest python -m hlidac_rag.tokens list`).
+
+MCP server běží pod rolí `mcp_ro` (`hlidac_rag/role.py`): čte jen vyjmenované tabulky webu (`TABULKY_CTENI`,
+`MCP_NAVIC`) a celá schémata `steno`, `texty`, `rag`; `meta` a `reel_state` jen přes pohledy s vyjmenovanými klíči.
+Tokeny ověřuje a volání zapisuje přes funkce `SECURITY DEFINER` (`mcp.over_token`, `mcp.zapis_volani`,
+`mcp.volani_od`), tabulky `mcp.token` a `mcp.volani` číst nesmí. Nová tabulka webu, kterou má nástroj číst, patří do
+výčtu v `role.py`; pak znovu `python -m hlidac_rag.role` (test `tests/test_role_mcp.py` chybějící GRANT pozná).
 
 ## MCP
 

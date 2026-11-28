@@ -1,7 +1,9 @@
 """MCP server Hlídače zákonů (Streamable HTTP, jen čtení).
 
 Spuštění: python -m hlidac_rag.mcp_server  (MCP_HOST, MCP_PORT, MCP_ALLOWED_HOSTS, DATABASE_URL / PG*)
-Přístup: hlavička Authorization: Bearer <token>; tokeny spravuje python -m hlidac_rag.tokens.
+Přístup: hlavička Authorization: Bearer <token>; tokeny spravuje python -m hlidac_rag.tokens (v kontejneru rag-ingest).
+Role DB: v provozu mcp_ro (hlidac_rag.role), jen čtení. Token, zápis a počet volání jdou přes funkce SECURITY DEFINER
+mcp.over_token, mcp.zapis_volani a mcp.volani_od (schema.sql); kód funguje i pod vlastníkem tabulek hlidac.
 """
 from __future__ import annotations
 
@@ -76,7 +78,7 @@ class _TooBig(Exception):
 
 
 def _call(name: str, fn, *args, **kwargs) -> Any:
-    """Spustí dotaz nástroje v transakci jen pro čtení s časovým limitem a zapíše volání do mcp.volani.
+    """Spustí dotaz nástroje v transakci jen pro čtení s časovým limitem a zapíše volání (mcp.zapis_volani).
 
     Režim čtení a limit platí jen pro jednu transakci (SET TRANSACTION / SET LOCAL), do poolu se nic nepřenáší.
     Chyby se vrací jako ToolError, klient pak dostane isError a čitelnou zprávu."""
@@ -112,10 +114,12 @@ def _call(name: str, fn, *args, **kwargs) -> Any:
     finally:
         try:
             with pool.connection() as conn:
-                conn.execute("INSERT INTO mcp.volani (token_id, nastroj, ms, chyba) VALUES (%s,%s,%s,%s)",
+                # role mcp_ro má výchozí transakci jen pro čtení; zápis dělá funkce SECURITY DEFINER
+                conn.execute("SET TRANSACTION READ WRITE")
+                conn.execute("SELECT mcp.zapis_volani(%s, %s, %s, %s)",
                              (current_token.get(), name, int((time.monotonic() - start) * 1000), err))
-        except (psycopg.Error, PoolTimeout):
-            pass
+        except (psycopg.Error, PoolTimeout) as e:
+            log.warning("zápis volání nástroje %s do mcp.volani selhal (%s)", name, type(e).__name__)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -304,13 +308,18 @@ PER_DAY = int(os.environ.get("MCP_RATE_PER_DAY", "2000"))
 
 
 class AuthMiddleware:
-    """Bearer token proti mcp.token (v DB jen sha256), limit volání na token."""
+    """Bearer token proti mcp.token (v DB jen sha256, ověří mcp.over_token), limit volání na token.
+
+    Limity se počítají v paměti procesu. Denní limit přežije restart: při prvním ověření tokenu v procesu se do
+    počítadla načte počet volání nástrojů za posledních 24 h (mcp.volani_od). Načtená volání se berou, jako by
+    proběhla teď (vyprší až 24 h po startu): po restartu je limit spíš přísnější, nikdy volnější."""
 
     def __init__(self, app):
         self.app = app
         self.minute: dict[int, deque] = defaultdict(deque)
         self.day: dict[int, deque] = defaultdict(deque)
         self.cache: dict[str, tuple[int | None, float]] = {}
+        self.nacteno: set[int] = set()   # tokeny, jejichž volání za 24 h už se načetla z DB
 
     def _cached(self, token: str) -> tuple[bool, int | None]:
         hit = self.cache.get(hashlib.sha256(token.encode()).hexdigest())
@@ -322,9 +331,13 @@ class AuthMiddleware:
         """Ověří token v DB (blokující, volat mimo event loop). Do cache jen platné tokeny."""
         h = hashlib.sha256(token.encode()).hexdigest()
         with pool.connection() as conn:
-            r = conn.execute("UPDATE mcp.token SET naposledy = now() WHERE hash = %s AND zrusen IS NULL RETURNING id",
-                             (h,)).fetchone()
-        tid = r[0] if r else None
+            # over_token zapisuje mcp.token.naposledy, výchozí transakce role mcp_ro je jen pro čtení
+            conn.execute("SET TRANSACTION READ WRITE")
+            tid = conn.execute("SELECT mcp.over_token(%s)", (h,)).fetchone()[0]
+            if tid is not None and tid not in self.nacteno:
+                volani = conn.execute("SELECT mcp.volani_od(%s, now() - interval '1 day')", (tid,)).fetchone()[0]
+                self.day[tid].extend([time.monotonic()] * min(volani, PER_DAY))
+                self.nacteno.add(tid)
         if tid is not None:
             if len(self.cache) > 1000:
                 self.cache.clear()
@@ -389,7 +402,7 @@ def build_app():
     pool = ConnectionPool(db.dsn(), min_size=1, max_size=int(os.environ.get("MCP_POOL", "4")), open=True,
                           check=ConnectionPool.check_connection, timeout=POOL_TIMEOUT_S)
     # čítač embeddingů dotazů: vlastní krátké spojení (ne z poolu, který drží transakce nástrojů)
-    hledani.nastav_citac(db.connect)
+    hledani.nastav_citac(lambda: psycopg.connect(db.dsn(), connect_timeout=2))
     hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*").split(",") if h.strip()]
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
@@ -408,10 +421,13 @@ def main() -> None:
     try:
         chybi = [n for n in ("steno", "mcp")
                  if conn.execute("SELECT to_regnamespace(%s)", (n,)).fetchone()[0] is None]
+        # funkce pro tokeny přidala migrace úlohy 8b; bez nich by každé ověření tokenu skončilo 503
+        if not chybi and conn.execute("SELECT to_regprocedure('mcp.over_token(text)')").fetchone()[0] is None:
+            chybi = ["mcp.over_token"]
     finally:
         conn.close()
     if chybi:
-        raise SystemExit(f"Chybí schémata {', '.join(chybi)}: spusťte nejdřív rag-ingest (provede migraci).")
+        raise SystemExit(f"Chybí {', '.join(chybi)}: spusťte nejdřív rag-ingest (provede migraci).")
     uvicorn.run(build_app(), host=os.environ.get("MCP_HOST", "0.0.0.0"), port=int(os.environ.get("MCP_PORT", "8000")),
                 proxy_headers=True, forwarded_allow_ips="*", log_level="info")
 

@@ -836,7 +836,7 @@ def stav_dat(conn) -> dict:
           (SELECT max(datum) FROM steno.projev) AS posledni_den,
           (SELECT count(*) FROM tisky) AS tisku,
           (SELECT count(*) FROM pn) AS pn""") or {}
-    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("steno_last_result",))
+    r = _one(conn, "SELECT v FROM mcp.meta_verejne WHERE k = %s", ("steno_last_result",))
     raw = _json(r["v"]) if r else None
     if isinstance(raw, dict):
         # text chyby může obsahovat adresy a cesty, ven jde jen ok/ne a čísla
@@ -855,7 +855,7 @@ def stav_dat(conn) -> dict:
                 "chyba": bool(emb.get("chyba"))}
     else:
         out["steno_last_result"] = None
-    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
+    r = _one(conn, "SELECT v FROM mcp.meta_verejne WHERE k = %s", ("last_sync",))
     out["last_sync"] = r["v"] if r else None
     # dokumentu = dokumenty s textem; jen_pdf = tisky a PN, ke kterým psp.cz nemá DOCX; None = schéma ještě není
     out["texty"] = _one(conn, """SELECT
@@ -874,14 +874,16 @@ def stav_dat(conn) -> dict:
 
 # čas z tabulek PHP webu ('Y-m-d H:i:s' v místním čase) → timestamptz
 _PHP_CAS = "(NULLIF({}, '')::timestamp AT TIME ZONE 'Europe/Prague')"
-# klíč reel_state, kam bot reels ukládá poslední výsledek hlídání dat (hlidac_reels.hlidani.SNAPSHOT_KEY)
+# klíč reel_state, kam bot reels ukládá poslední výsledek hlídání dat (hlidac_reels.hlidani.SNAPSHOT_KEY); MCP ho čte
+# přes pohled mcp.reel_state_verejne (schema.sql), který propustí jen tento klíč
 HLIDANI_KLIC = "hlidani_vystrahy"
 
 
 def _stav_hlidani(conn) -> dict:
     """Hlídání dat (audit 2026-11-21): historie běhů synchronizace, fronta AI rozboru a výstrahy bota reels.
     Bez textů chyb; None = tabulka zatím neexistuje."""
-    t = _one(conn, """SELECT to_regclass('sync_beh') IS NOT NULL AS sync, to_regclass('reel_state') IS NOT NULL AS reel,
+    t = _one(conn, """SELECT to_regclass('sync_beh') IS NOT NULL AS sync,
+                             to_regclass('mcp.reel_state_verejne') IS NOT NULL AS reel,
                              to_regclass('tisk_text') IS NOT NULL AND to_regclass('pn_text') IS NOT NULL AS ai""")
     out: dict = {"sync": None, "ai_fronta": None, "vystrahy": None}
     if t["sync"]:
@@ -899,7 +901,7 @@ def _stav_hlidani(conn) -> dict:
         out["ai_fronta"] = _one(conn, f"""SELECT count(*) AS cekajicich, min(od) AS nejstarsi_cekajici,
               greatest((SELECT max({_PHP_CAS.format('ai_at')}) FROM tisk_text),
                        (SELECT max({_PHP_CAS.format('ai_at')}) FROM pn_text)) AS posledni_vysledek,
-              (SELECT {_PHP_CAS.format('v')} FROM meta WHERE k = 'ai_queue_seen_at') AS klient_naposledy
+              (SELECT {_PHP_CAS.format('v')} FROM mcp.meta_verejne WHERE k = 'ai_queue_seen_at') AS klient_naposledy
             FROM (SELECT {_PHP_CAS.format('x.fetched_at')} AS od FROM tisk_text x
                    WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
                   UNION ALL
@@ -907,7 +909,7 @@ def _stav_hlidani(conn) -> dict:
                    WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
                      AND EXISTS (SELECT 1 FROM pn p WHERE p.id_dokument = x.id_dokument)) q""")
     if t["reel"]:
-        r = _one(conn, "SELECT value FROM reel_state WHERE key = %s", (HLIDANI_KLIC,))
+        r = _one(conn, "SELECT value FROM mcp.reel_state_verejne WHERE key = %s", (HLIDANI_KLIC,))
         raw = _json(r["value"]) if r else None
         if isinstance(raw, dict) and isinstance(raw.get("vystrahy"), list):
             out["vystrahy"] = {"zkontrolovano": raw.get("at"),

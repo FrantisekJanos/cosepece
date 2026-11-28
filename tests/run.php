@@ -3294,6 +3294,49 @@ check('v praxi: poznámka o podkladech se z pole nejistoty vypustí, odkaz na ch
         $pxSan(['nejiste' => 'Úřad by mohl účet blokovat, text neuvádí lhůtu ani výpis z rejstříku.'])['nejiste']],
     [null, true, null, null, 'PN odkazuje na § 30a, jehož znění v poskytnutých textech není.', 'Úřad by mohl účet blokovat, text neuvádí lhůtu ani výpis z rejstříku.']);
 check('v praxi: neznámý typ a příliš mnoho skupin', [$pxSan(['typ' => 'revoluce'])['typ'], count($pxSan(['koho_se_tyka' => ['a', 'b', 'c', 'd', 'e', 7]])['koho_se_tyka'])], ['vecna_zmena', 4]);
+// znění s vyznačením změn přiložené za odůvodněním: samostatný blok, citace z něj neprojde (staré a nové znění za sebou)
+$pxAtt = "Pozměňovací návrh poslance Karla Vzorného\nV čl. II se slova „1. října 2027“ nahrazují slovy „17. října 2027“.\n"
+    . "Odůvodnění:\nÚčinnost se posouvá. Tučně jsou vyznačeny navrhované změny.\n Platné znění s\u{00a0}vyznačením navrhovaných změn:\n"
+    . "Čl. II\nTento zákon nabývá účinnosti dnem 1. října 2027 17. října 2027.";
+[, $pxAttJust] = Hlidac\PnPractice::split($pxAtt);
+check('v praxi: znění s vyznačením změn za odůvodněním se oddělí (věta s tečkou nadpis není)', [
+    Hlidac\PnPractice::attachment($pxAttJust),
+    Hlidac\PnPractice::attachment("Kauce má omezit agentury.\nÚplné znění s vyznačenými změnami\n§ 1")[1],
+    Hlidac\PnPractice::attachment("Důvod.\nVyznačení navrhovaných změn a doplnění   \n§ 2")[1],
+    Hlidac\PnPractice::attachment("Důvod.\nZákon č. 1/2000 Sb., o něčem, ve znění pozdějších předpisů s vyznačením navrhovaných změn\n§ 3")[0],
+    Hlidac\PnPractice::attachment("Pohyb mimo vyznačené trasy se zakazuje.\nZměny jsou vyznačeny proti tisku 270/0.")[1],
+    Hlidac\PnPractice::attachment('Kauce má omezit zakládání účelových agentur.'),
+], [['Účinnost se posouvá. Tučně jsou vyznačeny navrhované změny.', "Platné znění s\u{00a0}vyznačením navrhovaných změn:\nČl. II\nTento zákon nabývá účinnosti dnem 1. října 2027 17. října 2027."],
+    "Úplné znění s vyznačenými změnami\n§ 1", "Vyznačení navrhovaných změn a doplnění   \n§ 2", 'Důvod.', '', ['Kauce má omezit zakládání účelových agentur.', '']]);
+$pxAttPrompt = Hlidac\PnPractice::prompt('Návrh zákona', $pxAtt, '', $pxSettings, true);
+check('v praxi: prompt má přiložené znění jako vlastní blok mimo odůvodnění; bez přílohy blok chybí', [
+    str_contains($pxAttPrompt, "(jeho vlastní tvrzení, ne ověřená fakta):\n<<<\nÚčinnost se posouvá. Tučně jsou vyznačeny navrhované změny.\n>>>"),
+    str_contains($pxAttPrompt, "není to text změn a necituje se z něj):\n<<<\nPlatné znění s\u{00a0}vyznačením navrhovaných změn:\nČl. II"),
+    str_contains($pxPrompt1, 'necituje se z něj)'), str_contains($pxAttPrompt, 'kontrola odmítla')], [true, true, false, false]);
+check('v praxi: důvod minulého odmítnutí na konci promptu (zkrácený na jeden řádek)',
+    str_ends_with(Hlidac\PnPractice::prompt('Návrh zákona', $pxAtt, '', $pxSettings, true, "žádná citace není\n doslova v textu změn"),
+        "\n- Tvou předchozí odpověď na tento PN kontrola odmítla s důvodem: žádná citace není doslova v textu změn. Tuto chybu neopakuj."), true);
+$pxAttSan = function (array $over) use ($pxAtt): array|string {
+    try {
+        return Hlidac\PnPractice::sanitize($over + ['typ' => 'technicka_uprava', 'co_se_meni' => 'Účinnost by se posunula.', 'po' => 'Zákon by platil od 17. října 2027.',
+            'v_praxi' => 'Ustanovení by se uplatnilo o 16 dnů později.', 'citace' => ['V čl. II se slova „1. října 2027“ nahrazují slovy „17. října 2027“.']], $pxAtt, '', 'Karel Vzorný', true);
+    } catch (DomainException $ex) {
+        return $ex->getMessage();
+    }
+};
+check('v praxi: citace z přiloženého znění neprojde, z textu změn ano', [
+    $pxAttSan(['citace' => ['Tento zákon nabývá účinnosti dnem 1. října 2027 17. října 2027.']]), $pxAttSan([])['citace'] ?? null],
+    ['žádná citace není doslova v textu změn', ['V čl. II se slova „1. října 2027“ nahrazují slovy „17. října 2027“.']]);
+// počet dnů jako rozdíl dvou dat téhož měsíce (čísla do 12 se neověřují, jedničku by pojistka jinak neměla čím podložit)
+$pxDays = Hlidac\PnPractice::dayDifferences('Od 1. října 2027 do 17. října 2027, pak 3. 10. 2027; jinde 20. listopadu 2027 a 5. října 2028.');
+sort($pxDays);
+check('v praxi: rozdíly dnů jen mezi daty téhož měsíce a roku', [$pxDays, Hlidac\PnPractice::dayDifferences('1. ledna 2028 a 1. července 2027')], [[2, 14, 16], []]);
+check('v praxi: rozdíl dvou dat projde jen jako počet dnů', [
+    $pxAttSan([])['v_praxi'] ?? null, $pxAttSan(['v_praxi' => 'Šlo by o 16denní posun.'])['v_praxi'] ?? null,
+    $pxAttSan(['v_praxi' => 'Poplatek by byl 16 Kč.']), $pxAttSan(['v_praxi' => 'Ustanovení by se uplatnilo o 15 dnů později.']),
+    Hlidac\PnPractice::unsupported('Lhůta by byla 16 dnů.', [])],
+    ['Ustanovení by se uplatnilo o 16 dnů později.', 'Šlo by o 16denní posun.', 'pole v_praxi uvádí číslo, které v textech není: 16',
+        'pole v_praxi uvádí číslo, které v textech není: 15', ['16']]);
 
 // průchod s falešným CLI: rychlý model, pak silnější u PN s nálezem; odmítnutý výsledek se zkusí nejvýš praxe_tries×
 $fixtureBill(9950, 0, []);
@@ -3338,6 +3381,9 @@ check('v praxi: uložené vysvětlení rychlého modelu bez příkladu', [$pxRow
     ['claude-haiku-5-5', Hlidac\PnPractice::VERSION, 'Agentura práce by musela složit 5 000 000 Kč.', null, 0]);
 check('v praxi: odmítnutý výsledek je chyba s důvodem a čeká na další pokus', [$pxRow(99952)['praxe_json'], str_starts_with((string)$pxRow(99952)['praxe_error'], 'Pojistka: pole v_praxi uvádí číslo'),
     (int)$pxRow(99952)['praxe_tries'], array_column($practice->queue(10, 9950), 'id')], [null, true, 1, [99952]]);
+check('v praxi: opakovaný pokus dostane v zadání důvod odmítnutí, první pokus ne', [
+    str_contains($practice->queue(10, 9950)[0]['prompt'], 'kontrola odmítla s důvodem: pole v_praxi uvádí číslo, které v textech není:'),
+    count(array_filter($pxQueue, fn(array $item): bool => str_contains($item['prompt'], 'kontrola odmítla')))], [true, 0]);
 $practice->run(10, 9950);
 $practice->run(10, 9950);
 check('v praxi: po třech neúspěších se PN z fronty vyřadí', [(int)$pxRow(99952)['praxe_tries'], $practice->queue(10, 9950)], [3, []]);
@@ -3475,6 +3521,18 @@ check('v praxi: první neúspěch v nové verzi začíná počitadla od nuly', a
 $practice->saveError(99961, 'Pojistka: zkouška', true);
 $practice->saveError(99961, 'Pojistka: zkouška', true);
 check('v praxi: v aktuální verzi tři odmítnutí PN z fronty vyřadí', array_column($practice->queue(10, 9960), 'id'), [99962]);
+// --praxe --retry: vyčerpané pokusy zpět do fronty; výpadek spojení (ne pojistka) se nevrací
+$fxExhausted = array_column(db()->all('SELECT id_dokument FROM pn_text WHERE praxe_tries >= 3 AND praxe_try_v = ' . Hlidac\PnPractice::VERSION), 'id_dokument');
+db()->run("UPDATE pn_text SET praxe_tries = 3, praxe_try_v = ?, praxe_error = 'claude CLI: výpadek' WHERE id_dokument = 99962", [Hlidac\PnPractice::VERSION]);
+$fxRetried = $practice->retryRejected();
+$fxRetryQueue = $practice->queue(10, 9960);
+check('v praxi: vrácení odmítnutých do fronty (počitadlo od nuly, důvod zůstává a jde do zadání)', [$fxRetried, array_column($fxRetryQueue, 'id'),
+    (int)db()->value('SELECT praxe_tries FROM pn_text WHERE id_dokument = 99961'), str_contains($fxRetryQueue[0]['prompt'] ?? '', 'kontrola odmítla s důvodem: zkouška.'),
+    $practice->retryRejected()], [count($fxExhausted), [99961], 0, true, 0]);
+foreach ($fxExhausted as $fxId) {
+    db()->run('UPDATE pn_text SET praxe_tries = 3 WHERE id_dokument = ?', [$fxId]);
+}
+db()->run('UPDATE pn_text SET praxe_tries = 0, praxe_try_v = NULL, praxe_error = NULL WHERE id_dokument = 99962');
 // uložená vysvětlení: jedno v pořádku, jedno s číslem, které novými pojistkami neprojde (součet lhůty s číslem paragrafu)
 $fxGood = Hlidac\PnPractice::sanitize($pxResult, $pxPn, Hlidac\PnText::normativePart($pxBill), 'Karel Vzorný', false);
 $fxBad = array_replace($fxGood, ['v_praxi' => 'Agentura by složila 5 000 000 Kč do 61 dnů.']);

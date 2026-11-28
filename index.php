@@ -7,6 +7,7 @@ require_once __DIR__ . '/app/bootstrap.php';
 
 use Hlidac\Repo;
 use Hlidac\Scorer;
+use Hlidac\Updates;
 use Hlidac\View;
 
 $w = Scorer::weights(config());
@@ -28,6 +29,8 @@ $watch = $repo->watchlist(config('watch_laws', []), config('watch_tisky', []));
 $authors = $repo->topAuthors(7, 6);
 $bills = $repo->bills('flagged', '', 12);
 $maxAuthor = $authors[0]['n'] ?? 1;
+// řádek „Poslední změna“: nejnovější aktualizace a pět předchozích po rozbalení
+$updates = Updates::latest(db(), 6);
 
 View::header('Přehled', 'prehled');
 ?>
@@ -38,6 +41,8 @@ View::header('Přehled', 'prehled');
   </div>
   <?php View::searchForm(); ?>
 </section>
+
+<?php View::updatesBar($updates, $repo->lastSync()); ?>
 
 <section class="kpis" aria-label="Klíčová čísla">
   <div class="card kpi">

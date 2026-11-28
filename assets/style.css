@@ -135,6 +135,33 @@ code { background: #F0F0EC; padding: 1px 5px; border-radius: 4px; }
 .alert h3 a:hover { text-decoration: underline; }
 .alert p { margin: 0; font-size: 14px; color: var(--ink-2); }
 
+/* řádek „Poslední změna“ na přehledu (prvek details, rozbalí se i bez JavaScriptu) */
+.updates summary { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; cursor: pointer; list-style: none; font-size: 14px; border-radius: 14px; }
+.updates summary::-webkit-details-marker { display: none; }
+.updates summary::after { content: ''; flex-shrink: 0; width: 9px; height: 9px; margin: 5px 4px 0 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); }
+.updates[open] summary::after { margin-top: 10px; transform: rotate(-135deg); }
+.updates summary:hover::after { border-color: var(--ink); }
+.updates-line { flex: 1; min-width: 0; line-height: 1.75; }
+.updates .score { padding: 1px 6px; vertical-align: 1px; }
+.updates-list { list-style: none; margin: 0; padding: 0; }
+.updates-list li { display: flex; gap: 16px; padding: 12px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; line-height: 1.75; }
+.updates-list time { width: 104px; flex-shrink: 0; font-size: 13px; color: var(--muted); }
+.updates-list li > span { flex: 1; min-width: 0; }
+.updates-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 20px; border-top: 1px solid var(--line-soft); font-size: 14px; }
+.updates-foot a { font-weight: 500; }
+
+/* časová osa aktualizací (/aktualizace) */
+.upd { padding: 4px 20px 20px; }
+.upd-day { margin: 20px 0 12px; font-size: 17px; }
+.upd-item { position: relative; margin-left: 5px; padding: 0 0 14px 24px; border-left: 1px solid var(--line); scroll-margin-top: 16px; }
+.upd-item::before { content: ''; position: absolute; left: -5px; top: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.upd-item:target::before { background: var(--accent); box-shadow: 0 0 0 4px #E8EEFD; }
+.upd-when { margin: 0; font-size: 13px; color: var(--muted); }
+.upd-when time { font-weight: 600; color: var(--ink); font-size: 14px; }
+.upd-item .alert { padding: 12px 0; }
+.upd-more summary { padding: 10px 0; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--accent); }
+.upd-note { margin: 8px 0 0; }
+
 /* sledované a autoři */
 .watch { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; text-decoration: none; color: var(--ink); }
 .watch:hover { border-color: var(--accent); color: var(--ink); }
@@ -201,6 +228,8 @@ a.plain:hover { text-decoration: underline; }
   .search { width: 100%; }
   .search input { flex: 1; width: auto; max-width: none; }
   .alert { flex-direction: column; gap: 4px; }
+  .updates-list li { flex-direction: column; gap: 2px; }
+  .updates-list time { width: auto; }
   .timeline li { grid-template-columns: 80px 14px 1fr; }
   .timeline li::before { left: 100px; }
 }

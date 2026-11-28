@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Složitější vysvětlení píše silnější model',
+        'Vysvětlení, co by pozměňovací návrh změnil v praxi, dosud silnější model přepisoval jen u návrhů s procedurálním nálezem. Nově přepíše všechny věcné změny, protože i procedurálně čistý návrh může být věcně složitý (typicky daně). U přesunů peněz v rozpočtu a vypuštění částí návrhu zůstává vysvětlení rychlého modelu. Z části „Z textu neplyne“ zároveň mizí poznámky, které popisovaly podklady modelu místo návrhu. Děkujeme čtenáři, který na obojí upozornil.',
+        [111], false],
     ['2026-11-27', 'Vysvětlení pozměňovacích návrhů v API a pro AI asistenty',
         'Vysvětlení, co by pozměňovací návrh změnil v praxi, je nově i ve strojových výstupech. V API ho vrací detail tisku s parametrem pn=1 (api.php?tisk=311&pn=1) spolu se seznamem návrhů, předkladateli a jejich kluby. AI asistenti připojení přes MCP ho dostanou v detailu návrhu a v seznamu návrhů k tisku jednu větu. Jde o text od jazykového modelu, který se může mýlit a do skóre nevstupuje.',
         [106], false],

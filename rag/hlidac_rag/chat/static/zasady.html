@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Zásady chatbota cosepece.cz</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.55 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 1.6rem; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Zásady chatbota cosepece.cz</h1>
+
+<h2>Co chatbot je</h2>
+<p>Chatbot odpovídá na otázky o sněmovních tiscích, pozměňovacích návrzích, projevech a hlasováních 10. volebního
+období. Odpovídá umělá inteligence, ne člověk. Může se mýlit: důležité údaje si ověřte v odkazovaném zdroji. Není to
+právní poradenství. Chatbot popisuje postup a obsah návrhů, nehodnotí strany ani politiky, neradí, koho volit, a
+nepředpovídá hlasování.</p>
+
+<h2>Odkud data jsou</h2>
+<p>Data pocházejí z otevřených dat Poslanecké sněmovny PČR (psp.cz). Chatbot z psp.cz nic nestahuje, na originál
+jen odkazuje. Zdroj v každém náhledu: Poslanecká sněmovna PČR, psp.cz. Projev označený jako neautorizovaný neprošel
+jazykovou korekturou a může se ještě změnit. Text označený jako rozbor AI je odvozený text modelu, ne fakt.</p>
+
+<h2>Co se ukládá</h2>
+<ul>
+  <li>Ukládá se text vašich zpráv a odpovědí, kontext stránky, ze které se ptáte (čísla tisku nebo PN), zdroje odpovědi
+  a údaje o využití služby.</li>
+  <li>Neukládá se IP adresa v čitelné podobě, žádný účet ani e-mail. Pro limity se drží jen krátkodobý otisk adresy,
+  ze kterého se adresa zpětně přepočítat nedá.</li>
+  <li>Texty konverzací se mažou po 30 dnech. Kód odpovědi a otisk jejího textu se drží 12 měsíců. Nahlášené odpovědi
+  se drží do vyřízení.</li>
+  <li>Konverzaci můžete smazat hned tlačítkem „Smazat konverzaci“, smaže se i na serveru.</li>
+  <li>Texty konverzací anonymně procházíme kvůli zlepšování chatbota. Nepište osobní údaje.</li>
+</ul>
+
+<h2>Cookie</h2>
+<p>Cookie <code>chat_sid</code> vznikne odesláním první zprávy a slouží jen provozu služby (propojení vašich zpráv a
+limity). Ve skrytém testovacím režimu se navíc používá cookie <code>chat_beta</code>.</p>
+
+<h2>Třetí strany</h2>
+<ul>
+  <li>Anthropic: zpracovává vaše dotazy a podklady z dat (model Claude).</li>
+  <li>OpenAI: zpracovává hledaný výraz při vyhledávání podle významu (embedding).</li>
+  <li>Cloudflare: ověření, že nejste automat (Turnstile), a doručování webu.</li>
+</ul>
+
+<h2>Kód odpovědi a nahlášení chyby</h2>
+<p>Každá odpověď má kód o osmi znacích. Na adrese <code>/chat-api/overit?kod=…</code> si můžete ověřit, že
+odpověď s daným kódem opravdu vznikla (stránka řekne jen „existuje“ nebo „neexistuje“ a datum, text neukáže). Chybnou
+nebo nevhodnou odpověď můžete nahlásit tlačítkem „Nahlásit“; uloží se kód a váš důvod, bez účtu. Nahlášení prověříme,
+případně opravíme a přidáme do kontrolních scénářů.</p>
+
+<h2>Provozovatel a kontakt</h2>
+<p>{{PROVOZOVATEL}}</p>
+</body>
+</html>

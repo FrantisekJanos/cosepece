@@ -2,9 +2,9 @@ name: rag-tests
 
 on:
   push:
-    paths: ["rag/**", ".github/workflows/rag-tests.yml"]
+    paths: ["rag/**", "docker/docker-compose.yml", "docker/.env.example", ".github/workflows/rag-tests.yml", "tisk.php", "pripravovane.php", "app/Url.php"]
   pull_request:
-    paths: ["rag/**", ".github/workflows/rag-tests.yml"]
+    paths: ["rag/**", "docker/docker-compose.yml", "docker/.env.example", ".github/workflows/rag-tests.yml", "tisk.php", "pripravovane.php", "app/Url.php"]
 
 permissions:
   contents: read
@@ -38,3 +38,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python -m pytest -q tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test "tests/js/*.test.mjs"

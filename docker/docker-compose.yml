@@ -56,18 +56,105 @@ services:
     command: ["sh", "-c", "while true; do python -m hlidac_rag.run; sleep 3600; done"]
     depends_on: [db]
 
-  # MCP server (Streamable HTTP na /mcp, přístup tokenem: python -m hlidac_rag.tokens add <jméno>)
+  # MCP server (Streamable HTTP na /mcp). Tokeny: docker compose exec rag-ingest python -m hlidac_rag.tokens add <jméno>
+  # (MCP sám do mcp.token zapisovat nesmí). Běží pod rolí mcp_ro jen pro čtení (rag/hlidac_rag/role.py, spec chatbota 21):
+  # roli založí/obnoví docker compose exec -e MCP_DB_PASSWORD rag-ingest python -m hlidac_rag.role
   mcp:
     build:
       context: ../rag
     restart: unless-stopped
     environment:
       <<: *ragenv
+      # přepíše PGUSER a PGPASSWORD z *ragenv: heslo superuseru hlidac do kontejneru nejde
+      PGUSER: mcp_ro
+      PGPASSWORD: ${MCP_DB_PASSWORD}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:*,127.0.0.1:*}
       MCP_RATE_PER_DAY: ${MCP_RATE_PER_DAY:-20000}
       MCP_RATE_PER_MINUTE: ${MCP_RATE_PER_MINUTE:-120}
     ports:
       - "${MCP_BIND:-127.0.0.1:8102}:8000"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    depends_on: [db]
+
+  # Chatbot (/chat-api/*, spec chatbota 16 a 21). Stejný obraz jako mcp, ale vlastní výčet prostředí (nikdy *ragenv:
+  # nese heslo superuseru hlidac), role chat_ro (čtení dat) a chat_rw (jen schéma chat), síť jen chatdb (bez web, mcp,
+  # reels). Role založí: docker compose exec -e CHAT_DB_RO_PASSWORD -e CHAT_DB_RW_PASSWORD rag-ingest python -m hlidac_rag.role
+  # Nevyplněná proměnná = prázdná = výchozí hodnota z kódu (hlidac_rag/chat/config.py). Změna limitu: .env a
+  # docker compose up -d chat. Vypnutí: CHAT_ZAPNUTO=0.
+  chat:
+    build:
+      context: ../rag
+    restart: unless-stopped
+    command: ["python", "-m", "hlidac_rag.chat"]
+    environment:
+      PGHOST: db
+      PGDATABASE: hlidac
+      CHAT_DB_RO_USER: chat_ro
+      CHAT_DB_RO_PASSWORD: ${CHAT_DB_RO_PASSWORD:-}
+      CHAT_DB_RW_USER: chat_rw
+      CHAT_DB_RW_PASSWORD: ${CHAT_DB_RW_PASSWORD:-}
+      # vlastní klíče s limitem útraty (ne klíč ingestu): při úniku je škoda omezená limitem
+      ANTHROPIC_API_KEY: ${CHAT_ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${CHAT_OPENAI_API_KEY:-}
+      # embedding dotazu stejným modelem jako indexace v rag-ingest; denní strop embeddingů je společný s MCP
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-large}
+      EMBED_DOTAZY_DEN: ${EMBED_DOTAZY_DEN:-20000}
+      SENTRY_DSN: ${SENTRY_DSN_RAG:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # tajemství
+      CHAT_BETA_KLIC: ${CHAT_BETA_KLIC:-}
+      CHAT_BETA_KOD: ${CHAT_BETA_KOD:-}
+      CHAT_EVAL_KLIC: ${CHAT_EVAL_KLIC:-}
+      CHAT_TURNSTILE_SITEKEY: ${CHAT_TURNSTILE_SITEKEY:-}
+      CHAT_TURNSTILE_SECRET: ${CHAT_TURNSTILE_SECRET:-}
+      CHAT_TELEGRAM_TOKEN: ${CHAT_TELEGRAM_TOKEN:-}
+      CHAT_TELEGRAM_CHAT: ${CHAT_TELEGRAM_CHAT:-}
+      # vypínač, režim, model a limity (spec 10.2 a 11.1)
+      CHAT_ZAPNUTO: ${CHAT_ZAPNUTO:-}
+      CHAT_REZIM: ${CHAT_REZIM:-}
+      CHAT_MODEL: ${CHAT_MODEL:-}
+      CHAT_EFFORT: ${CHAT_EFFORT:-}
+      CHAT_KARTA_JAKO: ${CHAT_KARTA_JAKO:-}
+      CHAT_MODEL_NOUZOVY: ${CHAT_MODEL_NOUZOVY:-}
+      CHAT_PRAH_NOUZE: ${CHAT_PRAH_NOUZE:-}
+      CHAT_CENIK: ${CHAT_CENIK:-}
+      CHAT_ROZPOCET_DEN_USD: ${CHAT_ROZPOCET_DEN_USD:-}
+      CHAT_ROZPOCET_MESIC_USD: ${CHAT_ROZPOCET_MESIC_USD:-}
+      CHAT_PODIL_HODINA: ${CHAT_PODIL_HODINA:-}
+      CHAT_STROP_TAHU_USD: ${CHAT_STROP_TAHU_USD:-}
+      CHAT_STROP_RELACE_USD: ${CHAT_STROP_RELACE_USD:-}
+      CHAT_STROP_IP_USD: ${CHAT_STROP_IP_USD:-}
+      CHAT_ZPRAV_RELACE_MIN: ${CHAT_ZPRAV_RELACE_MIN:-}
+      CHAT_ZPRAV_RELACE_DEN: ${CHAT_ZPRAV_RELACE_DEN:-}
+      CHAT_MAX_KOL: ${CHAT_MAX_KOL:-}
+      CHAT_ROZPOCET_VYSLEDKU_TOKENU: ${CHAT_ROZPOCET_VYSLEDKU_TOKENU:-}
+      CHAT_MAX_TOKENU_ODPOVEDI: ${CHAT_MAX_TOKENU_ODPOVEDI:-}
+      CHAT_HISTORIE_MAX_TOKENU: ${CHAT_HISTORIE_MAX_TOKENU:-}
+      CHAT_MAX_TAHU_KONVERZACE: ${CHAT_MAX_TAHU_KONVERZACE:-}
+      CHAT_MAX_ZNAKU_ZPRAVY: ${CHAT_MAX_ZNAKU_ZPRAVY:-}
+      CHAT_KARTA_MAX_TOKENU: ${CHAT_KARTA_MAX_TOKENU:-}
+      CHAT_SOUBEH_CELKEM: ${CHAT_SOUBEH_CELKEM:-}
+      CHAT_SOUBEH_IP: ${CHAT_SOUBEH_IP:-}
+      CHAT_TURNSTILE_ZPRAV: ${CHAT_TURNSTILE_ZPRAV:-}
+      CHAT_TURNSTILE_HODIN: ${CHAT_TURNSTILE_HODIN:-}
+      CHAT_TURNSTILE_PRISNY_PRAH: ${CHAT_TURNSTILE_PRISNY_PRAH:-}
+      CHAT_DRZENI_TAHU_S: ${CHAT_DRZENI_TAHU_S:-}
+      CHAT_MAX_NAHLASENI_DEN: ${CHAT_MAX_NAHLASENI_DEN:-}
+      CHAT_PROVOZOVATEL: ${CHAT_PROVOZOVATEL:-}
+    ports:
+      - "${CHAT_BIND:-127.0.0.1:8103}:8000"
+    networks: [chatdb]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: 0.75
     depends_on: [db]
 
   # Reels: Telegram bot pro schválení a publikaci na FB, IG a Threads; video do fronty dá reels-enqueue (viz reels/README.md)
@@ -112,9 +199,15 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # default pro ostatní služby, chatdb jen pro chat (chat tak nedosáhne na web, mcp ani reels)
+    networks: [default, chatdb]
 
 volumes:
   appdata:
   pgdata:
   reelsmedia:
   reelsinbox:
+
+networks:
+  # síť služby chat: jen chat a db; odchozí spojení do internetu (Anthropic, OpenAI, Turnstile, Telegram) zůstává
+  chatdb: {}

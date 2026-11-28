@@ -9,16 +9,19 @@ dependencies = [
   "mcp==2.3.0",
   "uvicorn==0.54.0",
   "sentry-sdk==2.75.0",
+  "anthropic==2.14.0",
+  "starlette==1.10.0",
+  "httpx2==2.16.2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pyyaml"]
 
 [tool.setuptools.packages.find]
 include = ["hlidac_rag*"]
 
 [tool.setuptools.package-data]
-hlidac_rag = ["schema.sql", "schema_*.sql"]
+hlidac_rag = ["schema.sql", "schema_*.sql", "chat/static/**/*"]
 
 [build-system]
 requires = ["setuptools>=68"]

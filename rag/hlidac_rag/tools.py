@@ -322,6 +322,37 @@ def _praxe(praxe_json: str | None, model: str | None) -> dict | None:
     return out
 
 
+# Stavy pn_vysledek (app/PnOutcome.php::STATES) a jejich popis; neznámý stav se vrací beze změny i jako popis.
+VYSLEDEK_POPIS = {
+    "prijat": "Přijat",
+    "castecne": "Přijat zčásti",
+    "zamitnut": "Zamítnut",
+    "nehlasovatelny": "Nehlasovalo se o něm (nehlasovatelný)",
+    "nezaznel": "Nezazněl ve 2. čtení",
+    "ceka": "Čeká na hlasování ve 3. čtení",
+    "neurceno": "Výsledek nelze určit",
+}
+
+
+def _vysledek(stav: str | None, pismena: str | None, hlasovani: str | None, stanovisko: str | None,
+              detail: bool = True) -> dict | None:
+    """Výsledek PN ve 3. čtení z tabulky pn_vysledek (sloupce ct, cislo, pismena, stav, hlasovani, stanovisko).
+
+    stav a popis jsou jako v DB (ne vymýšlené); pismena = písmena návrhu ze souhrnu po 2. čtení („B1, E“) jako seznam
+    {"pismeno"}, hlasovani = JSON seznam {cislo, id, vysledek A/N, varianta} z hlasovani, stanovisko = stanovisko
+    výboru. Bez řádku v pn_vysledek (stav None) vrací None. detail=False (seznam v pn_k_tisku, kvůli limitu odpovědi)
+    vrací jen stav, popis a pismena; hlasovani a stanovisko jen s detail=True (get_pn)."""
+    if not stav:
+        return None
+    out = {"stav": stav, "popis": VYSLEDEK_POPIS.get(stav, stav),
+           "pismena": [{"pismeno": p.strip()} for p in (pismena or "").split(",") if p.strip()]}
+    if detail:
+        hl = _json(hlasovani)
+        out["hlasovani"] = hl if isinstance(hl, list) else []
+        out["stanovisko"] = stanovisko
+    return out
+
+
 def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, offset: int = 0) -> dict:
     where, params = ["p.ct = %s"], [ct]
     if id_osoba:
@@ -334,8 +365,10 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
     total = sum(a["n"] for a in autori)
     off = _offset(offset)
     rows = _rows(conn, f"""SELECT p.cislo, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_json, t.laws, t.chars,
-                                  t.praxe_json
+                                  t.praxe_json, v.stav AS v_stav, v.pismena AS v_pismena,
+                                  v.hlasovani AS v_hlasovani, v.stanovisko AS v_stanovisko
                            FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument
+                                     LEFT JOIN pn_vysledek v ON v.ct = p.ct AND v.cislo = p.cislo
                            WHERE {w} ORDER BY p.cas, p.cislo LIMIT %s OFFSET %s""",
                  (*params, _limit(limit, 100), off))
     for r in rows:
@@ -344,6 +377,7 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
         # z vysvětlení „v praxi“ jen hlavní věta (celé je v get_pn), aby se seznam vešel do limitu odpovědi
         praxe = _json(r.pop("praxe_json", None))
         r["v_praxi"] = praxe.get("co_se_meni") if isinstance(praxe, dict) else None
+        r["vysledek"] = _vysledek(r.pop("v_stav", None), r.pop("v_pismena", None), r.pop("v_hlasovani", None), r.pop("v_stanovisko", None), detail=False)
         r["url_psp"] = f"{PSP}/sqw/sd.sqw?cd={r['cislo']}&o={OBDOBI}"
     return {"ct": ct, "celkem": total, "offset": off, "dalsi_offset": _next_offset(total, off, len(rows)),
             "pocet": len(rows), "predkladatele": [(a["osoba"], a["n"]) for a in autori], "pn": rows}
@@ -352,10 +386,15 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
 def get_pn(conn, cislo: int) -> dict:
     """Detail PN. Text se čte po celcích přes osnova_textu(pn=…) a get_cel(pn=…); osnova_dostupna říká, zda už je."""
     r = _one(conn, """SELECT p.cislo, p.ct, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_model, t.ai_json, t.signals,
-                             t.laws, t.chars, t.docx_url, t.praxe_json, t.praxe_model
-                      FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument WHERE p.cislo = %s""", (cislo,))
+                             t.laws, t.chars, t.docx_url, t.praxe_json, t.praxe_model,
+                             v.stav AS v_stav, v.pismena AS v_pismena, v.hlasovani AS v_hlasovani,
+                             v.stanovisko AS v_stanovisko
+                      FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument
+                                LEFT JOIN pn_vysledek v ON v.ct = p.ct AND v.cislo = p.cislo
+                      WHERE p.cislo = %s""", (cislo,))
     if not r:
         raise ValueError(f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám.")
+    r["vysledek"] = _vysledek(r.pop("v_stav", None), r.pop("v_pismena", None), r.pop("v_hlasovani", None), r.pop("v_stanovisko", None))
     r["ai"] = _json(r.pop("ai_json"))
     r["v_praxi"] = _praxe(r.pop("praxe_json", None), r.pop("praxe_model", None))
     r["priznaky"] = _json(r.pop("signals"))
@@ -366,6 +405,49 @@ def get_pn(conn, cislo: int) -> dict:
         (cislo,))["ok"])
     r["projevy"], r["projevy_celkem"] = _projevy_pn(conn, cislo)
     return r
+
+
+def upozorneni(conn, ct: int | None = None, limit: int = 20) -> dict:
+    """Poslední upozornění webu (tabulka alerts: alert_key, kind, ct, event_at, title, body, score), nejnovější první.
+
+    ct omezí na jeden tisk; bez něj jdou všechna, včetně upozornění na připravované materiály (ct = 0).
+    typ = kind, text = title, detail = body, cas = event_at."""
+    where, params = ("WHERE ct = %s", [ct]) if ct is not None else ("", [])
+    rows = _rows(conn, f"""SELECT alert_key, kind AS typ, ct, event_at AS cas, title AS text, body AS detail, score
+                           FROM alerts {where} ORDER BY event_at DESC, created_at DESC, alert_key LIMIT %s""",
+                 (*params, _limit(limit, 20)))
+    for r in rows:
+        key = r.pop("alert_key")
+        if r["ct"]:
+            r["url"] = f"{SITE}/tisk/{r['ct']}"
+        elif r["typ"] == "prep_narizeni":
+            r["url"] = f"{SITE}/pripravovane?druh=narizeni#prep-{key.split(':', 1)[-1]}"
+        elif r["typ"].startswith("prep_"):
+            r["url"] = f"{SITE}/pripravovane#prep-{key.split(':', 1)[-1]}"
+        else:
+            r["url"] = f"{SITE}/upozorneni"
+    return {"pocet": len(rows), "upozorneni": rows}
+
+
+def pripravovane(conn, q: str = "", pid: str | None = None, limit: int = 20) -> dict:
+    """Připravované zákony u vlády, které ještě nejsou ve Sněmovně (tabulka pripravovane: pid, nazev, resort, faze,
+    stav, pripominky_do, dni, mimo_plan…). pid je přesná shoda, q hledá v názvu a resortu bez ohledu na velikost
+    písmen. druh je vždy "zakon" (tabulka nese jen zákony); url vede do VeKLEP (odok.gov.cz)."""
+    where, params = [], []
+    if pid:
+        where.append("pid = %s")
+        params.append(pid.strip())
+    if q and q.strip():
+        like = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(nazev ILIKE %s OR resort ILIKE %s)")
+        params += [like, like]
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = _rows(conn, f"""SELECT pid, nazev, 'zakon' AS druh, resort, faze, stav, pripominky_do, dni
+                           FROM pripravovane {w} ORDER BY zmeneno DESC NULLS LAST, pid LIMIT %s""",
+                 (*params, _limit(limit, 20)))
+    for r in rows:
+        r["url"] = f"https://odok.gov.cz/portal/veklep/material/{r['pid']}/"
+    return {"pocet": len(rows), "materialy": rows}
 
 
 def _projevy_pn(conn, cislo: int, limit: int = 20) -> tuple[list[dict], int]:
@@ -754,7 +836,7 @@ def stav_dat(conn) -> dict:
           (SELECT max(datum) FROM steno.projev) AS posledni_den,
           (SELECT count(*) FROM tisky) AS tisku,
           (SELECT count(*) FROM pn) AS pn""") or {}
-    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("steno_last_result",))
+    r = _one(conn, "SELECT v FROM mcp.meta_verejne WHERE k = %s", ("steno_last_result",))
     raw = _json(r["v"]) if r else None
     if isinstance(raw, dict):
         # text chyby může obsahovat adresy a cesty, ven jde jen ok/ne a čísla
@@ -773,7 +855,7 @@ def stav_dat(conn) -> dict:
                 "chyba": bool(emb.get("chyba"))}
     else:
         out["steno_last_result"] = None
-    r = _one(conn, "SELECT v FROM meta WHERE k = %s", ("last_sync",))
+    r = _one(conn, "SELECT v FROM mcp.meta_verejne WHERE k = %s", ("last_sync",))
     out["last_sync"] = r["v"] if r else None
     # dokumentu = dokumenty s textem; jen_pdf = tisky a PN, ke kterým psp.cz nemá DOCX; None = schéma ještě není
     out["texty"] = _one(conn, """SELECT
@@ -792,14 +874,16 @@ def stav_dat(conn) -> dict:
 
 # čas z tabulek PHP webu ('Y-m-d H:i:s' v místním čase) → timestamptz
 _PHP_CAS = "(NULLIF({}, '')::timestamp AT TIME ZONE 'Europe/Prague')"
-# klíč reel_state, kam bot reels ukládá poslední výsledek hlídání dat (hlidac_reels.hlidani.SNAPSHOT_KEY)
+# klíč reel_state, kam bot reels ukládá poslední výsledek hlídání dat (hlidac_reels.hlidani.SNAPSHOT_KEY); MCP ho čte
+# přes pohled mcp.reel_state_verejne (schema.sql), který propustí jen tento klíč
 HLIDANI_KLIC = "hlidani_vystrahy"
 
 
 def _stav_hlidani(conn) -> dict:
     """Hlídání dat (audit 2026-11-21): historie běhů synchronizace, fronta AI rozboru a výstrahy bota reels.
     Bez textů chyb; None = tabulka zatím neexistuje."""
-    t = _one(conn, """SELECT to_regclass('sync_beh') IS NOT NULL AS sync, to_regclass('reel_state') IS NOT NULL AS reel,
+    t = _one(conn, """SELECT to_regclass('sync_beh') IS NOT NULL AS sync,
+                             to_regclass('mcp.reel_state_verejne') IS NOT NULL AS reel,
                              to_regclass('tisk_text') IS NOT NULL AND to_regclass('pn_text') IS NOT NULL AS ai""")
     out: dict = {"sync": None, "ai_fronta": None, "vystrahy": None}
     if t["sync"]:
@@ -817,7 +901,7 @@ def _stav_hlidani(conn) -> dict:
         out["ai_fronta"] = _one(conn, f"""SELECT count(*) AS cekajicich, min(od) AS nejstarsi_cekajici,
               greatest((SELECT max({_PHP_CAS.format('ai_at')}) FROM tisk_text),
                        (SELECT max({_PHP_CAS.format('ai_at')}) FROM pn_text)) AS posledni_vysledek,
-              (SELECT {_PHP_CAS.format('v')} FROM meta WHERE k = 'ai_queue_seen_at') AS klient_naposledy
+              (SELECT {_PHP_CAS.format('v')} FROM mcp.meta_verejne WHERE k = 'ai_queue_seen_at') AS klient_naposledy
             FROM (SELECT {_PHP_CAS.format('x.fetched_at')} AS od FROM tisk_text x
                    WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
                   UNION ALL
@@ -825,7 +909,7 @@ def _stav_hlidani(conn) -> dict:
                    WHERE x.ai_at IS NULL AND x.chars > 0 AND {zive}
                      AND EXISTS (SELECT 1 FROM pn p WHERE p.id_dokument = x.id_dokument)) q""")
     if t["reel"]:
-        r = _one(conn, "SELECT value FROM reel_state WHERE key = %s", (HLIDANI_KLIC,))
+        r = _one(conn, "SELECT value FROM mcp.reel_state_verejne WHERE key = %s", (HLIDANI_KLIC,))
         raw = _json(r["value"]) if r else None
         if isinstance(raw, dict) and isinstance(raw.get("vystrahy"), list):
             out["vystrahy"] = {"zkontrolovano": raw.get("at"),

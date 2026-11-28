@@ -452,3 +452,130 @@ def test_husty_prah_vzdalenosti_pg(pgconn, monkeypatch):
     assert hledani.husty(pgconn, vektor, "projev", "", [], model="text-embedding-3-large")
     opacny = [-x for x in vektor]
     assert hledani.husty(pgconn, opacny, "projev", "", [], model="text-embedding-3-large") == []
+
+
+# ---------------------------------------------------------------- čítač v DB (úloha 5)
+
+class _FakeSpojeni:
+    """Kontext spojení s falešným čítačem: SELECT rag.pricti_dotaz() vrací rostoucí číslo, případně vyhodí chybu."""
+
+    def __init__(self, stav: dict):
+        self.stav = stav
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        self.stav.setdefault("sql", []).append(sql)
+        if "pricti_dotaz" in sql:
+            if self.stav.get("chyba"):
+                raise RuntimeError("db nedostupná")
+            self.stav["pocet"] = self.stav.get("pocet", 0) + 1
+        return self
+
+    def fetchone(self):
+        return (self.stav["pocet"],)
+
+
+def test_po_stropu_se_hleda_jen_podle_slov(monkeypatch):
+    k, volani = _klient_s(_ok)
+    monkeypatch.setattr(hledani, "_klient", lambda: k)
+    stav = {"pocet": 1}   # dnes už jeden dotaz padl (jiný proces)
+    monkeypatch.setattr(hledani, "_citac_spojeni", lambda: _FakeSpojeni(stav))
+    monkeypatch.setenv("EMBED_DOTAZY_DEN", "2")
+    assert hledani.vektor_dotazu("první") is not None
+    assert hledani.vektor_dotazu("druhý") is None
+    assert "denní limit" in hledani.posledni_chyba()
+    assert len(volani) == 1
+    assert "SET TRANSACTION READ WRITE" in stav["sql"][0]
+    conn = FakeConn([dict(ok=True)], [dict(ok=True)], [dict(n=0)], [])
+    r = tools.hledej_v_projevech(conn, "elektřiny")
+    assert r["rezim_pouzity"] == "fulltext" and "denní limit" in r["poznamka"]
+
+
+def test_chyba_citace_v_db_hledani_nespadne(monkeypatch, caplog):
+    k, volani = _klient_s(_ok)
+    monkeypatch.setattr(hledani, "_klient", lambda: k)
+    monkeypatch.setattr(hledani, "_citac_spojeni", lambda: _FakeSpojeni({"chyba": True}))
+    assert hledani.vektor_dotazu("něco") is None
+    assert "počítadlo" in hledani.posledni_chyba()
+    assert not volani
+    assert "čítač dotazů v DB" in caplog.text
+
+
+def test_timeout_klienta_vraci_duvod_misto_vyjimky(monkeypatch):
+    def spi(req):
+        time.sleep(1.0)
+        return _ok(req)
+    k, _ = _klient_s(spi)
+    monkeypatch.setattr(hledani, "_klient", lambda: k)
+    monkeypatch.setattr(hledani, "TIMEOUT", 0.2)
+    conn = FakeConn([dict(ok=True)], [dict(ok=True)], [dict(n=0)], [])
+    r = tools.hledej_v_projevech(conn, "elektřiny")
+    assert r["rezim_pouzity"] == "fulltext"
+    assert "nedorazil" in r["poznamka"]
+
+
+@pytest.mark.pg
+@bez_db
+def test_citac_je_v_db_a_sdili_ho_dva_klienti():
+    from hlidac_rag import db
+
+    a, b = db.connect(), db.connect()
+    try:
+        db.migrate(a)
+        if not a.execute("SELECT current_database()").fetchone()[0].endswith("_test"):
+            pytest.skip("databáze nekončí na _test")
+        a.execute("DELETE FROM rag.dotazy_den")
+        a.commit()
+        assert a.execute("SELECT rag.pricti_dotaz()").fetchone()[0] == 1
+        a.commit()
+        assert b.execute("SELECT rag.pricti_dotaz()").fetchone()[0] == 2
+        b.commit()
+        assert a.execute("SELECT pocet FROM rag.dotazy_den").fetchone()[0] == 2
+        a.commit()
+        a.execute("DELETE FROM rag.dotazy_den")
+        a.commit()
+    finally:
+        a.close()
+        b.close()
+
+
+@pytest.mark.pg
+@bez_db
+def test_citac_funguje_pod_roli_jen_pro_cteni(monkeypatch):
+    import psycopg
+    from hlidac_rag import db
+
+    c = db.connect()
+    try:
+        db.migrate(c)
+        if not c.execute("SELECT current_database()").fetchone()[0].endswith("_test"):
+            pytest.skip("databáze nekončí na _test")
+        c.execute("DELETE FROM rag.dotazy_den")
+        c.commit()
+        c.autocommit = True
+        c.execute("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'test_citac_ro') THEN "
+                  "CREATE ROLE test_citac_ro NOLOGIN; END IF; END $$")
+        c.execute("GRANT USAGE ON SCHEMA rag TO test_citac_ro")
+        c.execute("GRANT EXECUTE ON FUNCTION rag.pricti_dotaz() TO test_citac_ro")
+        c.execute("REVOKE ALL ON rag.dotazy_den FROM test_citac_ro")
+        c.autocommit = False
+        c.execute("SET ROLE test_citac_ro")
+        assert c.execute("SELECT rag.pricti_dotaz()").fetchone()[0] == 1
+        assert c.execute("SELECT rag.pricti_dotaz()").fetchone()[0] == 2
+        c.commit()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("INSERT INTO rag.dotazy_den (den, pocet) VALUES ('2000-01-01', 1)")
+        c.rollback()
+        c.execute("RESET ROLE")
+        c.execute("DELETE FROM rag.dotazy_den")
+        c.commit()
+    finally:
+        c.rollback()
+        c.execute("RESET ROLE")
+        c.commit()
+        c.close()

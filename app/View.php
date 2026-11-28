@@ -216,6 +216,26 @@ final class View
         return preg_match('/^G-[A-Z0-9]+$/', $id) === 1 ? $id : '';
     }
 
+    /**
+     * Značka skriptu chatu (služba /chat-api, adresa je pevná). Výchozí stav (bez konfigurace, 'vypnuto',
+     * neznámý režim) nevypíše nic. Ve skrytém režimu ('skryte') jen s cookie chat_beta nebo parametrem ?chat=;
+     * jejich platnost ověřuje služba, PHP hodnotu nikdy nevypisuje ani nekontroluje.
+     */
+    public static function chatTag(array $chat, array $cookies, array $get): string
+    {
+        $rezim = $chat['rezim'] ?? 'vypnuto';
+        if ($rezim === 'skryte') {
+            $maCookie = is_string($cookies['chat_beta'] ?? null) && $cookies['chat_beta'] !== '';
+            $maKod = is_string($get['chat'] ?? null) && $get['chat'] !== '';
+            if (!$maCookie && !$maKod) {
+                return '';
+            }
+        } elseif ($rezim !== 'verejne') {
+            return '';
+        }
+        return '<script defer src="/chat-api/w.js"></script>' . "\n";
+    }
+
     public static function footer(): void
     {
         $issues = (string)config('issues_url', '');
@@ -227,6 +247,7 @@ final class View
   <p><a href="<?= e(url('zmeny')) ?>">Co jsme změnili</a> · <a href="<?= e(url('zakon')) ?>">Zákony</a> · <a href="<?= e(url('data')) ?>">Data a API</a> · <a href="<?= e(url('mcp')) ?>">Pro AI asistenty (MCP)</a> · <a href="https://github.com/FrantisekJanos/cosepece">Zdrojový kód (AGPL-3.0)</a><?php if ($ga4 !== ''): ?> · <?= self::cookieSettingsLink((array)config('ga4', [])) ?><?php endif; ?><?php if ($issues !== ''): ?> · <a href="<?= e($issues) ?>">Našli jste chybu nebo máte podnět? Napište nám.</a><?php endif; ?></p>
 </footer>
 <?= $ga4 ?>
+<?= self::$noAnalytics ? '' : self::chatTag((array)config('chat', []), $_COOKIE, $_GET) ?>
 </main>
 </body>
 </html>

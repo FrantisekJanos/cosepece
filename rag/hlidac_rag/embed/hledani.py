@@ -1,7 +1,9 @@
 """Hledání podle významu: embedding dotazu, husté (vektorové) hledání v rag.usek a slučování RRF.
 
-Volání API pro dotazy mají denní strop EMBED_DOTAZY_DEN (výchozí 20 000, den = datum UTC, počítadlo v paměti procesu
-MCP, dotazy z cache se nepočítají); po vyčerpání se hledá jen podle slov.
+Volání API pro dotazy mají denní strop EMBED_DOTAZY_DEN (výchozí 20 000, den = datum UTC, dotazy z cache se nepočítají); po vyčerpání se hledá jen
+podle slov. Počítadlo je v DB (rag.dotazy_den, zvyšuje ho funkce rag.pricti_dotaz()), takže ho sdílí MCP i chat;
+spojení pro něj dodá nastav_citac(). Bez nastaveného spojení (vývoj, testy) se počítá v paměti procesu. Když čítač
+nejde zapsat, hledá se jen podle slov a zaloguje se varování.
 
 Embedding dotazu má tvrdý strop TIMEOUT (vlákno s future, ne jen timeout spojení) a jeden pokus; při chybě nebo bez
 klíče vrátí None a důvod nechá v posledni_chyba(), nástroj pak hledá lexikálně a řekne to v odpovědi.
@@ -11,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from typing import Callable
 from datetime import datetime, timezone
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +41,15 @@ _zamek = threading.Lock()
 _stav = threading.local()
 _klienti: dict[tuple, Klient] = {}
 DOTAZY_DEN = 20000       # výchozí denní strop embeddingů dotazů (EMBED_DOTAZY_DEN), napříč všemi tokeny MCP
-_den = {"datum": None, "pocet": 0}   # počítadlo volání API za den (UTC) v paměti procesu MCP
+_den = {"datum": None, "pocet": 0}   # záložní počítadlo v paměti procesu, jen když není nastaveno spojení do DB
+_citac_spojeni: Callable | None = None   # továrna: () -> kontext spojení (with ... as conn) s právem na rag.pricti_dotaz()
+
+
+def nastav_citac(fn: Callable | None) -> None:
+    """Nastaví továrnu spojení pro čítač v DB (MCP: vlastní spojení, chat: své); None = čítač v paměti procesu.
+    Továrna vrací kontext, který při výstupu transakci potvrdí (psycopg.connect() i pool.connection())."""
+    global _citac_spojeni
+    _citac_spojeni = fn
 
 
 def max_vzdalenost() -> float:
@@ -62,14 +73,29 @@ def _denni_strop() -> int:
 
 
 def _zapocti_dotaz() -> bool:
-    """Započte jedno volání API do denního stropu; False = strop pro dnešek (UTC) vyčerpán. Volá se pod zámkem."""
-    dnes = _dnes()
-    if _den["datum"] != dnes:
-        _den.update(datum=dnes, pocet=0)
-    if _den["pocet"] >= _denni_strop():
+    """Započte jedno volání API do denního stropu; False = strop pro dnešek (UTC) vyčerpán nebo čítač nejde zapsat.
+
+    S nastaveným spojením zvýší čítač v DB funkcí rag.pricti_dotaz() na zvláštním spojení v transakci READ WRITE
+    (transakce nástroje je jen pro čtení). Chyba DB = False a varování, hledání pak jede podle slov."""
+    strop = _denni_strop()
+    if _citac_spojeni is None:
+        with _zamek:
+            dnes = _dnes()
+            if _den["datum"] != dnes:
+                _den.update(datum=dnes, pocet=0)
+            if _den["pocet"] >= strop:
+                return False
+            _den["pocet"] += 1
+            return True
+    try:
+        with _citac_spojeni() as conn:
+            conn.execute("SET TRANSACTION READ WRITE")
+            pocet = conn.execute("SELECT rag.pricti_dotaz()").fetchone()[0]
+    except Exception as e:   # pojistka: hledání nesmí spadnout kvůli čítači
+        log.warning("embeddingy: čítač dotazů v DB nejde zapsat (%s), hledá se jen podle slov", type(e).__name__)
+        _stav.chyba_citace = True
         return False
-    _den["pocet"] += 1
-    return True
+    return pocet <= strop
 
 
 def aktualni_model() -> str:
@@ -131,9 +157,11 @@ def vektor_dotazu(dotaz: str) -> list[float] | None:
         if klic in _cache:
             _cache.move_to_end(klic)
             return _cache[klic]
-        if not _zapocti_dotaz():
-            _stav.chyba = "denní limit sémantického hledání vyčerpán"
-            return None
+    _stav.chyba_citace = False
+    if not _zapocti_dotaz():
+        _stav.chyba = ("počítadlo denního limitu sémantického hledání není dostupné" if _stav.chyba_citace
+                       else "denní limit sémantického hledání vyčerpán")
+        return None
     fut = _pool.submit(klient.embed, [dotaz])
     try:
         vektory, _ = fut.result(timeout=TIMEOUT)

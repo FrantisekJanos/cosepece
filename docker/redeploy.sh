@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Redeploy produkce na serveru: stáhne main z GitHubu, sestaví kontejnery, novou verzi ještě před výměnou
-# otestuje a po výměně ověří. Když ověření po výměně selže, vrátí předchozí verzi.
+# otestuje a po výměně ověří. Když ověření webu nebo MCP po výměně selže, vrátí předchozí verzi. Služba chat jde až
+# po nich a její selhání (start, /chat-api/zdravi, kouřový eval) nasazení nevrací: chat se jen vypne.
+# SKIP_CHAT_EVAL=1 přeskočí kouřový eval (stojí ~0,40 USD).
 # Spuštění na serveru: ~/hlidac-zakonu/docker/redeploy.sh [commit]   (bez parametru origin/main)
 # config.php a .env v docker/ git ignoruje, data jsou ve volumech appdata a pgdata.
 set -euo pipefail
+# proměnné CHAT_* zděděné ze shellu (operátor si načetl .env přes set -a) by v docker compose přebily docker/.env:
+# po CHAT_ZAPNUTO=0 v .env by chat běžel dál zapnutý. Platí jen docker/.env.
+unset ${!CHAT_*}
 cd "$(dirname "$0")/.."
 TARGET=${1:-origin/main}
 PREVIOUS=$(git rev-parse HEAD)
@@ -35,12 +40,20 @@ if [ -n "$WEB_IMAGE" ] && [ "${SKIP_PREFLIGHT:-0}" != 1 ]; then
     exit 1
   fi
 fi
-docker compose up -d
+# služba chat se spouští až po ověření webu a MCP (níže): její selhání nesmí zastavit ani vrátit nasazení webu
+# seznam služeb se načte předem: prázdný (config selhal) = chyba, jinak by `up -d` bez argumentů spustil i chat
+SLUZBY=$(docker compose config --services | grep -vx chat || true)
+if [ -z "$SLUZBY" ]; then
+  echo "CHYBA: seznam služeb z docker compose config je prázdný, nic se nespouští." >&2
+  exit 1
+fi
+docker compose up -d $SLUZBY
 docker image prune -f >/dev/null
 docker compose ps --format '{{.Service}} {{.Status}}'
-# chybějící BIND v .env nesmí skript ukončit (set -e + pipefail); kontrola musí skončit 200
-BIND=$(grep -E '^BIND=' .env 2>/dev/null | cut -d= -f2 || true)
-MCP_BIND=$(grep -E '^MCP_BIND=' .env 2>/dev/null | cut -d= -f2 || true)
+# hodnota proměnné z .env bez uvozovek (compose CHAT_ZAPNUTO="1" čte jako 1); chybějící nesmí skript ukončit
+env_hodnota() { grep -E "^$1=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true; }
+BIND=$(env_hodnota BIND)
+MCP_BIND=$(env_hodnota MCP_BIND)
 check() {
   # kontejnery po startu chvíli nabíhají: až 30 s opakujeme
   local name=$1 url=$2 code=000
@@ -60,5 +73,55 @@ if [ "$FAIL" = 1 ] && [ "${ROLLBACK:-0}" != 1 ] && [ "$PREVIOUS" != "$CURRENT" ]
   echo "CHYBA: nová verze po spuštění neodpovídá, vracím předchozí ($PREVIOUS)." >&2
   ROLLBACK=1 SKIP_PREFLIGHT=1 "$0" "$PREVIOUS" || echo "CHYBA: návrat k předchozí verzi se nepovedl, je potřeba ruční zásah." >&2
   exit 1
+fi
+
+# chat (spec chatbota 14.2 a 16): start, /chat-api/zdravi, potom kouřový eval přes živý web. Jakékoli selhání chatu
+# jen vypíše varování a chat vypne; web a MCP běží dál a návratový kód redeploye se nemění.
+chat_varuj() { echo "VAROVÁNÍ (chat): $*" >&2; }
+if [ "$FAIL" = 1 ]; then
+  chat_varuj "web nebo MCP neodpovídá, chat se nespouští ani nevyměňuje."
+elif docker compose config --services | grep -qx chat; then
+  CHAT_BIND=$(env_hodnota CHAT_BIND)
+  CHAT_ZAPNUTO=$(env_hodnota CHAT_ZAPNUTO | tr '[:upper:]' '[:lower:]')
+  if ! docker compose up -d chat; then
+    chat_varuj "služba nenastartovala (web a MCP běží dál)."
+  elif ! check chat "http://${CHAT_BIND:-127.0.0.1:8103}/chat-api/zdravi"; then
+    # nejčastěji chybí role chat_ro/chat_rw nebo jejich hesla: zastavit, ať se kontejner neopakovaně nerestartuje
+    chat_varuj "neodpovídá na /chat-api/zdravi, zastavuji ho (docker compose logs chat)."
+    docker compose stop chat || true
+  elif [ "${ROLLBACK:-0}" = 1 ] || [ "${SKIP_CHAT_EVAL:-0}" = 1 ]; then
+    echo "chat: kouřový eval přeskočen"
+  elif ! [[ "$CHAT_ZAPNUTO" =~ ^(1|true|ano|yes|on)$ ]]; then   # stejné hodnoty jako config.py
+    echo "chat: vypnutý (CHAT_ZAPNUTO), kouřový eval se nespouští"
+  else
+    # 10 tahů přes https://cosepece.cz (Cloudflare, Caddy, Turnstile obchází jen klíč CHAT_EVAL_KLIC), ~0,40 USD
+    echo "chat: kouřový eval…"
+    # strop 15 minut: zaseknutý běh (kód 124) se počítá jako nedoběhnutý, ne jako selhání kvality
+    if timeout 900 docker compose run --rm --no-deps -T chat \
+        python -m eval.chat.chat_eval --sada kour --beta-z-prostredi; then
+      echo "chat: kouřový eval prošel"
+    else
+      KOD=$?
+      if [ "$KOD" = 1 ]; then
+        # selhání kontrol kvality (neutralita, injekce, citace): chat se sám vypne (CHAT_ZAPNUTO=0 v .env)
+        chat_varuj "kouřový eval neprošel, vypínám chat (CHAT_ZAPNUTO=0 v docker/.env; zapnutí: oprava, CHAT_ZAPNUTO=1, docker compose up -d chat)."
+        if ! sed -i 's/^CHAT_ZAPNUTO=.*/CHAT_ZAPNUTO=0/' .env; then
+          # bez této větve by set -e ukončil skript a chat by zůstal zapnutý
+          chat_varuj "nepodařilo se přepsat docker/.env, zastavuji chat (nastav CHAT_ZAPNUTO=0 ručně)."
+          docker compose stop chat || true
+        # CHAT_ZAPNUTO=0 explicitně (přebije cokoli v prostředí) a kontrola v kontejneru; jinak chat zastavit
+        elif ! CHAT_ZAPNUTO=0 docker compose up -d chat; then
+          chat_varuj "restart s CHAT_ZAPNUTO=0 selhal, zastavuji chat."
+          docker compose stop chat || true
+        elif [ "$(docker compose exec -T chat printenv CHAT_ZAPNUTO 2>/dev/null || true)" != 0 ]; then
+          chat_varuj "chat po restartu nehlásí CHAT_ZAPNUTO=0, zastavuji ho."
+          docker compose stop chat || true
+        fi
+      else
+        # 2 = služba nedostupná, limit nebo strop ceny evalu: kvalita neověřena, chat zůstává zapnutý
+        chat_varuj "kouřový eval nedoběhl (kód $KOD: služba nedostupná, limit nebo strop ceny), chat zůstává zapnutý; zkontroluj ručně."
+      fi
+    fi
+  fi
 fi
 exit "$FAIL"

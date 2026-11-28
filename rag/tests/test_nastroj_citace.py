@@ -445,7 +445,7 @@ def test_over_citaci_pres_call(fake_pool):
     r = t.fn(citace=CITACE, klic="10/35/10/6")
     assert r["shoda"] == "presne" and r["klic"] == "10/35/10/6"
     assert conn.sql[0] == "SET TRANSACTION READ ONLY" and conn.sql[1].startswith("SET LOCAL statement_timeout")
-    assert conn.sql[-1].startswith("INSERT INTO mcp.volani") and conn.params[-1][1] == "over_citaci"
+    assert conn.sql[-1].startswith("SELECT mcp.zapis_volani(") and conn.params[-1][1] == "over_citaci"
 
 
 def test_over_citaci_chyba_je_toolerror(fake_pool):

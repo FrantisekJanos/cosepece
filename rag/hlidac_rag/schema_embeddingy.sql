@@ -39,3 +39,18 @@ CREATE INDEX IF NOT EXISTS usek_projev ON rag.usek (projev_id);
 CREATE INDEX IF NOT EXISTS usek_cel ON rag.usek (cel_id);
 CREATE INDEX IF NOT EXISTS usek_ct ON rag.usek (ct);
 CREATE INDEX IF NOT EXISTS usek_osoba ON rag.usek (id_osoba, datum);
+
+-- Denní čítač embeddingů dotazů (strop EMBED_DOTAZY_DEN), sdílený MCP a chatem. Role pro čtení do tabulky nepíšou,
+-- čítač zvyšuje jen funkce níže (SECURITY DEFINER, pevný search_path); EXECUTE dostanou role mcp_ro a chat_ro.
+CREATE TABLE IF NOT EXISTS rag.dotazy_den (
+  den    date PRIMARY KEY,
+  pocet  int NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION rag.pricti_dotaz() RETURNS int
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, rag, pg_temp AS $$
+  INSERT INTO rag.dotazy_den (den, pocet) VALUES ((now() AT TIME ZONE 'utc')::date, 1)
+  ON CONFLICT (den) DO UPDATE SET pocet = dotazy_den.pocet + 1
+  RETURNING pocet
+$$;
+REVOKE ALL ON FUNCTION rag.pricti_dotaz() FROM PUBLIC;

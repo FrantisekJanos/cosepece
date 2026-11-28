@@ -22,6 +22,8 @@ $base['pn_text']['enabled'] = false; // test běží bez sítě; analýzu textu 
 $base['tisk_text']['enabled'] = false;
 $base['history_html']['enabled'] = false; // stránky historie tisků se testují zvlášť s falešným stahováním
 $base['ai']['enabled'] = false;
+// kontrola vysvětlení „v praxi“ nezávislým modelem: vypnutá, ať se uložené vysvětlení ukáže hned; zapíná ji oddíl „Kontrola vysvětlení“
+$base['ai']['praxe_check'] = false;
 $base['pn_outcome']['enabled'] = false; // souhrny PN se stahují z psp.cz; čtení a párování testujeme přímo
 file_put_contents($tmp . '/config.php', '<?php return ' . var_export($base, true) . ';');
 putenv('HLIDAC_CONFIG=' . $tmp . '/config.php');
@@ -3311,7 +3313,7 @@ check('v praxi: odmítnutí (číslo mimo text, hodnoticí slovo, jméno předkl
     $pxSan(['v_praxi' => 'Podle Vzorného by agentura složila 5 000 000 Kč.']),
     $pxSan(['citace' => ['Kauce má omezit zakládání účelových agentur.']]),
     $pxSan(['po' => ' ']),
-], ['pole v_praxi uvádí číslo, které v textech není: 2368', 'hodnoticí slovo „lepší“', 'jméno předkladatele ve vysvětlení', 'žádná citace není doslova v textu změn', 'chybí pole po']);
+], ['pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není: 2368', 'hodnoticí slovo „lepší“', 'jméno předkladatele ve vysvětlení', 'žádná citace není doslova v textu změn', 'chybí pole po']);
 check('v praxi: úvod „Předkladatel uvádí, že“ se z tvrzení odstraní (web ho doplňuje sám)',
     [$pxSan(['podle_predkladatele' => 'Předkladatelka uvádí, že kauce omezí účelové agentury.'])['podle_predkladatele'], $pxSan(['podle_predkladatele' => 'Podle předkladatele návrh nic nestojí.'])['podle_predkladatele']],
     ['Kauce omezí účelové agentury.', 'Návrh nic nestojí.']);
@@ -3364,8 +3366,8 @@ check('v praxi: rozdíl dvou dat projde jen jako počet dnů', [
     $pxAttSan([])['v_praxi'] ?? null, $pxAttSan(['v_praxi' => 'Šlo by o 16denní posun.'])['v_praxi'] ?? null,
     $pxAttSan(['v_praxi' => 'Poplatek by byl 16 Kč.']), $pxAttSan(['v_praxi' => 'Ustanovení by se uplatnilo o 15 dnů později.']),
     Hlidac\PnPractice::unsupported('Lhůta by byla 16 dnů.', [])],
-    ['Ustanovení by se uplatnilo o 16 dnů později.', 'Šlo by o 16denní posun.', 'pole v_praxi uvádí číslo, které v textech není: 16',
-        'pole v_praxi uvádí číslo, které v textech není: 15', ['16']]);
+    ['Ustanovení by se uplatnilo o 16 dnů později.', 'Šlo by o 16denní posun.', 'pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není: 16',
+        'pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není: 15', ['16']]);
 
 // průchod s falešným CLI: rychlý model, pak silnější u PN s nálezem; odmítnutý výsledek se zkusí nejvýš praxe_tries×
 $fixtureBill(9950, 0, []);
@@ -3397,7 +3399,7 @@ FAKE);
 chmod($pxCli, 0755);
 $pxConfig = config();
 $pxConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $pxCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5', 'verify_model' => 'claude-sonnet-5-5',
-    'praxe_verify_types' => []];
+    'praxe_verify_types' => [], 'praxe_check' => false];
 $practice = new Hlidac\PnPractice(db(), $pxConfig);
 $pxScore = (int)db()->value('SELECT score FROM tisky WHERE ct = 9950');
 $pxQueue = $practice->queue(10, 9950);
@@ -3411,7 +3413,7 @@ check('v praxi: uložené vysvětlení rychlého modelu bez příkladu', [$pxRow
 check('v praxi: odmítnutý výsledek je chyba s důvodem a čeká na další pokus', [$pxRow(99952)['praxe_json'], str_starts_with((string)$pxRow(99952)['praxe_error'], 'Pojistka: pole v_praxi uvádí číslo'),
     (int)$pxRow(99952)['praxe_tries'], array_column($practice->queue(10, 9950), 'id')], [null, true, 1, [99952]]);
 check('v praxi: opakovaný pokus dostane v zadání důvod odmítnutí, první pokus ne', [
-    str_contains($practice->queue(10, 9950)[0]['prompt'], 'kontrola odmítla s důvodem: pole v_praxi uvádí číslo, které v textech není:'),
+    str_contains($practice->queue(10, 9950)[0]['prompt'], 'kontrola odmítla s důvodem: pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není:'),
     count(array_filter($pxQueue, fn(array $item): bool => str_contains($item['prompt'], 'kontrola odmítla')))], [true, 0]);
 $practice->run(10, 9950);
 $practice->run(10, 9950);
@@ -4089,8 +4091,8 @@ check('kontrola hlášení: nové ustanovení nebo jiná část spustí novou ko
 check('kontrola hlášení: oprava s číslem mimo text neprojde pojistkami, vysvětlení zůstane a další zadání dostane důvod', [
     $chk->saveCheck(990001, ['po' => 'Lhůta by byla 777 dnů.'] + $chkFixed, 'claude-sonnet-5-5'), $chkRow($chkC)['kontrola_tries'], $chkRow($chkD)['kontrola'],
     db()->value('SELECT kontrola_error FROM hlaseni WHERE id = ?', [$chkC]), $chkPraxe()['po'],
-    str_contains((string)($chk->checkQueue(10)[0]['prompt'] ?? ''), 'kontrola odmítla s důvodem: pole po uvádí číslo, které v textech není: 777')],
-    [false, 1, null, 'Pojistka: pole po uvádí číslo, které v textech není: 777', 'Lhůta je 90 dnů.', true]);
+    str_contains((string)($chk->checkQueue(10)[0]['prompt'] ?? ''), 'kontrola odmítla s důvodem: pole po uvádí číslo, které v textu změn ani v návrhu zákona není: 777')],
+    [false, 1, null, 'Pojistka: pole po uvádí číslo, které v textu změn ani v návrhu zákona není: 777', 'Lhůta je 90 dnů.', true]);
 check('kontrola hlášení: oprava, která projde pojistkami, nahradí vysvětlení a původní zůstane u hlášení', [$chk->saveCheck(990001, $chkFixed, 'claude-sonnet-5-5'),
     $chkPraxe()['co_se_meni'], $chkPraxe()['po'], array_key_exists('kontrola', $chkPraxe()), db()->value('SELECT praxe_model FROM pn_text WHERE id_dokument = 990001'),
     $chkRow($chkC), $chkRow($chkD)['kontrola'], str_contains((string)db()->value('SELECT kontrola_puvodni FROM hlaseni WHERE id = ?', [$chkD]), 'z 30 na 90 dnů'),
@@ -4158,6 +4160,128 @@ $_GET = [];
 Hlidac\View::$noAnalytics = false;
 db()->run('DELETE FROM hlaseni');
 db()->run('DELETE FROM pn_text WHERE id_dokument IN (990001, 990002)');
+
+echo "\nKontrola vysvětlení v praxi\n";
+// pojistky: čísla věcných polí jen z textu změn a návrhu, příloha s vyznačením změn i uvnitř textu změn, dny k datům z textu
+$kxPn = "Pozměňovací návrh\nV čl. I bodě 2 se částka „1 000 Kč“ nahrazuje částkou „2 000 Kč“.\n"
+    . "Odůvodnění\nPoplatek pokryje náklady 30 000 Kč ročně. Lhůta platí od 1. března 2027 do 20. března 2027.";
+$kxBill = "Vládní návrh ZÁKON\nČl. I\n2. V § 5 se částka „500 Kč“ nahrazuje částkou „1 000 Kč“.\nDůvodová zpráva\nObecná část.";
+$kxClean = fn(array $over): array => Hlidac\PnPractice::sanitize(array_replace(['typ' => 'vecna_zmena', 'koho_se_tyka' => ['žadatelé'],
+    'co_se_meni' => 'Poplatek by se zvýšil.', 'pred' => 'Podle návrhu by poplatek byl 1 000 Kč.', 'pred_zdroj' => 'navrh', 'po' => 'Poplatek by byl 2 000 Kč.',
+    'v_praxi' => 'Žadatel by platil 2 000 Kč.', 'priklad' => null, 'podle_predkladatele' => null, 'nejiste' => null,
+    'citace' => ['V čl. I bodě 2 se částka „1 000 Kč“ nahrazuje částkou „2 000 Kč“.']], $over), $kxPn, $kxBill, 'Jan Novotný', true);
+$kxError = function (array $over) use ($kxClean): string {
+    try {
+        $kxClean($over);
+        return 'prošlo';
+    } catch (DomainException $ex) {
+        return $ex->getMessage();
+    }
+};
+check('pojistky: číslo jen z odůvodnění neprojde ve věcném poli, ve stavu před se vypustí, v příkladu projde', [
+    $kxError(['v_praxi' => 'Poplatek by pokryl 30 000 Kč ročně.']),
+    $kxClean(['pred' => 'Poplatek by pokryl 30 000 Kč ročně.'])['pred'],
+    $kxClean(['priklad' => 'Například: úřad by vybral 30 000 Kč.'])['priklad'],
+    $kxClean([])['v_praxi']],
+    ['pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není: 30000', null, 'Například: úřad by vybral 30 000 Kč.', 'Žadatel by platil 2 000 Kč.']);
+check('pojistky: počet dnů jen z dat v textu změn a jen jako dny (i se slovem mezi)', [
+    $kxError(['v_praxi' => 'Lhůta by trvala 19 dnů.']),
+    Hlidac\PnPractice::unsupported('Platilo by to o 16 kalendářních dnů později.', [], [16]),
+    Hlidac\PnPractice::unsupported('Šlo by o 16 % a 16 dnů.', [], [16]),
+    Hlidac\PnPractice::unsupported('Šlo by o 16denní posun.', [], [16])],
+    ['pole v_praxi uvádí číslo, které v textu změn ani v návrhu zákona není: 19', [], ['16'], []]);
+$kxAttPn = "Pozměňovací návrh\nV § 3 se číslo „25“ nahrazuje číslem „49“.\nPlatné znění s vyznačením navrhovaných změn\n§ 3\nNejvýše 25 49 % majetku.";
+check('pojistky: příloha s vyznačením změn se oddělí i z textu změn a nejde z ní citovat', [
+    Hlidac\PnPractice::parts($kxAttPn),
+    Hlidac\PnPractice::attachment("Důvod změny.\nV textu jsou vyznačeny navrhované změny\nDalší důvod.")[1],
+    Hlidac\PnPractice::sanitize(['co_se_meni' => 'Strop by se zvýšil.', 'po' => 'Strop by byl 49 %.', 'v_praxi' => 'Fond by mohl investovat víc.',
+        'citace' => ['Nejvýše 25 49 % majetku.', 'V § 3 se číslo „25“ nahrazuje číslem „49“.']], $kxAttPn, '', 'Jan Novotný', true)['citace']],
+    [["Pozměňovací návrh\nV § 3 se číslo „25“ nahrazuje číslem „49“.", '', "Platné znění s vyznačením navrhovaných změn\n§ 3\nNejvýše 25 49 % majetku."],
+        '', ['V § 3 se číslo „25“ nahrazuje číslem „49“.']]);
+$kxPrompt = Hlidac\PnPractice::prompt('Návrh zákona o poplatcích', $kxPn, $kxBill, Hlidac\PnPractice::settings([]), true);
+check('prompt: pravidla proti chybám z kontroly', [str_contains($kxPrompt, 'Popisuj jen tento PN.'), str_contains($kxPrompt, 'Nepiš pokuty, lhůty'),
+    str_contains($kxPrompt, 'Nepřipisuj PN změnu, kterou obsahuje už návrh.'), str_contains($kxPrompt, 'Nezávislá kontrola')], [true, true, true, false]);
+
+// kontrola nezávislým modelem: skrytí, přepis s výtkami, nová kontrola
+$fixtureBill(9970, 0, []);
+db()->run("INSERT INTO tisk_text (ct, text, chars, signals, fetched_at) VALUES (9970, ?, 100, '{}', ?)", [$kxBill, date('Y-m-d H:i:s')]);
+foreach ([[99971, 9971], [99972, 9972]] as [$kxId, $kxCislo]) {
+    db()->run("INSERT INTO pn (id_dokument, cislo, ct, id_osoba, osoba, cas, klub) VALUES (?, ?, 9970, 1, 'Jan Novotný', '2026-11-20 10:00:00', 'ODS')", [$kxId, $kxCislo]);
+    db()->run("INSERT INTO pn_text (id_dokument, ct, cislo, text, chars, laws, signals, rule_score, fetched_at) VALUES (?, 9970, ?, ?, 300, '', '{}', 0, ?)", [$kxId, $kxCislo, $kxPn, date('Y-m-d H:i:s')]);
+}
+$kxCli = $tmp . '/claude-kontrola.php';
+file_put_contents($kxCli, '#!' . PHP_BINARY . "\n" . <<<'FAKE'
+<?php
+$prompt = stream_get_contents(STDIN);
+$args = implode(' ', $argv);
+if (str_contains($args, '--model claude-opus-5-5')) {
+    // kontrola: vysvětlení se slovem „CHYBNE“ má chybu, ostatní drobnost
+    $result = str_contains($prompt, 'CHYBNE')
+        ? ['verdikt' => 'chyba', 'problemy' => [['pole' => 'v_praxi', 'zavaznost' => 'vysoka', 'popis' => 'Pokuta 500 000 Kč v textu není.', 'oprava' => null],
+            ['pole' => 'koho_se_tyka', 'zavaznost' => 'nizka', 'popis' => 'Obecné označení.', 'oprava' => null]]]
+        : ['verdikt' => 'drobnost', 'problemy' => [['pole' => 'po', 'zavaznost' => 'nizka', 'popis' => 'Mohlo by být stručnější.', 'oprava' => null]]];
+} else {
+    // přepis: s výtkami kontroly bez chyby
+    $fixed = str_contains($prompt, 'Nezávislá kontrola tvé předchozí verze') && str_contains($prompt, 'Pokuta 500 000 Kč v textu není.');
+    $result = ['typ' => 'vecna_zmena', 'koho_se_tyka' => ['žadatelé'], 'co_se_meni' => 'Poplatek by se zvýšil.', 'pred' => null, 'pred_zdroj' => null,
+        'po' => 'Poplatek by byl 2 000 Kč.', 'v_praxi' => $fixed ? 'Žadatel by platil 2 000 Kč.' : 'CHYBNE: žadatel by platil 2 000 Kč.',
+        'podle_predkladatele' => null, 'nejiste' => null, 'citace' => ['V čl. I bodě 2 se částka „1 000 Kč“ nahrazuje částkou „2 000 Kč“.']];
+}
+echo json_encode(['type' => 'result', 'is_error' => false, 'stop_reason' => 'end_turn', 'result' => json_encode($result, JSON_UNESCAPED_UNICODE)]);
+FAKE);
+chmod($kxCli, 0755);
+$kxConfig = config();
+$kxConfig['ai'] = ['enabled' => true, 'backend' => 'cli', 'cli_path' => $kxCli, 'cli_prefix' => [PHP_BINARY], 'model' => 'claude-haiku-5-5', 'verify_model' => 'claude-sonnet-5-5',
+    'praxe_check' => true, 'praxe_check_model' => 'claude-opus-5-5', 'praxe_rewrites' => 2];
+$kx = new Hlidac\PnPractice(db(), $kxConfig);
+$kxRow = fn(int $id): array => db()->one('SELECT praxe_json, praxe_at, praxe_zobrazit, praxe_kontrola, praxe_vytky, praxe_kontrola_for, praxe_kontrola_model,
+    praxe_kontrola_fails, praxe_prepis FROM pn_text WHERE id_dokument = ?', [$id]);
+$kxVisible = fn(int $id): bool => ((new Hlidac\Repo(db()))->pnTexts(9970)[$id]['praxe'] ?? null) !== null;
+$kxStore = $kx->saveResult(99971, ['typ' => 'vecna_zmena', 'co_se_meni' => 'Poplatek by se zvýšil.', 'po' => 'Poplatek by byl 2 000 Kč.',
+    'v_praxi' => 'CHYBNE: žadatel by platil 2 000 Kč.', 'citace' => ['V čl. I bodě 2 se částka „1 000 Kč“ nahrazuje částkou „2 000 Kč“.']], 'claude-sonnet-5-5');
+$kxQueue = $kx->checkQueue(10, 9970);
+check('kontrola: nové vysvětlení je skryté a čeká ve frontě kontroly s verzí a zadáním', [$kxStore, (int)$kxRow(99971)['praxe_zobrazit'], $kxVisible(99971),
+    array_column($kxQueue, 'id'), array_unique(array_column($kxQueue, 'kind')), ($kxQueue[0]['praxe_at'] ?? null) === $kxRow(99971)['praxe_at'],
+    str_contains($kxQueue[0]['prompt'] ?? '', 'Pozměňovací návrh č. 9971'), str_contains($kxQueue[0]['prompt'] ?? '', 'CHYBNE'), str_contains($kxQueue[0]['prompt'] ?? '', 'Odůvodnění předkladatele')],
+    [true, 0, false, [99971], ['praxe_kontrola'], true, true, true, true]);
+check('kontrola: verdikt chyba vysvětlení nechá skryté a uloží výtky', [$kx->runChecks(10, 9970), $kxRow(99971)['praxe_kontrola'], (int)$kxRow(99971)['praxe_zobrazit'],
+    $kxRow(99971)['praxe_kontrola_for'] === $kxRow(99971)['praxe_at'], $kxRow(99971)['praxe_kontrola_model'], count(json_decode((string)$kxRow(99971)['praxe_vytky'], true)), $kx->checkQueue(10, 9970)],
+    [['checked' => 1, 'errors' => 0], 'chyba', 0, true, 'claude-opus-5-5', 2, []]);
+$kxRewrite = $kx->queue(10, 9970, true);
+check('kontrola: chybné vysvětlení přepíše silnější model s předchozí verzí a výtkami se střední a vysokou závažností', [array_column($kxRewrite, 'id'),
+    str_contains($kxRewrite[0]['prompt'] ?? '', 'Nezávislá kontrola tvé předchozí verze'), str_contains($kxRewrite[0]['prompt'] ?? '', 'Pokuta 500 000 Kč v textu není.'),
+    str_contains($kxRewrite[0]['prompt'] ?? '', 'Obecné označení.'), str_contains($kxRewrite[0]['prompt'] ?? '', '"v_praxi":"CHYBNE')],
+    [[99971], true, true, false, true]);
+db()->run("UPDATE pn_text SET praxe_at = '2026-01-01 00:00:00', praxe_kontrola_for = '2026-01-01 00:00:00' WHERE id_dokument = 99971");
+check('kontrola: přepis uloží novou verzi, počítá přepisy a vrátí ji do kontroly', [$kx->run(10, 9970, true), json_decode((string)$kxRow(99971)['praxe_json'], true)['v_praxi'],
+    (int)$kxRow(99971)['praxe_prepis'], (int)$kxRow(99971)['praxe_zobrazit'], array_column($kx->checkQueue(10, 9970), 'id'), $kx->queue(10, 9970, true)],
+    [['reviewed' => 1, 'errors' => 0], 'Žadatel by platil 2 000 Kč.', 1, 0, [99971], []]);
+check('kontrola: verdikt bez chyby vysvětlení ukáže a vynuluje počet přepisů', [$kx->runChecks(10, 9970), $kxRow(99971)['praxe_kontrola'], (int)$kxRow(99971)['praxe_zobrazit'],
+    $kxVisible(99971), (int)$kxRow(99971)['praxe_prepis'], $kx->checkQueue(10, 9970)], [['checked' => 1, 'errors' => 0], 'drobnost', 1, true, 0, []]);
+check('kontrola: výsledek ke starší verzi se zahodí, neplatný verdikt se počítá jako chyba kontroly', [
+    $kx->saveCheck(99971, ['verdikt' => 'chyba', 'problemy' => []], 'claude-opus-5-5', '2000-01-01 00:00:00'), (int)$kxRow(99971)['praxe_zobrazit'],
+    $kx->saveCheck(99971, ['verdikt' => 'nevim'], 'claude-opus-5-5'), (int)$kxRow(99971)['praxe_kontrola_fails'], $kxRow(99971)['praxe_kontrola']],
+    [false, 1, false, 1, 'drobnost']);
+db()->run("UPDATE pn_text SET praxe_kontrola = 'chyba', praxe_zobrazit = 0, praxe_prepis = 2 WHERE id_dokument = 99971");
+check('kontrola: po praxe_rewrites přepisech se chybné vysvětlení už nepřepisuje a zůstane skryté', [$kx->queue(10, 9970, true), $kxVisible(99971),
+    (new Hlidac\Reports(db(), $kxConfig))->target(99971)], [[], false, null]);
+// vysvětlení od rychlého modelu, které ještě přepíše silnější: kontrola ho přeskočí, dokud silnější model nevyčerpá pokusy
+$kx->saveResult(99972, ['typ' => 'vecna_zmena', 'co_se_meni' => 'Poplatek by se zvýšil.', 'po' => 'Poplatek by byl 2 000 Kč.',
+    'v_praxi' => 'Žadatel by platil 2 000 Kč.', 'citace' => ['V čl. I bodě 2 se částka „1 000 Kč“ nahrazuje částkou „2 000 Kč“.']], 'claude-haiku-5-5');
+$kxPendingQueue = array_column($kx->checkQueue(10, 9970), 'id');
+db()->run('UPDATE pn_text SET praxe_tries = 3 WHERE id_dokument = 99972');
+check('kontrola: vysvětlení čekající na silnější model se nekontroluje, po vyčerpání jeho pokusů ano', [$kxPendingQueue, array_column($kx->checkQueue(10, 9970), 'id')], [[], [99972]]);
+check('kontrola: vypnutá kontrola nechá vysvětlení vidět hned a frontu kontroly nemá', [
+    (function () use ($kxConfig): array {
+        $off = new Hlidac\PnPractice(db(), ['ai' => ['praxe_check' => false] + $kxConfig['ai']] + $kxConfig);
+        $off->store(99972, ['typ' => 'vecna_zmena', 'co_se_meni' => 'x', 'po' => 'y', 'v_praxi' => 'z', 'citace' => []], 'claude-sonnet-5-5');
+        return [(int)db()->value('SELECT praxe_zobrazit FROM pn_text WHERE id_dokument = 99972'), $off->checkQueue(10, 9970)];
+    })()], [[1, []]]);
+check('kontrola: výtky bez střední a vysoké závažnosti jdou do zadání všechny, bez výtek nic', [
+    str_contains(Hlidac\PnPractice::feedback('{"v_praxi":"a"}', '[{"pole":"po","zavaznost":"nizka","popis":"Drobnost.","oprava":null}]'), '- po (nizka): Drobnost.'),
+    Hlidac\PnPractice::feedback('{"v_praxi":"a"}', '[]')], [true, '']);
+db()->run('DELETE FROM pn_text WHERE ct = 9970');
+db()->run('DELETE FROM pn WHERE ct = 9970');
 
 echo "\nVýstupy: $tmp\n";
 echo $failures === 0 ? "VŠE OK\n" : "CHYB: $failures\n";

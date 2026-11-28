@@ -643,13 +643,17 @@ def test_pg_get_pn_projevy(pgconn):
         cur.execute(f"CREATE TABLE {SCHEMA_WEB}.pn (cislo int, ct int, id_osoba int, osoba text, klub text, cas text, "
                     "id_dokument int)")
         cur.execute(f"""CREATE TABLE {SCHEMA_WEB}.pn_text (id_dokument int, ai_score int, ai_model text, ai_json text,
-                        signals text, laws text, chars int, docx_url text, praxe_json text, praxe_model text)""")
+                        signals text, laws text, chars int, docx_url text, praxe_json text, praxe_model text,
+                        praxe_zobrazit int NOT NULL DEFAULT 1)""")
         # vysvětlení „v praxi“ jen u PN 2244; interní poznámka „upravy“ se ven nevydává
         cur.execute(f"INSERT INTO {SCHEMA_WEB}.pn_text (id_dokument, praxe_json, praxe_model) VALUES (1, %s, %s)",
                     ('{"typ": "vecna_zmena", "koho_se_tyka": ["agentury práce"], "co_se_meni": "Kauce by vzrostla.", '
                      '"pred": null, "pred_zdroj": null, "po": "Kauce by byla 5 000 000 Kč.", "v_praxi": "Agentura by složila '
                      '5 000 000 Kč.", "priklad": null, "podle_predkladatele": null, "nejiste": null, '
                      '"citace": ["V čl. I se částka nahrazuje."], "upravy": ["vypuštěno: příklad"]}', "claude-haiku-5-5"))
+        # PN 2246 má vysvětlení, které kontrola nepustila (praxe_zobrazit = 0): ven se nevydává
+        cur.execute(f"INSERT INTO {SCHEMA_WEB}.pn_text (id_dokument, praxe_json, praxe_model, praxe_zobrazit) VALUES (2, %s, %s, 0)",
+                    ('{"typ": "vecna_zmena", "co_se_meni": "Skryté vysvětlení.", "po": "x", "v_praxi": "y"}', "claude-sonnet-5-5"))
         cur.executemany(f"INSERT INTO {SCHEMA_WEB}.pn (cislo, ct, id_osoba, osoba, klub, id_dokument) "
                         "VALUES (%s,%s,%s,%s,%s,%s)",
                         [(2244, 76, 2001, "Karel Haas", "ANO2011", 1), (2246, 76, 2001, "Karel Haas", None, 2)])

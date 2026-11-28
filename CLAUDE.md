@@ -65,6 +65,7 @@ php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na ulo
 php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
 php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
 php bin/ai.php --praxe --retry    # PN s vyčerpanými pokusy (odmítnuté pojistkami) zpět do fronty, bez modelu
+php bin/ai.php --praxe --kontrola # kontrola hotových vysvětlení nezávislým modelem (ai.praxe_check_model, výchozí Opus)
 php bin/ai.php --hlaseni          # roztřídí hlášení čtenářů k vysvětlením (Reports); s --remote fronta z hostingu
 php bin/ai.php --hlaseni --verify # silnější model zkontroluje vysvětlení s platným hlášením (oprava jen přes pojistky)
 php bin/hlaseni.php [--vse]       # přehled hlášení čtenářů; --rozhodnout=ID --jako=platne|spam|… ruční rozhodnutí
@@ -115,6 +116,15 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    za odůvodněním jde modelu jako samostatný blok (PnPractice::attachment), necituje se z něj. Opakovaný pokus
                    dostane v zadání důvod minulého odmítnutí; `--praxe --retry` vrátí do fronty PN s vyčerpanými pokusy.
                    Po změně promptu zvyš PnPractice::VERSION (přepíše všechna vysvětlení; u drobného zpřesnění stačí --retry)
+                   Čísla v co_se_meni/po/v_praxi jen z textu změn a billContext (ne z odůvodnění ani z přílohy), stav před
+                   i z přílohy, příklad a tvrzení předkladatele z celého textu; příloha se odděluje i z textu změn (parts).
+                   Kontrola (3. kolo, ai.praxe_check): bin/ai.php --praxe --kontrola, fronta ai_api.php?praxe=1&kontrola=1
+                   (kind praxe_kontrola, položka nese praxe_at). Verdikt v_poradku/drobnost/chyba a výtky v pn_text.praxe_kontrola,
+                   praxe_vytky, praxe_kontrola_for (= praxe_at posuzované verze; výsledek ke starší verzi se zahodí).
+                   pn_text.praxe_zobrazit: 0 = web, API (Repo::pnTexts), hlášení (Reports::target) i MCP (rag tools.py)
+                   vysvětlení nevydají; nová verze je skrytá do kontroly, „chyba“ ji nechá skrytou. Chybné vysvětlení
+                   přepíše --praxe --verify s předchozí verzí a výtkami (PnPractice::feedback), nejvýš ai.praxe_rewrites×
+                   po sobě (praxe_prepis). Vysvětlení čekající na Sonnet se nekontroluje, dokud ho Sonnet nepřepíše.
   6c. Reports     hlášení chyb ve vysvětlení „v praxi“ od čtenářů (app/Reports.php, tabulka hlaseni): praporek
                    v rohu bloku vysvětlení (View::reportLink) otevře vrstvu s formulářem (View::reportDialog,
                    assets/report.js; bez JavaScriptu stránka hlaseni.php). submit(): stejný původ, past na roboty,

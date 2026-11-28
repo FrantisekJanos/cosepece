@@ -111,7 +111,10 @@ return [
         // praxe_verify_min = od jaké závažnosti (nebo s příznakem pravidel) vysvětlení přepíše silnější model;
         // praxe_verify_types = typy změn, které přepíše vždy (výchozí ['vecna_zmena']; [] = jen podle závažnosti)
         // praxe_tries = kolikrát smí pojistky výsledek odmítnout; praxe_fails = kolikrát smí selhat model nebo spojení
+        // praxe_check = hotové vysvětlení zkontroluje nezávislý model (praxe_check_model) a ukáže se, až ho kontrola
+        // pustí; s chybou ho druhé kolo přepíše s výtkami, nejvýš praxe_rewrites× po sobě (false = ukáže se hned)
         'praxe_enabled' => true, 'praxe_bill_max' => 40000, 'praxe_verify_min' => 4, 'praxe_verify_types' => ['vecna_zmena'], 'praxe_tries' => 3, 'praxe_fails' => 10,
+        'praxe_check' => true, 'praxe_check_model' => 'claude-opus-5-5', 'praxe_rewrites' => 2,
         'per_run' => 20,       // kolik textů (tisky + PN) posoudit za běh
         'max_chars' => 150000, // delší texty se zkrátí
         'timeout' => 300,      // s na jeden rozbor přes CLI

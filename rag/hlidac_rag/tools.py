@@ -333,8 +333,9 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
                    params)
     total = sum(a["n"] for a in autori)
     off = _offset(offset)
+    # vysvětlení „v praxi“ jen tehdy, když ho web ukazuje (praxe_zobrazit: kontrola ho pustila)
     rows = _rows(conn, f"""SELECT p.cislo, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_json, t.laws, t.chars,
-                                  t.praxe_json
+                                  CASE WHEN t.praxe_zobrazit = 0 THEN NULL ELSE t.praxe_json END AS praxe_json
                            FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument
                            WHERE {w} ORDER BY p.cas, p.cislo LIMIT %s OFFSET %s""",
                  (*params, _limit(limit, 100), off))
@@ -352,7 +353,8 @@ def pn_k_tisku(conn, ct: int, id_osoba: int | None = None, limit: int = 100, off
 def get_pn(conn, cislo: int) -> dict:
     """Detail PN. Text se čte po celcích přes osnova_textu(pn=…) a get_cel(pn=…); osnova_dostupna říká, zda už je."""
     r = _one(conn, """SELECT p.cislo, p.ct, p.id_osoba, p.osoba, p.klub, p.cas, t.ai_score, t.ai_model, t.ai_json, t.signals,
-                             t.laws, t.chars, t.docx_url, t.praxe_json, t.praxe_model
+                             t.laws, t.chars, t.docx_url,
+                             CASE WHEN t.praxe_zobrazit = 0 THEN NULL ELSE t.praxe_json END AS praxe_json, t.praxe_model
                       FROM pn p LEFT JOIN pn_text t ON t.id_dokument = p.id_dokument WHERE p.cislo = %s""", (cislo,))
     if not r:
         raise ValueError(f"Pozměňovací návrh {cislo} v {OBDOBI}. období neznám.")

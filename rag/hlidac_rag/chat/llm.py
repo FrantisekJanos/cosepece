@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import anthropic
+import httpx2 as httpx
 
 # Server-side fallback (`fallbacks`) se záměrně neposílá, odchylka od spec 10.1: fallback by tiše přepnul na model
 # mimo ceník (u Sonnetu 5.5 na claude-sonnet-5 s dražším čtením cache), odmítnutý pokus by byl jen v
@@ -31,6 +32,12 @@ class Pretizeno(Exception):
 
 class CasVyprsel(Pretizeno):
     """Volání nedoběhlo v časovém limitu. Mohlo být účtováno, cenu nikdo nezná (služba zapíše horní odhad)."""
+
+
+def _pred_streamem(e: BaseException) -> BaseException:
+    """Označí chybu HTTP stavu, která přišla dřív, než stream začal (požadavek se neúčtuje)."""
+    e.pred_streamem = True
+    return e
 
 
 @dataclass(frozen=True)
@@ -130,22 +137,31 @@ class AnthropicLLM:
             kwargs["tool_choice"] = tool_choice
         klient = self.client if timeout_s is None else self.client.with_options(timeout=max(1.0, timeout_s))
         zacatek = time.monotonic()
+        stream_bezi = False
         try:
             async with klient.beta.messages.stream(**kwargs) as stream:
+                stream_bezi = True
                 async for udalost in stream:
                     if udalost.type == "content_block_delta" and getattr(udalost.delta, "type", None) == "text_delta":
                         await na_text(udalost.delta.text)
                 zprava = await stream.get_final_message()
         except anthropic.RateLimitError as e:
-            raise Pretizeno(f"429: {e}") from e
+            chyba = Pretizeno(f"429: {e}")
+            raise (chyba if stream_bezi else _pred_streamem(chyba)) from e
         except anthropic.APIStatusError as e:
             if _pretizeni(e):
-                raise Pretizeno(f"{e.status_code}: {e}") from e
-            raise
+                chyba = Pretizeno(f"{e.status_code}: {e}")
+                raise (chyba if stream_bezi else _pred_streamem(chyba)) from e
+            raise e if stream_bezi else _pred_streamem(e)
         except anthropic.APITimeoutError as e:
             raise CasVyprsel(f"časový limit: {e}") from e
         except anthropic.APIConnectionError as e:
             raise Pretizeno(f"spojení: {e}") from e
+        # SDK chyby transportu uprostřed streamu nepřebalí (anthropic/_streaming.py)
+        except httpx.TimeoutException as e:
+            raise CasVyprsel(f"časový limit ve streamu: {type(e).__name__}") from e
+        except httpx.TransportError as e:
+            raise Pretizeno(f"spojení ve streamu: {type(e).__name__}") from e
         ms = int((time.monotonic() - zacatek) * 1000)
         content = [b.model_dump(mode="json", exclude_none=True) for b in zprava.content]
         return Odpoved(content, str(zprava.stop_reason), _usage(zprava.usage), str(zprava.model or model), ms)

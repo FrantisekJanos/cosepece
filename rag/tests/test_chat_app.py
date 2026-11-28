@@ -885,7 +885,7 @@ async def test_timeout_volani_ze_zbyvajiciho_casu_a_odhad_ceny():           # re
     assert len(s.ulozit.volani_llm) == 2
     odhad = s.ulozit.volani_llm[-1]
     assert odhad["stop_reason"] == "odhad_timeout" and odhad["vystup"] == s.n.max_tokenu_odpovedi
-    assert odhad["vstup"] >= MALA.vstup + MALA.vystup and odhad["cena_usd"] > s.ulozit.volani_llm[0]["cena_usd"]
+    assert odhad["vstup"] == 0 and odhad["cache_zapis"] >= MALA.vstup + MALA.vystup and odhad["cena_usd"] > s.ulozit.volani_llm[0]["cena_usd"]
     assert s.ulozit.zpravy[-1]["stav"] == "chyba" and ("chyba", {"kod": "chyba"}) in [(t, d) for t, d, _ in sse(r.telo)]
     assert all(v["tah"] is None for v in s.ulozit.relace_.values()) and s.sluzba.soubeh == 0
 
@@ -924,6 +924,135 @@ async def test_anthropic_llm_posila_timeout_a_cas_vyprsel():
         await AnthropicLLM(Klient()).volej(model=MODEL, effort="low", system="s", tools=[], messages=[
             {"role": "user", "content": "x"}], max_tokens=10, na_text=na_text, timeout_s=12.5)
     assert pouzite == {"timeout": 12.5}
+
+
+class _KlientSChybou:
+    """Falešný AsyncAnthropic: chyba při otevření streamu, nebo po prvním kousku textu uprostřed streamu."""
+
+    def __init__(self, pri_otevreni=None, ve_streamu=None):
+        from types import SimpleNamespace
+        klient = self
+
+        class _Stream:
+            async def __aenter__(self):
+                if pri_otevreni is not None:
+                    raise pri_otevreni
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def __aiter__(self):
+                async def gen():
+                    yield SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta",
+                                                                                              text="Začátek "))
+                    raise ve_streamu
+                return gen()
+
+        class _Messages:
+            def stream(self, **kw):
+                klient.kwargs = kw
+                return _Stream()
+
+        self.beta = SimpleNamespace(messages=_Messages())
+
+    def with_options(self, **kw):
+        return self
+
+
+async def _volej_anthropic(klient):
+    from hlidac_rag.chat.llm import AnthropicLLM
+
+    async def na_text(t):
+        pass
+    return await AnthropicLLM(klient).volej(model=MODEL, effort="low", system="s", tools=[],
+                                            messages=[{"role": "user", "content": "x"}], max_tokens=10,
+                                            na_text=na_text, timeout_s=10)
+
+
+async def test_anthropic_chyby_transportu_ve_streamu():                     # re-recenze A
+    from hlidac_rag.chat.llm import CasVyprsel, Pretizeno
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    with pytest.raises(CasVyprsel) as e:
+        await _volej_anthropic(_KlientSChybou(ve_streamu=httpx.ReadTimeout("čtení", request=req)))
+    assert not getattr(e.value, "pred_streamem", False)
+    with pytest.raises(Pretizeno) as e:
+        await _volej_anthropic(_KlientSChybou(ve_streamu=httpx.RemoteProtocolError("spojení přerušeno", request=req)))
+    assert not isinstance(e.value, CasVyprsel) and not getattr(e.value, "pred_streamem", False)
+
+
+async def test_anthropic_chyba_stavu_pred_streamem_je_oznacena():
+    import anthropic
+
+    from hlidac_rag.chat.llm import Pretizeno
+    odp = httpx.Response(400, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    with pytest.raises(anthropic.BadRequestError) as e:
+        await _volej_anthropic(_KlientSChybou(pri_otevreni=anthropic.BadRequestError("špatně", response=odp, body={})))
+    assert e.value.pred_streamem is True
+    odp = httpx.Response(529, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    with pytest.raises(Pretizeno) as e:
+        await _volej_anthropic(_KlientSChybou(pri_otevreni=anthropic.APIStatusError("přetížení", response=odp,
+                                                                                    body={})))
+    assert e.value.pred_streamem is True
+
+
+class _LLMSKlientem:
+    """Opravdové AnthropicLLM nad falešným klientem v prostředí služby (Svet)."""
+
+    def __init__(self, klient):
+        from hlidac_rag.chat.llm import AnthropicLLM
+        self.llm = AnthropicLLM(klient)
+        self.volani = 0
+
+    async def volej(self, **kw):
+        self.volani += 1
+        return await self.llm.volej(**kw)
+
+
+async def test_read_timeout_uprostred_streamu_zapise_horni_odhad():
+    from hlidac_rag.chat.cenik import cena_usd
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    s = Svet()
+    s.sluzba.llm = _LLMSKlientem(_KlientSChybou(ve_streamu=httpx.ReadTimeout("čtení", request=req)))
+    r = await post(s)
+    await s.dobehni()
+    assert len(s.ulozit.volani_llm) == 1
+    o = s.ulozit.volani_llm[0]
+    assert o["stop_reason"] == "odhad_timeout" and o["vstup"] == 0 and o["cache_zapis"] > 0
+    # horní mez: vstup za sazbu zápisu do cache (nejdražší sazba vstupu) a celé max_tokens výstupu
+    assert o["cena_usd"] == pytest.approx(cena_usd(MODEL, 0, s.n.max_tokenu_odpovedi, 0, o["cache_zapis"]))
+    assert o["vystup"] == s.n.max_tokenu_odpovedi
+    assert s.ulozit.zpravy[-1]["stav"] == "chyba" and s.sluzba.soubeh == 0
+    assert ("chyba", {"kod": "chyba"}) in [(t, d) for t, d, _ in sse(r.telo)]
+
+
+async def test_prerusene_spojeni_ve_streamu_zapise_odhad_chyba_pred_streamem_ne():
+    import anthropic
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    s = Svet()
+    s.sluzba.llm = _LLMSKlientem(_KlientSChybou(ve_streamu=httpx.RemoteProtocolError("přerušeno", request=req)))
+    await post(s)
+    await s.dobehni()
+    assert [v["stop_reason"] for v in s.ulozit.volani_llm] == ["odhad_timeout"]
+    s = Svet()
+    odp = httpx.Response(400, request=req)
+    s.sluzba.llm = _LLMSKlientem(_KlientSChybou(pri_otevreni=anthropic.BadRequestError("x", response=odp, body={})))
+    await post(s)
+    await s.dobehni()
+    assert s.ulozit.volani_llm == [] and s.ulozit.zpravy[-1]["stav"] == "chyba"
+
+
+async def test_selhani_pricteni_zpravy_uklidi_zalozenou_odpoved():            # re-recenze C
+    s = Svet([ODP_TEXT("Ano.")])
+
+    def pada(rid):
+        raise RuntimeError("DB nedostupná")
+    s.ulozit.pricti_zpravu_od_overeni = pada
+    with pytest.raises(RuntimeError):
+        await post(s)
+    assert s.ulozit.zpravy[-1]["stav"] == "chyba" and not s.sluzba.tahy
+    assert s.sluzba.soubeh == 0 and not s.sluzba.bezici_relace and s.llm.volani == 0
+    assert all(v["tah"] is None for v in s.ulozit.relace_.values())
 
 
 async def test_chyba_modelu_je_udalost_chyba_a_cena_zustane():

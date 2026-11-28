@@ -354,7 +354,7 @@ class Sluzba:
         if self.soubeh >= n.soubeh_celkem or self.soubeh_ip.get(otisk, 0) >= n.soubeh_ip:
             return _chyba(503, "obsazeno", hlavicky={**cookie, "Retry-After": str(RETRY_OBSAZENO_S)})
         self._obsad(rid, otisk)
-        token, predano = None, False
+        token, predano, p = None, False, None
         try:
             try:
                 z = await self._u("zahaj_tah", rid, otisk, ted, n.drzeni_tahu_s)
@@ -374,6 +374,12 @@ class Sluzba:
             return ProudTahu(p.beh, 0, self.ping_s, cookie)
         finally:
             if not predano:
+                if p is not None:      # odpověď už založená, tah se ale nespustil
+                    self.tahy.pop(p.beh.id, None)
+                    try:
+                        await self._u("dokonci", p.zprava_id, "", "chyba", p.model, [], {})
+                    except Exception:
+                        log.exception("založenou odpověď %s nejde označit jako chybu", p.zprava_id)
                 try:
                     if token is not None:
                         await self._u("skonci_tah", rid, token)
@@ -527,10 +533,11 @@ class Sluzba:
 
     async def _zapis_odhad(self, p: _Priprava, r: dict) -> None:
         """Horní odhad ceny volání, které nedoběhlo (vstup bez cache + celé max_tokens výstupu)."""
-        cena = _ocen(r["model"], r["vstup"], r["vystup"], 0, 0, self.cenik)
+        # vstup jako zápis do cache: nejdražší sazba vstupu, odhad je tedy opravdu horní mez
+        cena = _ocen(r["model"], 0, r["vystup"], 0, r["vstup"], self.cenik)
         log.warning("tah %s: volání modelu nedoběhlo, zapisuji horní odhad ceny %.4f USD", p.beh.id, cena)
         await self._u("zapis_volani_llm", zprava_id=p.zprava_id, relace_id=p.relace_id, otisk_ip=p.otisk,
-                      model=r["model"], vstup=r["vstup"], vystup=r["vystup"], cache_cteni=0, cache_zapis=0,
+                      model=r["model"], vstup=0, vystup=r["vystup"], cache_cteni=0, cache_zapis=r["vstup"],
                       cena_usd=cena, ms=int((time.monotonic() - r["start"]) * 1000), stop_reason=STOP_ODHAD)
 
     async def _dokonci(self, p: _Priprava, vystup: Vystup, konec: dict) -> None:
@@ -564,7 +571,8 @@ class Sluzba:
 
 class _LLMVTahu:
     """LLM pro jeden tah: timeout každého volání ze zbývajícího času tahu (SDK opakuje nejvýš MAX_OPAKOVANI)
-    a evidence rozběhnutého volání. Vypršené volání (`CasVyprsel`) dostane do útraty horní odhad ceny."""
+    a evidence rozběhnutého volání. Volání, které po odeslání požadavku skončí chybou (vypršení, přerušené
+    spojení, chyba ve streamu), dostane do útraty horní odhad ceny."""
 
     def __init__(self, llm: LLM, konec_tahu: float, pri_odhadu):
         self.llm, self.konec_tahu, self.pri_odhadu = llm, konec_tahu, pri_odhadu
@@ -580,9 +588,11 @@ class _LLMVTahu:
         try:
             o = await self.llm.volej(model=model, system=system, tools=tools, messages=messages,
                                      max_tokens=max_tokens, timeout_s=timeout_s, **kw)
-        except CasVyprsel:
+        except Exception as e:
+            # požadavek odešel a mohl být účtován; neúčtuje se jen chyba HTTP stavu před začátkem streamu
             r, self.rozbehnute = self.rozbehnute, None
-            await self.pri_odhadu(r)
+            if not getattr(e, "pred_streamem", False):
+                await self.pri_odhadu(r)
             raise
         self.rozbehnute = None
         u = o.usage

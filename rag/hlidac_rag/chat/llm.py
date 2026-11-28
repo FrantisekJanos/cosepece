@@ -96,9 +96,17 @@ def _usage(u) -> Usage:
     return Usage(*horni)
 
 
+TIMEOUT_VOLANI_S = 45   # jedno volání modelu; celý tah hlídá služba (LIMIT_TAHU_S)
+
+
 class AnthropicLLM:
     def __init__(self, client: anthropic.AsyncAnthropic):
         self.client = client
+
+    @classmethod
+    def z_prostredi(cls) -> "AnthropicLLM":
+        """Klient s klíčem z ANTHROPIC_API_KEY (ve službě chat vlastní klíč CHAT_ANTHROPIC_API_KEY z compose)."""
+        return cls(anthropic.AsyncAnthropic(timeout=TIMEOUT_VOLANI_S))
 
     async def volej(self, *, model: str, effort: str, system: str, tools: list[dict], messages: list[dict],
                     max_tokens: int, na_text: Callable[[str], Awaitable[None]],

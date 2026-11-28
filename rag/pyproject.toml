@@ -21,7 +21,7 @@ dev = ["pytest", "pyyaml"]
 include = ["hlidac_rag*"]
 
 [tool.setuptools.package-data]
-hlidac_rag = ["schema.sql", "schema_*.sql"]
+hlidac_rag = ["schema.sql", "schema_*.sql", "chat/static/**/*"]
 
 [build-system]
 requires = ["setuptools>=68"]

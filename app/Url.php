@@ -30,6 +30,7 @@ final class Url
         'zmeny' => 'zmeny',
         'hledat' => 'hledat',
         'revize' => 'revize',
+        'hlaseni' => 'hlaseni',
     ];
 
     /** null = podle config.php → pretty_urls (výchozí zapnuto); testy si hodnotu přepínají */

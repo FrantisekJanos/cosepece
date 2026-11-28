@@ -360,9 +360,10 @@ final class View
      * a dopad jsou vidět hned, stav před a po, dotčené skupiny, příklad a tvrzení předkladatele se rozbalují.
      * Nadpis se řídí výsledkem hlasování ve 3. čtení ($outcome z PnOutcome), text sám zůstává podmiňovací.
      * Nad nadpisem je doslovná citace z textu PN ($quote: citace z rozboru, jinak první citace vysvětlení),
-     * aby čtenář viděl znění návrhu a hned pod ním, co znamená. Vrací hotové HTML; bez vysvětlení prázdný řetězec.
+     * aby čtenář viděl znění návrhu a hned pod ním, co znamená. $report (id_dokument, cislo, ct) přidá do rohu
+     * praporek pro nahlášení chyby (app/Reports.php). Vrací hotové HTML; bez vysvětlení prázdný řetězec.
      */
-    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null): string
+    public static function pnPractice(?array $p, ?string $model, ?array $outcome = null, ?string $quote = null, ?array $report = null): string
     {
         if (!is_array($p) || trim((string)($p['co_se_meni'] ?? '')) === '') {
             return '';
@@ -374,7 +375,7 @@ final class View
             'zamitnut' => 'Co by se změnilo v praxi <span class="muted">(návrh neprošel)</span>',
             default => 'Co by se změnilo v praxi',
         };
-        $html = '<div class="pn-praxe">' . ($quote !== '' ? '<blockquote class="quote small">' . e($quote) . '</blockquote>' : '')
+        $html = '<div class="pn-praxe' . ($report !== null ? ' has-report' : '') . '">' . ($quote !== '' ? '<blockquote class="quote small">' . e($quote) . '</blockquote>' : '')
             . '<span class="pn-praxe-head">' . $head . '</span>'
             . '<span class="pn-praxe-what">' . e((string)$p['co_se_meni']) . '</span>'
             . '<span class="small">' . e((string)($p['v_praxi'] ?? '')) . '</span>';
@@ -408,7 +409,74 @@ final class View
             $html .= '<details class="pn-praxe-more"><summary>' . ($technical ? 'Co uvádí předkladatel' : 'Před a po, koho se to týká') . '</summary>' . $more . '</details>';
         }
         return $html . '<span class="muted small">Vysvětlení připravil jazykový model' . ($model !== null && $model !== '' ? ' (' . e($model) . ')' : '')
-            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.</span></div>';
+            . ' z textu návrhu a může se mýlit. Skóre neovlivňuje.</span>'
+            . ($report !== null ? self::reportLink((int)$report['id_dokument'], (int)$report['cislo'], (int)$report['ct']) : '') . '</div>';
+    }
+
+    /**
+     * Praporek „Nahlásit chybu ve vysvětlení“ v rohu bloku vysvětlení. Je to obyčejný odkaz na stránku
+     * s formulářem (hlaseni.php); s JavaScriptem ho assets/report.js otevře jako vrstvu nad stránkou.
+     */
+    public static function reportLink(int $id, int $cislo, int $ct): string
+    {
+        $title = 'Nahlásit chybu ve vysvětlení';
+        return '<a class="report-link" href="' . e(url('hlaseni', ['d' => $id])) . '" rel="nofollow" title="' . $title . '" aria-label="' . $title
+            . ' návrhu č. ' . $cislo . '" data-report="' . $id . '" data-report-label="' . e(Reports::label($cislo, $ct)) . '">'
+            . '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            . '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg></a>';
+    }
+
+    /**
+     * Formulář hlášení chyby ve vysvětlení: stejný ve vrstvě na stránce tisku i na samostatné stránce
+     * (hlaseni.php, bez JavaScriptu). $id = 0 a prázdný $label vyplní až assets/report.js podle praporku,
+     * na který čtenář klikl. $old = dříve odeslané hodnoty (cast, poznamka) při chybě.
+     */
+    public static function reportForm(int $id, string $label, string $cancel, string $error = '', array $old = []): string
+    {
+        $max = Reports::settings(config())['max_note'];
+        $html = '<form class="report-form" method="post" action="' . e(url('hlaseni')) . '">'
+            . '<p class="report-context muted small" data-report-context>' . e($label) . '</p>'
+            . '<input type="hidden" name="d" value="' . ($id > 0 ? $id : '') . '">'
+            . '<fieldset><legend>Která část nesedí</legend>';
+        foreach (Reports::PARTS as $key => $name) {
+            $html .= '<label class="report-option"><input type="radio" name="cast" value="' . e($key) . '" required'
+                . (($old['cast'] ?? '') === $key ? ' checked' : '') . '> ' . e($name) . '</label>';
+        }
+        return $html . '</fieldset>'
+            . '<label class="report-note"><span>Co je podle vás správně <span class="muted">(nepovinné)</span></span>'
+            . '<textarea name="poznamka" rows="4" maxlength="' . $max . '" placeholder="Lhůta v § 12 odst. 3 se prodlužuje na 60 dnů, ne na 90.">'
+            . e((string)($old['poznamka'] ?? '')) . '</textarea></label>'
+            . '<p class="report-help small"><strong>Nejvíc nám pomůže, když napíšete:</strong> co přesně je špatně, kde to v textu návrhu najdeme (paragraf, odstavec, bod) a jak to má být správně.</p>'
+            // past na roboty: pole je skryté stylem, člověk ho nevyplní
+            . '<label class="report-web" aria-hidden="true">Web <input type="text" name="web" tabindex="-1" autocomplete="off"></label>'
+            . '<p class="report-error small" role="alert"' . ($error === '' ? ' hidden' : '') . '>' . e($error) . '</p>'
+            . '<p class="muted small">Hlášení slouží jen k opravě vysvětlení: zajímá nás, zda odpovídá textu návrhu, ne názor na návrh samotný. Nepište osobní údaje. Hlášení nejdřív roztřídí jazykový model a neodpovídáme na ně.</p>'
+            . '<div class="report-actions">' . $cancel . '<button type="submit" class="btn">Odeslat hlášení</button></div>'
+            . '</form>';
+    }
+
+    /** Poděkování po odeslání hlášení (ve vrstvě i na samostatné stránce). */
+    public static function reportThanks(): string
+    {
+        return '<p><strong>Děkujeme, hlášení jsme přijali.</strong></p>'
+            . '<p class="small">Vysvětlení podle něj prověříme proti textu návrhu. Když se potvrdí chyba, opravíme ho.</p>';
+    }
+
+    /**
+     * Vrstva s formulářem hlášení (prvek dialog) a její skript; na stránce jednou. Bez JavaScriptu nebo
+     * v prohlížeči bez prvku dialog zůstane skrytá a praporek vede na stránku hlaseni.php.
+     */
+    public static function reportDialog(): string
+    {
+        $js = asset('assets/report.js') . '?v=' . (int)@filemtime(APP_ROOT . '/assets/report.js');
+        return '<dialog class="report-dialog" id="report-dialog" aria-labelledby="report-title">'
+            . '<h2 id="report-title">Nahlásit chybu ve vysvětlení</h2>'
+            . '<div data-report-body>' . self::reportForm(0, '', '<button type="button" class="btn btn-ghost" data-report-close>Zrušit</button>') . '</div>'
+            . '<div data-report-done hidden>' . self::reportThanks()
+            . '<div class="report-actions"><button type="button" class="btn" data-report-close>Zavřít</button></div></div>'
+            . '</dialog>' . "
+" . '<script src="' . e($js) . '" defer></script>' . "
+";
     }
 
     public static function isPastPeriod(array $alert): bool

@@ -64,6 +64,8 @@ php bin/ai.php --verify --all     # 2. kolo: nálezy se závažností ≥ ai.ver
 php bin/ai.php --resanitize       # pojistky (AiReviewer::sanitize) znovu na uložené rozbory, bez modelu
 php bin/ai.php --praxe [--verify] # vysvětlení PN „v praxi“ (PnPractice); s --remote fronta z hostingu
 php bin/ai.php --praxe --resanitize   # pojistky znovu na uložená vysvětlení (bez modelu); nevyhovující zpět do fronty
+php bin/ai.php --hlaseni          # roztřídí hlášení čtenářů k vysvětlením (Reports); s --remote fronta z hostingu
+php bin/hlaseni.php [--vse]       # přehled hlášení čtenářů; --rozhodnout=ID --jako=platne|spam|… ruční rozhodnutí
 php bin/reanalyze.php             # pravidlové signály PnText/TiskText znovu na stažené texty, bez sítě a AI
 HLIDAC_CONFIG=/cesta/config.php php -S 127.0.0.1:8099 bin/router.php   # lokální náhled (router kvůli adresám bez .php)
 ```
@@ -108,6 +110,16 @@ cron.php / bin/sync.php → Hlidac\Sync::run()   (každý běh zapíše řádek 
                    v praxe_fails se stropem ai.praxe_fails a takové PN jdou ve frontě až za ostatní; počitadla patří
                    k verzi praxe_try_v, po zvýšení VERSION se nepoužijí). Čísla paragrafů a zákonů nejsou hodnoty
                    ke sčítání. `bin/ai.php --praxe --resanitize` pustí pojistky znovu na uložená vysvětlení. Po změně promptu zvyš PnPractice::VERSION
+  6c. Reports     hlášení chyb ve vysvětlení „v praxi“ od čtenářů (app/Reports.php, tabulka hlaseni): praporek
+                   v rohu bloku vysvětlení (View::reportLink) otevře vrstvu s formulářem (View::reportDialog,
+                   assets/report.js; bez JavaScriptu stránka hlaseni.php). submit(): stejný původ, past na roboty,
+                   limit z adresy a denní strop, levné filtry (bez poznámky = platné, víc odkazů = spam).
+                   Ostatní třídí Haiku (fronta ai_api.php?hlaseni=1, kind hlaseni, klient bin/ai.php --hlaseni):
+                   poznámka čtenáře je cizí text mezi náhodnými značkami, model běží bez nástrojů a smí vrátit
+                   jen verdikt v_poradku / spam / nesmysl / manipulace / mimo_tema; cokoli jiného = stav rucne
+                   (počká na člověka). Odkazy na ustanovení se uloží, jen když doslova stojí v poznámce i v textu PN
+                   (verifyRefs). Vyřazená hlášení se po hlaseni.keep_days dnech mažou (Sync → purge). Poznámka
+                   se nikde nezveřejňuje a nesmí se předávat dalšímu modelu jako pokyn. Skóre se nemění
   7. Scorer        skóre tisků 0–100 + důvody (tisky.reasons JSON), skóre upozornění = skóre tisku + bonus typu
   1b. Votes      hlasování k tiskům (hl-{rok}ps.zip, schuze.zip): z kroků historie (hist.id_hlasovani) a podle bodu
                 schůze + stejného krátkého názvu; souhrn a rozdělení podle klubů (tabulky hlasovani, hlasovani_kluby),
@@ -209,7 +221,7 @@ za kalendářní den podle času podání, ne za běh synchronizace.
 
 Tabulky: `tisky`, `kroky` (historie), `pn`, `pn_seen`, `pn_text`, `tisk_text`, `alerts`, `post_log`, `meta`, `pripravovane`,
 `text_revize`, `ai_revize` (historie verzí), `tisk_text_archiv`, `pn_text_archiv` (texty minulých období), `sync_beh`
-(historie běhů synchronizace, 90 dní), `html_kroky`, `html_pn` (záznamy ze stránek historie tisků), `hlasovani_poslanci`.
+(historie běhů synchronizace, 90 dní), `html_kroky`, `html_pn` (záznamy ze stránek historie tisků), `hlasovani_poslanci`, `hlaseni` (hlášení čtenářů k vysvětlením).
 
 ## Zdroj dat (psp.cz open data)
 

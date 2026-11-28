@@ -456,7 +456,29 @@ final class Db
             chyba $text
         )$suffix");
 
+        // hlášení chyb ve vysvětlení PN „v praxi“ od čtenářů (app/Reports.php). stav: nove = čeká na třídění,
+        // platne = k prověření, rucne = třídění si nebylo jisté (počká na člověka), ostatní = vyřazeno a skryto
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS hlaseni (
+            id INTEGER NOT NULL PRIMARY KEY,
+            id_dokument INTEGER NOT NULL,
+            ct INTEGER NOT NULL,
+            cislo INTEGER NOT NULL,
+            oblast VARCHAR(20) NOT NULL,
+            poznamka $text,
+            praxe_at VARCHAR(19),
+            praxe_model VARCHAR(60),
+            vytvoreno VARCHAR(19) NOT NULL,
+            stav VARCHAR(20) NOT NULL,
+            duvod VARCHAR(255),
+            odkazy $text,
+            model VARCHAR(60),
+            trideno VARCHAR(19),
+            pokusy INTEGER NOT NULL DEFAULT 0
+        )$suffix");
+
         $this->createIndex('kroky', 'idx_kroky_tisk', 'id_tisk');
+        $this->createIndex('hlaseni', 'idx_hlaseni_stav', 'stav');
+        $this->createIndex('hlaseni', 'idx_hlaseni_dokument', 'id_dokument');
         $this->createIndex('sync_beh', 'idx_sync_beh_zacatek', 'zacatek');
         $this->createIndex('text_revize', 'idx_text_revize_ct', 'ct');
         $this->createIndex('ai_revize', 'idx_ai_revize_ct', 'ct');

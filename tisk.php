@@ -47,6 +47,8 @@ $pnRev = Revisions::counts(db(), 'pn', null, $ct);
 // na ně vedou odkazy, od nejzávažnějšího (nejvýš 10). Seznam sám zůstává od nejnovějšího, aby byly nové návrhy
 // vidět hned; prvních 10 je vidět rovnou, zbytek je pod odkazem „Další pozměňovací návrhy“. Skóre se tím nemění.
 $pnVisible = 10;
+// praporek pro nahlášení chyby u vysvětlení PN „v praxi“ (app/Reports.php)
+$reportsOn = Hlidac\Reports::settings(config())['enabled'];
 $pnFlagged = [];
 foreach ($pn as $p) {
     $x = $texts[(int)$p['id_dokument']] ?? null;
@@ -187,7 +189,8 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
             <?php if (Revisions::hasHistory($rev)): ?><a class="small" href="<?= e(Revisions::url('pn', (int)$p['id_dokument'])) ?>">Historie (<?= e(Revisions::versionsLabel($rev['text'] + $rev['ai'])) ?>)</a><?php endif; ?>
             <?php // citace z textu PN: s vysvětlením „v praxi“ je uvnitř jeho rámečku nad nadpisem, jinak samostatně ?>
             <?php $pnQuote = trim((string)(($x['ai']['citace'] ?? [])[0] ?? '')); ?>
-            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote); ?>
+            <?php $pnPractice = View::pnPractice($x['praxe'] ?? null, $x['praxe_model'] ?? null, $pnOutcomes[(int)$p['cislo']] ?? null, $pnQuote,
+                $reportsOn ? ['id_dokument' => (int)$p['id_dokument'], 'cislo' => (int)$p['cislo'], 'ct' => $ct] : null); ?>
             <?php if ($pnPractice === '' && $pnQuote !== ''): ?><blockquote class="quote small"><?= e($pnQuote) ?></blockquote><?php endif; ?>
             <?= $pnPractice ?>
           <?php endif; ?>
@@ -209,6 +212,7 @@ View::header('Tisk ' . $ct . ' – ' . $t['nazev'], 'tisky', mb_substr($ogDesc, 
     })();
     </script>
     <?php endif; ?>
+    <?php if ($reportsOn): ?><?= View::reportDialog() ?><?php endif; ?>
   </section>
 
   <aside class="side-col">

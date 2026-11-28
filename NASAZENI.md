@@ -179,6 +179,10 @@ Body 1–4 stejně (Claude Code přihlášený pod uživatelem, pod kterým pob�
    starších návrhů neblokovalo rozbor nových. Jednorázově lze dohnat ručně s `--all`. Web výsledek uloží jen
    tehdy, když projde pojistkami (citace a čísla musí být v textu); odmítnutý se v logu ukáže jako `ODMÍTNUTO`
    a zkusí se příště. Skóre se nemění.
+5. `php bin/ai.php --remote=… --hlaseni` – hlášení čtenářů k vysvětlením (praporek u vysvětlení) roztřídí Haiku:
+   platné, spam, nesmysl, pokus o manipulaci, mimo téma (`AI_HLASENI_LIMIT`, výchozí 20). Web přijme jen verdikt
+   z tohoto seznamu, jinak hlášení počká na ruční posouzení. Přehled hlášení: `php bin/hlaseni.php` na serveru
+   (v Dockeru `docker exec docker-web-1 php bin/hlaseni.php`).
 
 Limit předplatného: při běžném provozu (desítky nových textů denně) se nepozná. Když se limit při prvním
 dohánění vyčerpá, rozbory skončí chybou a doženou se v dalších hodinách.

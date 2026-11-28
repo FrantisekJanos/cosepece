@@ -98,6 +98,12 @@ final class Sync
         // úklid: prošlé záznamy limitů dotazů a nepoužívané tokeny MCP vydané na webu
         RateLimit::cleanup();
         try {
+            // vyřazená hlášení čtenářů (spam, nesmysly…) po uplynutí lhůty
+            (new Reports(db(), $config))->purge();
+        } catch (\Throwable $ex) {
+            Sentry::capture($ex, ['kde' => 'Sync/Reports']);
+        }
+        try {
             $revoked = (new McpTokens(db(), $config))->revokeStale();
         } catch (\Throwable $ex) {
             $revoked = ['error' => Http::redact($ex->getMessage())];

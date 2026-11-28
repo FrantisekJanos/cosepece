@@ -32,7 +32,8 @@ Postup pro člověka je v **`NASAZENI.md`** – drž se ho a nic nevynechávej. 
 - Při nasazování neměň logiku skóre ani prompty AI; při chybě nejdřív `php tests/run.php` (musí vypsat `VŠE OK`).
 
 Docker (cosepece.cz): `docker/redeploy.sh [commit]` – před výměnou kontejnerů pustí `tests/run.php` v novém obrazu webu
-(`docker run --network none`), po výměně ověří web a MCP a při neúspěchu vrátí předchozí verzi; `docker/rollback.sh`
+(`docker run --network none`), po výměně ověří web a MCP a při neúspěchu vrátí předchozí verzi; služba `chat` jde až
+po nich (`/chat-api/zdravi`, kouřový eval) a její selhání nasazení nevrací, chat jen vypne; `docker/rollback.sh`
 = ruční návrat (commit v `docker/.previous-commit`, obrazy `:previous`). CI: `.github/workflows/php-tests.yml` (PHP 8.3,
 SQLite i PostgreSQL; testy musí projít na obou), `deploy.yml` (po sloučení do `main`, vypnuto do `DEPLOY_ENABLED`).
 `Http::post(..., $retryDelays)` opakuje jen při výpadku (bez odpovědi, 502–504); `bin/ai.php` tak přečká výměnu kontejneru.

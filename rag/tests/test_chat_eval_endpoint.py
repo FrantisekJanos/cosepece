@@ -2,9 +2,11 @@
 Skutečné API ani server se nevolají; klíč je jen testovací."""
 from __future__ import annotations
 
+import json
+
 import httpx2 as httpx
 import pytest
-from test_chat_app import EVAL_KLIC, ODP_TEXT, PUVOD, U, Svet
+from test_chat_app import BETA_KLIC, EVAL_KLIC, ODP_TEXT, PUVOD, U, N, Svet
 
 from eval.chat import chat_eval
 from eval.chat.chat_eval import SCENARE, main, navratovy_kod, spust, vyber_scenare
@@ -123,3 +125,25 @@ def test_vyber_kour_ze_scenare_json():
     anafora = next(s for s in kour if s["id"] == "K-anafora-po-zmene")
     assert len(anafora["tahy"]) == 2                               # dřívější tah nese kontext, poslední kour tah končí
     assert vyber_scenare(vsechny, "vse") == vsechny
+
+
+async def test_beta_z_prostredi_projde_skrytym_rezimem(capsys, tmp_path):
+    """Brána v redeploy.sh běží v kontejneru chat: cookie chat_beta si podepíše klíčem CHAT_BETA_KLIC z prostředí."""
+    s = _svet([ODP_TEXT("Ano, prošel.")], n=N(CHAT_REZIM="skryte"))
+    env = {"CHAT_EVAL_KLIC": EVAL_KLIC, "CHAT_BETA_KLIC": BETA_KLIC.decode()}
+    scenare = json.dumps([_scenar()])
+    soubor = tmp_path / "s.json"
+    soubor.write_text(scenare, encoding="utf-8")
+    async with _klient(s) as http:
+        a = chat_eval._parser().parse_args(["--url", PUVOD, "--scenare", str(soubor), "--beta-z-prostredi"])
+        a.cookie_beta = chat_eval._cookie_beta(a, env)
+        assert await chat_eval._hlavni(a, EVAL_KLIC, http) == 0
+    ven = capsys.readouterr()
+    assert BETA_KLIC.decode() not in ven.out + ven.err
+
+
+def test_beta_z_prostredi_bez_klice_a_spolu_s_cookie(capsys):
+    assert main(["--beta-z-prostredi"], env={"CHAT_EVAL_KLIC": "x"}) == 2
+    assert "CHAT_BETA_KLIC" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        chat_eval._parser().parse_args(["--beta-z-prostredi", "--cookie-beta", "x"])

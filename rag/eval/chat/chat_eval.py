@@ -12,6 +12,8 @@ přidá do události `konec` pole `eval` {cena_usd, nastroje}: cena tahu a sezna
 
 Spuštění (z `rag/`):
     CHAT_EVAL_KLIC=… python -m eval.chat.chat_eval --url https://cosepece.cz [--sada kour|vse] [--cookie-beta …]
+Brána v `docker/redeploy.sh` (v kontejneru chat, skrytý režim): `--beta-z-prostredi` podepíše cookie `chat_beta` klíčem
+`CHAT_BETA_KLIC` z prostředí (hodnota cookie ani klíč se nevypisují).
 Návratový kód: 0 = vše prošlo, 1 = selhání kontrol, 2 = služba nedostupná, odmítla zprávu (limit, špatný klíč) nebo
 byl překročen strop ceny (neúplný běh; při současném selhání kontrol vyhrává 1, protože je skutečné).
 """
@@ -237,7 +239,10 @@ def _parser() -> argparse.ArgumentParser:
                                 description="Kouřový eval chatu přes endpoint. Klíč se čte z CHAT_EVAL_KLIC.")
     p.add_argument("--url", default="https://cosepece.cz")
     p.add_argument("--sada", choices=("kour", "vse"), default="kour")
-    p.add_argument("--cookie-beta", default=None, help="hodnota cookie chat_beta (skrytý režim)")
+    beta = p.add_mutually_exclusive_group()
+    beta.add_argument("--cookie-beta", default=None, help="hodnota cookie chat_beta (skrytý režim)")
+    beta.add_argument("--beta-z-prostredi", action="store_true",
+                      help="cookie chat_beta podepsaná klíčem CHAT_BETA_KLIC z prostředí (brána po redeployi)")
     p.add_argument("--max-usd", type=_kladne_cislo, default=MAX_USD)
     p.add_argument("--scenare", default=str(SCENARE))
     return p
@@ -265,11 +270,30 @@ async def _hlavni(a, klic: str, http: httpx.AsyncClient | None) -> int:
     return kod
 
 
+def _cookie_beta(a, env) -> str | None:
+    """Hodnota cookie chat_beta: z --cookie-beta, nebo s --beta-z-prostredi podepsaná klíčem CHAT_BETA_KLIC
+    (ValueError, když klíč chybí)."""
+    if not a.beta_z_prostredi:
+        return a.cookie_beta
+    from hlidac_rag.chat.relace import podepis_beta
+
+    klic_bety = env.get("CHAT_BETA_KLIC", "").strip()
+    if not klic_bety:
+        raise ValueError("Chybí CHAT_BETA_KLIC v prostředí (--beta-z-prostredi).")
+    return podepis_beta(klic_bety.encode())
+
+
 def main(argv: list[str] | None = None, env=None, http: httpx.AsyncClient | None = None) -> int:
     a = _parser().parse_args(argv)
-    klic = (os.environ if env is None else env).get("CHAT_EVAL_KLIC", "").strip()
+    env = os.environ if env is None else env
+    klic = env.get("CHAT_EVAL_KLIC", "").strip()
     if not klic:
         print("Chybí CHAT_EVAL_KLIC v prostředí.", file=sys.stderr)
+        return 2
+    try:
+        a.cookie_beta = _cookie_beta(a, env)
+    except ValueError as e:
+        print(e, file=sys.stderr)
         return 2
     return asyncio.run(_hlavni(a, klic, http))
 

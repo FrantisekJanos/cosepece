@@ -99,3 +99,9 @@ def test_drzeni_tahu_z_prostredi():
     assert nacti({"CHAT_DRZENI_TAHU_S": "700"}).drzeni_tahu_s == 700
     with pytest.raises(ValueError, match="CHAT_DRZENI_TAHU_S"):
         nacti({"CHAT_DRZENI_TAHU_S": "5"})
+
+
+def test_prazdna_promenna_je_vychozi():
+    """Compose předává každou CHAT_* jako ${CHAT_X:-}: nevyplněná v .env = prázdný řetězec = výchozí hodnota z kódu."""
+    assert nacti({"CHAT_MAX_KOL": ""}).max_kol == 3
+    assert nacti({k: "" for k in ("CHAT_ZAPNUTO", "CHAT_REZIM", "CHAT_MODEL", "CHAT_ROZPOCET_DEN_USD")}) == nacti({})

@@ -9,6 +9,9 @@ use Hlidac\View;
 
 // [datum, nadpis, popis, čísla PR na GitHubu, mění skóre?]
 $changes = [
+    ['2026-11-28', 'Poslední změna na stránce tisku a časová osa tisku',
+        'Na stránce tisku je pod nadpisem nový řádek s poslední změnou: který den se u tisku naposledy něco stalo a co to bylo, například podané pozměňovací návrhy, zkrácená lhůta, rozeslaný souhrn pozměňovacích návrhů nebo další krok projednávání. Odkazy vedou přímo na daný pozměňovací návrh nebo krok na stránce. Po rozbalení ukáže pět předchozích dnů se změnami. Odkaz „Zobrazit všechny změny tisku“ vede na novou časovou osu tisku, kde jsou kroky a pozměňovací návrhy den po dni od nejnovějšího, u návrhů i s předkladatelem a shrnutím. Datum je den, kdy se změna stala; v otevřených datech Sněmovny se krok může objevit se zpožděním. Skóre se nemění.',
+        [133], false],
     ['2026-11-28', 'Složitější vysvětlení píše silnější model',
         'Vysvětlení, co by pozměňovací návrh změnil v praxi, dosud silnější model přepisoval jen u návrhů s procedurálním nálezem. Nově přepíše všechny věcné změny, protože i procedurálně čistý návrh může být věcně složitý (typicky daně). U přesunů peněz v rozpočtu a vypuštění částí návrhu zůstává vysvětlení rychlého modelu. Z části „Z textu neplyne“ zároveň mizí poznámky, které popisovaly podklady modelu místo návrhu. Děkujeme čtenáři, který na obojí upozornil.',
         [111], false],

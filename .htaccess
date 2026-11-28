@@ -20,10 +20,11 @@ DirectoryIndex index.php
   # hezké adresy bez .php: /tisk/221, /zakon/159/2006, /tisky… Tabulka je v app/Url.php (shodu hlídá test),
   # staré adresy s .php přesměruje app/bootstrap.php. Bez mod_rewrite nastavte v config.php pretty_urls = false.
   RewriteRule ^tisk/([0-9]+)/?$ tisk.php?ct=$1 [L,QSA]
+  RewriteRule ^tisk/([0-9]+)/aktualizace/?$ tisk-aktualizace.php?ct=$1 [L,QSA]
   RewriteRule ^zakon/([0-9]{1,4})/([0-9]{4})/?$ zakon.php?z=$1/$2 [L,QSA]
   RewriteRule ^zakony/?$ zakon.php [L,QSA]
   RewriteRule ^data-a-api/?$ data.php [L,QSA]
-  RewriteRule ^(tisky|tisk|upozorneni|aktualizace|pripravovane|metodika|mcp|zmeny|hledat|revize)/?$ $1.php [L,QSA]
+  RewriteRule ^(tisky|tisk|tisk-aktualizace|upozorneni|aktualizace|pripravovane|metodika|mcp|zmeny|hledat|revize)/?$ $1.php [L,QSA]
   # mapa webu pro vyhledávače
   RewriteRule ^sitemap\.xml$ sitemap.php [L,QSA]
   # pokyny pro vyhledávače s odkazem na mapu webu

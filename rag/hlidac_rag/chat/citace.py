@@ -10,8 +10,9 @@ začínající `>`) a hned za ní `[N]`. Server odpověď drží po odstavcích 
 
 Přisouzení u projevu: jména osob z DB v textu před citátem (od konce předchozího citátu; když tam žádné
 není, platí jména z nejbližšího dřívějšího úseku). Jiná osoba než řečník zdroje = `neovereno`, s výjimkou
-„B cituje A“: v odstavci je jmenovaný i řečník zdroje a jméno té osoby stojí v textu projevu u nalezeného
-místa; výrok se pak přisoudí A s uvedením, kdo ho cituje.
+„B cituje A“: v odstavci je jmenovaný i řečník zdroje B a místo v projevu B je samo v uvozovkách (a A je
+jmenovaný v okolí), nebo mu těsně předchází uvozovací sloveso u jména A; výrok se pak přisoudí A
+s uvedením, kdo ho cituje. Pouhá zmínka jména A v projevu = `neovereno`.
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ TYPY_S_TEXTEM = ("cel", "projev")
 STROP = 2_000          # delší citace se ověří jen začátkem a koncem (každý KUS znaků)
 KUS = 1_000
 OKNO_JMENA = 1_500     # jak daleko před nalezeným místem ve zdroji se hledá jméno citované osoby (B cituje A)
+OKNO_UVOZOVEK = 300    # jak daleko od nalezeného místa se hledají uvozovky, které ho ve zdroji obklopují
+OKNO_PRED = 150        # jméno citované osoby před uvozovacím slovesem
+OKNO_SLOVESA = 40      # uvozovací sloveso končí nejvýš tolik znaků před nalezeným místem („řekl, že… “)
 
 _KONEC_ODSTAVCE = re.compile(r"\n(?:[ \t]*\n)+")
 _INLINE = re.compile(r"„([^„“”\n]+)[“”]|“([^“”\n]+)”|\"([^\"\n]+)\"|»([^»«\n]+)«|«([^«»\n]+)»")
@@ -41,6 +45,12 @@ _VYPUSTKA = re.compile(r"\s*(?:\[…\]|\(…\)|\[\.\.\.\]|\(\.\.\.\)|…|\.\.\.)
 _SLOVO = re.compile(r"\w+")
 _DATUM_TITULKU = re.compile(r",\s*\d{1,2}\.\s*\d{1,2}\.\s*\d{4}$")
 _ZAVORKA = re.compile(r"\s*\([^()]*\)$")
+_UVOZOVKA = re.compile("[„“”\"‚‘’»«]")
+# otvírací uvozovka → přípustné zavírací (“ je česká zavírací i anglická otvírací)
+_PARY = {"„": "“”", "“": "”", "\"": "\"", "‚": "‘’", "‘": "’", "»": "«", "«": "»"}
+_PRERUSENI = re.compile("[.!?„“”\"‚‘’»«]")
+_UVOZOVACI = re.compile(r"(?<!\w)(rekl|rekla|uvedl|uvedla|citoval|citovala|napsal|napsala|prohlasil|prohlasila"
+                        r"|cituji)(?!\w)")
 
 
 class Odstavce:
@@ -264,8 +274,32 @@ def _kmen_prijmeni(jmeno: str) -> str:
     return w if len(w) <= 4 else w[:max(4, len(w) - 2)]
 
 
+def _v_uvozovkach(text: str, od: int, do: int) -> bool:
+    """Nalezené místo ve zdroji stojí v uvozovkách: nejbližší uvozovka před ním (do OKNO_UVOZOVEK znaků)
+    otvírá a nejbližší za ním ji zavírá, bez jiné uvozovky mezi."""
+    pred = _UVOZOVKA.findall(text[max(0, od - OKNO_UVOZOVEK):od])
+    za = _UVOZOVKA.findall(text[do:do + OKNO_UVOZOVEK])
+    return bool(pred and za) and za[0] in _PARY.get(pred[-1], "")
+
+
+def _uvozeno_slovesem(text: str, od: int, kmen: str) -> bool:
+    """Těsně před nalezeným místem (do OKNO_SLOVESA znaků) končí uvozovací sloveso a jméno citované osoby
+    stojí do OKNO_PRED znaků před místem („pan poslanec Jan Hrnčíř, když řekl, že… kdyby…“)."""
+    pred = _bez_diakritiky(text[max(0, od - OKNO_PRED):od])
+    slovesa = list(_UVOZOVACI.finditer(pred))
+    if not slovesa or len(pred) - slovesa[-1].end() > OKNO_SLOVESA:
+        return False
+    # mezi slovesem a místem nesmí skončit věta ani stát jiný citát („napsal „to je skandál“. Kdyby…“)
+    mezera = pred[slovesa[-1].end():].replace("...", "…")
+    return not _PRERUSENI.search(mezera) and re.search(r"(?<!\w)" + re.escape(kmen), pred) is not None
+
+
 def _prisouzeni(zdroj: Zdroj, jmena: list[str], text: str, od: int, do: int) -> str | None:
-    """Komu výrok přisoudit; None = jiná osoba než řečník zdroje (citát je neověřený)."""
+    """Komu výrok přisoudit; None = jiná osoba než řečník zdroje (citát je neověřený).
+
+    B cituje A projde, jen když je v odstavci jmenovaný i řečník zdroje B a místo v projevu B je výrok A:
+    samo v uvozovkách (a A je jmenovaný v okolí), nebo mu těsně předchází uvozovací sloveso u jména A.
+    Pouhá zmínka jména A v projevu nestačí: chybné přisouzení je horší než neověřená citace."""
     recnik = _recnik(zdroj)
     cizi = [j for j in jmena if not _je_osoba(j, recnik)]
     if not cizi:
@@ -273,8 +307,12 @@ def _prisouzeni(zdroj: Zdroj, jmena: list[str], text: str, od: int, do: int) -> 
     if len(cizi) == len(jmena):
         return None         # řečník zdroje v odstavci jmenovaný není
     okoli = _bez_diakritiky(text[max(0, od - OKNO_JMENA):do + KUS // 2])
+    uvozovky = _v_uvozovkach(text, od, do)
     for j in cizi:
         kmen = _kmen_prijmeni(j)
-        if not kmen or not re.search(r"(?<!\w)" + re.escape(kmen), okoli):
+        if not kmen:
+            return None
+        jmenovan = re.search(r"(?<!\w)" + re.escape(kmen), okoli) is not None
+        if not ((uvozovky and jmenovan) or _uvozeno_slovesem(text, od, kmen)):
             return None
     return f"{', '.join(cizi)} (cituje {'ho' if len(cizi) == 1 else 'je'} {recnik})"

@@ -114,6 +114,38 @@ def test_vyrok_cizi_osoby_bez_rekneho_citujiciho_je_neovereno():
     assert v.citaty[0]["shoda"] == "neovereno" and v.citaty[0]["recnik"] is None
 
 
+
+B_CITUJE = 'Ministryně Schillerová citovala poslance Hrnčíře: „kdyby místo toho investoval do lihovin a děvčat“ [4].'
+
+
+def test_b_cituje_a_v_uvozovkach_projde():
+    # projev Schillerové 10/31/145/2 s výrokem Hrnčíře v uvozovkách
+    zdroj = ("Tohle vystihl na odborném semináři 16. září pan poslanec Jan Hrnčíř. Cituji ho: „Kdyby místo toho "
+             "investoval do lihovin a děvčat, pak by asi vydělal více.“ Není to můj názor.")
+    v = over_odstavec(B_CITUJE, SCHILLEROVA, lambda n: zdroj, jmena)
+    assert v.citaty[0]["shoda"] == "presne"
+    assert v.citaty[0]["recnik"] == "Jan Hrnčíř (cituje ho Alena Schillerová (ANO))"
+
+
+@pytest.mark.parametrize("zdroj", [
+    # pouhá zmínka jména A, výrok je B
+    "Pan poslanec Jan Hrnčíř tu dnes není. Kdyby místo toho investoval do lihovin a děvčat, vydělal by víc.",
+    # uvozovací sloveso daleko od výroku
+    "Pan poslanec Hrnčíř včera řekl, že nesouhlasí s celým návrhem rozpočtu a se vším, co k tomu vláda předložila. "
+    "Já k tomu říkám: kdyby místo toho investoval do lihovin a děvčat, vydělal by víc.",
+    # v uvozovkách je jiný úsek, výrok B za nimi
+    "Hrnčíř napsal „to je skandál“. Kdyby místo toho investoval do lihovin a děvčat, vydělal by víc.",
+])
+def test_b_se_zminkou_jmena_a_je_neovereno(zdroj):
+    v = over_odstavec(B_CITUJE, SCHILLEROVA, lambda n: zdroj, jmena)
+    assert v.citaty[0]["shoda"] == "neovereno" and v.citaty[0]["recnik"] is None and "„" not in v.text
+
+
+def test_b_cituje_a_v_uvozovkach_bez_jmena_a_v_okoli_je_neovereno():
+    zdroj = "Jak se říká: „kdyby místo toho investoval do lihovin a děvčat, vydělal by víc“."
+    assert over_odstavec(B_CITUJE, SCHILLEROVA, lambda n: zdroj, jmena).citaty[0]["shoda"] == "neovereno"
+
+
 def test_jmeno_ktere_ve_zdroji_neni_neprojde_ani_s_recnikem():
     t = 'Schillerová a Petr Malý shodně řekli: „kdyby místo toho investoval do lihovin a děvčat“ [4].'
     v = over_odstavec(t, SCHILLEROVA, lambda n: TEXT_SCHILLEROVE,

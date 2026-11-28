@@ -7,7 +7,13 @@ from hlidac_rag.chat.registr import Registr
 
 
 def test_prompt_je_pripnuty():
-    assert hash_promptu() == "cc7415c83add50ba314ffd3d4aca98e5616fd09fad12442e0997cebca1d4f79e"   # změna promptu = vědomá změna testu
+    assert hash_promptu() == "5dca0eff334e81a121f56b52c77116f3ccaadfcbbb45a138a2794f81c6c2a94a"   # změna promptu = vědomá změna testu
+
+
+def test_prompt_cituje_projev_jako_to_co_zaznelo():
+    # úloha 13 r4: server ověřuje jen, že znění v projevu zaznělo; model netvrdí, že je to názor řečníka
+    assert "v projevu zaznělo" in SYSTEM and "příjmení řečníka" in SYSTEM
+    assert "neříkej, že to je jeho názor, pokud to projev sám neříká" in SYSTEM
 
 
 def test_prompt_neobsahuje_tajemstvi_a_ma_pravidla():

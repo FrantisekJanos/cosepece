@@ -6,7 +6,8 @@ import time
 
 import pytest
 
-from hlidac_rag.chat.citace import ZNACKA_NEOVERENO, Odstavce, _konce_vet, ma_citat, over_odstavec
+from hlidac_rag.chat.citace import (POZNAMKA_CITUJE, ZNACKA_NEOVERENO, Odstavce, _konce_vet, ma_citat,
+                                    over_odstavec)
 from hlidac_rag.chat.registr import Registr, Zdroj
 
 REG_PROJEV = Registr([Zdroj(1, "projev:10/1/1/1", "projev", "Jan Novák (ANO), 12. 11. 2026",
@@ -53,6 +54,9 @@ def test_presna_citace_projde_s_offsety():
     assert c["shoda"] == "presne" and c["recnik"] == "Jan Novák (ANO)" and v.text.count("„") == 1
     assert zdroj[c["od"]:c["do"]] == "rozpočet je vyrovnaný" and c["n"] == 1
     assert v.text == 'Novák uvedl: „rozpočet je vyrovnaný“ [1].'
+    # r4: výsledek říká, ve kterém projevu znění zaznělo (datum z titulku, když meta datum nemá)
+    assert c["zaznelo_v"] == {"recnik": "Jan Novák (ANO)", "klic": "projev:10/1/1/1", "datum": "12. 11. 2026",
+                              "url": None} and c["poznamka"] is None
 
 
 def test_priblizna_se_neprepisuje():
@@ -168,14 +172,18 @@ def test_b_cituje_a_v_uvozovkach_je_neovereno():
              "investoval do lihovin a děvčat, pak by asi vydělal více.“ Není to můj názor.")
     v = over_odstavec(B_CITUJE, SCHILLEROVA, lambda n: zdroj, jmena)
     assert v.citaty[0]["shoda"] == "neovereno" and v.citaty[0]["recnik"] is None
-    # ani bez jména Hrnčíře v odstavci: místo ve zdroji je v uvozovkách za „Cituji ho“ (r3 c, K1)
+    # bez jména Hrnčíře v odstavci: znění v jejím projevu zaznělo, ale v uvozovkách za „Cituji ho“
+    # → nejvýš přibližně s poznámkou (r4 rozhodnutí 3, dřív neověřeno)
     t = 'Ministryně Schillerová řekla: „kdyby místo toho investoval do lihovin a děvčat“ [4].'
     v = over_odstavec(t, SCHILLEROVA, lambda n: zdroj, jmena)
-    assert v.citaty[0]["shoda"] == "neovereno"
-    # vlastní výrok Schillerové se jí přisoudí
+    c = v.citaty[0]
+    assert c["shoda"] == "priblizne" and c["poznamka"] == POZNAMKA_CITUJE
+    assert c["zaznelo_v"]["recnik"] == "Alena Schillerová (ANO)" and v.text == t
+    # vlastní výrok Schillerové: přesně, bez poznámky
     vlastni = "Já říkám: kdyby místo toho investoval do lihovin a děvčat, vydělal by víc."
     v = over_odstavec(t, SCHILLEROVA, lambda n: vlastni, jmena)
     assert v.citaty[0]["shoda"] == "presne" and v.citaty[0]["recnik"] == "Alena Schillerová (ANO)"
+    assert v.citaty[0]["poznamka"] is None
 
 
 @pytest.mark.parametrize("zdroj", [
@@ -412,7 +420,7 @@ def test_r1_8_kratky_citat_u_osoby_nebo_slovesa():
 def test_r1_9_vykon(t):
     zacatek = time.perf_counter()
     over_odstavec(t, REG_PROJEV, lambda n: "rozpočet je vyrovnaný", bez_jmen)
-    assert time.perf_counter() - zacatek < 0.2
+    assert time.perf_counter() - zacatek < 2.0     # ×10 proti naměřenému stropu: chytí kvadratiku, ne zátěž
 
 
 # --- nálezy re-recenze r2 ---------------------------------------------------------------------
@@ -504,12 +512,21 @@ def jm(s: str) -> list[str]:
 @pytest.mark.parametrize("t", [
     f"Premiér ve Sněmovně řekl: „{X}“ [1].",                              # R1 role
     f"Ministryně financí prohlásila: „{X}“ [1].",                         # R2
-    f"Na to odpověděl: „{X}“ [1].",                                      # R3 zájmeno / bez jména
     f"Předseda poslaneckého klubu SPD uvedl: „{X}“ [1].",                 # R4
-    f"V rozpravě zaznělo: „{X}“ [1].",                                   # bez jména
 ])
-def test_r3_k4_role_nebo_zajmeno_bez_jmena_je_neovereno(t):
+def test_r3_k4_role_bez_jmena_je_neovereno(t):
     assert over_odstavec(t, REG_PROJEV, lambda n: VLASTNI, jm).citaty[0]["shoda"] == "neovereno"
+
+
+@pytest.mark.parametrize("t", [
+    f"V rozpravě zaznělo: „{X}“ [1].",                                   # formulace z promptu
+    f"V projevu zaznělo: „{X}“ [1].",
+    f"Na to odpověděl: „{X}“ [1].",                                      # R3: nikoho nejmenuje
+])
+def test_r4_bez_jmena_zazni_v_projevu_recnika(t):
+    # r4 rozhodnutí 2: jméno řečníka se nevyžaduje, čip ho dodá (dřív neověřeno)
+    c = over_odstavec(t, REG_PROJEV, lambda n: VLASTNI, jm).citaty[0]
+    assert c["shoda"] == "presne" and c["zaznelo_v"]["recnik"] == "Jan Novák (ANO)"
 
 
 @pytest.mark.parametrize("t", [
@@ -562,24 +579,51 @@ def test_r3_b_jmenovany_recnik_projde_i_sklonovany():
 
 @pytest.mark.parametrize("zdroj", [
     f"Pan Hrnčíř tu řekl: „{X}“. To není můj názor, jen cituji.",           # Q1 v uvozovkách
-    f"Cituji pana poslance Hrnčíře: {X}. Konec citace.",                   # Q2 cituji
-    f"Jak řekl kolega, {X}.",                                             # jak řekl
-    f"Podle ministerstva {X}.",                                           # podle
+    f"Cituji pana poslance Hrnčíře: {X}. Konec citace.",                   # Q2 cituji před místem
+    f"Hrnčíř to shrnul takto: {X}. Jenom cituji pana kolegu.",             # cituji za místem
+    "„" + "slovo " * 60 + f"{X}“ dodal jsem jen pro pořádek.",             # K1g otvírací uvozovka daleko
+    f"Pan Hrnčíř řekl: „{X.split(' a ')[0]}“ a zdravý je jen podle mě.",    # místo začíná v uvozovkách
+])
+def test_r4_recnik_ve_zdroji_cituje_je_priblizne_s_poznamkou(zdroj):
+    # r4 rozhodnutí 3: znění v projevu Nováka zaznělo, jen v uvozovkách nebo u „cituji“ (dřív neověřeno)
+    c = over_odstavec(f"Novák řekl: „{X}“ [1].", REG_PROJEV, lambda n: zdroj, jm).citaty[0]
+    assert c["shoda"] == "priblizne" and c["poznamka"] == POZNAMKA_CITUJE
+    assert c["zaznelo_v"]["recnik"] == "Jan Novák (ANO)"
+
+
+@pytest.mark.parametrize("zdroj", [
+    f"Jak řekl kolega, {X}.",                                             # „jak řekl“
+    f"Podle ministerstva {X}.",                                           # „podle“
     f"Pan Hrnčíř, když mluvil o rozpočtu, {X}.",                          # jiné jméno v okně zdroje
+    f"Pan ministr nám tu před chvílí řekl, že {X}. To je směšné.",         # K1a
+    f"Vy tady pořád tvrdíte, že {X}. Ale není to pravda.",                 # K1b
+    f"Opozice tvrdí, že {X}. To je lež.",                                 # K1c
+    "Pan poslanec Hrnčíř na semináři " + "a pak dlouho mluvil o všem možném, " * 7 + f"když řekl, že {X}.",  # K1d
+    f"Kdo z vás věří tomu, že {X}?",                                      # K1f
+    f"Já netvrdím ani v nejmenším, ani náhodou... ale že {X}, to si nemyslím.",   # K1e zápor za místem
 ])
-def test_r3_k1_recnik_ve_zdroji_cituje_jineho(zdroj):
-    v = over_odstavec(f"Novák řekl: „{X}“ [1].", REG_PROJEV, lambda n: zdroj, jm)
-    assert v.citaty[0]["shoda"] == "neovereno"
+def test_r4_prevypraveni_ve_zdroji_se_neresi(zdroj):
+    # r4 rozhodnutí 3: kontext zdroje bez heuristiky; výsledek tvrdí jen, že znění v projevu Nováka zaznělo
+    c = over_odstavec(f"Novák řekl: „{X}“ [1].", REG_PROJEV, lambda n: zdroj, jm).citaty[0]
+    assert c["shoda"] == "presne" and c["zaznelo_v"]["klic"] == "projev:10/1/1/1" and c["poznamka"] is None
 
 
-@pytest.mark.parametrize("t", [
-    "Schillerová ve Sněmovně řekla: „kdyby místo toho investoval do lihovin a děvčat, pak by asi vydělal více“ [4].",
-    "Ministryně financí řekla: „kdyby místo toho investoval do lihovin a děvčat, pak by asi vydělal více“ [4].",
-])
-def test_r3_skutecny_text_schillerove_je_neovereno(t):
-    # SCH1, SCH2: „…když řekl [Hrnčíř]… jenom cituji“
-    v = over_odstavec(t, SCHILLEROVA, lambda n: TEXT_SCHILLEROVE, jm)
-    assert v.citaty[0]["shoda"] == "neovereno"
+def test_r4_popreni_tesne_pred_mistem_zustava_priblizne():
+    # pravidlo z r2 #4 zůstává (zápor ve stejné větě těsně před místem)
+    zdroj = f"Já netvrdím ani v nejmenším, ani náhodou, že {X}, to si nemyslím."
+    c = over_odstavec(f"Novák řekl: „{X}“ [1].", REG_PROJEV, lambda n: zdroj, jm).citaty[0]
+    assert c["shoda"] == "priblizne" and c["zaznelo_v"] is not None
+
+
+def test_r3_skutecny_text_schillerove():
+    # SCH1: znění v jejím projevu zaznělo, za ním „jenom cituji pana poslance Hrnčíře“ → přibližně s poznámkou
+    t = "Schillerová ve Sněmovně řekla: „kdyby místo toho investoval do lihovin a děvčat, pak by asi vydělal více“ [4]."
+    c = over_odstavec(t, SCHILLEROVA, lambda n: TEXT_SCHILLEROVE, jm).citaty[0]
+    assert c["shoda"] == "priblizne" and c["poznamka"] == POZNAMKA_CITUJE
+    assert c["zaznelo_v"]["recnik"] == "Alena Schillerová (ANO)"
+    # SCH2: role místo jména
+    t = "Ministryně financí řekla: „kdyby místo toho investoval do lihovin a děvčat, pak by asi vydělal více“ [4]."
+    assert over_odstavec(t, SCHILLEROVA, lambda n: TEXT_SCHILLEROVE, jm).citaty[0]["shoda"] == "neovereno"
 
 
 def test_r3_m1_dva_zdroje_v_jedne_vete():
@@ -592,7 +636,7 @@ def test_r3_d_vykon_odstavce_s_daty():
     assert len(t) > 18_000
     zacatek = time.perf_counter()
     over_odstavec(t, REG_PROJEV, lambda n: "x " * 500, bez_jmen)
-    assert time.perf_counter() - zacatek < 0.3
+    assert time.perf_counter() - zacatek < 3.0     # ×10 (r4 rozhodnutí 4)
 
 
 def test_r3_d_vykon_konce_vet():
@@ -600,14 +644,159 @@ def test_r3_d_vykon_konce_vet():
     assert len(s) > 60_000
     zacatek = time.perf_counter()
     konce = list(_konce_vet(s, 0, len(s)))
-    assert time.perf_counter() - zacatek < 0.3 and len(konce) == 1_400
+    assert time.perf_counter() - zacatek < 3.0 and len(konce) == 1_400     # ×10 (r4 rozhodnutí 4)
 
 
-@pytest.mark.parametrize("n", [5_000, 20_000, 60_000])
-def test_r3_d_vykon_sondy_f(n):
-    for t, zdroj in (("„aaa bbb ccc“ [1] " + "Slovo. " * (n // 7), "aaa bbb ccc"),
-                     (" ".join(f"„aaa bbb ccc{i}“ [1]. Věta." for i in range(n // 30)), "x " * 1000),
-                     ("„aaa bbb ccc“ [1]", "Slovo. " * (n // 7) + "aaa bbb ccc")):
+def _cas(t: str, zdroj: str) -> float:
+    """Nejkratší ze tří běhů (jeden pomalý běh pod zátěží test neshodí)."""
+    casy = []
+    for _ in range(3):
         zacatek = time.perf_counter()
         over_odstavec(t, REG_PROJEV, lambda k: zdroj, bez_jmen)
-        assert time.perf_counter() - zacatek < 1.0
+        casy.append(time.perf_counter() - zacatek)
+    return min(casy)
+
+
+@pytest.mark.parametrize("pripad", [
+    lambda n: ("„aaa bbb ccc“ [1] " + "Slovo. " * (n // 7), "aaa bbb ccc"),
+    lambda n: (" ".join(f"„aaa bbb ccc{i}“ [1]. Věta." for i in range(n // 30)), "x " * 1000),
+    lambda n: ("„aaa bbb ccc“ [1]", "Slovo. " * (n // 7) + "aaa bbb ccc"),
+    # r4: hodně nalezených citátů bez jména řečníka (kontrola celého odstavce u každého z nich)
+    lambda n: (" ".join("„aaa bbb ccc“ [1]. Věta." for _ in range(n // 25)), "aaa bbb ccc"),
+])
+def test_r3_d_vykon_sondy_f(pripad):
+    # r4 rozhodnutí 4: poměr růstu místo absolutního času; lineární = 3, kvadratický = 9
+    t20, t60 = _cas(*pripad(20_000)), _cas(*pripad(60_000))
+    assert t60 < 5 * t20 + 0.05 and t60 < 10.0
+
+
+# --- r4: znění zaznělo v projevu, odstavec nesmí jmenovat jiného mluvčího (sondy probe13g) ----------
+
+def reg(jmeno: str, klub: str = "ANO") -> Registr:
+    return Registr([Zdroj(1, "projev:x", "projev", f"{jmeno} ({klub}), 1. 1. 2026",
+                          {"url": "https://www.psp.cz/x", "datum": "2026-01-01"}, False)])
+
+
+NOVAK = reg("Jan Novák")
+
+
+def jm_g(s: str) -> list[str]:
+    """Jména z DB jako v probe13g: „Malý“ bez tvaru „málo“, „Válek“ bez „válka“ na začátku věty."""
+    vzory = [("Alena Schillerová", "schillerov"), ("Jan Hrnčíř", "hrnčíř"), ("Petr Malý", r"\bmal(ý|ého|ému|ým)\b"),
+             ("Andrej Babiš", "babiš"), ("Jan Novák", r"\bnovák\b|nováka|novákovi"),
+             ("Vlastimil Válek", r"\bválek\b")]
+    return [j for j, k in vzory if re.search(k, s.lower())]
+
+
+def shoda(t: str, r: Registr = NOVAK, zdroj: str = VLASTNI) -> list[str]:
+    return [c["shoda"] for c in over_odstavec(t, r, lambda n: zdroj, jm_g).citaty]
+
+
+@pytest.mark.parametrize("t", [
+    f"Na Nováka reagoval ministr financí slovy: „{X}“ [1].",             # P1 řečník jako předmět + role
+    f"Novákovi odpověděla ministryně: „{X}“ [1].",                       # P2
+    f"Novákův kolega z klubu řekl: „{X}“ [1].",                          # P3 přivlastňovací + role
+    f"Nováková řekla: „{X}“ [1].",                                       # P4 jiná osoba mimo DB
+    f"Novák mluvil o opozici. Ta podle něj tvrdí: „{X}“ [1].",           # P5 instituce a zájmeno
+    f"Premiér po jednání s Novákem prohlásil: „{X}“ [1].",               # P6
+])
+def test_r4_n1_jmeno_recnika_ale_mluvi_jiny(t):
+    assert shoda(t) == ["neovereno"]
+
+
+@pytest.mark.parametrize("t, r", [
+    (f"Je to málo, prohlásil ministr: „{X}“ [1].", reg("Taťána Malá")),              # W1
+    (f"Válka na Ukrajině trvá, řekl ministr: „{X}“ [1].", reg("Vlastimil Válek", "TOP 09")),   # W2
+    (f"Fialový plakát, uvedl premiér: „{X}“ [1].", reg("Petr Fiala", "ODS")),        # W3
+    (f"Té holce ministr řekl: „{X}“ [1].", reg("Tomáš Holec")),                     # W4
+    # běžné slovo na začátku věty řečníka nejmenuje, takže se kontroluje celý odstavec
+    (f"Ministr Válek vystoupil. Malá změna nastala, když řekl: „{X}“ [1].", reg("Taťána Malá")),
+])
+def test_r4_n2_bezne_slovo_neni_jmeno(t, r):
+    assert shoda(t, r) == ["neovereno"]
+
+
+@pytest.mark.parametrize("t", [
+    f"Karel Novák řekl: „{X}“ [1].",                                     # jiné křestní jméno
+    f"K. Novák řekl: „{X}“ [1].",                                        # jiná iniciála
+    f"Po projevu Nováka řekl: „{X}“ [1].",                               # rámec po předložce
+    f"Na slova Nováka reagoval: „{X}“ [1].",
+    f"Se slovy Nováka nesouhlasil: „{X}“ [1].",
+    f"Na dnešní projev Nováka reagoval: „{X}“ [1].",
+    f"Na Novákův projev reagoval: „{X}“ [1].",
+    f"Pane Nováku, já vám říkám: „{X}“ [1].",                            # oslovení
+    f"Na Nováka reagoval: „{X}“ [1].",                                   # předmět bez podmětu
+    f"Malý vystoupil. Na Nováka reagoval: „{X}“ [1].",
+    f"Novákovi kontroval Malý: „{X}“ [1].",
+    f"Šéfka resortu řekla: „{X}“ [1].",                                  # rod slovesa nesedí
+    f"Novák a jeho kolegové tvrdili: „{X}“ [1].",                        # množné číslo, zájmeno
+    f"ODS tvrdí: „{X}“ [1].",                                            # jiný klub
+    f"ANO tvrdí: „{X}“ [1].",                                            # klub místo jména
+    f"Vláda ústy Nováka tvrdí: „{X}“ [1].",
+    f"Ministr nikoli Novák řekl: „{X}“ [1].",
+    f"Novák, ministryně Malá: „{X}“ [1].",
+    f"Novák řekl: „{X}“ [1]. Ministryně s ním nesouhlasila.",            # role v další větě
+    f"Malý řekl „to je fakt dobře“ [2]. Pak řekl: „{X}“ [1].",           # podmět z předchozí věty
+    f"„{X}“ [1]. „to je fakt dobře“ [2]. Oba výroky řekl Malý.",         # mluvčí až za dalším citátem
+])
+def test_r4_odstavec_jmenuje_jineho_mluvciho(t):
+    v = over_odstavec(t, NOVAK, lambda n: VLASTNI, jm_g)
+    assert [c["shoda"] for c in v.citaty if c["n"] == 1] == ["neovereno"]
+
+
+@pytest.mark.parametrize("t", [
+    f"V projevu Nováka zaznělo: „{X}“ [1].",
+    f"V projevu ministra financí Jana Nováka zaznělo: „{X}“ [1].",
+    f"Ministr financí Novák řekl: „{X}“ [1].",
+    f"Novák, ministr financí, řekl: „{X}“ [1].",
+    f"Novák jako zpravodaj uvedl: „{X}“ [1].",
+    f"Ve Sněmovně Novák řekl: „{X}“ [1].",
+    f"Včera Novák řekl: „{X}“ [1].",
+    f"Ano, Novák řekl: „{X}“ [1].",
+    f"J. Novák řekl: „{X}“ [1].",
+    f"Ing. Jan Novák řekl: „{X}“ [1].",
+    f"Pan poslanec Novák řekl: „{X}“ [1].",
+    f"Poslanec Jan Novák (ANO) řekl: „{X}“ [1].",
+    f"Poslanec za ANO Novák řekl: „{X}“ [1].",
+    f"Podle Nováka „{X}“ [1].",
+    f"Řečeno slovy Nováka: „{X}“ [1].",
+    f"Novákova slova zněla: „{X}“ [1].",
+    f"Z projevu Nováka: „{X}“ [1].",
+    f"Malý vystoupil. Novák mu odpověděl: „{X}“ [1].",
+])
+def test_r4_recnik_zdroje_nebo_nikdo_projde(t):
+    c = over_odstavec(t, NOVAK, lambda n: VLASTNI, jm_g).citaty[0]
+    assert c["shoda"] == "presne" and c["zaznelo_v"] == {"recnik": "Jan Novák (ANO)", "klic": "projev:x",
+                                                         "datum": "2026-01-01", "url": "https://www.psp.cz/x"}
+
+
+@pytest.mark.parametrize("t, r, ocekavano", [
+    (f"Malá řekla: „{X}“ [1].", reg("Taťána Malá"), "presne"),
+    (f"Taťána Malá řekla: „{X}“ [1].", reg("Taťána Malá"), "presne"),
+    (f"Ministryně Schillerová řekla: „{X}“ [1].", reg("Alena Schillerová"), "presne"),
+    (f"Podle ministryně Schillerové „{X}“ [1].", reg("Alena Schillerová"), "presne"),
+    (f"Schillerová řekl: „{X}“ [1].", reg("Alena Schillerová"), "neovereno"),
+    (f"Starosta řekl: „{X}“ [1].", reg("Josef Starosta"), "presne"),     # příjmení = slovo role
+])
+def test_r4_tvary_prijmeni(t, r, ocekavano):
+    assert shoda(t, r) == [ocekavano]
+
+
+def test_r4_cel_nema_zaznelo_v():
+    c = over_odstavec(f"Paragraf 1 stanoví: „{X}“ [3].", CEL, lambda n: f"§ 1 {X}.", jm).citaty[0]
+    assert c["shoda"] == "presne" and c["zaznelo_v"] is None and c["recnik"] is None
+
+
+def test_r4_1c_priblizna_shoda_nespoji_vety():
+    # probe13 1c: „Já souhlasím s tím. Jinde: zrušením daně…“ není „Já souhlasím se zrušením daně…“
+    zdroj = "Já souhlasím s tím. Jinde: zrušením daně z nemovitosti."
+    assert shoda("„Já souhlasím se zrušením daně z nemovitosti“ [1]", zdroj=zdroj) == ["nenalezeno"]
+    # přibližná shoda v rámci jedné věty zůstává
+    zdroj = "Já souhlasím se zrušením té daně z nemovitosti."
+    assert shoda("„Já souhlasím se zrušením daně z nemovitosti“ [1]", zdroj=zdroj) == ["priblizne"]
+
+
+def test_r4_2b_popreni_ve_zdroji_je_priblizne_v_projevu_recnika():
+    c = over_odstavec("„rozpočet je vyrovnaný“ [1]", REG_PROJEV, lambda n: "Netvrdím, že rozpočet je vyrovnaný.",
+                      bez_jmen).citaty[0]
+    assert c["shoda"] == "priblizne" and c["zaznelo_v"]["recnik"] == "Jan Novák (ANO)"

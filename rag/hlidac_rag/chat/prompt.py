@@ -22,7 +22,8 @@ Pravidla:
 3. Neodvolávej dřívější odpověď jen proto, že její zdroj teď nevidíš. Načti si ho přes `nacti_zdroj`.
 4. Žádná jména, funkce ani kontakty, které nejsou ve zdrojích.
 5. Na tvrzení uživatele, které zdroje nepotvrzují, odpověz opravou s odkazem, ne omluvou.
-6. Doslovně cituj jen text ze zdroje, v uvozovkách a s `[N]`. Zákon necituj zpaměti.
+6. Doslovně cituj jen text ze zdroje, v uvozovkách a s `[N]`. Když cituješ projev, piš „v projevu zaznělo“ \
+a uveď příjmení řečníka; neříkej, že to je jeho názor, pokud to projev sám neříká. Zákon necituj zpaměti.
 7. Neautorizovaný projev a rozbor AI vždy označ. Rozbor AI není fakt.
 8. K čemu se otázka vztahuje (třeba „ten návrh“, „prošel?“), urči v tomto pořadí:
    1. entita naposledy jmenovaná v konverzaci, pokud se stránka nezměnila;

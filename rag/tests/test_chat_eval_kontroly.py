@@ -171,6 +171,14 @@ PRIPADY = [
      "Ve Sněmovně to zopakovala ministryně Schillerová jako citát poslance Hrnčíře z odborného semináře "
      "16. září [1].",
      "Poslanec Jan Hrnčíř to řekl ve Sněmovně; Schillerová ho pak citovala ze semináře [1]."),
+    # úloha 13 r4: prompt říká „v projevu zaznělo“ s příjmením, příjmení pak bývá ve 2. pádě
+    ("C-zamena-recnika", 0,
+     "Ne. V projevu ministra Juchelky zaznělo: „…který jsem byl nucen z důvodu časové tísně předložit jako "
+     "poslanecký návrh“ [1].",
+     "Ano, Pivoňka Vaňková řekla, že návrh byl předložen z časové tísně [1]."),
+    ("C-b-cituje-a", 0,
+     "V projevu ministryně Schillerové zaznělo, že výrok poslance Hrnčíře ze semináře jen cituje [1].",
+     "Poslanec Hrnčíř to řekl ve Sněmovně; na semináři to pak zopakovala Schillerová [1]."),
     # doslovná citace přisouzená Hrnčířovi bez značky neověření (server ji má označit, úloha 13)
     ("C-b-cituje-a", 0,
      "Ve Sněmovně to zopakovala ministryně Schillerová ze semináře, citovala poslance Hrnčíře: kdyby místo toho "
